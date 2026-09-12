@@ -875,6 +875,84 @@ navigation:
       - page: "UI Examples"
         path: "examples/ag-ui.md"
         slug: "examples/ag-ui"
+  - section: "Comparisons"
+    slug: ""
+    contents:
+      - page: "Overview"
+        path: "comparisons/index.md"
+        slug: "comparisons/overview"
+        aliases:
+          - "comparisons"
+      - page: "vs LangChain & LangGraph"
+        path: "comparisons/vs-langchain-langgraph.md"
+        slug: "comparisons/vs-langchain-langgraph"
+        aliases:
+          - "comparisons/langchain-langgraph"
+          - "pydantic-ai-vs-langchain-langgraph"
+          - "langchain-langgraph-vs-pydantic-ai"
+      - page: "vs Claude Agent SDK"
+        path: "comparisons/vs-claude-agent-sdk.md"
+        slug: "comparisons/vs-claude-agent-sdk"
+        aliases:
+          - "comparisons/claude-agent-sdk"
+          - "pydantic-ai-vs-claude-agent-sdk"
+          - "claude-agent-sdk-vs-pydantic-ai"
+      - page: "vs Vercel AI SDK"
+        path: "comparisons/vs-vercel-ai-sdk.md"
+        slug: "comparisons/vs-vercel-ai-sdk"
+        aliases:
+          - "comparisons/vercel-ai-sdk"
+          - "pydantic-ai-vs-vercel-ai-sdk"
+          - "vercel-ai-sdk-vs-pydantic-ai"
+      - page: "vs OpenAI Agents SDK"
+        path: "comparisons/vs-openai-agents-sdk.md"
+        slug: "comparisons/vs-openai-agents-sdk"
+        aliases:
+          - "comparisons/openai-agents-sdk"
+          - "pydantic-ai-vs-openai-agents-sdk"
+          - "openai-agents-sdk-vs-pydantic-ai"
+      - page: "vs Google ADK"
+        path: "comparisons/vs-google-adk.md"
+        slug: "comparisons/vs-google-adk"
+        aliases:
+          - "comparisons/google-adk"
+          - "pydantic-ai-vs-google-adk"
+          - "google-adk-vs-pydantic-ai"
+      - page: "vs Mastra"
+        path: "comparisons/vs-mastra.md"
+        slug: "comparisons/vs-mastra"
+        aliases:
+          - "comparisons/mastra"
+          - "pydantic-ai-vs-mastra"
+          - "mastra-vs-pydantic-ai"
+      - page: "vs LiveKit Agents"
+        path: "comparisons/vs-livekit.md"
+        slug: "comparisons/vs-livekit"
+        aliases:
+          - "comparisons/livekit"
+          - "pydantic-ai-vs-livekit"
+          - "livekit-vs-pydantic-ai"
+      - page: "vs Pi"
+        path: "comparisons/vs-pi.md"
+        slug: "comparisons/vs-pi"
+        aliases:
+          - "comparisons/pi"
+          - "pydantic-ai-vs-pi"
+          - "pi-vs-pydantic-ai"
+      - page: "vs Agno"
+        path: "comparisons/vs-agno.md"
+        slug: "comparisons/vs-agno"
+        aliases:
+          - "comparisons/agno"
+          - "pydantic-ai-vs-agno"
+          - "agno-vs-pydantic-ai"
+      - page: "vs CrewAI"
+        path: "comparisons/vs-crewai.md"
+        slug: "comparisons/vs-crewai"
+        aliases:
+          - "comparisons/crewai"
+          - "pydantic-ai-vs-crewai"
+          - "crewai-vs-pydantic-ai"
   - section: "API Reference"
     slug: ""
     contents:
@@ -1247,6 +1325,30 @@ redirects:
     status: 302
   - from: "capabilities/durable_execution"
     to: "capabilities/durable_execution/overview"
+    status: 302
+  - from: "comparisons/production-agents"
+    to: "comparisons/overview"
+    status: 302
+  - from: "comparisons/under-the-hood"
+    to: "comparisons/overview"
+    status: 302
+  - from: "comparisons/vs-smolagents"
+    to: "comparisons/overview"
+    status: 302
+  - from: "pydantic-ai-vs-smolagents"
+    to: "comparisons/overview"
+    status: 302
+  - from: "smolagents-vs-pydantic-ai"
+    to: "comparisons/overview"
+    status: 302
+  - from: "comparisons/vs-ag2"
+    to: "comparisons/overview"
+    status: 302
+  - from: "pydantic-ai-vs-ag2"
+    to: "comparisons/overview"
+    status: 302
+  - from: "ag2-vs-pydantic-ai"
+    to: "comparisons/overview"
     status: 302
   - from: "mcp"
     to: "mcp/overview"
