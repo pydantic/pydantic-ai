@@ -2291,6 +2291,32 @@ def test_result():
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_include_content_instrumentation(capfire: CaptureLogfire):
+    """include_content=True must export the embeddings vector on the span.
+
+    Regression test for #8293: the guarded write used `attributes` (consumed at span
+    creation) instead of `attributes_to_set` (passed to span.set_attributes), so the
+    `embeddings` key was always absent from the exported span even when include_content
+    was True.
+    """
+    model = TestEmbeddingModel(dimensions=3)
+    embedder = Embedder(model, instrument=InstrumentationSettings(include_content=True))
+    await embedder.embed_query('hello')
+
+    [span] = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    attrs = span['attributes']
+
+    # The vector must be present on the span under include_content=True.
+    assert attrs.get('embeddings') == [[1.0, 1.0, 1.0]]
+
+    # The input must also be present.
+    assert attrs.get('inputs') == ['hello']
+
+    # Dimension count must be wired up regardless of include_content.
+    assert attrs.get('gen_ai.embeddings.dimension.count') == 3
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_limited_instrumentation(capfire: CaptureLogfire):
     model = TestEmbeddingModel()
     embedder = Embedder(model, instrument=InstrumentationSettings(include_content=False))
