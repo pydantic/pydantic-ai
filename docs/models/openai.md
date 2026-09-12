@@ -1057,6 +1057,33 @@ print(result.output)
 !!! note "Multiple system messages are merged by default"
     Some vLLM chat templates reject multiple leading system messages, so `VLLMProvider` merges them by default. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message).
 
+#### Nebius Serverless Endpoints
+
+To connect to vLLM deployed on a [Nebius Serverless Endpoint](https://docs.vllm.ai/en/latest/deployment/frameworks/nebius/),
+use the Endpoint's managed HTTPS URL followed by `/v1` as `base_url`, and its authentication token as `api_key`:
+
+```python {test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.vllm import VLLMProvider
+
+model = OpenAIChatModel(
+    'Qwen/Qwen3-0.6B',  # Use the model ID served by your Endpoint.
+    provider=VLLMProvider(
+        base_url=os.environ['VLLM_BASE_URL'],  # https://<endpoint-url>/v1
+        api_key=os.environ['VLLM_API_KEY'],  # The Endpoint authentication token.
+    ),
+)
+agent = Agent(model)
+```
+
+Enable token authentication when creating the Endpoint, and wait for the model to be ready before making requests.
+The Endpoint token is separate from your Nebius CLI credentials and managed model API key.
+Tool calling requires the vLLM server configuration described above; support depends on the model and server version.
+Stop or delete the Endpoint when it is no longer needed; closing the agent does not stop it.
+
 ### Nebius AI Studio
 
 Go to [Nebius AI Studio](https://studio.nebius.com/) and create an API key.
