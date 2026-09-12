@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, Literal, Optional, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -538,7 +538,7 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
     for activity_fn, (params_type, result_type) in expected_signatures.items():
         signature = inspect.signature(activity_fn)
         assert signature.parameters['params'].annotation is params_type
-        assert signature.parameters['deps'].annotation == agent.deps_type | None
+        assert signature.parameters['deps'].annotation == Optional[agent.deps_type]  # noqa: UP045
         assert signature.parameters['deps'].default is None
         assert signature.return_annotation == result_type
 

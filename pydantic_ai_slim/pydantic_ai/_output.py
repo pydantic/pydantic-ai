@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overl
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import SchemaValidator
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import Self, TypedDict, TypeForm, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
 
@@ -104,7 +104,7 @@ def _build_output_handlers(
     return do_validate, do_process
 
 
-def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
+def _isinstance_maybe_generic(value: Any, type_: TypeForm[Any]) -> bool:
     """`isinstance(value, type_)` that also works for generics like `list[Bar]`.
 
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
@@ -112,7 +112,8 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
     element type can't be checked at runtime.
     """
     try:
-        return isinstance(value, type_)
+        # `isinstance` only accepts classes statically; the `TypeError` fallback covers the other type forms.
+        return isinstance(value, cast(type[Any], type_))
     except TypeError:
         origin = get_origin(type_)
         return origin is not None and isinstance(value, origin)
@@ -838,7 +839,7 @@ class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
 @dataclass(init=False)
 class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
-    output_type: type[Any] | None = None
+    output_type: TypeForm[Any] | None = None
     """The resolved semantic output type (e.g. `MyModel`, `int`). For output functions,
     this is the function's *input* type — i.e. what the model produces — not its return
     type. `None` only for processors without a resolvable input type."""
@@ -869,7 +870,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                     self.output_type = hint_type
                     break
         else:
-            self.output_type = cast(type[Any], output)
+            self.output_type = cast(TypeForm[Any], output)
             json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
             if _utils.is_model_like(output):
@@ -1081,7 +1082,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             processor = ObjectOutputProcessor(output=output, strict=strict)
             object_def = processor.object_def
 
-            object_key = object_def.name or output.__name__
+            object_key = object_def.name or getattr(output, '__name__')
             i = 1
             original_key = object_key
             while object_key in self._processors:
@@ -1556,7 +1557,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
         elif union_types := _utils.get_union_args(output):
             outputs_flat.extend(union_types)
         else:
-            outputs_flat.append(cast(_OutputSpecItem[T], output))
+            outputs_flat.append(output)
     return outputs_flat
 
 

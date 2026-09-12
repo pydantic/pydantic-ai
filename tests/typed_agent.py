@@ -223,8 +223,22 @@ class Bar:
     b: str
 
 
-union_agent: Agent[object, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[arg-type]
+MyUnion: TypeAlias = 'Foo | Bar'
+
+if MYPY:
+    # mypy's support for PEP 747 `TypeForm` is still incomplete, so it can't infer the output type from a union
+    union_agent: Agent[object, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[arg-type]
+    union_agent2: Agent[object, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
+else:
+    # pyright is able to correctly infer the type here
+    union_agent = Agent(output_type=Foo | Bar)
+    union_agent2 = Agent(output_type=MyUnion)
+
+    optional_deps_agent = Agent(deps_type=MyDeps | None)
+    assert_type(optional_deps_agent, Agent[MyDeps | None, str])
+
 assert_type(union_agent, Agent[object, Foo | Bar])
+assert_type(union_agent2, Agent[object, MyUnion])
 
 
 def run_sync3() -> None:
@@ -232,10 +246,6 @@ def run_sync3() -> None:
     assert_type(result, AgentRunResult[Foo | Bar])
     assert_type(result.output, Foo | Bar)
 
-
-MyUnion: TypeAlias = 'Foo | Bar'
-union_agent2: Agent[object, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
-assert_type(union_agent2, Agent[object, MyUnion])
 
 structured_dict = StructuredDict(
     {
@@ -286,7 +296,7 @@ if MYPY:
     two_scalars_output_agent = Agent[object, int | str](output_type=[int, str])
     assert_type(two_scalars_output_agent, Agent[object, int | str])
 
-    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
+    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])
     complex_output_agent = Agent[object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]](
         output_type=[str, Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker, TextOutput(str_to_regex)]
     )
@@ -314,7 +324,8 @@ else:
     two_scalars_output_agent = Agent(output_type=[int, str])
     assert_type(two_scalars_output_agent, Agent[object, int | str])
 
-    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
+    marker = ToolOutput(bool | tuple[str, int])
+    assert_type(marker, ToolOutput[bool | tuple[str, int]])
     complex_output_agent = Agent(
         output_type=[str, Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker, TextOutput(str_to_regex)]
     )

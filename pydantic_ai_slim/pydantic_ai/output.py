@@ -7,7 +7,7 @@ from typing import Any, Generic, Literal
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
@@ -51,7 +51,7 @@ StructuredOutputMode = Literal['tool', 'native', 'prompted']
 
 
 OutputTypeOrFunction = TypeAliasType(
-    'OutputTypeOrFunction', type[T_co] | Callable[..., Awaitable[T_co] | T_co], type_params=(T_co,)
+    'OutputTypeOrFunction', TypeForm[T_co] | Callable[..., Awaitable[T_co] | T_co], type_params=(T_co,)
 )
 """Definition of an output type or function.
 
@@ -296,7 +296,7 @@ class OutputContext:
     example, a `ToolOutputSchema` with a `text_processor` (hybrid mode) reports `'tool'`
     even if the model returned text — check [`tool_call`][pydantic_ai.output.OutputContext.tool_call]
     to distinguish."""
-    output_type: type[Any] | None
+    output_type: TypeForm[Any] | None
     """The resolved output type (e.g. MyModel, str). For output functions, the function's input type (what the model produces)."""
     object_def: OutputObjectDefinition | None
     """The output object definition (schema, name, description), if structured output."""

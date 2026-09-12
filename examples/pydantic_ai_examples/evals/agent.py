@@ -6,8 +6,6 @@ from datetime import datetime
 from pydantic_ai import Agent, RunContext
 
 from .models import (
-    TimeRangeBuilderError,
-    TimeRangeBuilderSuccess,
     TimeRangeInputs,
     TimeRangeResponse,
 )
@@ -25,10 +23,9 @@ class TimeRangeDeps:
     now: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
 
-time_range_agent = Agent[TimeRangeDeps, TimeRangeResponse](
+time_range_agent = Agent(
     'openai:gpt-5.2',
-    # pass the union members directly: a `TimeRangeResponse` type alias isn't yet accepted as a `TypeForm` value (PEP-747)
-    output_type=TimeRangeBuilderSuccess | TimeRangeBuilderError,
+    output_type=TimeRangeResponse,
     deps_type=TimeRangeDeps,
     system_prompt="Convert the user's request into a structured time range.",
     retries=1,

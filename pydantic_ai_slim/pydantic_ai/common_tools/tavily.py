@@ -166,7 +166,7 @@ def tavily_search_tool(
         original = func
         func = partial(func, **kwargs)
         func.__name__ = original.__name__  # type: ignore[union-attr]
-        func.__qualname__ = original.__qualname__
+        func.__qualname__ = original.__qualname__  # type: ignore[union-attr]
         # partial with keyword args only updates defaults, not removes params.
         # Set __signature__ explicitly to exclude bound params from the tool schema.
         orig_sig = signature(original)

@@ -18,7 +18,7 @@ from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, 
 from weakref import ReferenceType, ref
 
 from pydantic_core import PydanticSerializationError
-from typing_extensions import Self
+from typing_extensions import Self, TypeForm
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._run_context import set_current_run_context
@@ -710,11 +710,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def get_durable_operation_backend(self) -> DurableOperationBackend[Any]:
         """Return the backend that dispatches this capability's durable operations."""
 
-    def _typed_result_codec(self, result_type: object) -> _TypedResultCodec[Any]:
+    def _typed_result_codec(self, result_type: TypeForm[Any]) -> _TypedResultCodec[Any]:
         """Build a typed result codec with the engine's serialization-failure mapping."""
         return _TypedResultCodec(partial(self._encode, result_type), partial(self.engine_spec.codec.load, result_type))
 
-    def _encode(self, tp: Any, value: Any) -> Any:
+    def _encode(self, tp: TypeForm[Any], value: Any) -> Any:
         """Encode a durable-unit result, mapping deterministic serialization failures when configured."""
         try:
             return self.engine_spec.codec.dump(tp, value)
@@ -1433,7 +1433,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             cancel_suspended_response_operation,
         )
 
-    def _model_request_parameter_transport(self, result_type: object) -> ParameterTransport[ModelRequestParams, Any]:
+    def _model_request_parameter_transport(
+        self, result_type: TypeForm[Any]
+    ) -> ParameterTransport[ModelRequestParams, Any]:
         return IdentityParameterTransport[ModelRequestParams]()
 
     def _cancel_suspended_response_parameter_transport(

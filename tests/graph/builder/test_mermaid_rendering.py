@@ -7,7 +7,7 @@ from typing import Literal
 
 import pytest
 
-from pydantic_graph import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.graph_builder import build_mermaid_graph
 
 pytestmark = pytest.mark.anyio
@@ -99,9 +99,7 @@ async def test_render_decision_node():
     g.add(
         g.edge_from(g.start_node).to(choose),
         g.edge_from(choose).to(
-            g.decision()
-            .branch(g.match(TypeExpression[Literal['a']]).to(path_a))
-            .branch(g.match(TypeExpression[Literal['b']]).to(path_b))
+            g.decision().branch(g.match(Literal['a']).to(path_a)).branch(g.match(Literal['b']).to(path_b))
         ),
         g.edge_from(path_a, path_b).to(g.end_node),
     )
@@ -160,8 +158,8 @@ async def test_render_decision_with_note():
         g.edge_from(g.start_node).to(choose),
         g.edge_from(choose).to(
             g.decision(note='Route based on input')
-            .branch(g.match(TypeExpression[Literal['x']]).to(handler))
-            .branch(g.match(TypeExpression[Literal['y']]).to(handler))
+            .branch(g.match(Literal['x']).to(handler))
+            .branch(g.match(Literal['y']).to(handler))
         ),
         g.edge_from(handler).to(g.end_node),
     )

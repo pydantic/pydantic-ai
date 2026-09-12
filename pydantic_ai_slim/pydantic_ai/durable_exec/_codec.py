@@ -20,20 +20,20 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from pydantic import TypeAdapter
+from typing_extensions import TypeForm
 
 
 class DurabilityCodec(Protocol):
     """Reduces a value to a durably-storable payload and rebuilds it on the other side.
 
-    `tp` is a "type form" (a class, or an annotated/aliased type like `CallToolResult`), i.e.
-    anything `TypeAdapter` accepts, so it is typed `Any`, not `type[T]`. Engine authors select a
-    codec on `BaseDurabilityCapability`; see
+    `tp` is a type form (a class, or an annotated/aliased type like `CallToolResult`), i.e.
+    anything `TypeAdapter` accepts. Engine authors select a codec on `BaseDurabilityCapability`; see
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
 
-    def dump(self, tp: Any, value: Any) -> Any: ...
+    def dump(self, tp: TypeForm[Any], value: Any) -> Any: ...
 
-    def load(self, tp: Any, payload: Any) -> Any: ...
+    def load(self, tp: TypeForm[Any], payload: Any) -> Any: ...
 
 
 class _IdentityCodec(DurabilityCodec):
