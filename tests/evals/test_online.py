@@ -495,6 +495,68 @@ async def test_evaluate_decorator_sync_run_on_errors_no_event_loop():
 
 
 @pytest.mark.anyio
+async def test_wait_for_evaluations_joins_background_threads():
+    """wait_for_evaluations() calls _join_threads when a background thread is live at snapshot time.
+
+    Coverage test for the ``if threads_snapshot`` branch and the inner
+    ``_join_threads`` function in ``wait_for_evaluations``.  The existing
+    ``test_evaluate_decorator_sync_run_on_errors_no_event_loop`` exercises the
+    same code path but the background thread often self-discards before the
+    snapshot is taken, making coverage non-deterministic.
+
+    Here we guarantee the thread is still live at snapshot time by having its
+    evaluator sleep for 100 ms inside its own event loop.  The sleep keeps the
+    background thread alive long enough for ``wait_for_evaluations`` to take its
+    ``_background_threads`` snapshot (which happens well under 1 ms after
+    dispatch), yet the test completes in ~100 ms because ``_join_threads`` waits
+    for the thread to finish naturally.
+    """
+    import asyncio
+    from anyio.to_thread import run_sync as _run_sync
+
+    @dataclass
+    class SlowEvaluator(Evaluator):
+        """Async-sleeps briefly so the background thread stays live for the snapshot."""
+
+        async def evaluate_async(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            import anyio
+
+            await anyio.sleep(0.1)
+            return True
+
+        def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
+            return True  # pragma: no cover
+
+    collector = Collector()
+    config = OnlineEvalConfig(default_sink=collector)
+
+    @config.evaluate(SlowEvaluator())
+    def my_func(x: int) -> int:
+        return x * 2
+
+    # Run from a worker thread with no running event loop so that the decorator
+    # uses dispatch_in_background_thread (not dispatch_async).  The background
+    # thread is added to _background_threads before thread.start() returns, so
+    # it is guaranteed to be present when wait_for_evaluations takes its snapshot.
+    await _run_sync(lambda: my_func(42))
+
+    # Schedule wait_for_evaluations as a concurrent task and yield once so it
+    # runs: it takes the snapshot (thread still sleeping), then blocks inside
+    # ``await run_sync(_join_threads)`` waiting for thread.join().
+    wait_task = asyncio.create_task(wait_for_evaluations())
+    await asyncio.sleep(0)
+
+    # The background thread finishes its 0.1 s sleep, thread.join() returns,
+    # and wait_task completes.
+    await wait_task
+
+    assert len(collector.calls) == 1
+    results, failures, _ = collector.calls[0]
+    assert not failures, f'evaluator failed unexpectedly: {failures}'
+    assert results[0].value is True
+
+
+@pytest.mark.anyio
 async def test_evaluate_decorator_with_failure():
     """evaluate() decorator handles evaluator failures gracefully."""
     collector = Collector()
