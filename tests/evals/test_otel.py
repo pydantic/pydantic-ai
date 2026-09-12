@@ -19,6 +19,7 @@ with try_import() as imports_successful:
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
     from pydantic_evals.otel._context_in_memory_span_exporter import (
+        _add_context_span_exporter,  # pyright: ignore[reportPrivateUsage]
         _context_in_memory_providers,  # pyright: ignore[reportPrivateUsage]
         _ContextInMemorySpanExporter,  # pyright: ignore[reportPrivateUsage]
     )
@@ -1130,6 +1131,46 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'refer to the documentation at '
         'https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
     )
+
+
+async def test_context_subtree_finalizes_tree_on_exception():
+    """Spans completed before an exception are still added to the yielded SpanTree.
+
+    Regression test for #6927: the tree was only finalized after the inner span
+    context exited normally, so an exception escaping `context_subtree()` left the
+    yielded tree empty even though spans had completed before the failure.
+    """
+    with pytest.raises(RuntimeError, match='boom'):
+        with context_subtree() as tree:
+            with logfire.span('before-error'):
+                pass
+            raise RuntimeError('boom')
+
+    assert isinstance(tree, SpanTree)  # pyright: ignore[reportPossiblyUnboundVariable]
+    assert [node.name for node in tree] == ['before-error']
+
+
+async def test_context_subtree_clears_exporter_on_exception():
+    """The span exporter does not retain spans when an exception escapes the context.
+
+    Regression test for #6927: the exporter context was only cleared after the
+    yield in `_context_subtree_spans`, so failed evaluations leaked their completed
+    spans into the shared in-memory exporter.
+    """
+    exporter = _add_context_span_exporter()
+    assert isinstance(exporter, _ContextInMemorySpanExporter)
+    exporter._finished_spans.clear()  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(RuntimeError, match='boom'):
+        with context_subtree():
+            with logfire.span('before-error'):
+                pass
+            raise RuntimeError('boom')
+
+    # Assert on the mapping, not on `get_finished_spans()`: the flattened view would also be
+    # empty if the context's key survived holding an empty list, which is the unbounded-growth
+    # half of #6927.
+    assert exporter._finished_spans == {}  # pyright: ignore[reportPrivateUsage]
 
 
 class RecordingTracerProvider:
