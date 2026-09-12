@@ -23,7 +23,7 @@ class EmbeddingSettings(TypedDict, total=False):
     * Cohere
     * Google
     * Sentence Transformers
-    * Bedrock
+    * Bedrock (Titan v2+, Cohere v4+, and Nova models)
     * VoyageAI
     """
 
