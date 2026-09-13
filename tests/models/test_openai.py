@@ -35,6 +35,7 @@ from pydantic_ai import (
     ModelRetry,
     PartDeltaEvent,
     PartEndEvent,
+    PartStartEvent,
     RetryPromptPart,
     TextContent,
     TextPart,
@@ -6481,3 +6482,81 @@ def test_model_construction_preloads_lazy_dependencies():
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
     process = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120, env=env)
     assert process.returncode == 0, f'lazy-dependency preload check failed:\n{process.stderr}'
+
+
+async def test_stream_dangling_tool_call_delta_keeps_part_end_events_consistent(
+    allow_model_requests: None,
+):
+    """Regression: `PartStartEvent.index` comes from the unfiltered parts space, but
+    `part_end_event` used `get_parts()[index]` — the filtered list. A nameless
+    tool-call delta (OpenAI-compatible gateways do send those — the same shape
+    issue #5165 defends against) creates a dangling `ToolCallPartDelta` that
+    shrinks the filtered list, so a later part's end event carried the WRONG
+    part object, and the end-of-stream lookup raised IndexError."""
+    # Tool call 0 arrives complete; tool call 1 never gets a name (dangling
+    # delta at unfiltered index 1); text then lands at unfiltered index 2.
+    first_turn = [
+        chunk(
+            [
+                ChoiceDelta(
+                    tool_calls=[
+                        ChoiceDeltaToolCall(
+                            index=0,
+                            id='call_0',
+                            function=ChoiceDeltaToolCallFunction(name='get_location', arguments='{}'),
+                        )
+                    ]
+                )
+            ]
+        ),
+        chunk(
+            [
+                ChoiceDelta(
+                    tool_calls=[
+                        ChoiceDeltaToolCall(
+                            index=1,
+                            function=ChoiceDeltaToolCallFunction(arguments='{"city"'),
+                        )
+                    ]
+                )
+            ]
+        ),
+        text_chunk('Hello there'),
+        text_chunk('.', finish_reason='tool_calls'),
+    ]
+    second_turn = [text_chunk('done'), text_chunk('.', finish_reason='stop')]
+    mock_client = MockOpenAI.create_mock_stream([first_turn, second_turn])
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    def get_location() -> str:
+        return 'Paris'
+
+    agent = Agent(m, tools=[get_location], output_type=[str])
+
+    turns: list[list[object]] = []
+    async with agent.iter('') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                turn_events: list[object] = []
+                async with node.stream(run.ctx) as stream_events:
+                    async for event in stream_events:
+                        turn_events.append(event)
+                turns.append(turn_events)
+
+    # Each model request numbers its parts from zero; assert per turn.
+    first_turn_events = turns[0]
+    starts = {e.index: e for e in first_turn_events if isinstance(e, PartStartEvent)}
+    ends = [e for e in first_turn_events if isinstance(e, PartEndEvent)]
+    assert 2 in starts and isinstance(starts[2].part, TextPart)
+
+    for end in ends:
+        # Every end event must carry the same part type its start event
+        # announced for that index — no cross-contamination from the dangling
+        # delta shrinking the filtered list.
+        assert type(end.part) is type(starts[end.index].part)
+
+    # The text part (unfiltered index 2, filtered position 1) ends with the
+    # text part itself, not the tool call the off-by-one used to pick, and
+    # the stream completes instead of raising IndexError past the list end.
+    text_end = next(e for e in ends if e.index == 2)
+    assert isinstance(text_end.part, TextPart) and text_end.part.content == 'Hello there.'
