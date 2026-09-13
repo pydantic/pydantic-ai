@@ -35,6 +35,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -64,7 +65,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
@@ -2044,8 +2045,9 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     cache_read_tokens=92160,
                     output_tokens=1720,
                     output_reasoning_tokens=1472,
-                    details={'reasoning_tokens': 1472},
-                    cost=Decimal('0.0583775'),
+                    details={'reasoning_tokens': 1472, 'web_search_requests': 6},
+                    web_searches=6,
+                    cost=Decimal('0.1183775'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2168,8 +2170,9 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     cache_read_tokens=8448,
                     output_tokens=577,
                     output_reasoning_tokens=512,
-                    details={'reasoning_tokens': 512},
-                    cost=Decimal('0.00788975'),
+                    details={'reasoning_tokens': 512, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.01788975'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2242,8 +2245,9 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     cache_read_tokens=8576,
                     output_tokens=439,
                     output_reasoning_tokens=384,
-                    details={'reasoning_tokens': 384},
-                    cost=Decimal('0.0066245'),
+                    details={'reasoning_tokens': 384, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.0166245'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2326,8 +2330,9 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                     cache_read_tokens=8320,
                     output_tokens=660,
                     output_reasoning_tokens=512,
-                    details={'reasoning_tokens': 512},
-                    cost=Decimal('0.00906875'),
+                    details={'reasoning_tokens': 512, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.01906875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2484,8 +2489,9 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                     input_tokens=22013,
                     output_tokens=1737,
                     output_reasoning_tokens=1728,
-                    details={'reasoning_tokens': 1728},
-                    cost=Decimal('0.04488625'),
+                    details={'reasoning_tokens': 1728, 'web_search_requests': 4},
+                    web_searches=4,
+                    cost=Decimal('0.08488625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2580,8 +2586,9 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                     cache_read_tokens=8320,
                     output_tokens=1610,
                     output_reasoning_tokens=1344,
-                    details={'reasoning_tokens': 1344},
-                    cost=Decimal('0.01916375'),
+                    details={'reasoning_tokens': 1344, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.02916375'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2675,8 +2682,9 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     cache_read_tokens=8320,
                     output_tokens=582,
                     output_reasoning_tokens=512,
-                    details={'reasoning_tokens': 512},
-                    cost=Decimal('0.00828875'),
+                    details={'reasoning_tokens': 512, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.01828875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -3024,8 +3032,9 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     cache_read_tokens=8576,
                     output_tokens=638,
                     output_reasoning_tokens=576,
-                    details={'reasoning_tokens': 576},
-                    cost=Decimal('0.00886075'),
+                    details={'reasoning_tokens': 576, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.01886075'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4512,6 +4521,98 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
     assert result.usage == snapshot(
         RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
     )
+
+
+async def test_openai_responses_web_search_usage(allow_model_requests: None):
+    """Native `web_search_call` items must surface as `web_searches` and be priced.
+
+    Test for https://github.com/pydantic/pydantic-ai/issues/8087
+    """
+    from openai.types import responses as resp
+
+    c1 = resp.Response(
+        id='123',
+        # Use a priceable model name so that `cost` is filled.
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,  # 2024-01-01
+        output=[
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-1',
+                action={'type': 'search', 'query': 'pydantic'},
+                status='completed',
+                type='web_search_call',
+            ),
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-2',
+                action={'type': 'search', 'query': 'openai'},
+                status='completed',
+                type='web_search_call',
+            ),
+        ],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+        usage=ResponseUsage.model_construct(input_tokens=100, output_tokens=10, total_tokens=110),
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is pydantic?')
+    assert result.usage == snapshot(
+        RunUsage(
+            input_tokens=100,
+            output_tokens=10,
+            web_searches=2,
+            details={'reasoning_tokens': 0, 'web_search_requests': 2},
+            requests=2,
+            cost=Decimal('0.02035'),
+        )
+    )
+
+
+async def test_openai_responses_web_search_usage_without_token_usage(allow_model_requests: None):
+    """`web_search_call` items are counted even when the response carries no `usage` at all."""
+    c1 = response_message(
+        [
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-1',
+                action={'type': 'search', 'query': 'pydantic'},
+                status='completed',
+                type='web_search_call',
+            ),
+        ]
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is pydantic?')
+    # The mock response's model name (`gpt-4o-123`) is unknown to genai-prices, so `cost` stays `None`.
+    assert result.usage == snapshot(RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=2))
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
@@ -12702,6 +12803,7 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
                     provider_name='openai',
                 ),
             ],
+            usage=RequestUsage(details={'web_search_requests': 1}, web_searches=1),
             model_name='gpt-4o-123',
             timestamp=IsDatetime(),
             provider_name='openai',
