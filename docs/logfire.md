@@ -146,7 +146,7 @@ This means you can debug and monitor Pydantic AI with any OpenTelemetry backend.
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so while we think you'll have the best experience using the Logfire platform :wink:, you should be able to use any OTel service with GenAI support.
 
-### Logfire with an alternative OTel backend
+### Logfire with an alternative OTel backend {#otel}
 
 You can use the Logfire SDK completely freely and send the data to any OpenTelemetry backend.
 
@@ -435,3 +435,9 @@ The `gen_ai.tool.definitions` attribute (tool name, description, and parameters)
 Use the agent's `metadata` parameter to attach additional data to the agent's span.
 When instrumentation is enabled, the computed metadata is recorded on the agent span under the `metadata` attribute.
 See the [usage and metadata example in the agents guide](agent.md#run-metadata) for details and usage.
+
+### The first-run banner
+
+Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. To turn it off entirely, set `PYDANTIC_AI_NO_BANNER` to any value in the environment, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run.
+
+Coding agents are recognized by the environment variables they set for the purpose. That list is best-effort and will always be behind, so a harness it doesn't recognize — including one built on Pydantic AI — can set `AI_AGENT` (or `AGENT`) to be treated the same way, naming itself in the value.
