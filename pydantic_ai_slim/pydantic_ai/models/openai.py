@@ -5180,9 +5180,8 @@ def _map_usage(
     # OpenAI bills native web searches per call (see
     # <https://developers.openai.com/api/docs/guides/tools-web-search#usage-and-pricing>) but never reports
     # the count in `usage` — it only shows up as `web_search_call` output items, so count them here.
-    web_search_requests = sum(
-        1 for item in getattr(response, 'output', None) or [] if getattr(item, 'type', None) == 'web_search_call'
-    )
+    response_output = cast(list[Any], getattr(response, 'output', None) or [])
+    web_search_requests = sum(1 for item in response_output if getattr(item, 'type', None) == 'web_search_call')
     if response_usage is None:
         if web_search_requests:
             return usage.RequestUsage(
@@ -5227,7 +5226,8 @@ def _map_usage(
     # genai-prices prices `web_searches` straight off the usage object (its OpenAI extractors have no mapping
     # for it since the count never appears in the wire `usage`), so lift the count we found in the output items.
     if web_search_requests:
-        request_usage.web_searches = web_search_requests
+        # Dynamic field, same mechanism as `UsageBase.__init__` (see usage.py).
+        setattr(request_usage, 'web_searches', web_search_requests)
     # genai-prices maps OpenAI's nested `cache_write_tokens` on the `openai` extractors as of
     # https://github.com/pydantic/genai-prices/pull/463 (in 0.1.4), but not every OpenAI-compatible
     # provider's extractor does — Azure's still omits it — so lift it manually here.
