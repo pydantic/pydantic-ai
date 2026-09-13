@@ -198,7 +198,7 @@ Demonstrates the AG-UI interrupt lifecycle. A tool declared with
 model proposes a call, and the adapter emits `RUN_FINISHED` with `outcome.type == "interrupt"`. The client
 renders an approval UI from `outcome.interrupts[]` and posts a follow-up `RunAgentInput` carrying `resume[]`
 to approve, deny, or edit the call. The agent's `output_type` includes
-[`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] so the run can pause instead of erroring.
+[`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] so the run can pause instead of erroring.
 
 Requires `ag-ui-protocol >= 0.1.19`.
 
