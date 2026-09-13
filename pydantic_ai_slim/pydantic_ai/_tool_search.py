@@ -65,7 +65,7 @@ custom-callable empty-results path (where wire-time filtering left
 class ToolSearchMatch(TypedDict):
     """A single match in a tool-search result."""
 
-    __pydantic_config__ = pydantic.ConfigDict(extra='allow')
+    __pydantic_config__ = pydantic.ConfigDict(extra='allow')  # pyright: ignore[reportGeneralTypeIssues]
 
     name: str
     """Name of the discovered tool, as the model will call it.

@@ -8081,3 +8081,83 @@ def test_tool_availability_delta_synthesis_deconflicts_duplicate_client_ids():
         if isinstance(part, ToolSearchCallPart)
     ]
     assert len(call_ids) == len(set(call_ids)) == 2
+
+
+def _native_search_return_messages(content: Any) -> list[ModelMessage]:
+    return [
+        ModelResponse(
+            parts=[
+                NativeToolSearchReturnPart(tool_name='tool_search', tool_call_id='c1', content=content),
+            ],
+        ),
+    ]
+
+
+def _local_search_return_messages(content: Any) -> list[ModelMessage]:
+    return [
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(tool_name='search_tools', tool_call_id='c2', content=content),
+            ],
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    'build_messages',
+    [
+        pytest.param(_native_search_return_messages, id='native_search_return'),
+        pytest.param(_local_search_return_messages, id='local_search_return'),
+    ],
+)
+def test_discovered_tools_match_extras_survive_round_trip(
+    build_messages: Callable[[Any], list[ModelMessage]],
+):
+    """Unknown keys on each `ToolSearchMatch` inside `discovered_tools` survive a `ModelMessagesTypeAdapter` round-trip."""
+    matches = [
+        {'name': 't1', 'description': 'KEEP_ME', 'relevance_score': 0.42},
+        {'name': 't2', 'description': 'KEEP_ME_TOO'},
+    ]
+    messages = build_messages({'discovered_tools': matches})
+
+    back_json = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    assert isinstance(back_json[0].parts[0], NativeToolSearchReturnPart | ToolSearchReturnPart)
+    assert back_json[0].parts[0].content['discovered_tools'] == matches
+
+    back_python = ModelMessagesTypeAdapter.validate_python(messages)
+    assert isinstance(back_python[0].parts[0], NativeToolSearchReturnPart | ToolSearchReturnPart)
+    assert back_python[0].parts[0].content['discovered_tools'] == matches
+
+
+def test_discovered_tools_match_required_keys_still_enforced():
+    """Extra-key preservation must not weaken the required keys or types on `ToolSearchMatch`.
+
+    A match missing `name` (or with a non-string one) fails typed narrowing and degrades
+    to the base part, mirroring `test_narrow_type_promotes_builtin_return_to_tool_search`.
+    """
+    missing_name = NativeToolReturnPart(
+        tool_name='tool_search',
+        content={'discovered_tools': [{'description': 'missing name'}]},
+        tool_call_id='c1',
+        tool_kind='tool-search',
+    )
+    degraded = NativeToolReturnPart.narrow_type(missing_name)
+    assert not isinstance(degraded, NativeToolSearchReturnPart)
+
+    wrong_type = NativeToolReturnPart(
+        tool_name='tool_search',
+        content={'discovered_tools': [{'name': 123}]},
+        tool_call_id='c1',
+        tool_kind='tool-search',
+    )
+    degraded = NativeToolReturnPart.narrow_type(wrong_type)
+    assert not isinstance(degraded, NativeToolSearchReturnPart)
+
+    valid = NativeToolReturnPart(
+        tool_name='tool_search',
+        content={'discovered_tools': [{'name': 'foo'}]},
+        tool_call_id='c1',
+        tool_kind='tool-search',
+    )
+    narrowed = NativeToolReturnPart.narrow_type(valid)
+    assert isinstance(narrowed, NativeToolSearchReturnPart)
