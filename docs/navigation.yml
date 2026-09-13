@@ -25,6 +25,11 @@ navigation:
         slug: "overview/help"
         aliases:
           - "help"
+      - page: "Enterprise Support"
+        path: "enterprise-support.md"
+        slug: "overview/enterprise-support"
+        aliases:
+          - "enterprise-support"
       - page: "Troubleshooting"
         path: "troubleshooting.md"
         slug: "overview/troubleshooting"
