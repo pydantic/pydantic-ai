@@ -260,6 +260,10 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
 
         Returns:
             The final output from the graph execution
+
+        Raises:
+            TypeError: If `state` is required (because `state_type` is not `NoneType`)
+                but was not provided.
         """
         if infer_name and self.name is None:
             inferred_name = infer_obj_name(self, depth=2)
@@ -333,11 +337,26 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
 
         Yields:
             A GraphRun instance that can be iterated for step-by-step execution
+
+        Raises:
+            TypeError: If `state` is required (because `state_type` is not `NoneType`)
+                but was not provided.
         """
         if infer_name and self.name is None:
             inferred_name = infer_obj_name(self, depth=3)  # depth=3 because asynccontextmanager adds one
             if inferred_name is not None:  # pragma: no branch
                 self.name = inferred_name
+
+        if state is None and self.state_type is not NoneType:
+            origin = get_origin(self.state_type)
+            args = get_args(self.state_type)
+            # Don't require state when state_type explicitly allows None (e.g. Optional[State])
+            if not (origin is not None and NoneType in args):
+                type_name = getattr(self.state_type, '__name__', str(self.state_type))
+                raise TypeError(
+                    f'A state instance is required when state_type is {type_name}, '
+                    'but got None. Did you forget to pass state= to graph.run()?'
+                )
 
         with ExitStack() as stack:
             entered_span: AbstractSpan | None = None
@@ -894,7 +913,17 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         inputs = task.inputs
         fork_stack = task.fork_stack
 
-        node = self.graph.nodes[node_id]
+        try:
+            node = self.graph.nodes[node_id]
+        except KeyError:
+            # Provide a more helpful error for common misconfigurations
+            if node_id == '__start__':
+                raise exceptions.GraphSetupError(
+                    'The start node has no outgoing edges. '
+                    'Did you forget to add an edge from the start node? '
+                    'e.g.: g.add(g.edge_from(g.start_node).to(first_step))'
+                ) from None
+            raise
 
         if isinstance(node, StartNode | Fork):
             return self._handle_edges(node, inputs, fork_stack)
