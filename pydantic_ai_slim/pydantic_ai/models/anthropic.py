@@ -2980,8 +2980,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return
         if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
             return
-        thinking = model_settings.get('anthropic_thinking')
-        if thinking is None or thinking.get('type') != 'disabled':
+        # Resolve the thinking config the request will actually carry, so a caller who set
+        # `extra_body={'thinking': {'type': 'disabled'}}` gets the same fail-fast as the typed
+        # `anthropic_thinking` spelling (extra_body wins, matching `_build_extra_body`).
+        typed_thinking = model_settings.get('anthropic_thinking')
+        thinking = _effective_thinking(model_settings, OMIT if typed_thinking is None else typed_thinking)
+        if isinstance(thinking, Omit) or thinking.get('type') != 'disabled':
             return
         raise UserError(
             f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while '

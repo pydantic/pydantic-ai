@@ -1695,6 +1695,57 @@ async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
     assert (await Agent(allowed).run('Hello')).output == 'Hello!'
 
 
+@pytest.mark.parametrize('effort', ['xhigh', 'max'])
+async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled_via_extra_body(
+    allow_model_requests: None, effort: Literal['xhigh', 'max']
+):
+    """The disabled-thinking guard also catches `extra_body={'thinking': {'type': 'disabled'}}`.
+
+    `extra_body` is a second supported channel for the thinking config, and it produces the exact
+    disabled-thinking + top-effort request Anthropic 400s on every run for `claude-opus-5`, so it
+    must fail fast with the same `UserError` as the typed `anthropic_thinking` spelling.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    settings = AnthropicModelSettings(
+        extra_body={'thinking': {'type': 'disabled'}},
+        anthropic_effort=effort,
+    )
+    model = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
+
+    with pytest.raises(UserError, match='does not support `anthropic_effort='):
+        await Agent(model).run('Hello')
+
+    assert mock_client.chat_completion_kwargs == []  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+    # Opus 4.8 has the flag off, so the same settings go through untouched.
+    allowed = AnthropicModel(
+        'claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings
+    )
+    assert (await Agent(allowed).run('Hello')).output == 'Hello!'
+
+
+async def test_anthropic_opus_5_allows_top_effort_when_extra_body_enables_thinking(allow_model_requests: None):
+    """`extra_body` thinking that is not disabled must not trigger the top-effort guard."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+
+    settings = AnthropicModelSettings(
+        extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+        anthropic_effort='xhigh',
+    )
+    model = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
+
+    assert (await Agent(model).run('Hello')).output == 'Hello!'
+
+
 async def test_anthropic_task_budget_remaining_rejects_server_side_compaction(allow_model_requests: None):
     """`task_budget.remaining` and `AnthropicCompaction` are mutually exclusive.
 
