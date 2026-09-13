@@ -13,7 +13,7 @@ interactions:
   direction: received
   data:
     conversation_initiation_metadata_event:
-      conversation_id: conv_0101m1hxktk2fsdabc90kq9ze3n1
+      conversation_id: conv_9601m2de70xyf8hr1edgyy7ypsa8
       agent_output_audio_format: pcm_16000
       user_input_audio_format: pcm_16000
       persistent_session_token: null
@@ -28,7 +28,7 @@ interactions:
   data:
     client_tool_call:
       tool_name: get_weather
-      tool_call_id: get_weather_03798b3bb6cd4af38e75c0d683210966
+      tool_call_id: get_weather_d6c5035836b849488a7274e0dd5397c8
       parameters:
         city: Berlin
       event_id: 1
@@ -38,7 +38,7 @@ interactions:
   direction: sent
   data:
     type: client_tool_result
-    tool_call_id: get_weather_03798b3bb6cd4af38e75c0d683210966
+    tool_call_id: get_weather_d6c5035836b849488a7274e0dd5397c8
     result: It is sunny and 21 degrees in Berlin.
     is_error: false
 - kind: message
@@ -46,7 +46,7 @@ interactions:
   data:
     agent_tool_response:
       tool_name: get_weather
-      tool_call_id: get_weather_03798b3bb6cd4af38e75c0d683210966
+      tool_call_id: get_weather_d6c5035836b849488a7274e0dd5397c8
       tool_type: client
       is_error: false
       is_blocked: false
@@ -54,62 +54,6 @@ interactions:
       is_called: true
       status: success
     type: agent_tool_response
-- kind: message
-  direction: received
-  data:
-    audio_event:
-      audio_base_64: //8CAAIA///9//z/AwACAP/////+/////f/9////AAAB
-      event_id: 1
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  data:
-    audio_event:
-      audio_base_64: wQqzDDsLHwvRDT4O/g0uEJYQ5wzTCosMSgzyCTEKrQrJ
-      event_id: 1
-      is_final: false
-    type: audio
-- kind: message
-  direction: received
-  data:
-    agent_response_event:
-      agent_response: It is sunny and twenty one degrees in Berlin.
-      event_id: 1
-      response_id: 934d2364-8f8a-4eed-af16-d5a9805e6e3b
-      in_response_to_ids:
-      - 1d2f195f-5f76-4399-871a-2ddc26196730
-      response_type: text
-    type: agent_response
-- kind: message
-  direction: sent
-  data:
-    type: user_message
-    text: Thanks, that is all.
-- kind: message
-  direction: received
-  data:
-    context_usage_event:
-      event_id: 1
-      model: gemini-2.5-flash
-      context_tokens: 451
-      context_limit_tokens: 1048576
-    type: context_usage
-- kind: message
-  direction: received
-  data:
-    interruption_event:
-      event_id: 2
-    type: interruption
-- kind: message
-  direction: received
-  data:
-    agent_response_correction_event:
-      original_agent_response: It is sunny and twenty one degrees in Berlin.
-      corrected_agent_response: It...
-      event_id: 1
-      response_id: 934d2364-8f8a-4eed-af16-d5a9805e6e3b
-    type: agent_response_correction
 - kind: message
   direction: received
   data:
@@ -126,7 +70,64 @@ interactions:
   direction: received
   data:
     audio_event:
-      audio_base_64: /f8CAAIA/f8AAP//AAD+//7//f/9//3//v////7/AAD/
+      audio_base_64: AAABAAQA///8////AgACAAAA/////////f/9////AAD/
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  data:
+    audio_event:
+      audio_base_64: NwoLCPEFyQPDAQIAgf6a/T79Av0L/T/9x/2W/iH/n///
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  data:
+    agent_response_event:
+      agent_response: It is sunny and twenty-one degrees in Berlin.
+      event_id: 1
+      response_id: 8134a2fb-81e2-4aa3-ac6c-1a1fda07109c
+      in_response_to_ids:
+      - 448e7c25-64e0-4fca-a5d9-b155d06ecf5b
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: sent
+  data:
+    type: user_message
+    text: Thanks, that is all.
+- kind: message
+  direction: received
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gemini-2.5-flash
+      context_tokens: 436
+      context_limit_tokens: 1048576
+    type: context_usage
+- kind: message
+  direction: received
+  data:
+    interruption_event:
+      event_id: 2
+    type: interruption
+- kind: message
+  direction: received
+  data:
+    agent_response_correction_event:
+      original_agent_response: It is sunny and twenty-one degrees in Berlin.
+      corrected_agent_response: '...'
+      event_id: 1
+      response_id: 8134a2fb-81e2-4aa3-ac6c-1a1fda07109c
+    type: agent_response_correction
+- kind: message
+  direction: received
+  data:
+    audio_event:
+      audio_base_64: //8DAAQAAAABAP//AAD//////v/+//3//v8AAP//////
       event_id: 2
       is_final: false
     type: audio
@@ -136,8 +137,9 @@ interactions:
     agent_response_event:
       agent_response: You're welcome.
       event_id: 2
-      response_id: a4450610-f2f5-4819-a595-b909b2dcc8f4
+      response_id: cf067590-b0c1-4450-8816-e43e387a8ccb
       in_response_to_ids:
-      - 7908931e-e7f6-4f32-9058-cac73e7b8de6
+      - de0907c5-8c52-46b2-b7ac-02df4f49f153
       response_type: text
+      attachments: []
     type: agent_response

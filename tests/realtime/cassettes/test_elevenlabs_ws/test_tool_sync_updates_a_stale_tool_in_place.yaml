@@ -11,7 +11,7 @@ interactions:
       host:
       - api.elevenlabs.io
     method: GET
-    uri: https://api.elevenlabs.io/v1/convai/agents/agent_7801m2de06mqem2bcj41b3br9drm
+    uri: https://api.elevenlabs.io/v1/convai/agents/agent_0101m2dhhjp2e9h8001eznp7q483
   response:
     headers:
       access-control-allow-headers:
@@ -25,7 +25,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000
       content-length:
-      - '11901'
+      - '11883'
       content-type:
       - application/json
       strict-transport-security:
@@ -42,8 +42,8 @@ interactions:
         creator_name: scrubbed
         is_creator: true
         role: admin
-      agent_id: agent_7801m2de06mqem2bcj41b3br9drm
-      branch_id: agtbrch_7401m2de07qtfrv80094sv06h3gn
+      agent_id: agent_0101m2dhhjp2e9h8001eznp7q483
+      branch_id: agtbrch_3001m2dhhkk7e9wrrmr13yy7y09z
       conversation_config:
         agent:
           disable_first_message_interruptions: false
@@ -102,10 +102,10 @@ interactions:
             thinking_budget: null
             timezone: null
             tool_ids:
-            - tool_9101m2de06f8fk0b2rr27ekdm2sd
+            - tool_9401m2dhhg1mec8bdk5fz074cq4t
             tools:
             - assignments: []
-              description: Look up the current weather for a city.
+              description: Stale description.
               disable_interruptions: false
               dynamic_variables:
                 dynamic_variable_placeholders: {}
@@ -222,11 +222,11 @@ interactions:
           background_voice_detection: false
           use_local_cpu_vad: false
       default_hold_audio_url: https://eleven-public-cdn-common.elevenlabs.io/convai/ambient-audio-assets/elevator1.mp3
-      main_branch_id: agtbrch_7401m2de07qtfrv80094sv06h3gn
+      main_branch_id: agtbrch_3001m2dhhkk7e9wrrmr13yy7y09z
       metadata:
-        created_at_unix_secs: 1789304774
-        updated_at_unix_secs: 1789304774
-      name: pydantic-ai cassette dev (agent_id)
+        created_at_unix_secs: 1789308489
+        updated_at_unix_secs: 1789308489
+      name: pydantic-ai cassette dev (sync update)
       phone_numbers: []
       platform_settings:
         alerting: null
@@ -497,7 +497,7 @@ interactions:
       procedures: {}
       tags: []
       trust_context: unknown
-      version_id: agtvrsn_7601m2de07trf0ptz7dknjscz6zv
+      version_id: agtvrsn_8401m2dhhkp6ekpb0h31nbnqr4dc
       whatsapp_accounts: []
       workflow:
         edges: {}
@@ -526,7 +526,325 @@ interactions:
       host:
       - api.elevenlabs.io
     method: GET
-    uri: https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent_7801m2de06mqem2bcj41b3br9drm
+    uri: https://api.elevenlabs.io/v1/convai/tools?page_size=100
+  response:
+    headers:
+      access-control-allow-headers:
+      - '*'
+      access-control-allow-methods:
+      - POST, PATCH, OPTIONS, DELETE, GET, PUT
+      access-control-allow-origin:
+      - '*'
+      access-control-max-age:
+      - '600'
+      alt-svc:
+      - h3=":443"; ma=2592000
+      content-length:
+      - '4479'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=1800;
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Language, Accept-Encoding
+    parsed_body:
+      has_more: false
+      next_cursor: null
+      tools:
+      - access_info:
+          access_source: creator
+          anonymous_access_level_override: null
+          creator_email: scrubbed
+          creator_name: scrubbed
+          is_creator: true
+          role: admin
+        id: tool_0801m2dhhhtge8hb2fkj8byw867m
+        response_mocks: null
+        tool_config:
+          assignments: []
+          description: Close the chat widget.
+          disable_interruptions: false
+          dynamic_variables:
+            dynamic_variable_placeholders: {}
+          execution_mode: immediate
+          expects_response: false
+          force_pre_tool_speech: false
+          interruption_mode: allow
+          name: close_widget
+          parameters:
+            description: ''
+            dynamic_variable: ''
+            is_omitted: false
+            properties: {}
+            required: []
+            type: object
+          pre_tool_speech: auto
+          response_timeout_secs: 20
+          tool_call_sound: null
+          tool_call_sound_behavior: auto
+          tool_error_handling_mode: auto
+          type: client
+        usage_stats:
+          avg_latency_secs: 0.0
+          total_calls: 0
+      - access_info:
+          access_source: creator
+          anonymous_access_level_override: null
+          creator_email: scrubbed
+          creator_name: scrubbed
+          is_creator: true
+          role: admin
+        id: tool_0001m2dhhgxmfy98cvmw2d0dfjp9
+        response_mocks: null
+        tool_config:
+          api_schema:
+            auth_connection: null
+            auth_resolved_params: []
+            content_type: application/json
+            kind: webhook
+            method: GET
+            path_params_schema: {}
+            query_params_schema: null
+            request_body_schema: null
+            request_headers: {}
+            response_body_schema: null
+            response_filter: null
+            url: https://example.com/crm
+          assignments: []
+          description: Look up a customer in the CRM.
+          disable_interruptions: false
+          dynamic_variables:
+            dynamic_variable_placeholders: {}
+          execution_mode: immediate
+          follow_redirects: false
+          follow_redirects_allowed_domains: []
+          force_pre_tool_speech: false
+          interruption_mode: allow
+          name: crm_lookup
+          pre_tool_speech: auto
+          response_timeout_secs: 20
+          tool_call_sound: null
+          tool_call_sound_behavior: auto
+          tool_error_handling_mode: auto
+          type: webhook
+        usage_stats:
+          avg_latency_secs: 0.0
+          total_calls: 0
+      - access_info:
+          access_source: creator
+          anonymous_access_level_override: null
+          creator_email: scrubbed
+          creator_name: scrubbed
+          is_creator: true
+          role: admin
+        id: tool_9401m2dhhg1mec8bdk5fz074cq4t
+        response_mocks: null
+        tool_config:
+          assignments: []
+          description: Stale description.
+          disable_interruptions: false
+          dynamic_variables:
+            dynamic_variable_placeholders: {}
+          execution_mode: immediate
+          expects_response: true
+          force_pre_tool_speech: false
+          interruption_mode: allow
+          name: get_weather
+          parameters:
+            description: ''
+            dynamic_variable: ''
+            is_omitted: false
+            properties:
+              city:
+                allowed_values: null
+                allowed_values_dynamic_variable: ''
+                constant_value: ''
+                description: City name
+                dynamic_variable: ''
+                enum: null
+                is_omitted: false
+                is_system_provided: false
+                type: string
+            required:
+            - city
+            type: object
+          pre_tool_speech: auto
+          response_timeout_secs: 20
+          tool_call_sound: null
+          tool_call_sound_behavior: auto
+          tool_error_handling_mode: auto
+          type: client
+        usage_stats:
+          avg_latency_secs: 0.0
+          total_calls: 0
+      - access_info:
+          access_source: creator
+          anonymous_access_level_override: null
+          creator_email: scrubbed
+          creator_name: scrubbed
+          is_creator: true
+          role: admin
+        id: tool_5301m2dhen2veb38drv05m1mkkxg
+        response_mocks: null
+        tool_config:
+          assignments: []
+          description: Look up the current weather for a city.
+          disable_interruptions: false
+          dynamic_variables:
+            dynamic_variable_placeholders: {}
+          execution_mode: immediate
+          expects_response: true
+          force_pre_tool_speech: false
+          interruption_mode: allow
+          name: get_weather
+          parameters:
+            description: ''
+            dynamic_variable: ''
+            is_omitted: false
+            properties:
+              city:
+                allowed_values: null
+                allowed_values_dynamic_variable: ''
+                constant_value: ''
+                description: City name
+                dynamic_variable: ''
+                enum: null
+                is_omitted: false
+                is_system_provided: false
+                type: string
+            required:
+            - city
+            type: object
+          pre_tool_speech: auto
+          response_timeout_secs: 20
+          tool_call_sound: null
+          tool_call_sound_behavior: auto
+          tool_error_handling_mode: auto
+          type: client
+        usage_stats:
+          avg_latency_secs: 0.13
+          total_calls: 2
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '270'
+      content-type:
+      - application/json
+      host:
+      - api.elevenlabs.io
+    method: PATCH
+    parsed_body:
+      tool_config:
+        description: Look up the current weather for a city.
+        expects_response: true
+        name: get_weather
+        parameters:
+          properties:
+            city:
+              description: City name
+              type: string
+          required:
+          - city
+          type: object
+        type: client
+    uri: https://api.elevenlabs.io/v1/convai/tools/tool_9401m2dhhg1mec8bdk5fz074cq4t
+  response:
+    headers:
+      access-control-allow-headers:
+      - '*'
+      access-control-allow-methods:
+      - POST, PATCH, OPTIONS, DELETE, GET, PUT
+      access-control-allow-origin:
+      - '*'
+      access-control-max-age:
+      - '600'
+      alt-svc:
+      - h3=":443"; ma=2592000
+      content-length:
+      - '1171'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=1800;
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Language, Accept-Encoding
+    parsed_body:
+      access_info:
+        access_source: creator
+        anonymous_access_level_override: null
+        creator_email: scrubbed
+        creator_name: scrubbed
+        is_creator: true
+        role: admin
+      id: tool_9401m2dhhg1mec8bdk5fz074cq4t
+      response_mocks: null
+      tool_config:
+        assignments: []
+        description: Look up the current weather for a city.
+        disable_interruptions: false
+        dynamic_variables:
+          dynamic_variable_placeholders: {}
+        execution_mode: immediate
+        expects_response: true
+        force_pre_tool_speech: false
+        interruption_mode: allow
+        name: get_weather
+        parameters:
+          description: ''
+          dynamic_variable: ''
+          is_omitted: false
+          properties:
+            city:
+              allowed_values: null
+              allowed_values_dynamic_variable: ''
+              constant_value: ''
+              description: City name
+              dynamic_variable: ''
+              enum: null
+              is_omitted: false
+              is_system_provided: false
+              type: string
+          required:
+          - city
+          type: object
+        pre_tool_speech: auto
+        response_timeout_secs: 20
+        tool_call_sound: null
+        tool_call_sound_behavior: auto
+        tool_error_handling_mode: auto
+        type: client
+      usage_stats:
+        avg_latency_secs: 0.0
+        total_calls: 0
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.elevenlabs.io
+    method: GET
+    uri: https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent_0101m2dhhjp2e9h8001eznp7q483
   response:
     headers:
       access-control-allow-headers:
@@ -550,7 +868,7 @@ interactions:
       vary:
       - Accept-Language, Accept-Encoding
     parsed_body:
-      signed_url: wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_7801m2de06mqem2bcj41b3br9drm&conversation_signature=scrubbed
+      signed_url: wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_0101m2dhhjp2e9h8001eznp7q483&conversation_signature=scrubbed
     status:
       code: 200
       message: OK
