@@ -5,6 +5,7 @@ import inspect
 import json
 import math
 import sys
+from codecs import BOM_UTF8
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -979,6 +980,45 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert len(loaded_dataset.cases) == 2
     assert loaded_dataset.name == 'example'
+    assert loaded_dataset.cases[0].name == 'case1'
+    assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
+
+
+@pytest.mark.parametrize('fmt', ['json', 'yaml'])
+async def test_from_file_with_utf8_bom(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path, fmt: str
+):
+    """A dataset file saved with a UTF-8 BOM should load, in either format.
+
+    Notepad and PowerShell redirection write a BOM by default, so a dataset that has been opened and
+    re-saved on Windows arrives with one. Reading as plain `utf-8` keeps the BOM. PyYAML strips it, so
+    only JSON was affected: the parser failed at column 1 and the error appeared to blame the schema.
+    The yaml case is here so the two formats are covered by the same guarantee.
+    """
+    path = tmp_path / f'test_cases.{fmt}'
+    example_dataset.to_file(path)
+    path.write_text(path.read_text(encoding='utf-8'), encoding='utf-8-sig')
+    assert path.read_bytes().startswith(BOM_UTF8)
+
+    loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(path)
+
+    assert len(loaded_dataset.cases) == 2
+    assert loaded_dataset.cases[0].name == 'case1'
+    assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
+
+
+@pytest.mark.parametrize('fmt', ['json', 'yaml'])
+async def test_from_file_without_bom_is_unchanged(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path, fmt: str
+):
+    """Files without a BOM must load exactly as before: `utf-8-sig` decodes plain UTF-8 identically."""
+    path = tmp_path / f'test_cases.{fmt}'
+    example_dataset.to_file(path)
+    assert not path.read_bytes().startswith(BOM_UTF8)
+
+    loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(path)
+
+    assert len(loaded_dataset.cases) == 2
     assert loaded_dataset.cases[0].name == 'case1'
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
 

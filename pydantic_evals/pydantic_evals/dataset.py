@@ -582,7 +582,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path = Path(path)
         fmt = cls._infer_fmt(path, fmt)
 
-        raw = Path(path).read_text(encoding='utf-8')
+        # utf-8-sig decodes plain UTF-8 identically, and additionally strips a byte order mark.
+        # Editors on Windows (Notepad, Excel, PowerShell redirection) write a BOM by default, and the
+        # JSON parser rejects it at column 1 with an error that appears to blame the dataset schema.
+        raw = Path(path).read_text(encoding='utf-8-sig')
         try:
             return cls.from_text(
                 raw,
