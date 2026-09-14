@@ -26,7 +26,7 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, cast, overload
 from uuid import uuid4
 
 import anyio
@@ -41,6 +41,7 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 
 from .. import (
     _agent_graph,
+    _display,
     _instructions,
     _output,
     _system_prompt,
@@ -1528,7 +1529,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
 
         # The string the run's model was selected from, if any — carried through to
         # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
@@ -1826,6 +1827,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
+        def display_banner(*, model: str, tools: int) -> None:
+            # Called by the graph once the run's first step has resolved the model it will actually
+            # use and the tools it will actually offer, and only when there is a banner to show;
+            # everything else is settled here and now.
+            _display.display_agent_banner(
+                name=self.name,
+                model=model,
+                # A run-level `output_type=` overrides what the agent was built with.
+                output_type=output_type_,
+                tools=tools,
+                capabilities=_registered_capability_count(bootstrap_capability),
+            )
+
         model_resources = _RunModelResources(self._entered_model_ids.copy())
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
@@ -1853,6 +1867,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             discovered_tool_names=discovered_tool_names,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
+            display_banner=display_banner,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
@@ -2246,7 +2261,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage = usage or _usage.RunUsage()
         messages = list(message_history or [])
         capability = self._effective_root_capability()
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
         default_model = (
             await self._resolve_model_selection(self._pick_raw_model(model), capability=capability, deps=deps)
             if has_default_model
@@ -2829,6 +2844,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return toolset_decorator if func is None else toolset_decorator(func)
 
+    def _has_model(self, model: models.Model | models.KnownModelName | str | None) -> bool:
+        """Whether a run given `model` would have one to use, counting an `override(model=...)`.
+
+        What `_pick_raw_model` answers for, asked ahead of it by callers that would rather not have
+        it raise. A capability can still contribute a model when this is False.
+        """
+        return model is not None or self._override_model.get() is not None or self.model is not None
+
     def _pick_raw_model(
         self, model: models.Model | models.KnownModelName | str | None
     ) -> models.Model | models.KnownModelName | str:
@@ -2844,6 +2867,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Return the override capability when present, otherwise the configured root."""
         override = self._override_root_capability.get()
         return override.value if override is not None else self._root_capability
+
+    def _startup_banner_details(
+        self,
+        model: models.Model | models.KnownModelName | str | None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    ) -> _StartupBannerDetails:
+        """Describe the session `_cli` is about to open, before any run has resolved anything.
+
+        Resolved the way a run resolves it rather than read off the agent as configured: an
+        `override()` in force, or instrumentation switched on globally by `Agent.instrument_all()`,
+        would otherwise have the banner describe a different session than the one about to start.
+
+        Args:
+            model: Model the session was asked to use, if not the agent's own.
+            toolsets: Toolsets the session will pass to each run, which aren't on the agent.
+        """
+        chat_model = self._pick_raw_model(model)
+        # `self.toolsets` is override-aware, so an `override(toolsets=...)` is reflected.
+        session_toolsets = [*self.toolsets, *(toolsets or [])]
+        # Only a `FunctionToolset` holds its tools synchronously; every other toolset answers
+        # `get_tools()` given a `RunContext`, and an MCP server would have to be connected to first.
+        countable = [toolset for toolset in session_toolsets if isinstance(toolset, FunctionToolset)]
+        return _StartupBannerDetails(
+            model=chat_model.model_id if isinstance(chat_model, models.Model) else chat_model,
+            # Rather than report a number that's wrong — `clai --mcp-config` would have said
+            # `tools: 0` next to a session full of MCP tools — the banner leaves the count out
+            # entirely. A run's own banner counts what the model is really offered.
+            tools=sum(len(toolset.tools) for toolset in countable) if len(countable) == len(session_toolsets) else None,
+            capabilities=_registered_capability_count(self._effective_root_capability()),
+            instrumented=(
+                isinstance(chat_model, InstrumentedModel) or self._resolve_instrumentation_settings() is not None
+            ),
+        )
 
     def _resolve_tool_retries(self, retries: int | None = None) -> int:
         """Resolve the effective tool-retry default: override > run/spec > agent default."""
@@ -4289,6 +4345,25 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
     PendingMessageDrainCapability,
 )
 """Infrastructure capabilities auto-injected when not already present."""
+
+
+def _registered_capability_count(capability: AbstractCapability[Any]) -> int:
+    """Count the capabilities the user registered, for a `pydantic_ai._display` banner.
+
+    Infrastructure capabilities are injected for every agent, so counting those would say nothing
+    about the agent the user actually wrote.
+    """
+    return sum(not isinstance(leaf, _AUTO_INJECT_CAPABILITY_TYPES) for leaf in leaf_capabilities(capability))
+
+
+class _StartupBannerDetails(NamedTuple):
+    """What a chat session can say about itself before any run has resolved anything."""
+
+    model: str
+    tools: int | None
+    """`None` when the session holds a toolset whose tools can't be counted without connecting."""
+    capabilities: int
+    instrumented: bool
 
 
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
