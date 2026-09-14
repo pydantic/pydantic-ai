@@ -3267,6 +3267,39 @@ def test_web_fetch_local_true_silent():
     assert cap.local is not None and cap.local is not False
 
 
+async def test_capability_web_fetch_local_excludes_script_and_style(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch(local=True)'s resolved tool drops script/style contents when converting HTML."""
+    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
+    import httpx2
+
+    from pydantic_ai.tools import Tool
+
+    response = httpx2.Response(
+        200,
+        text='<script>window.x = 1;</script><style>.a{color:red}</style><p>Text</p>',
+        headers={'content-type': 'text/html'},
+        request=httpx2.Request('GET', 'https://93.184.215.14/page'),
+    )
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: response))
+
+    def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
+        return client
+
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
+
+    cap = WebFetch(local=True)
+    resolved = cap.local
+    assert isinstance(resolved, Tool)
+    assert resolved.name == 'web_fetch'
+
+    result = await resolved.function('https://93.184.215.14/page')
+
+    assert isinstance(result, dict)
+    assert 'Text' in result['content']
+    assert 'window.x = 1' not in result['content']
+    assert '.a{color:red}' not in result['content']
+
+
 def test_mcp_local_true_silent_with_explicit_native():
     """MCP(url=..., local=True, native=True) resolves silently — no PydanticAIDeprecationWarning."""
     pytest.importorskip('mcp', reason='mcp package not installed')

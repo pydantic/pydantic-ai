@@ -184,7 +184,7 @@ def _decode_text(response: httpx2.Response) -> str:
 def _convert_html(html: str) -> tuple[str, str]:
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
     soup = BeautifulSoup(html, 'html.parser')
-    return _extract_title(html), _MarkdownConverter(strip=['img', 'script', 'style']).convert_soup(soup)
+    return _extract_title(html), _MarkdownConverter(strip=['img']).convert_soup(soup)
 
 
 class _MarkdownConverter(MarkdownConverter):
