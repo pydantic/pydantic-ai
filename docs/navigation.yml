@@ -991,6 +991,11 @@ navigation:
             slug: "api/pydantic-ai/concurrency"
             aliases:
               - "api/concurrency"
+          - page: "conversation"
+            path: "api/conversation.md"
+            slug: "api/pydantic-ai/conversation"
+            aliases:
+              - "api/conversation"
           - page: "direct"
             path: "api/direct.md"
             slug: "api/pydantic-ai/direct"

@@ -5,7 +5,11 @@ import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+
+from pydantic import model_serializer, model_validator
+from pydantic_core.core_schema import SerializerFunctionWrapHandler
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
@@ -20,12 +24,29 @@ from . import (
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import CustomEventT
+from .conversation import Conversation
 from .output import OutputDataT
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
     from .result import FinalResult
+
+
+class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
+    output: OutputDataT
+    messages: list[_messages.ModelMessage]
+    new_message_index: NotRequired[int]
+    output_tool_name: NotRequired[str | None]
+    usage: NotRequired[_usage.RunUsage]
+    run_id: NotRequired[str]
+    conversation_id: NotRequired[str]
+    metadata: NotRequired[dict[str, Any] | None]
+    traceparent: NotRequired[str | None]
+
+
+_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
+"""Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
 @dataclasses.dataclass(repr=False)
@@ -645,6 +666,73 @@ class AgentRunResult(Generic[OutputDataT]):
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
 
+    @model_validator(mode='before')
+    @classmethod
+    def _validate_serialized(cls, value: Any) -> Any:
+        """Accept the public serialized shape, and the private one older versions produced.
+
+        Returns the private field names the dataclass schema validates, so `messages`, `usage`,
+        `run_id`, `conversation_id` and `metadata` land back on `_state`.
+        """
+        if not isinstance(value, dict):
+            return value
+        data = cast('dict[str, Any]', value)
+
+        if isinstance(legacy_state := data.get('_state'), dict):
+            # Serialized before this shape existed, when every private field was exposed directly,
+            # `GraphAgentState`'s run-local scratch included; that scratch is dropped here. Public
+            # keys still win, so a payload carrying both reads as the public one.
+            state = cast('dict[str, Any]', legacy_state)
+            restored: dict[str, Any] = {
+                'new_message_index': data.get('_new_message_index', 0),
+                'output_tool_name': data.get('_output_tool_name'),
+                'traceparent': data.get('_traceparent_value'),
+            }
+            if 'message_history' in state:
+                restored['messages'] = state['message_history']
+            for key in _STATE_KEYS:
+                if key in state:
+                    restored[key] = state[key]
+            data = {**restored, **{key: item for key, item in data.items() if not key.startswith('_')}}
+
+        state_data: dict[str, Any] = {}
+        if 'messages' in data:
+            state_data['message_history'] = data['messages']
+        for key in _STATE_KEYS:
+            if key in data:
+                state_data[key] = data[key]
+
+        validated: dict[str, Any] = {
+            '_output_tool_name': data.get('output_tool_name'),
+            '_state': state_data,
+            '_new_message_index': data.get('new_message_index', 0),
+            '_traceparent_value': data.get('traceparent'),
+        }
+        if 'output' in data:
+            # Left out when absent so the dataclass reports it missing rather than rejecting `None`.
+            validated['output'] = data['output']
+        return validated
+
+    @model_serializer(mode='wrap')
+    def _serialize(self, handler: SerializerFunctionWrapHandler) -> _AgentRunResultData[Any]:
+        # `output` is typed by the generic parameter, and only the dataclass serializer `handler`
+        # wraps knows what that resolved to — a serializer's own return annotation is not
+        # parameterized, so it would fall back to `OutputDataT`'s default. Hand it a stand-in
+        # carrying just the output; handing it `self` would serialize all of `_state`'s run-local
+        # scratch only to discard it.
+        output = cast('dict[str, Any]', handler(AgentRunResult(output=self.output)))['output']
+        return {
+            'output': output,
+            'messages': self._state.message_history,
+            'new_message_index': self._new_message_index,
+            'output_tool_name': self._output_tool_name,
+            'usage': self._state.usage,
+            'run_id': self._state.run_id,
+            'conversation_id': self._state.conversation_id,
+            'metadata': self._state.metadata,
+            'traceparent': self._traceparent_value,
+        }
+
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
     @overload
@@ -753,6 +841,20 @@ class AgentRunResult(Generic[OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    @property
+    def conversation(self) -> Conversation:
+        """This run's [`Conversation`][pydantic_ai.conversation.Conversation], ready to carry into the next one.
+
+        Bundles the messages, usage and conversation ID that a following run — text, streamed, or
+        realtime — needs, so none of them is dropped on the way. The messages are a
+        copy, so the returned conversation can be stored and mutated without touching this result.
+        """
+        return Conversation(
+            messages=list(self.all_messages()),
+            usage=self.usage,
+            conversation_id=self.conversation_id,
+        )
 
     @property
     def timestamp(self) -> datetime:
