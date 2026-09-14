@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 from abc import abstractmethod
 from collections.abc import (
@@ -186,7 +187,7 @@ class _CompactMessagesCacheIdentity(CacheIdentity[ModelCompactMessagesParams]):
 
 class _EventStreamHandlerCacheIdentity(CacheIdentity[EventStreamHandlerParams]):
     def project(self, params: EventStreamHandlerParams) -> tuple[object, ...]:
-        return (params.event,)
+        return (params.events,)
 
 
 class _GetToolsCacheIdentity(CacheIdentity[ToolsetGetToolsParams]):
@@ -644,6 +645,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         elif event_stream_handler is not None:
             dispatch_events = True
 
+        if dispatch_events and self._batch_event_stream_dispatch:
+            stream = self._batched_event_stream(ctx, stream)
+            dispatch_events = False
+
         try:
             async for event in stream:
                 # `ModelResponseStreamEvent`s were already delivered live to the handler inside the
@@ -653,6 +658,93 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     await self._dispatch_event_stream_event(ctx, event)
                 yield event
         finally:
+            await aclose_if_supported(stream)
+
+    @property
+    def _batch_event_stream_dispatch(self) -> bool:
+        """Whether this durable run uses batched event-handler operations."""
+        return True
+
+    async def _batched_event_stream(  # noqa: C901
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterator[AgentStreamEvent]:
+        ready: list[tuple[AgentStreamEvent, asyncio.Future[None]]] = []
+        available = asyncio.Event()
+        output: asyncio.Queue[tuple[AgentStreamEvent, asyncio.Future[None]] | BaseException | None] = asyncio.Queue()
+        producer_done = False
+
+        async def produce() -> None:
+            nonlocal producer_done
+            try:
+                async for event in stream:
+                    acknowledged = asyncio.get_running_loop().create_future()
+                    replayed = isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES)
+                    if not replayed:
+                        ready.append((event, acknowledged))
+                        available.set()
+                    output.put_nowait((event, acknowledged))
+                    if replayed:
+                        # Replayed model events go to no handler, so nothing else will resolve their
+                        # future: the consumer does, after yielding. Waiting for it here is what keeps
+                        # the model stream's backpressure intact. Running ahead instead advances the
+                        # shared stream accumulator underneath events the caller has not seen yet, so
+                        # earlier events observe accumulated text and later deltas apply twice.
+                        await acknowledged
+            except BaseException as exc:
+                output.put_nowait(exc)
+            finally:
+                producer_done = True
+                available.set()
+                output.put_nowait(None)
+
+        async def dispatch() -> None:
+            while True:
+                await available.wait()
+                available.clear()
+                if not ready:
+                    if producer_done:
+                        return
+                    continue
+                batch = ready[:]
+                del ready[:]
+                try:
+                    await self._dispatch_event_stream_events(ctx, [event for event, _ in batch])
+                except BaseException as exc:
+                    batch[0][1].set_exception(exc)
+                    for _, acknowledged in batch[1:]:
+                        acknowledged.cancel()
+                    raise
+                else:
+                    for _, acknowledged in batch:
+                        acknowledged.set_result(None)
+                if ready:
+                    available.set()
+                elif producer_done:
+                    return
+
+        producer = asyncio.create_task(produce())
+        dispatcher = asyncio.create_task(dispatch())
+        try:
+            while item := await output.get():
+                if isinstance(item, BaseException):
+                    raise item
+                event, acknowledged = item
+                if isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                    # Acknowledge only once the caller has consumed it, releasing the producer to
+                    # pull the next event off the model stream. See `produce` above.
+                    yield event
+                    acknowledged.set_result(None)
+                else:
+                    # A dispatched event is only safe to hand on once its handler operation has
+                    # recorded it, so the batch's future gates the yield rather than following it.
+                    await acknowledged
+                    yield event
+            await producer
+            await dispatcher
+        finally:
+            producer.cancel()
+            dispatcher.cancel()
+            await asyncio.gather(producer, dispatcher, return_exceptions=True)
             await aclose_if_supported(stream)
 
     @property
@@ -1538,7 +1630,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return None
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        """Base-owned: deliver one workflow-side event inside a durable unit.
+        """Base-owned compatibility path: deliver one workflow-side event inside a durable unit.
 
         Sufficient for SEQUENCE-keyed engines (Restate/Lambda/Absurd/DBOS/Temporal), where the
         durable unit's identity is its encounter order, so content-identical events map to distinct
@@ -1547,10 +1639,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         (#5477 requirement 4). That override is the one genuine behavioral difference the hash-keyed
         family forces.
         """
+        await self._dispatch_event_stream_events(ctx, [event])
+
+    async def _dispatch_event_stream_events(self, ctx: RunContext[AgentDepsT], events: list[AgentStreamEvent]) -> None:
+        """Deliver a burst of workflow-side events inside one durable unit."""
         bound_operation = self._bound_event_operation or self._bind_event_operation(
             self.get_durable_operation_backend()
         )
-        await bound_operation(EventStreamHandlerParams(event, run_context=ctx))
+        await bound_operation(EventStreamHandlerParams(events, run_context=ctx))
 
     def _bind_event_operation(
         self, backend: DurableOperationBackend[Any]
@@ -1572,7 +1668,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         handler = self._effective_event_stream_handler()
         assert handler is not None
         with self._durable_run_context_scope(params.run_context) as durable_ctx:
-            await handler(durable_ctx, self._single_event_stream(params.event))
+            for event in params.events:
+                await handler(durable_ctx, self._single_event_stream(event))
 
     @staticmethod
     async def _single_event_stream(

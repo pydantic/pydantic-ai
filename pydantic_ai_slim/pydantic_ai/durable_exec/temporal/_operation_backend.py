@@ -50,7 +50,7 @@ class _ModelParams(Protocol):
 
 
 class _EventParams(Protocol):
-    event: Any
+    events: Any
 
 
 class TemporalOperationConfig(DurableOperationConfig[ActivityConfig]):
@@ -129,8 +129,8 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
         elif isinstance(operation_id, CapabilityOperationId):
             activity_config['summary'] = f'capability: {operation_id.capability_id}.{operation_id.operation}'
         elif isinstance(operation_id, EventStreamHandlerId):
-            event = cast(_EventParams, params).event
-            activity_config['summary'] = f'handle event: {event.event_kind}'
+            events = cast(_EventParams, params).events
+            activity_config['summary'] = f'handle events: {len(events)}'
         else:
             # New operation ids use their stable activity name as the default summary. Their
             # parameter transport must implement `TemporalParameterTransport`, including
