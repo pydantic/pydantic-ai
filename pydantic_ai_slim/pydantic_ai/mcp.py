@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, T
 
 import anyio
 import pydantic_core
-from pydantic import AnyUrl, Field, TypeAdapter
+from pydantic import AnyUrl, BeforeValidator, Field, StrictBool, TypeAdapter
 from typing_extensions import Self, TypedDict, assert_never
 
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -1922,8 +1922,8 @@ class _MCPServerConfig(TypedDict, total=False):
     """The keys `load_mcp_toolsets` reads from an `mcpServers` entry.
 
     Unknown keys are ignored rather than rejected, so a configuration file shared with another MCP
-    client still loads. They are only ignored, never honoured: `disabled` does not skip a server,
-    and `type` does not select the transport — that is inferred from the URL.
+    client still loads. `disabled: true` skips a server, and an explicit `type` takes precedence
+    over URL-based transport inference.
 
     Optional transport values accept explicit JSON `null` for compatibility with existing shared
     MCP configuration files; loading treats those values the same as omission.
@@ -1935,10 +1935,20 @@ class _MCPServerConfig(TypedDict, total=False):
     cwd: str | None
     url: str
     headers: dict[str, str] | None
+    type: Literal['stdio', 'sse', 'http', 'streamableHttp']
+    disabled: StrictBool
+
+
+def _prepare_mcp_server_config(value: object) -> object:
+    # Disabled entries may contain stale credentials or incomplete transport configuration.
+    if _utils.is_str_dict(value) and value.get('disabled') is True:
+        return {'disabled': True}
+    # Expand before validating, so `${VAR}` references are checked as the values they resolve to.
+    return _expand_env_vars(value)
 
 
 class _MCPConfig(TypedDict):
-    mcpServers: dict[str, _MCPServerConfig]
+    mcpServers: dict[str, Annotated[_MCPServerConfig, BeforeValidator(_prepare_mcp_server_config)]]
 
 
 _MCP_CONFIG_ADAPTER = TypeAdapter(_MCPConfig)
@@ -1948,9 +1958,14 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     """Load `MCPToolset`s from a configuration file.
 
     The configuration file uses the same `mcpServers` JSON shape as Claude Desktop, Claude Code,
-    and Cursor. Each server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset], wrapped
+    and Cursor. Each enabled server entry produces one [`MCPToolset`][pydantic_ai.mcp.MCPToolset], wrapped
     in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name as prefix
     to disambiguate tools across multiple servers.
+
+    Entries with `disabled: true` are skipped before environment expansion or transport validation.
+    An explicit `type` selects `stdio` (requires `command` without `url`), `sse`, or
+    `http`/`streamableHttp` (requires `url` without `command`). Without `type`, `command` takes
+    precedence; otherwise a URL ending in `/sse` selects SSE and other URLs select Streamable HTTP.
 
     Environment variables can be referenced in the configuration file using:
 
@@ -1961,27 +1976,36 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
         config_path: Path to the JSON configuration file.
 
     Returns:
-        A list of toolsets, one per server in the config file, each prefixed with the server name.
+        A list of toolsets, one per enabled server in the config file, each prefixed with the server name.
 
     Raises:
         OSError: If the configuration file does not exist (`FileNotFoundError`), or exists but
             cannot be read — a directory, or a file without read permission.
         ValidationError: If the configuration does not match the `mcpServers` shape above. This is
             a `ValueError` subclass, so catching `ValueError` covers it too.
-        ValueError: If the file is not valid JSON, a server entry has neither `command` nor `url`,
-            or an environment variable referenced in the configuration is not defined and no
-            default is provided.
+        ValueError: If the file is not valid JSON, an enabled server entry has neither `command` nor
+            `url` or conflicts with its explicit `type`, or an environment variable referenced in an
+            enabled entry is not defined and no default is provided.
     """
     config_path = Path(config_path)
     if not config_path.exists():
         raise FileNotFoundError(f'Config file {config_path} not found')
 
     config_data = pydantic_core.from_json(config_path.read_bytes())
-    # Expand before validating, so `${VAR}` references are checked as the values they resolve to.
-    config = _MCP_CONFIG_ADAPTER.validate_python(_expand_env_vars(config_data))
+    config = _MCP_CONFIG_ADAPTER.validate_python(config_data)
 
     toolsets: list[AbstractToolset[Any]] = []
     for name, server in config['mcpServers'].items():
+        if server.get('disabled', False):
+            continue
+        transport_type = server.get('type')
+        if transport_type is not None:
+            if transport_type == 'stdio':
+                valid_shape = 'command' in server and 'url' not in server
+            else:
+                valid_shape = 'url' in server and 'command' not in server
+            if not valid_shape:
+                raise ValueError(f'MCP server config {name!r} has fields incompatible with `type` {transport_type!r}')
         if 'command' in server:
             transport = StdioTransport(
                 command=server['command'],
@@ -1991,7 +2015,11 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
             )
             toolset = MCPToolset(transport, id=name)
         elif 'url' in server:
-            toolset = MCPToolset(server['url'], id=name, headers=server.get('headers'))
+            if transport_type is None:
+                toolset = MCPToolset(server['url'], id=name, headers=server.get('headers'))
+            else:
+                transport_class = SSETransport if transport_type == 'sse' else StreamableHttpTransport
+                toolset = MCPToolset(transport_class(server['url'], headers=server.get('headers')), id=name)
         else:
             raise ValueError(f'MCP server config {name!r} must have either `command` or `url`')
         toolsets.append(toolset.prefixed(name))
