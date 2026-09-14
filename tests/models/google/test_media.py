@@ -35,7 +35,7 @@ from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import ContentDict, ToolCall
+    from google.genai.types import ContentDict, Part, ToolCall
 
     from pydantic_ai.models.google import (
         GoogleModel,
@@ -305,7 +305,7 @@ async def test_media_processing_composes_with_media_resolution(
         url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
         vendor_metadata={
             'media_processing': 'AGENTIC',
-            'media_resolution': 'MEDIA_RESOLUTION_LOW',
+            'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'},
         },
     )
 
@@ -319,20 +319,21 @@ async def test_media_processing_composes_with_media_resolution(
                     'mime_type': 'video/mp4',
                 },
                 'media_processing': 'AGENTIC',
-                'media_resolution': 'MEDIA_RESOLUTION_LOW',
+                'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'},
             }
         ]
     )
+    Part.model_validate(content[0])
 
 
-def test_missing_native_tool_type_with_payload_is_rejected() -> None:
+@pytest.mark.parametrize(
+    ('allow_media_processing', 'args'),
+    [(True, {'query': 'test'}), (False, None)],
+    ids=['payload-is-not-media-processing', 'media-processing-disabled'],
+)
+def test_missing_native_tool_type_is_rejected(allow_media_processing: bool, args: dict[str, str] | None) -> None:
     with pytest.raises(UnexpectedModelBehavior, match='Missing tool_type on native tool part'):
-        _map_tool_call(ToolCall(id='call-1', args={'query': 'test'}), 'google')
-
-
-def test_missing_native_tool_type_without_agentic_video_is_rejected() -> None:
-    with pytest.raises(UnexpectedModelBehavior, match='Missing tool_type on native tool part'):
-        _map_tool_call(ToolCall(id='call-1'), 'google')
+        _map_tool_call(ToolCall(id='call-1', args=args), 'google', allow_media_processing=allow_media_processing)
 
 
 @pytest.mark.parametrize(

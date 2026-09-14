@@ -2121,11 +2121,11 @@ def _is_media_processing_native_part(part: Part) -> bool:
         return (_MEDIA_PROCESSING_TOOL_TYPE is not None and tool_call.tool_type == _MEDIA_PROCESSING_TOOL_TYPE) or (
             tool_call.tool_type is None and tool_call.args is None
         )
-    if tool_response := part.tool_response:
-        return (_MEDIA_PROCESSING_TOOL_TYPE is not None and tool_response.tool_type == _MEDIA_PROCESSING_TOOL_TYPE) or (
-            tool_response.tool_type is None and tool_response.response is None
-        )
-    return False
+    tool_response = part.tool_response
+    assert tool_response is not None
+    return (_MEDIA_PROCESSING_TOOL_TYPE is not None and tool_response.tool_type == _MEDIA_PROCESSING_TOOL_TYPE) or (
+        tool_response.tool_type is None and tool_response.response is None
+    )
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:

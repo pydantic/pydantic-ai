@@ -3,12 +3,11 @@ from __future__ import annotations
 import pytest
 from httpx2 import Timeout
 
-from pydantic_ai import NativeToolCallPart, NativeToolReturnPart, TextPart, UserPromptPart, VideoUrl
+from pydantic_ai import NativeToolCallPart, NativeToolReturnPart, TextPart, VideoUrl
 from pydantic_ai.agent import Agent
 
 from ..._inline_snapshot import snapshot
 from ...conftest import IsStr, RequestCapture, try_import
-from ...parts_from_messages import part_types_from_messages
 
 supports_media_processing = False
 with try_import() as imports_successful:
@@ -54,7 +53,9 @@ async def test_agentic_video_processing(
         result = await agent.run(prompt)
         messages = result.all_messages()
 
-    assert request_capture.body()['contents'] == snapshot(
+    first_request_contents = request_capture.body()['contents']
+    assert isinstance(first_request_contents, list)
+    assert first_request_contents == snapshot(
         [
             {
                 'parts': [
@@ -71,7 +72,6 @@ async def test_agentic_video_processing(
             }
         ]
     )
-    assert part_types_from_messages(messages)[0] == [UserPromptPart]
     response_parts = messages[-1].parts
     assert isinstance(response_parts[-1], TextPart)
     processing_parts = response_parts[:-1]
@@ -82,24 +82,15 @@ async def test_agentic_video_processing(
         assert isinstance(tool_return, NativeToolReturnPart)
         assert tool_call.tool_name == tool_return.tool_name == 'media_processing'
         assert tool_call.tool_call_id == tool_return.tool_call_id
+        assert tool_call.provider_details == {'thought_signature': IsStr()}
+        assert tool_return.provider_details == {'thought_signature': IsStr()}
 
-    follow_up = await agent.run('Which animal appears first?', message_history=messages)
-    assert isinstance(follow_up.output, str)
-    assert request_capture.body(index=1)['contents'] == snapshot(
+    await agent.run('Which animal appears first?', message_history=messages)
+    follow_up_contents = request_capture.body(index=1)['contents']
+    assert isinstance(follow_up_contents, list)
+    assert follow_up_contents[:1] == first_request_contents
+    assert follow_up_contents[1:] == snapshot(
         [
-            {
-                'parts': [
-                    {'text': 'In one sentence, which animals appear and roughly when?'},
-                    {
-                        'fileData': {
-                            'fileUri': 'https://www.youtube.com/watch?v=lCdaVNyHtjU',
-                            'mimeType': 'video/mp4',
-                        },
-                        'mediaProcessing': 'AGENTIC',
-                    },
-                ],
-                'role': 'user',
-            },
             {'parts': [{'text': IsStr(), 'thoughtSignature': IsStr()}], 'role': 'model'},
             {'parts': [{'text': 'Which animal appears first?'}], 'role': 'user'},
         ]
