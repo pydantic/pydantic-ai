@@ -118,7 +118,7 @@ class WebFetchLocalTool:
                 content = text
             elif not media_type or media_type in ('text/html', 'application/xhtml+xml'):
                 title = _extract_title(text)
-                content = md(text, strip=['img', 'script', 'style'])
+                content = md(text, strip=['img'])
             elif media_type == 'application/json':
                 try:
                     parsed = json.loads(text)
