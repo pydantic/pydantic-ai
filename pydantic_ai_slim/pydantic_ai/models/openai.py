@@ -4257,7 +4257,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
             mcp_list_tools_return_ids: set[str] = set()
             pending_tool_search_call_ids: deque[str] = deque()
-            tool_search_output_call_ids: dict[str, str] = {}
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -4415,9 +4414,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                         )
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
-                        if chunk.item.execution == 'server':
-                            call_id = _tool_search_output_call_id(chunk.item, pending_tool_search_call_ids)
-                            tool_search_output_call_ids[chunk.item.id] = call_id
+                        # The completed result is emitted from `output_item.done` below.
+                        pass
                     elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                         call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
 
@@ -4541,10 +4539,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 yield maybe_event
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         if chunk.item.execution == 'server':
-                            call_id = tool_search_output_call_ids.get(chunk.item.id)
-                            if call_id is None:
-                                call_id = _tool_search_output_call_id(chunk.item, pending_tool_search_call_ids)
-                                tool_search_output_call_ids[chunk.item.id] = call_id
+                            if chunk.item.call_id is not None:
+                                # An explicit ID wins and retires the corresponding pending call.
+                                call_id = chunk.item.call_id
+                                if call_id in pending_tool_search_call_ids:
+                                    pending_tool_search_call_ids.remove(call_id)
+                            else:
+                                # OpenAI omits this ID for hosted searches, so pair them FIFO.
+                                call_id = (
+                                    pending_tool_search_call_ids.popleft()
+                                    if pending_tool_search_call_ids
+                                    else chunk.item.id
+                                )
                             yield self._parts_manager.handle_part(
                                 vendor_part_id=f'{chunk.item.id}-return',
                                 part=_build_tool_search_return_part(call_id, chunk.item, self.provider_name),
@@ -5470,17 +5476,20 @@ def _tool_search_output_call_ids(response: responses.Response) -> dict[str, str]
     for item in response.output:
         if not isinstance(item, responses.ResponseToolSearchOutputItem) or item.execution != 'server':
             continue
-        if (item.call_id is None and pending_call_ids) or item.call_id in server_call_ids:
-            output_call_ids[item.id] = _tool_search_output_call_id(item, pending_call_ids)
+        if item.call_id is not None:
+            if item.call_id not in server_call_ids:
+                continue
+            # An explicit ID wins and retires the corresponding pending call.
+            call_id = item.call_id
+            if call_id in pending_call_ids:
+                pending_call_ids.remove(call_id)
+        elif pending_call_ids:
+            # OpenAI omits this ID for hosted searches, so pair them FIFO.
+            call_id = pending_call_ids.popleft()
+        else:
+            continue
+        output_call_ids[item.id] = call_id
     return output_call_ids
-
-
-def _tool_search_output_call_id(item: responses.ResponseToolSearchOutputItem, pending_call_ids: deque[str]) -> str:
-    if item.call_id is not None:
-        if item.call_id in pending_call_ids:
-            pending_call_ids.remove(item.call_id)
-        return item.call_id
-    return pending_call_ids.popleft() if pending_call_ids else item.id
 
 
 def _map_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> NativeToolSearchCallPart:
