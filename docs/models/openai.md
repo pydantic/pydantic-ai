@@ -1129,7 +1129,7 @@ To use [SambaNova Cloud](https://cloud.sambanova.ai/), you need to obtain an API
 
 SambaNova provides access to multiple model families including Meta Llama, DeepSeek, Qwen, and Mistral models with fast inference speeds.
 
-You can set the `SAMBANOVA_API_KEY` environment variable and use [`SambaNovaProvider`][pydantic_ai.providers.sambanova.SambaNovaProvider] by name:
+You can set the `SAMBANOVA_API_KEY` and (optionally) `SAMBANOVA_BASE_URL` environment variables and use [`SambaNovaProvider`][pydantic_ai.providers.sambanova.SambaNovaProvider] by name:
 
 ```python
 from pydantic_ai import Agent
