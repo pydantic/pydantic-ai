@@ -106,7 +106,7 @@ The project uses:
 
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.10 through 3.13
     - Install all dependencies with `make install`
-- `pre-commit`, can be installed with `uv tool install pre-commit`
+- `pre-commit`, installed and set up by `make install` (if it isn't available, `make install` installs it with `uv`)
 - `ruff` via `make lint` and `make format`
 - `pyright` via `make typecheck`
 - `pytest` in `tests/`, via `make test`, with:
