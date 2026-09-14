@@ -139,7 +139,7 @@ async def main():
     await agent.to_cli()
 ```
 
-_(You'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Both run the same chat interface as `clai`, so an agent with tools shows each call as it runs and
 marks it done when the result arrives, exactly as described under [CLI Usage](#cli-usage).

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Executor
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import _utils
@@ -40,6 +40,16 @@ class UseThreadExecutor(AbstractCapability[Any]):
 
     executor: Executor
     """The executor to use for running sync functions."""
+
+    _: KW_ONLY
+
+    id: str | None = 'use_thread_executor'
+    """One-off: exactly one executor is in effect for a run, so the id is fixed by default.
+
+    `wrap_run` sets a context variable, so a second one nested inside the first shadows it and the
+    outer executor is never used. Naming them the same makes that resolution explicit rather than an
+    accident of nesting order.
+    """
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

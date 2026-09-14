@@ -62,7 +62,7 @@ print(dice_result.output)
 ```
 
 1. This is a pretty simple task, so we can use the fast and cheap Gemini flash model.
-2. We pass the user's name as the dependency, to keep things simple we use just the name as a string as the dependency.
+2. We pass the user's name as a string dependency to keep the example simple.
 3. This tool doesn't need any context, it just returns a random number. You could probably use dynamic instructions in this case.
 4. This tool needs the player's name, so it uses `RunContext` to access dependencies which are just the player's name in this case.
 5. Run the agent, passing the player's name as the dependency.

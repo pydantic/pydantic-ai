@@ -17,6 +17,7 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 
 import pytest
+from pydantic import JsonValue
 
 from pydantic_ai import (
     Agent,
@@ -36,8 +37,8 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import MCPServerTool, WebSearchTool
 
 from ..._inline_snapshot import snapshot
-from ...conftest import try_import
-from ..conftest import AnthropicModelFactory, RequestCapture, message_shape
+from ...conftest import RequestCapture, try_import
+from ..conftest import AnthropicModelFactory, message_shape
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -321,7 +322,22 @@ async def test_drop_unpaired_native_tool_calls(case: Case):
     _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
         history, ModelRequestParameters(), AnthropicModelSettings()
     )
-    assert message_shape({'messages': [dict(message) for message in messages]}) == case.expected
+    rendered_messages: list[JsonValue] = []
+    for message in messages:
+        role = message['role']
+        assert isinstance(role, str)
+        content = message['content']
+        assert isinstance(content, list)
+
+        rendered_blocks: list[JsonValue] = []
+        for block in content:
+            assert isinstance(block, dict)
+            block_type = block.get('type')
+            assert isinstance(block_type, str)
+            rendered_blocks.append({'type': block_type})
+        rendered_messages.append({'role': role, 'content': rendered_blocks})
+
+    assert message_shape({'messages': rendered_messages}) == case.expected
     if case.expected_call_ids is not None:
         call_ids: list[str] = []
         for message in messages:

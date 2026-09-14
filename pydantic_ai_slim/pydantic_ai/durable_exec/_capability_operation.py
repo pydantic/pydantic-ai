@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, replace
 from functools import update_wrapper, wraps
 from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints
 
@@ -276,7 +276,7 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 result = await operation(*args, **kwargs)
             else:
                 dispatcher = (
-                    self._get_durable_operation_bindings().get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
+                    self._durable_operation_bindings.get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
                     if ctx.agent is not None
                     else None
                 )
@@ -463,15 +463,19 @@ async def call_declaration(
     model_request_context: ModelRequestContext | None = None,
 ) -> Any:
     bound = declaration.function.__get__(capability, type(capability))
+    # The operation body runs as the capability, so name it on the context the way the hook chain
+    # does: a context that crossed a durable boundary was rebuilt without the emitting capability,
+    # and `RunContext.emit` resolves a `CapabilityEvent`'s owner through it.
+    run_context = replace(params.run_context, _capability=capability)
     arguments = dict(params.arguments)
     args: list[Any] = []
     kwargs: dict[str, Any] = {}
     for name, parameter in declaration.signature.parameters.items():
         if name == declaration.ctx_parameter:
             if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-                kwargs[name] = params.run_context
+                kwargs[name] = run_context
             else:
-                args.append(params.run_context)
+                args.append(run_context)
             continue
         if parameter.kind is inspect.Parameter.VAR_KEYWORD:
             kwargs.update(arguments)

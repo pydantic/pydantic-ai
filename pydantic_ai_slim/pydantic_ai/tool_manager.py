@@ -295,6 +295,11 @@ class ToolManager(Generic[AgentDepsT]):
         assert self.ctx is not None
         return replace(
             self.ctx,
+            # The manager executing the call, not the one carried by `self.ctx`: a wrapper that
+            # dispatches hidden tools through its own nested `ToolManager` (e.g. a sandbox's
+            # `run_code`) inherits a `ctx` whose manager only knows the model-visible tools, and
+            # `RunContext.emit` resolves a tool's owning capability through `tool_manager.tools`.
+            tool_manager=self,
             tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
             retry=self.ctx.retries.get(call.tool_name, 0),

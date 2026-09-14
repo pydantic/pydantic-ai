@@ -411,8 +411,12 @@ async def test_enqueue_delivery_event_via_run_stream():
 
 
 async def test_with_event_stream_buffer_drains_around_node_stream():
-    """`_with_event_stream_buffer` yields buffered events before, between, and after node events."""
-    buffer: list[AgentStreamEvent] = []
+    """`_with_event_stream_buffer` yields buffered events before and after the node stream.
+
+    It deliberately does not drain between node events: a live node stream yields buffered events
+    itself as they are emitted, and draining here as well could invert emission order.
+    """
+    buffer: list[AgentStreamEvent] = [initial := EnqueuedMessagesEvent(enqueue_id='initial', messages=())]
     during = EnqueuedMessagesEvent(enqueue_id='during', messages=())
     after = EnqueuedMessagesEvent(enqueue_id='after', messages=())
     model_event = PartStartEvent(index=0, part=TextPart(content='done'))
@@ -423,7 +427,7 @@ async def test_with_event_stream_buffer_drains_around_node_stream():
         buffer.append(after)
 
     drained = [event async for event in _agent_graph._with_event_stream_buffer(stream(), buffer)]  # pyright: ignore[reportPrivateUsage]
-    assert drained == [during, model_event, after]
+    assert drained == [initial, model_event, during, after]
 
 
 async def test_agent_stream_events_iter_drains_buffer_before_each_pull():

@@ -163,6 +163,7 @@ async def test_text_in_audio_out_turn(
     )
 
 
+@pytest.mark.usefixtures('no_genai_prices_context_window')
 async def test_audio_in_server_vad_turn(
     azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette], assets_path: Path
 ) -> None:
@@ -194,6 +195,7 @@ async def test_audio_in_server_vad_turn(
         audio_output_sample_rate=24000,
         supports_thinking=False,
         supported_native_tools=frozenset(),
+        context_window=None,
     )
     agent = Agent(instructions='Reply in a few words.')
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()

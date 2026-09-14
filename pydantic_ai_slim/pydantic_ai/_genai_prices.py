@@ -1,8 +1,9 @@
-"""Best-effort response cost calculation with [genai-prices](https://github.com/pydantic/genai-prices)."""
+"""Shared [genai-prices](https://github.com/pydantic/genai-prices) helpers: best-effort cost calculation, the provider lookup order used for usage extraction, and the context window lookup."""
 
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterator
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -10,11 +11,13 @@ from genai_prices import calc_price
 from genai_prices.data_snapshot import get_snapshot
 
 from ._warnings import CostCalculationFailedWarning
+from .exceptions import UserError
 
 if TYPE_CHECKING:
     from genai_prices.types import PriceCalculation
 
     from .messages import ModelResponse
+    from .models._abstract import AbstractModel
     from .usage import RequestUsage, RunUsage
 
 
@@ -24,6 +27,60 @@ def preload_pricing_data() -> None:
     See https://github.com/pydantic/pydantic-ai/issues/7405.
     """
     get_snapshot()
+
+
+def iter_provider_references(
+    *,
+    provider_api_url: str | None = None,
+    provider_id: str | None = None,
+    provider_fallback: str | None = None,
+) -> Iterator[tuple[str | None, str | None]]:
+    """Yield `(provider_id, provider_api_url)` genai-prices lookup references, most specific first.
+
+    The API URL identifies a provider more precisely than a name (e.g. several providers reselling the
+    same models), so it's tried first, then the provider ID, then the fallback ID; references with
+    nothing to match on are skipped. Shared by `RequestUsage.extract` and `lookup_context_window` so
+    the lookup order is defined once.
+    """
+    for candidate_id, candidate_url in ((None, provider_api_url), (provider_id, None), (provider_fallback, None)):
+        if candidate_id or candidate_url:
+            yield candidate_id, candidate_url
+
+
+def lookup_context_window(
+    model: AbstractModel | str,
+    *,
+    provider_api_url: str | None = None,
+    provider_name: str | None = None,
+) -> int | None:
+    """Look up a model's context window in [genai-prices](https://github.com/pydantic/genai-prices) data.
+
+    Takes a model instance, whose `model_name`, `system`, and `base_url` are matched on, or a model name
+    together with the provider name and/or API URL to match on. Returns the context window recorded for
+    the model under the first provider reference that knows it, or `None` if none does or no context
+    window is recorded.
+    """
+    if isinstance(model, str):
+        model_name = model
+    else:
+        model_name, provider_name = model.model_name, model.system
+        try:
+            provider_api_url = model.base_url
+        except (AttributeError, UserError):
+            # HuggingFace may have no base URL, and Bedrock Mantle resolves its profile inside `__init__`
+            # before the client that `base_url` reads exists; either just means no URL to match on.
+            provider_api_url = None
+    for candidate_id, candidate_url in iter_provider_references(
+        provider_api_url=provider_api_url, provider_id=provider_name
+    ):
+        try:
+            _, model_info = get_snapshot().find_provider_model(
+                model_name, provider=None, provider_id=candidate_id, provider_api_url=candidate_url
+            )
+        except LookupError:
+            continue
+        return model_info.context_window
+    return None
 
 
 def calculate_price_for_usage(

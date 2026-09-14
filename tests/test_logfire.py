@@ -3822,9 +3822,21 @@ def test_instrumentation_capability_serialization() -> None:
     assert cap.settings.version == 2
     assert cap.settings.include_content is False
 
-    # Empty kwargs form: `Instrumentation: {}` in YAML.
+    # Empty kwargs form: `Instrumentation: {}` in YAML, which takes the class-level default id.
     cap_default = Instrumentation.from_spec()
     assert cap_default.settings.version == InstrumentationSettings().version
+    assert cap_default.id == 'instrumentation'
+
+    # The spec deliberately cannot name the capability: an agent has one instrumentation
+    # configuration, and two under different ids would stop resolving to one.
+    with pytest.raises(TypeError, match='id'):
+        Instrumentation.from_spec(id='monitoring')  # pyright: ignore[reportCallIssue]
+
+    # Every serializable setting is expressible, including the one the typed signature first missed.
+    assert (
+        Instrumentation.from_spec(include_model_request_parameters=False).settings.include_model_request_parameters
+        is False
+    )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

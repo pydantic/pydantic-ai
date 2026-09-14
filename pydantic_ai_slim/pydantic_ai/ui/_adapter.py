@@ -547,7 +547,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         run_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if self.manage_system_prompt == 'server':
-            run_capabilities.append(ReinjectSystemPrompt(replace_existing=True))
+            # `id=None` opts this adapter-owned instance out of the fixed default `id`, so it never
+            # occupies the `reinject_system_prompt` slot a user's own reinjector may hold. Keeping the
+            # default here would make a user reinjector supplied for this run a hard duplicate-id
+            # error, and silently supersede an agent-level one. Server mode stays authoritative
+            # either way: this instance always runs, deriving a distinct id when it has to.
+            run_capabilities.append(ReinjectSystemPrompt(replace_existing=True, id=None))
         if capabilities:
             run_capabilities.extend(capabilities)
 

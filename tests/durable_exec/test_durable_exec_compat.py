@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
@@ -57,6 +58,7 @@ from pydantic_ai.durable_exec._toolset import (
     validate_tool_args,
     wrap_tool_call_result,
 )
+from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -560,6 +562,41 @@ def test_model_request_context_projection_payload_golden() -> None:
         },
         'model_id': 'restricted',
         'streaming': False,
+    }
+
+
+@dataclass(kw_only=True)
+class GoldenProgressEvent(CustomEvent, name='golden_progress'):
+    percent: int
+
+
+@dataclass(kw_only=True)
+class GoldenCheckpointEvent(CapabilityEvent, namespace='golden', name='checkpoint'):
+    label: str
+
+
+def test_event_payload_goldens() -> None:
+    """Pin the wire shape of both event families, tag included.
+
+    An event's tag is derived from its class name unless an explicit `name=` overrides it, and it
+    rides Temporal activity history, Prefect cache keys, and the buffered event stream in
+    `GraphAgentState`. Renaming a class would silently change the tag, so the tags below are a
+    compatibility surface rather than an implementation detail.
+    """
+    assert JSON_CODEC.dump(AgentStreamEvent, GoldenProgressEvent(percent=50)) == {
+        'name': 'golden_progress',
+        'tool_call_id': None,
+        'tool_name': None,
+        'event_kind': 'custom',
+        'percent': 50,
+    }
+    assert JSON_CODEC.dump(AgentStreamEvent, GoldenCheckpointEvent(label='start', capability_id='golden')) == {
+        'kind': 'golden.checkpoint',
+        'capability_id': 'golden',
+        'tool_call_id': None,
+        'tool_name': None,
+        'event_kind': 'capability',
+        'label': 'start',
     }
 
 

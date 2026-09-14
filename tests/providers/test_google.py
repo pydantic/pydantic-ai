@@ -63,7 +63,21 @@ def test_google_provider_without_api_key_raises_error(env: TestEnv):
             r" to use the Gemini API\. To try Pydantic AI without an API key, use the built-in test model: `Agent\('test'\)`\."
         ),
     ):
-        GoogleProvider()  # pyright: ignore[reportCallIssue]  # deliberately no api_key, to test the missing-key error
+        GoogleProvider()
+
+
+@pytest.mark.parametrize('api_key_env_var', ['GOOGLE_API_KEY', 'GEMINI_API_KEY'])
+def test_google_provider_api_key_from_env(env: TestEnv, api_key_env_var: str):
+    """The current and legacy environment API keys both authenticate the Gemini API.
+
+    This is a unit test because authentication happens before any request a cassette could record.
+    """
+    for name in {'GOOGLE_API_KEY', 'GEMINI_API_KEY'} - {api_key_env_var}:
+        env.remove(name)
+    env.set(api_key_env_var, 'your-api-key')
+
+    provider = GoogleProvider()
+    assert provider.client._api_client.api_key == 'your-api-key'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_provider_retry_options(env: TestEnv):

@@ -23,6 +23,19 @@ budget before anyone noticed, documented in #6766:
   killed before it could emit anything.
 - `compiler_versions` — a partial `gh aw compile` leaves locks on mixed compiler
   versions, which is how source and lock drift apart unnoticed.
+- `compiled_runner_contract` — every generated agent job must keep the command-line
+  contract required by the Pydantic AI runner shim.
+- `awf_binary_version` — `engine.command` makes gh-aw skip its own AWF install, so
+  `shared/pre-steps.md` re-runs the installer with a hand-written version. #8041 moved
+  gh-aw to a release bundling AWF v0.27.44 without touching that pin, and the v0.27.42
+  binary rejected the v0.27.44 config (`config.apiProxy.providers is not supported`).
+  The agent job died before the model started, on every workflow using the shim.
+- `ai_credits_accounting` — `apiProxy.providers` is the API proxy's AI-credits pricing
+  table, not a reporting field, and AWF caps a run at 10,000 credits with nothing in
+  frontmatter able to lift it. Pricing `MiniMax-M3` there made one ordinary request cost
+  tens of thousands, so every agent job 403'd on its first call.
+- `compiler_version_compatibility` — the compiler version in every generated lock
+  must not appear in gh-aw's live blocked-version policy.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
   `*.lock.yml` in the same change as its `*.md` source. GitHub Actions runs the
   lock, so an un-recompiled source is a silent no-op.
@@ -37,8 +50,10 @@ import argparse
 import json
 import posixpath
 import re
+import shlex
 import subprocess
 import sys
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -89,6 +104,11 @@ JOB_TIMEOUT_HEADROOM_MINS = 2
 # whitespace, backtick, quote and the markdown-link delimiters is enough to end the token
 # wherever a prompt actually writes one.
 SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
+
+# The version argument of the hand-written AWF install step. Both the script path and
+# the version may be quoted, and the capture must not swallow those quotes: a pin that
+# only differs from the compiled version by a pair of them is the same pin.
+AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
@@ -376,6 +396,185 @@ def check_compiler_versions(locks: list[Path]) -> list[Violation]:
     ]
 
 
+def check_compiled_runner_contract(lock: Path) -> list[Violation]:
+    """The generated agent command must retain the interface our runner implements."""
+    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+    agent = _as_mapping(_as_mapping(workflow.get('jobs')).get('agent'))
+    steps = agent.get('steps')
+    commands: list[list[str]] = []
+    for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
+        run = _as_mapping(raw_step).get('run')
+        if not isinstance(run, str) or 'pydantic-ai-runner-launch' not in run:
+            continue
+        with suppress(ValueError):
+            outer_arguments = shlex.split(run)
+            for index, argument in enumerate(outer_arguments[:-1]):
+                if argument != '-c' or 'pydantic-ai-runner-launch' not in outer_arguments[index + 1]:
+                    continue
+                with suppress(ValueError):
+                    inner_arguments = shlex.split(outer_arguments[index + 1])
+                    for runner_index, inner_argument in enumerate(inner_arguments):
+                        if inner_argument.endswith('/pydantic-ai-runner-launch'):
+                            commands.append(inner_arguments[runner_index:])
+    if len(commands) != 1:
+        return [
+            Violation(
+                str(lock),
+                'compiled-runner-contract',
+                'the `agent` job must contain exactly one invocation of '
+                '`pydantic-ai-runner-launch`. The custom runner is the compatibility '
+                'boundary between gh-aw and Pydantic AI.',
+            )
+        ]
+
+    command = commands[0]
+    missing: list[str] = []
+    if '--output-format' not in command or command.index('--output-format') == len(command) - 1:
+        missing.append('`--output-format stream-json`')
+    elif command[command.index('--output-format') + 1] != 'stream-json':
+        missing.append('`--output-format stream-json`')
+    if '--mcp-config' not in command or command.index('--mcp-config') == len(command) - 1:
+        missing.append('`--mcp-config`')
+    if '--allowed-tools' not in command or command.index('--allowed-tools') == len(command) - 1:
+        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
+    elif 'mcp__safeoutputs' not in command[command.index('--allowed-tools') + 1].split(','):
+        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
+    if not missing:
+        return []
+    return [
+        Violation(
+            str(lock),
+            'compiled-runner-contract',
+            f'the generated Pydantic AI runner invocation is missing {", ".join(missing)}. '
+            'Recompiling changed the gh-aw interface that the custom runner implements.',
+        )
+    ]
+
+
+def check_awf_binary_version(lock: Path) -> list[Violation]:
+    """The hand-pinned AWF binary must be the one gh-aw compiled the lock against.
+
+    `GH_AW_INFO_AWF_VERSION` is what gh-aw bundles and what it writes the firewall
+    config against; the install step's argument is maintained by hand because
+    `engine.command` makes gh-aw skip its own install. A gh-aw upgrade moves the
+    first and leaves the second, and the older binary then refuses the newer config.
+
+    A lock that pins a version but declares none also fails: the comparison has lost
+    its reference, and passing there would disarm the check on a gh-aw rename.
+    """
+    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+    pinned: set[str] = set()
+    bundled: set[str] = set()
+    for raw_job in _as_mapping(workflow.get('jobs')).values():
+        steps = _as_mapping(raw_job).get('steps')
+        for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
+            step = _as_mapping(raw_step)
+            run = step.get('run')
+            # `finditer`, not `search`: one `run:` block can invoke the installer more than
+            # once, and the last call is the binary the agent ends up with. Every invocation
+            # has to match, so stopping at the first would let a stale later one through.
+            if isinstance(run, str):
+                pinned.update(match.group(1) for match in AWF_INSTALL_VERSION.finditer(run))
+            version = _as_mapping(step.get('env')).get('GH_AW_INFO_AWF_VERSION')
+            if isinstance(version, str):
+                bundled.add(version)
+
+    # No install step means this lock does not use the shim, so there is no hand-written
+    # pin to drift.
+    if not pinned:
+        return []
+    # A pin with nothing to compare it against is the check losing its reference, not a
+    # pass. Returning empty here would let a gh-aw rename of `GH_AW_INFO_AWF_VERSION`
+    # disarm this check silently, and the next skew would ship green exactly as #8041 did.
+    if not bundled:
+        return [
+            Violation(
+                str(lock),
+                'awf-binary-version',
+                f'the AWF install step pins {", ".join(sorted(pinned))} but the lock declares no '
+                '`GH_AW_INFO_AWF_VERSION` to check it against. gh-aw stopped reporting the AWF '
+                'version it bundles, so this check needs a new source before the pin can be trusted.',
+            )
+        ]
+    unexpected = sorted(pinned - bundled)
+    if not unexpected:
+        return []
+    return [
+        Violation(
+            str(lock),
+            'awf-binary-version',
+            f'the AWF install step pins {", ".join(unexpected)} but gh-aw compiled this lock against '
+            f'{", ".join(sorted(bundled))}. Update the version in the `pre-steps` that re-run '
+            '`install_awf_binary.sh` and recompile; an older binary rejects the newer firewall config.',
+        )
+    ]
+
+
+def check_ai_credits_accounting(lock: Path) -> list[Violation]:
+    """No lock may price a model into the API proxy's AI-credits table.
+
+    `models.providers` in a source compiles to `apiProxy.providers`, which AWF reads as
+    the pricing table for AI-credits accounting rather than as reporting metadata. A
+    priced model gets charged, and AWF caps a run at 10,000 credits — a limit no
+    frontmatter field lifts, since `max-ai-credits` only drops gh-aw's own budget. The
+    weekly spend report reads token counts from each run's artifact, so nothing here
+    needs the overlay.
+    """
+    # The AWF config is a single-line JSON string inside a `printf`, quoted bare in the
+    # agent job and backslash-escaped where it is nested one level deeper. Match the two
+    # keys on the same line so the informational `GH_AW_INFO_MODEL_COSTS` env var, which
+    # carries the same overlay but configures nothing, is not mistaken for the config.
+    if not any(
+        'apiProxy' in line and ('"providers":' in line or '\\"providers\\":' in line)
+        for line in lock.read_text(encoding='utf-8').splitlines()
+    ):
+        return []
+    return [
+        Violation(
+            str(lock),
+            'ai-credits-accounting',
+            "the AWF config carries `apiProxy.providers`, which prices a model into the API proxy's "
+            'AI-credits accounting. AWF then rejects the run at its 10,000-credit cap, which no '
+            'frontmatter field can raise. Drop `models.providers` from the source and recompile.',
+        )
+    ]
+
+
+def check_compiler_version_compatibility(locks: list[Path], compatibility: dict[str, Any]) -> list[Violation]:
+    """Compiled gh-aw versions must not be revoked by the upstream runtime policy."""
+    blocked_raw = compatibility.get('blockedVersions')
+    blocked = _as_strings(blocked_raw)
+    if not isinstance(blocked_raw, list):
+        return [
+            Violation(
+                'gh-aw compatibility policy',
+                'compiler-compatibility-policy-invalid',
+                '`blockedVersions` is missing or is not a list; refusing to pass without '
+                'the policy enforced by gh-aw activation jobs.',
+            )
+        ]
+    violations: list[Violation] = []
+    for lock in locks:
+        first_line = lock.read_text(encoding='utf-8').split('\n', 1)[0]
+        _, _, payload = first_line.partition('gh-aw-metadata: ')
+        if not payload:
+            continue
+        try:
+            version = _as_mapping(json.loads(payload)).get('compiler_version')
+        except json.JSONDecodeError:
+            continue
+        if isinstance(version, str) and version in blocked:
+            violations.append(
+                Violation(
+                    str(lock),
+                    'compiler-version-blocked',
+                    f'compiler version `{version}` is blocked by gh-aw and the activation job will fail. '
+                    'Upgrade gh-aw and recompile every agentic workflow.',
+                )
+            )
+    return violations
+
+
 def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
     """A changed `.md` source (or shared import) must ship its recompiled lock.
 
@@ -449,7 +648,11 @@ def changed_files(base_ref: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line]
 
 
-def run_checks(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = None) -> list[Violation]:
+def run_checks(
+    workflows_dir: Path = WORKFLOWS_DIR,
+    changed: list[str] | None = None,
+    compatibility: dict[str, Any] | None = None,
+) -> list[Violation]:
     """Run every static check; `changed` enables the lock-freshness check."""
     sources = sorted(workflows_dir.glob(AGENTIC_GLOB))
     locks = sorted(workflows_dir.glob('*.lock.yml'))
@@ -465,6 +668,9 @@ def run_checks(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = 
     violations: list[Violation] = []
     for lock in locks:
         violations += check_dangling_needs(lock)
+        violations += check_compiled_runner_contract(lock)
+        violations += check_awf_binary_version(lock)
+        violations += check_ai_credits_accounting(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
@@ -472,6 +678,8 @@ def run_checks(workflows_dir: Path = WORKFLOWS_DIR, changed: list[str] | None = 
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)
+    if compatibility is not None:
+        violations += check_compiler_version_compatibility(locks, compatibility)
     if changed:
         violations += check_lock_regenerated(changed, workflows_dir)
     return violations
@@ -490,6 +698,11 @@ def main(argv: list[str] | None = None) -> int:
             'checkout is shallow and a `git diff` range cannot resolve: feed it `gh pr view --json files`.'
         ),
     )
+    parser.add_argument(
+        '--compatibility-file',
+        type=Path,
+        help='gh-aw compatibility policy downloaded from `.github/aw/compat.json` in github/gh-aw',
+    )
     args = parser.parse_args(argv)
 
     if args.changed_file_list:
@@ -503,7 +716,15 @@ def main(argv: list[str] | None = None) -> int:
     else:
         changed = None
 
-    violations = run_checks(changed=changed)
+    if args.compatibility_file is None:
+        violations = run_checks(changed=changed)
+    else:
+        try:
+            compatibility = _as_mapping(json.loads(args.compatibility_file.read_text(encoding='utf-8')))
+        except (OSError, json.JSONDecodeError) as error:
+            print(f'{args.compatibility_file}: [compiler-compatibility-policy-invalid] {error}', file=sys.stderr)
+            return 1
+        violations = run_checks(changed=changed, compatibility=compatibility)
     for violation in violations:
         print(violation, file=sys.stderr)
     if violations:

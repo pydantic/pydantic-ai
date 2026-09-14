@@ -1,0 +1,68 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '205'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-5
+      moderation:
+        model: omni-moderation-latest
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-EJiHvYdVHtPY1spREeUfkCzVfEk3k","object":"chat.completion.chunk","created":1788367183,"model":"gpt-5-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"iRZXPKAUXC"}
+
+        data: {"id":"chatcmpl-EJiHvYdVHtPY1spREeUfkCzVfEk3k","object":"chat.completion.chunk","created":1788367183,"model":"gpt-5-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"Paris"},"finish_reason":null}],"usage":null,"obfuscation":"sFSikSO"}
+
+        data: {"id":"chatcmpl-EJiHvYdVHtPY1spREeUfkCzVfEk3k","object":"chat.completion.chunk","created":1788367183,"model":"gpt-5-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"."},"finish_reason":null}],"usage":null,"obfuscation":"2RZa0hYXRcP"}
+
+        data: {"id":"chatcmpl-EJiHvYdVHtPY1spREeUfkCzVfEk3k","object":"chat.completion.chunk","created":1788367183,"model":"gpt-5-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null,"obfuscation":"PgCdRv"}
+
+        data: {"id":"chatcmpl-EJiHvYdVHtPY1spREeUfkCzVfEk3k","object":"chat.completion.chunk","created":1788367183,"model":"gpt-5-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":13,"completion_tokens":11,"total_tokens":24,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"hA2rW19YMhM"}
+
+        data: {"id":"chatcmpl-EJiHvYdVHtPY1spREeUfkCzVfEk3k","object":"chat.completion.chunk","created":1788367183,"model":"gpt-5-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[],"moderation":{"input":{"type":"moderation_results","model":"omni-moderation-latest","results":[{"type":"moderation_result","model":"omni-moderation-latest","flagged":false,"categories":{"harassment":false,"harassment/threatening":false,"sexual":false,"hate":false,"hate/threatening":false,"illicit":false,"illicit/violent":false,"self-harm/intent":false,"self-harm/instructions":false,"self-harm":false,"sexual/minors":false,"violence":false,"violence/graphic":false},"category_scores":{"harassment":0.000015598027633743823,"harassment/threatening":2.1444948420913954e-6,"sexual":9.516251694168764e-7,"hate":0.000027803096387751555,"hate/threatening":1.0289513485400628e-6,"illicit":0.005282783283797828,"illicit/violent":0.000034062932773341,"self-harm/intent":2.5466403947055455e-6,"self-harm/instructions":5.955139348629957e-7,"self-harm":2.4682904407607285e-6,"sexual/minors":1.9333584585546466e-7,"violence":6.922183404468203e-6,"violence/graphic":7.889262586245034e-7},"category_applied_input_types":{"harassment":["text"],"harassment/threatening":["text"],"sexual":["text"],"hate":["text"],"hate/threatening":["text"],"illicit":["text"],"illicit/violent":["text"],"self-harm/intent":["text"],"self-harm/instructions":["text"],"self-harm":["text"],"sexual/minors":["text"],"violence":["text"],"violence/graphic":["text"]}}]},"output":{"type":"moderation_results","model":"omni-moderation-latest","results":[{"type":"moderation_result","model":"omni-moderation-latest","flagged":false,"categories":{"harassment":false,"harassment/threatening":false,"sexual":false,"hate":false,"hate/threatening":false,"illicit":false,"illicit/violent":false,"self-harm/intent":false,"self-harm/instructions":false,"self-harm":false,"sexual/minors":false,"violence":false,"violence/graphic":false},"category_scores":{"harassment":0.00009697519677825862,"harassment/threatening":4.53978687024344e-6,"sexual":4.53978687024344e-6,"hate":0.00003740956047302422,"hate/threatening":3.288749065460498e-7,"illicit":0.000010554685795431098,"illicit/violent":4.400118457925303e-6,"self-harm/intent":1.670142184809518e-6,"self-harm/instructions":8.139692624947503e-7,"self-harm":5.8748422865163195e-6,"sexual/minors":2.72647027069593e-7,"violence":0.000016346470245419304,"violence/graphic":2.2827997192887966e-6},"category_applied_input_types":{"harassment":["text"],"harassment/threatening":["text"],"sexual":["text"],"hate":["text"],"hate/threatening":["text"],"illicit":["text"],"illicit/violent":["text"],"self-harm/intent":["text"],"self-harm/instructions":["text"],"self-harm":["text"],"sexual/minors":["text"],"violence":["text"],"violence/graphic":["text"]}}]}},"usage":null,"obfuscation":"6LGhWk1Vt67"}
+
+        data: [DONE]
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '897'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

@@ -101,7 +101,8 @@ def serialization_user_error(error: PydanticSerializationError) -> UserError:
         f'A value passed to a Temporal activity failed to be serialized ({error}). '
         "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
         '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
-        '`tool_call_metadata`, and tool `metadata`.'
+        '`tool_call_metadata`, tool `metadata`, and the payload fields of any emitted `CustomEvent` or '
+        '`CapabilityEvent`, which ride the event stream handler activity.'
     )
 
 
@@ -399,19 +400,19 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         base_config = self._toolset_operation_config('function', toolset_id)
         config = resolve_tool_activity_config(cast(ToolsetTool[Any] | None, tool), name, {})
         if config is False:
-            from pydantic_ai.mcp import MCPToolset
-
-            if (
-                isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId))
-                and operation_id.toolset_kind == 'dynamic'
-            ):
+            # The tool-kind checks read `operation_id.toolset_kind` rather than the type of `tool.toolset`: the
+            # toolset that provided the tool is not always the durable leaf (wrappers like `PrefixedToolset` rewrite
+            # `ToolsetTool.toolset`), and reading the kind here keeps the optional `mcp` import out of this path
+            # entirely, so opting a plain tool out of activities works without the `mcp` extra (#8249).
+            is_tool_operation = isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId))
+            if is_tool_operation and operation_id.toolset_kind == 'dynamic':
                 raise UserError(
                     f'Temporal activity config for dynamic toolset tool {name!r} has been explicitly set to `False` '
                     '(activity disabled), but dynamic-toolset tools cannot run inside the workflow: resolving the '
                     'toolset and calling the tool may perform I/O. Remove the opt-out, or move the tool to a static '
                     '`FunctionToolset` (async tools there may opt out of activities).'
                 )
-            if isinstance(cast(ToolsetTool[Any], tool).toolset, MCPToolset):
+            if is_tool_operation and operation_id.toolset_kind == 'mcp':
                 raise UserError(
                     f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
                     'but MCP tools require the use of IO and so cannot be run outside of an activity.'

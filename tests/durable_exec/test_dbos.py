@@ -24,6 +24,8 @@ from pydantic_ai import (
     Agent,
     AgentStreamEvent,
     CancellationToken,
+    CapabilityEvent,
+    CustomEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -933,7 +935,10 @@ async def test_mcp_toolset_without_id():
         UserError,
         match=re.escape(
             'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
-            "The ID will be used to identify the MCP server's steps within the workflow."
+            "The ID will be used to identify the MCP server's steps within the workflow. "
+            'Set it on the toolset itself with `MCPToolset(..., id=...)`, or, when the toolset '
+            "is contributed by a capability, set the capability's `id` "
+            "(for example, `MCP(url='...', id='...')`)."
         ),
     ):
         DBOSAgent(Agent(model=model, name='test_agent', toolsets=[MCPToolset('https://example.com/mcp')]))  # pyright: ignore[reportDeprecated]
@@ -975,27 +980,24 @@ async def test_capability_contributed_toolset_id_from_capability():
 
 
 async def test_capability_contributed_toolsets_with_colliding_derived_id():
-    """Two genuinely different MCP servers whose URLs derive the same id would silently collide on the
-    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools).
+    """Two genuinely different MCP servers whose URLs derive the same id are rejected by `Agent`.
 
-    Both `MCP(url=...)` capabilities leave `cap.id=None` (so the agent-level capability-id uniqueness
-    check passes), yet both derive `a.com-api` from their URLs' host + last path segment.
+    Both would key their steps on `a.com-api` under DBOS, the second server returning the first's
+    cached tools. DBOS used to be what caught it, because `MCP(url=...)` left the capability
+    anonymous and only its toolset carried the derived id, so the agent-level capability-id
+    uniqueness check had nothing to compare. Now the capability takes the same derived id, and a
+    plain `Agent` rejects the pair before any engine is involved -- so the same mistake is reported
+    the same way with or without durable execution.
 
-    A plain `Agent` lets this through: it only rejects a shared id where the id has to become an
-    instruction key, and neither server has been connected to, so neither has contributed a block.
-    DBOS needs more — the id keys each server's step names whether or not it says anything to the
-    model — so its own leaf walk is what reports this, naming the toolset to change.
+    DBOS keeps its own leaf walk for collisions that never reach a capability id, such as two
+    toolsets passed directly to `toolsets=`; `test_nested_toolsets_with_colliding_id` covers that.
 
     This isn't a VCR test: the collision is rejected during local construction, before any model or
     MCP request, so there's no network round-trip to record.
     """
     with pytest.raises(
-        UserError,
         match=re.escape(
-            'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
-            "but more than one leaf toolset uses the id 'a.com-api'. "
-            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
-            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+            "Capability id 'a.com-api' is used by multiple capabilities. Ids identify one capability within a run, so give each a distinct `id`."
         ),
     ):
         DBOSAgent(  # pyright: ignore[reportDeprecated]
@@ -1409,10 +1411,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS
     with workflow_raises(
         UserError,
         snapshot(
-            "MCPToolset 'runtime_mcp' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
-            'execute their own tools or resolve dynamically must be registered for durable execution when the '
-            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
-            '`ExternalToolset` can be passed at runtime.'
+            "MCPToolset 'runtime_mcp' cannot be added at runtime with DBOS, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime."
         ),
     ):
         await simple_dbos_agent.run(
@@ -1425,10 +1424,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
     with workflow_raises(
         UserError,
         snapshot(
-            "DynamicToolset 'runtime_dynamic' cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that "
-            'execute their own tools or resolve dynamically must be registered for durable execution when the '
-            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
-            '`ExternalToolset` can be passed at runtime.'
+            "DynamicToolset 'runtime_dynamic' cannot be added at runtime with DBOS, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime."
         ),
     ):
         await simple_dbos_agent.run(
@@ -2709,6 +2705,91 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
         await run_workflow()
 
     await agent.run('run')
+
+
+@dataclass(kw_only=True)
+class DBOSCheckpointEvent(CapabilityEvent, namespace='dbos_test', name='checkpoint'):
+    label: str
+
+
+@dataclass(kw_only=True)
+class DBOSStepProgressEvent(CustomEvent, name='dbos_step_progress'):
+    label: str
+
+
+async def test_dbos_workflow_level_emit_reaches_durable_handler(dbos: DBOS) -> None:
+    """A capability event emitted at workflow level reaches the durability handler's own step."""
+    seen: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSCheckpointEvent):
+                seen.append(event.label)
+
+    class EmittingCapability(AbstractCapability[object]):
+        id = 'dbos_emitter'
+
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            await ctx.emit(DBOSCheckpointEvent(label='start'))
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_workflow_emit',
+        capabilities=[EmittingCapability(), DBOSDurability[object](event_stream_handler=handler)],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+
+    assert seen == ['start']
+
+
+async def test_dbos_step_emit_is_allowed(dbos: DBOS) -> None:
+    """`ctx.emit()` from inside a step is allowed, unlike `ctx.enqueue()`.
+
+    Enqueueing is rejected because a replayed step drops the message and changes what the model
+    sees; an emitted event only notifies observers, so it's a side effect of running the step, like
+    a log line. That costs re-delivery on recovery, which replays the step's recorded output without
+    re-running the body -- pinned for the equivalent Prefect cache hit in
+    `test_prefect_task_wrapped_tool_emit_is_not_replayed`, since a real DBOS recovery would need the
+    process killed mid-workflow.
+    """
+    observed: list[str] = []
+
+    @DBOS.step()
+    async def record(label: str) -> str:
+        ctx = get_current_run_context()
+        assert ctx is not None
+        await ctx.emit(DBOSStepProgressEvent(label=label))
+        return 'done'
+
+    async def emitter() -> str:
+        return await record('one')
+
+    async def observe(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, DBOSStepProgressEvent):
+                observed.append(event.label)
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_step_emit',
+        tools=[emitter],
+        capabilities=[ProcessEventStream(observe), DBOSDurability[object]()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    await run_workflow()
+
+    assert observed == ['one']
 
 
 async def test_dbos_non_streaming_model_request_rejects_enqueue(dbos: DBOS) -> None:
@@ -4136,9 +4217,7 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
             toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp')],
         )
 
-    with pytest.raises(
-        UserError, match=r"MCPToolset 'runtime_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
-    ):
+    with pytest.raises(UserError, match=r"MCPToolset 'runtime_mcp' cannot be added at runtime with DBOS"):
         await run_agent()
 
 
@@ -4152,7 +4231,7 @@ def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> Non
 
     with pytest.raises(
         UserError,
-        match=r"DynamicToolset 'runtime_dynamic' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS",
+        match=r"DynamicToolset 'runtime_dynamic' cannot be added at runtime with DBOS",
     ):
         run_agent()
 
@@ -4174,15 +4253,12 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset_in_iter(dbos: DBOS) -
             # Run setup raises before any node runs.
             pass  # pragma: no cover
 
-    with pytest.raises(
-        UserError, match=r"MCPToolset 'iter_mcp' cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS"
-    ):
+    with pytest.raises(UserError, match=r"MCPToolset 'iter_mcp' cannot be added at runtime with DBOS"):
         await run_agent()
 
 
 def _per_run_dynamic_factory(ctx: RunContext[Any]) -> FunctionToolset[Any]:
-    # Rejected before the factory is resolved.
-    return FunctionToolset()  # pragma: no cover
+    return FunctionToolset()
 
 
 async def test_dbos_durability_rejects_per_run_capabilities(dbos: DBOS) -> None:
@@ -4223,6 +4299,69 @@ async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_outside', capabilities=[DBOSDurability()])
     result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
     assert result.output == snapshot('Echo: Hello')
+
+
+@pytest.mark.parametrize('kind', ['mcp', 'dynamic'])
+async def test_dbos_durability_rejects_overridden_executing_toolsets(dbos: DBOS, kind: str) -> None:
+    toolsets = {
+        'mcp': MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='override_mcp'),
+        'dynamic': DynamicToolset(_per_run_dynamic_factory, id='override_dynamic'),
+    }
+    agent = Agent(_durability_fn_model, name=f'durability_override_{kind}', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        with agent.override(toolsets=[toolsets[kind]]):
+            await agent.run('Hello')
+
+    with pytest.raises(UserError, match=r'cannot be added at runtime .*`override'):
+        await run_agent()
+
+
+async def test_dbos_durability_allows_overridden_function_toolset(dbos: DBOS) -> None:
+    calls: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('override_tool', {}, tool_call_id='call-1')])
+
+    def override_tool() -> str:
+        calls.append('override_tool')
+        return 'ok'
+
+    agent = Agent(FunctionModel(model_fn), name='durability_override_function', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        with agent.override(toolsets=[FunctionToolset([override_tool], id='override_fn')]):
+            return (await agent.run('Hello')).output
+
+    assert await run_agent() == 'done'
+    assert calls == ['override_tool']
+
+
+async def test_dbos_durability_rejects_runtime_toolset_reusing_registered_id(dbos: DBOS) -> None:
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_runtime_id_collision',
+        toolsets=[DynamicToolset(_per_run_dynamic_factory, id='shared')],
+        capabilities=[DBOSDurability()],
+    )
+    colliding = FunctionToolset[Any](id='shared')
+    message = "A toolset added at run time has the same `id` 'shared' as one the agent was constructed with"
+
+    @DBOS.workflow()
+    async def run_with_override() -> None:
+        with agent.override(toolsets=[colliding]):
+            await agent.run('Hello')
+
+    with pytest.raises(UserError, match=message):
+        await run_with_override()
+
+    # Outside a workflow the capability is transparent: there is no durable unit to dispatch to, so
+    # the toolset that actually arrived is used as-is rather than the run being rejected.
+    assert await agent.run('Hello', toolsets=[colliding]) is not None
 
 
 async def test_dbos_durability_rejects_duplicate_toolset_id(dbos: DBOS) -> None:

@@ -264,6 +264,7 @@ async def test_connection_send_tool_result_image_raises_with_nothing_sent() -> N
 # --- capabilities --------------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures('no_genai_prices_context_window')
 def test_profile() -> None:
     """xAI supports cancellation-based interruption but not output truncation, and no image input."""
     assert _model().profile == RealtimeModelProfile(
@@ -283,6 +284,7 @@ def test_profile() -> None:
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
+        context_window=None,
     )
 
 
@@ -1014,6 +1016,7 @@ def test_non_xai_provider_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(UserError, match='requires an `XaiProvider`'):
         XaiRealtimeModel('grok-voice-latest', provider='openai')
     with pytest.raises(UserError, match='requires an `XaiProvider`'):
+        # Deliberately a foreign provider, so the cast is what lets the runtime guard be exercised.
         XaiRealtimeModel('grok-voice-latest', provider=cast('Any', OpenAIProvider(api_key='x')))
 
 

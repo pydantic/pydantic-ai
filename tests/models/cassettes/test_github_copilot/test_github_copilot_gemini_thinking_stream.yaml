@@ -1,0 +1,63 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '265'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: Factor 3599 into two primes, then show only their sum.
+        role: user
+      model: gemini-3.8-flash
+      reasoning_effort: medium
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"choices":[{"index":0,"delta":{"content":null,"role":"assistant","reasoning_text":"**Factoring N**\n\nI've identified the target number, $N = 3599$. My current focus is on a factorization trick, recognizing its proximity to $3600 = 60^2$. This allows me to express $3599$ as a difference of squares: $60^2 - 1^2$.\n\n"}}],"created":1788896390,"id":"hGSgarLAAs26lcIPuc2k8A4","usage":{"completion_tokens":0,"prompt_tokens":0,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":0},"model":"gemini-3.8-flash","copilot_usage":{"token_details":[{"batch_size":1000000,"cost_per_batch":75000000000,"model":"gemini-3.8-flash","token_count":0,"token_type":"input"},{"batch_size":1000000,"cost_per_batch":7500000000,"model":"gemini-3.8-flash","token_count":0,"token_type":"cache_read"},{"batch_size":1000000,"cost_per_batch":0,"model":"gemini-3.8-flash","token_count":0,"token_type":"cache_write"},{"batch_size":1000000,"cost_per_batch":375000000000,"model":"gemini-3.8-flash","token_count":0,"token_type":"output"}],"total_nano_aiu":0}}
+
+        data: {"choices":[{"index":0,"delta":{"content":"120","role":"assistant"}}],"created":1788896390,"id":"hGSgarLAAs26lcIPuc2k8A4","usage":{"completion_tokens":0,"prompt_tokens":0,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":0},"model":"gemini-3.8-flash","copilot_usage":{"token_details":[{"batch_size":1000000,"cost_per_batch":75000000000,"model":"gemini-3.8-flash","token_count":0,"token_type":"input"},{"batch_size":1000000,"cost_per_batch":7500000000,"model":"gemini-3.8-flash","token_count":0,"token_type":"cache_read"},{"batch_size":1000000,"cost_per_batch":0,"model":"gemini-3.8-flash","token_count":0,"token_type":"cache_write"},{"batch_size":1000000,"cost_per_batch":375000000000,"model":"gemini-3.8-flash","token_count":0,"token_type":"output"}],"total_nano_aiu":0}}
+
+        data: {"choices":[{"finish_reason":"stop","index":0,"delta":{"content":null,"role":"assistant"}}],"created":1788896390,"id":"hGSgarLAAs26lcIPuc2k8A4","usage":{"completion_tokens":3,"prompt_tokens":19,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":221,"reasoning_tokens":199},"model":"gemini-3.8-flash","copilot_usage":{"token_details":[{"batch_size":1000000,"cost_per_batch":75000000000,"model":"gemini-3.8-flash","token_count":19,"token_type":"input"},{"batch_size":1000000,"cost_per_batch":7500000000,"model":"gemini-3.8-flash","token_count":0,"token_type":"cache_read"},{"batch_size":1000000,"cost_per_batch":0,"model":"gemini-3.8-flash","token_count":0,"token_type":"cache_write"},{"batch_size":1000000,"cost_per_batch":375000000000,"model":"gemini-3.8-flash","token_count":3,"token_type":"output"}],"total_nano_aiu":2550000}}
+
+        data: [DONE]
+
+    headers:
+      cache-control:
+      - no-cache
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/event-stream
+      strict-transport-security:
+      - max-age=31536000
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

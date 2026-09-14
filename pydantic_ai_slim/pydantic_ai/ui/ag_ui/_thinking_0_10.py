@@ -1,5 +1,5 @@
 # pyright: reportPrivateUsage=false
-"""Thinking event handlers for AG-UI protocol < 0.1.13 (THINKING_* events).
+"""Thinking event handlers for AG-UI protocol < 0.1.11 (THINKING_* events).
 
 These are extracted class methods of `AGUIEventStream` — the `self` parameter
 is the event stream instance, and access to its private fields is intentional.
