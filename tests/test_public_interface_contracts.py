@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import sys
 import textwrap
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -110,7 +109,7 @@ def test_new_public_dataclasses_are_keyword_only():
     The walk runs in a worker thread with coverage disabled while importing optional modules. See
     `kw_only_walker.py` for why.
     """
-    with ThreadPoolExecutor(max_workers=1, initializer=lambda: sys.settrace(None)) as executor:
+    with ThreadPoolExecutor(max_workers=1) as executor:
         result = executor.submit(collect_public_dataclasses).result()
 
     offenders = set(result['offenders'])

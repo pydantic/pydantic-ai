@@ -14,6 +14,7 @@ import dataclasses
 import importlib
 import inspect
 import pkgutil
+import sys
 
 import pydantic_ai
 from pydantic_ai.models import StreamedResponse
@@ -42,6 +43,8 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
 
 
 def collect_public_dataclasses() -> dict[str, list[str]]:
+    sys.settrace(None)
+
     offenders: set[str] = set()
     skipped: list[str] = []
     unreadable: list[str] = []
