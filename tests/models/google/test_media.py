@@ -35,7 +35,7 @@ from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import ContentDict, Part, ToolCall
+    from google.genai.types import ContentDict, PartMediaResolution, ToolCall
 
     from pydantic_ai.models.google import (
         GoogleModel,
@@ -323,7 +323,9 @@ async def test_media_processing_composes_with_media_resolution(
             }
         ]
     )
-    Part.model_validate(content[0])
+    media_resolution = content[0].get('media_resolution')
+    assert media_resolution is not None
+    PartMediaResolution.model_validate(media_resolution)
 
 
 @pytest.mark.parametrize(
