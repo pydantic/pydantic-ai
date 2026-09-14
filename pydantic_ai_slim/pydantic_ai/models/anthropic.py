@@ -2208,10 +2208,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             elif isinstance(item, str):  # pragma: no branch
                                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
+                        if not tool_result_content and not request_part.files:
+                            content_param = request_part.model_response_str(wrap_if_error=False)
+                        else:
+                            content_param = tool_result_content or ''
+
                         tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
                             type='tool_result',
-                            content=tool_result_content or '',
+                            content=content_param,
                             is_error=request_part.outcome == 'failed',
                         )
                         user_content_params.append(tool_result_block_param)

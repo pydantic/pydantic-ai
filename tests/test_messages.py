@@ -2312,6 +2312,11 @@ def test_tool_return_part_response_methods_with_files():
     assert p_file_only.model_response_str() == snapshot('')
     assert p_file_only.model_response_object() == snapshot({})
 
+    p_empty = ToolReturnPart(tool_name='t', content=[], tool_call_id='c6')
+    assert p_empty.model_response_str() == '[]'
+    assert p_empty.model_response_object() == {'return_value': []}
+    assert p_empty.structured_content() == []
+
     p_multi = ToolReturnPart(tool_name='t', content=['a', 'b', img], tool_call_id='c5')
     assert p_multi.model_response_str() == snapshot('["a","b"]')
     assert p_multi.model_response_object() == snapshot({'return_value': ['a', 'b']})
