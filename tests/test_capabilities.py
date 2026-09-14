@@ -2599,6 +2599,9 @@ async def test_wrapper_capability_delegates_hooks():
             hook_calls.append('after_run')
             return result
 
+        def _after_run_finalized(self, ctx: RunContext, *, result: AgentRunResult[Any]) -> None:
+            hook_calls.append('after_run_finalized')
+
     wrapper = WrapperCapability(wrapped=HookCap())
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2607,8 +2610,7 @@ async def test_wrapper_capability_delegates_hooks():
     agent = Agent(FunctionModel(respond), capabilities=[wrapper])
     await agent.run('Hello')
 
-    assert 'before_run' in hook_calls
-    assert 'after_run' in hook_calls
+    assert hook_calls == ['before_run', 'after_run', 'after_run_finalized']
 
 
 def test_wrapper_capability_for_agent_replaces():

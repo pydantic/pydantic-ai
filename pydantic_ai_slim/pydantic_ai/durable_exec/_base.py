@@ -147,7 +147,7 @@ class _RestrictedRunContext(Protocol):
     def _expose_field(self, name: str) -> None: ...
 
 
-_MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
+MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
 
 class _BoundModelOperations(NamedTuple):
@@ -626,6 +626,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         return self._event_stream_handler
 
+    def _model_stream_event_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """The handler that consumes the live model stream inside a model-request unit.
+
+        Defaults to the run's event stream handler, which is the only handler most engines have.
+        Temporal overrides it to wrap that handler in one that also publishes the live model events
+        to a Workflow Stream topic: publishing has to happen inside the activity to reach the caller
+        while the model is still streaming, whereas the run's workflow-side events are published from
+        workflow code and must not go through this handler as well.
+        """
+        return self._effective_event_stream_handler()
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
         return self._effective_event_stream_handler() is not None
@@ -649,7 +660,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 # `ModelResponseStreamEvent`s were already delivered live to the handler inside the
                 # model-request boundary; workflow-side they're the replay, so only `HandleResponseEvent`s
                 # are dispatched to the handler here.
-                if dispatch_events and not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                if dispatch_events and not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES):
                     await self._dispatch_event_stream_event(ctx, event)
                 yield event
         finally:
@@ -1458,7 +1469,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 events = await capture_event_stream(
                     run_context=durable_ctx,
                     stream=streamed,
-                    handler=self._effective_event_stream_handler(),
+                    handler=self._model_stream_event_handler(),
                 )
         response = streamed.get()
         self._stamp_response(response, params.messages)

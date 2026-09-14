@@ -721,6 +721,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return result
 
+    def _after_run_finalized(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> None:
+        """Observe a result after all success-path finalizers have accepted it.
+
+        Internal, in-tree only. Unlike `after_run`, this hook cannot modify the result and is not
+        called until pending cancellation and run-specific finalizers have accepted it.
+        """
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
