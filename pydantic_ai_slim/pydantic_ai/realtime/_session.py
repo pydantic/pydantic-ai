@@ -1175,7 +1175,6 @@ class RealtimeSession:
             messages=self.all_messages(),
             usage=self.usage,
             **({'conversation_id': self._conversation_id} if self._conversation_id is not None else {}),
-            metadata=self._metadata,
         )
 
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:

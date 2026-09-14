@@ -7571,7 +7571,6 @@ def test_session_conversation_bundles_what_a_text_run_needs() -> None:
         message_history=history,
         usage=RunUsage(requests=2, input_tokens=30),
         conversation_id='conv-1',
-        metadata={'tenant': 'acme'},
     )
 
     conversation = session.conversation
@@ -7580,7 +7579,6 @@ def test_session_conversation_bundles_what_a_text_run_needs() -> None:
     assert conversation.usage.requests == 2
     assert conversation.usage.input_tokens == 30
     assert conversation.conversation_id == 'conv-1'
-    assert conversation.metadata == {'tenant': 'acme'}
 
 
 def test_session_conversation_mints_an_id_when_the_session_has_none() -> None:

@@ -4,7 +4,6 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from dataclasses import KW_ONLY
-from typing import Any
 
 from . import messages as _messages, usage as _usage
 from ._uuid import uuid7
@@ -16,14 +15,14 @@ __all__ = ('Conversation',)
 class Conversation:
     """Everything a conversation carries between runs, in one object.
 
-    `Agent.run` and a realtime session each already accept these four values, one argument at a
+    `Agent.run` and a realtime session each already accept these three values, one argument at a
     time. Keeping them together is what makes a conversation portable: a run's
     [`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation] can seed a
     realtime session, and that session's `conversation` can seed the next text run, without the
     caller remembering which pieces travel.
 
     [`messages`][pydantic_ai.conversation.Conversation.messages] alone is often enough, and
-    `message_history=` stays the way to pass just those. The other three are the ones quietly lost
+    `message_history=` stays the way to pass just those. The other two are the ones quietly lost
     when a conversation is reassembled by hand — most consequentially
     [`usage`][pydantic_ai.conversation.Conversation.usage], since a conversation that doesn't carry
     it starts every turn's [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget over from zero.
@@ -49,6 +48,3 @@ class Conversation:
 
     conversation_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     """The identifier every run in this conversation shares, and the key to store it under."""
-
-    metadata: dict[str, Any] | None = None
-    """Application metadata to attach to each run in this conversation."""

@@ -846,15 +846,14 @@ class AgentRunResult(Generic[OutputDataT]):
     def conversation(self) -> Conversation:
         """This run's [`Conversation`][pydantic_ai.conversation.Conversation], ready to carry into the next one.
 
-        Bundles the messages, usage, conversation ID and metadata that a following run — text,
-        streamed, or realtime — needs, so none of them is dropped on the way. The messages are a
+        Bundles the messages, usage and conversation ID that a following run — text, streamed, or
+        realtime — needs, so none of them is dropped on the way. The messages are a
         copy, so the returned conversation can be stored and mutated without touching this result.
         """
         return Conversation(
             messages=list(self.all_messages()),
             usage=self.usage,
             conversation_id=self.conversation_id,
-            metadata=self.metadata,
         )
 
     @property

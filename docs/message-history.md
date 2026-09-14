@@ -466,14 +466,13 @@ Each sanitization can be turned off individually when the corresponding parts we
 
 ### Carrying a conversation whole
 
-A history is not quite everything a conversation carries. [`usage`][pydantic_ai.usage.RunUsage], the
-[`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) and any `metadata` travel alongside it,
-each passed to the next run as its own argument — so a conversation reassembled by hand tends to lose them one
-at a time. Losing `usage` is the one that bites: pass `message_history` without it and every turn's
+A history is not quite everything a conversation carries. [`usage`][pydantic_ai.usage.RunUsage] and the
+[`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) travel alongside it, each passed to the
+next run as its own argument — so a conversation reassembled by hand tends to lose them one at a time. Losing `usage` is the one that bites: pass `message_history` without it and every turn's
 [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget starts over from zero, so a cap set across the
 conversation is never reached.
 
-[`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation] bundles all four as a
+[`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation] bundles all three as a
 [`Conversation`][pydantic_ai.conversation.Conversation], which serializes like any other Pydantic value, so the
 whole thing can be stored under one key and handed back intact:
 
