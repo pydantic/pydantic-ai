@@ -153,6 +153,11 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__capability__compat__operation',
 }
 
+TEMPORAL_CHILD_WORKFLOW_NAMES = {
+    'agent__compat__toolset__<agent>__call_tool__child_workflow',
+    'agent__compat__toolset__functions__call_tool__child_workflow',
+}
+
 DBOS_OPERATION_NAMES = {
     'compat__model.request',
     'compat__model.request_stream',
@@ -401,6 +406,15 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         for item in durability.temporal_activities
     }
     assert names == TEMPORAL_ACTIVITY_NAMES
+
+    from temporalio.workflow import _Definition as WorkflowDefinition
+
+    workflow_names = {
+        WorkflowDefinition.must_from_class(item).name
+        for item in durability.temporal_registrations
+        if isinstance(item, type)
+    }
+    assert workflow_names == TEMPORAL_CHILD_WORKFLOW_NAMES
 
 
 @pytest.mark.parametrize(
