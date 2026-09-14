@@ -21,6 +21,7 @@ from .concurrency import (
     ConcurrencyLimit,
     ConcurrencyLimiter,
 )
+from .conversation import Conversation
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -403,5 +404,6 @@ __all__ = (
     'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'Conversation',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

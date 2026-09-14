@@ -24,6 +24,7 @@ from . import (
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import CustomEventT
+from .conversation import Conversation
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -840,6 +841,21 @@ class AgentRunResult(Generic[OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    @property
+    def conversation(self) -> Conversation:
+        """This run's [`Conversation`][pydantic_ai.conversation.Conversation], ready to carry into the next one.
+
+        Bundles the messages, usage, conversation ID and metadata that a following run — text,
+        streamed, or realtime — needs, so none of them is dropped on the way. The messages are a
+        copy, so the returned conversation can be stored and mutated without touching this result.
+        """
+        return Conversation(
+            messages=list(self.all_messages()),
+            usage=self.usage,
+            conversation_id=self.conversation_id,
+            metadata=self.metadata,
+        )
 
     @property
     def timestamp(self) -> datetime:
