@@ -87,7 +87,8 @@ class SambaNovaProvider(_OpenAICompatibleProvider):
 
         Args:
             api_key: SambaNova API key. If not provided, reads from SAMBANOVA_API_KEY env var.
-            base_url: Custom API base URL. Defaults to https://api.sambanova.ai/v1
+            base_url: Custom API base URL. If not provided, reads from the SAMBANOVA_BASE_URL
+                env var, then defaults to https://api.sambanova.ai/v1
             openai_client: Optional pre-configured OpenAI client
             http_client: Optional custom `httpx2.AsyncClient` or legacy `httpx.AsyncClient` for making HTTP requests.
 
