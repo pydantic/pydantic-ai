@@ -4009,10 +4009,12 @@ def test_openai_preserves_unmatched_hosted_tool_search_output(call_id: str | Non
     assert return_part.tool_call_id == (call_id or 'tso_a')
 
 
-async def test_openai_pairs_multiple_null_id_hosted_tool_search_items_in_order() -> None:
-    """Hosted searches without call IDs pair in provider order."""
+@pytest.mark.parametrize('first_output_call_id', [None, 'ts_a'], ids=['anonymous', 'mixed-ids'])
+async def test_openai_pairs_multiple_hosted_tool_search_items_in_order(first_output_call_id: str | None) -> None:
+    """Hosted searches pair in provider order when output call IDs are absent or mixed."""
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
     calls, outputs = _openai_hosted_tool_search_items()
+    outputs[0] = outputs[0].model_copy(update={'call_id': first_output_call_id})
 
     response = model._process_response(  # pyright: ignore[reportPrivateUsage]
         response_message([calls[0], outputs[0], calls[1], outputs[1]]),
@@ -4031,7 +4033,7 @@ async def test_openai_pairs_multiple_null_id_hosted_tool_search_items_in_order()
     )
     assert [(item.get('type'), item.get('id'), item.get('call_id')) for item in replayed_items] == [
         ('tool_search_call', 'ts_a', None),
-        ('tool_search_output', 'tso_a', None),
+        ('tool_search_output', 'tso_a', first_output_call_id),
         ('tool_search_call', 'ts_b', None),
         ('tool_search_output', 'tso_b', None),
     ]
@@ -4085,13 +4087,16 @@ async def test_openai_streaming_ignores_client_tool_search_output(allow_model_re
     assert streamed_response.get().parts == []
 
 
-async def test_openai_streams_multiple_null_id_hosted_tool_searches_in_order(
+@pytest.mark.parametrize('first_output_call_id', [None, 'ts_a'], ids=['anonymous', 'mixed-ids'])
+async def test_openai_streams_multiple_hosted_tool_searches_in_order(
     allow_model_requests: None,
+    first_output_call_id: str | None,
 ) -> None:
     """Streaming preserves the provider's adjacent call/output order."""
     from openai.types import responses as resp
 
     calls, outputs = _openai_hosted_tool_search_items()
+    outputs[0] = outputs[0].model_copy(update={'call_id': first_output_call_id})
     response_items = [calls[0], outputs[0], calls[1], outputs[1]]
     completed_response = response_message(response_items).model_copy(update={'status': 'completed'})
     created_response = response_message([]).model_copy(update={'status': 'in_progress'})
