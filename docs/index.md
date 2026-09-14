@@ -87,6 +87,8 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
+    **Run it on GitHub →** [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/), on issues, pull requests or a schedule
+
 === "Data extraction" {#data-extraction}
 
     Give the agent an [output type](output.md) and [tools](tools.md), and every run comes back validated and typed:
@@ -449,6 +451,8 @@ uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m 
 ```
 
 Or [install Pydantic AI](install.md), pick a [model](models/overview.md), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
+
+**Put it to work on a repository.** That same agent, or one you write yourself, runs on issues, pull requests or a schedule as a [GitHub Agentic Workflow](https://pydantic.dev/docs/ai/harness/gh-aw/): headless, in a sandbox, writing back through safe outputs.
 
 **See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire) is the easiest way to look, any OTLP backend works.
 
