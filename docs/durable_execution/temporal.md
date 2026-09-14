@@ -490,8 +490,10 @@ agent = Agent(
 2. Set `'temporal': False` to skip activity wrapping entirely (only valid for `async` tools — sync tools always need an activity since threads aren't deterministic).
 3. Selector-based: [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] applies the same metadata across a selection of tools (`'all'`, a name list, a dict, or a callable).
 
-The opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
-their Temporal activity, so `metadata={'temporal': False}` on an MCP tool raises a `UserError`.
+The opt-out applies to [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] tools only. MCP tools
+perform I/O and always run in their Temporal activity, and a dynamic toolset has to be resolved before
+its tool can be called, which may perform I/O as well, so `metadata={'temporal': False}` on either
+raises a `UserError`. Move the tool to a static `FunctionToolset` to opt it out.
 
 !!! tip "Configuring third-party tools"
     [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] is the recommended path when the activity config doesn't belong on the tool definition — for example, tools defined in third-party packages, or a group of tools that share the same timeout profile but live in different files.
