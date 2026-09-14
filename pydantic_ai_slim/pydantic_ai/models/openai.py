@@ -4,6 +4,7 @@ import base64
 import itertools
 import json
 import warnings
+from collections import deque
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -4255,9 +4256,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # buffer the whole part), or on `output_text.done` if no delta was received.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
             mcp_list_tools_return_ids: set[str] = set()
-            streamed_tool_search_calls: dict[str, responses.ResponseToolSearchCall] = {}
-            explicit_tool_search_output_call_ids: set[str] = set()
-            deferred_tool_search_outputs: dict[str, responses.ResponseToolSearchOutputItem] = {}
+            pending_tool_search_call_ids: deque[str] = deque()
+            tool_search_output_call_ids: dict[str, str] = {}
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -4280,27 +4280,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
                     # relies on it to cancel the server-side job.
                     self._track_background(chunk.response)
-                if isinstance(
-                    chunk,
-                    (
-                        responses.ResponseCompletedEvent,
-                        responses.ResponseFailedEvent,
-                        responses.ResponseIncompleteEvent,
-                    ),
-                ):
-                    final_tool_search_output_call_ids = _tool_search_output_call_ids(chunk.response)
-                    for item in chunk.response.output:
-                        if (
-                            isinstance(item, responses.ResponseToolSearchOutputItem)
-                            and item.execution == 'server'
-                            and item.call_id is None
-                            and (call_id := final_tool_search_output_call_ids.get(item.id)) is not None
-                        ):
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'{item.id}-return',
-                                part=_build_tool_search_return_part(call_id, item, self.provider_name),
-                            )
-                            deferred_tool_search_outputs.pop(item.id, None)
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
@@ -4424,8 +4403,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 provider_name=self.provider_name,
                             )
                         else:
-                            streamed_tool_search_calls[chunk.item.id] = chunk.item
                             call_part = _map_tool_search_call(chunk.item, self.provider_name)
+                            if chunk.item.call_id is None:
+                                pending_tool_search_call_ids.append(call_part.tool_call_id)
                             yield self._parts_manager.handle_part(
                                 vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                             )
@@ -4436,16 +4416,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         if chunk.item.execution == 'server':
-                            if chunk.item.call_id is None:
-                                deferred_tool_search_outputs[chunk.item.id] = chunk.item
-                            else:
-                                explicit_tool_search_output_call_ids.add(chunk.item.call_id)
-                                yield self._parts_manager.handle_part(
-                                    vendor_part_id=f'{chunk.item.id}-return',
-                                    part=_build_tool_search_return_part(
-                                        chunk.item.call_id, chunk.item, self.provider_name
-                                    ),
-                                )
+                            call_id = _streamed_tool_search_output_call_id(chunk.item, pending_tool_search_call_ids)
+                            tool_search_output_call_ids[chunk.item.id] = call_id
                     elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                         call_part, _, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
 
@@ -4559,7 +4531,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             if maybe_event is not None:  # pragma: no branch
                                 yield maybe_event
                         else:
-                            streamed_tool_search_calls[chunk.item.id] = chunk.item
                             call_part = _map_tool_search_call(chunk.item, self.provider_name)
                             maybe_event = self._parts_manager.handle_tool_call_delta(
                                 vendor_part_id=f'{chunk.item.id}-call',
@@ -4570,17 +4541,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 yield maybe_event
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         if chunk.item.execution == 'server':
-                            if chunk.item.call_id is None:
-                                deferred_tool_search_outputs[chunk.item.id] = chunk.item
-                            else:
-                                explicit_tool_search_output_call_ids.add(chunk.item.call_id)
-                                deferred_tool_search_outputs.pop(chunk.item.id, None)
-                                yield self._parts_manager.handle_part(
-                                    vendor_part_id=f'{chunk.item.id}-return',
-                                    part=_build_tool_search_return_part(
-                                        chunk.item.call_id, chunk.item, self.provider_name
-                                    ),
-                                )
+                            call_id = tool_search_output_call_ids.get(chunk.item.id)
+                            if call_id is None:
+                                call_id = _streamed_tool_search_output_call_id(chunk.item, pending_tool_search_call_ids)
+                                tool_search_output_call_ids[chunk.item.id] = call_id
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=f'{chunk.item.id}-return',
+                                part=_build_tool_search_return_part(call_id, chunk.item, self.provider_name),
+                            )
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
 
@@ -4833,20 +4801,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
                         UserWarning,
                     )
-
-            pending_call_ids = iter(
-                item.id
-                for item in streamed_tool_search_calls.values()
-                if item.call_id is None and item.id not in explicit_tool_search_output_call_ids
-            )
-            for item in deferred_tool_search_outputs.values():
-                call_id = next(pending_call_ids, None)
-                event = self._parts_manager.handle_part(
-                    vendor_part_id=f'{item.id}-return',
-                    part=_build_tool_search_return_part(call_id or item.id, item, self.provider_name),
-                )
-                if call_id is not None and self.state != 'suspended':
-                    yield event
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
@@ -5502,33 +5456,33 @@ def _normalize_tool_search_args(raw: Any) -> ToolSearchArgs:
 
 def _tool_search_output_call_ids(response: responses.Response) -> dict[str, str]:
     """Pair hosted tool-search outputs with calls, using response order when IDs are absent."""
-    calls = [
-        item
+    pending_call_ids = iter(
+        item.id
         for item in response.output
-        if isinstance(item, responses.ResponseToolSearchCall) and item.execution == 'server'
-    ]
-    call_ids = {item.call_id or item.id for item in calls}
+        if isinstance(item, responses.ResponseToolSearchCall) and item.execution == 'server' and item.call_id is None
+    )
+    explicit_call_ids = {
+        item.call_id
+        for item in response.output
+        if isinstance(item, responses.ResponseToolSearchCall)
+        and item.execution == 'server'
+        and item.call_id is not None
+    }
     output_call_ids: dict[str, str] = {}
-    paired_call_ids: set[str] = set()
-
-    # Reserve explicit matches before pairing the remaining anonymous items.
     for item in response.output:
         if not isinstance(item, responses.ResponseToolSearchOutputItem) or item.execution != 'server':
             continue
-        if item.call_id is not None and item.call_id in call_ids:
+        if item.call_id in explicit_call_ids:
             output_call_ids[item.id] = item.call_id
-            paired_call_ids.add(item.call_id)
-
-    pending_call_ids = iter(item.id for item in calls if item.call_id is None and item.id not in paired_call_ids)
-    for item in response.output:
-        if (
-            isinstance(item, responses.ResponseToolSearchOutputItem)
-            and item.execution == 'server'
-            and item.call_id is None
-            and (call_id := next(pending_call_ids, None)) is not None
-        ):
+        elif item.call_id is None and (call_id := next(pending_call_ids, None)) is not None:
             output_call_ids[item.id] = call_id
     return output_call_ids
+
+
+def _streamed_tool_search_output_call_id(
+    item: responses.ResponseToolSearchOutputItem, pending_call_ids: deque[str]
+) -> str:
+    return item.call_id or (pending_call_ids.popleft() if pending_call_ids else item.id)
 
 
 def _map_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> NativeToolSearchCallPart:

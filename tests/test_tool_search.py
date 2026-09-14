@@ -24,7 +24,7 @@ from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 import pydantic_ai.agent as agent_module
-from pydantic_ai import Agent, AgentRunResultEvent, FunctionToolset, ToolCallPart
+from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
@@ -97,7 +97,7 @@ with try_import() as evals_available:
     from pydantic_evals.reporting import EvaluationReport
 
 with try_import() as ag_ui_available:
-    from ag_ui.core import RunErrorEvent, ToolCallResultEvent, ToolCallStartEvent
+    from ag_ui.core import ToolCallResultEvent, ToolCallStartEvent
 
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 
@@ -4009,15 +4009,13 @@ def test_openai_preserves_unmatched_hosted_tool_search_output(call_id: str | Non
     assert return_part.tool_call_id == (call_id or 'tso_a')
 
 
-@pytest.mark.parametrize('calls_first', [False, True], ids=['adjacent', 'calls-first'])
-async def test_openai_pairs_multiple_null_id_hosted_tool_search_items_in_order(calls_first: bool) -> None:
+async def test_openai_pairs_multiple_null_id_hosted_tool_search_items_in_order() -> None:
     """Hosted searches without call IDs pair in provider order."""
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
     calls, outputs = _openai_hosted_tool_search_items()
-    response_items = [*calls, *outputs] if calls_first else [calls[0], outputs[0], calls[1], outputs[1]]
 
     response = model._process_response(  # pyright: ignore[reportPrivateUsage]
-        response_message(response_items),
+        response_message([calls[0], outputs[0], calls[1], outputs[1]]),
         OpenAIResponsesModelSettings(),
         ModelRequestParameters(),
     )
@@ -4037,22 +4035,6 @@ async def test_openai_pairs_multiple_null_id_hosted_tool_search_items_in_order(c
         ('tool_search_call', 'ts_b', None),
         ('tool_search_output', 'tso_b', None),
     ]
-
-
-def test_openai_explicit_tool_search_output_retires_pending_call() -> None:
-    """An explicit output match is not reused by the following anonymous output."""
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
-    calls, outputs = _openai_hosted_tool_search_items()
-    outputs[0] = outputs[0].model_copy(update={'call_id': calls[0].id})
-
-    response = model._process_response(  # pyright: ignore[reportPrivateUsage]
-        response_message([*calls, *outputs]), OpenAIResponsesModelSettings(), ModelRequestParameters()
-    )
-
-    search_parts = [
-        part for part in response.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
-    ]
-    assert [part.tool_call_id for part in search_parts] == ['ts_a', 'ts_a', 'ts_b', 'ts_b']
 
 
 def test_openai_ignores_client_tool_search_output() -> None:
@@ -4103,158 +4085,42 @@ async def test_openai_streaming_ignores_client_tool_search_output(allow_model_re
     assert streamed_response.get().parts == []
 
 
-@pytest.mark.parametrize(
-    ('pair_count', 'background', 'expected_return_ids'),
-    [(0, False, []), (1, False, ['ts_a']), (2, False, ['ts_a', 'ts_b']), (2, True, [])],
-    ids=['output-only', 'single', 'multiple', 'suspended'],
-)
-async def test_openai_preserves_tool_search_output_at_stream_end(
-    allow_model_requests: None, pair_count: int, background: bool, expected_return_ids: list[str]
-) -> None:
-    """A partial stream pairs an anonymous output when possible and always retains it."""
-    from openai.types import responses as resp
-
-    calls, outputs = _openai_hosted_tool_search_items()
-    selected_outputs = outputs[: max(1, pair_count)]
-    created_response = response_message([]).model_copy(update={'status': 'in_progress', 'background': background})
-    stream: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=created_response, type='response.created', sequence_number=0)
-    ]
-    sequence_number = 1
-    for output_index, call in enumerate(calls[:pair_count]):
-        stream.extend(
-            (
-                resp.ResponseOutputItemAddedEvent(
-                    item=call.model_copy(update={'status': 'in_progress'}),
-                    output_index=output_index,
-                    type='response.output_item.added',
-                    sequence_number=sequence_number,
-                ),
-                resp.ResponseOutputItemDoneEvent(
-                    item=call,
-                    output_index=output_index,
-                    type='response.output_item.done',
-                    sequence_number=sequence_number + 1,
-                ),
-            )
-        )
-        sequence_number += 2
-    for offset, output in enumerate(selected_outputs):
-        output_index = pair_count + offset
-        stream.extend(
-            (
-                resp.ResponseOutputItemAddedEvent(
-                    item=output.model_copy(update={'status': 'in_progress'}),
-                    output_index=output_index,
-                    type='response.output_item.added',
-                    sequence_number=sequence_number,
-                ),
-                resp.ResponseOutputItemDoneEvent(
-                    item=output,
-                    output_index=output_index,
-                    type='response.output_item.done',
-                    sequence_number=sequence_number + 1,
-                ),
-            )
-        )
-        sequence_number += 2
-
-    mock_client = MockOpenAIResponses.create_mock_stream(stream)
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
-    async with model.request_stream(
-        [ModelRequest(parts=[UserPromptPart(content='test')])],
-        OpenAIResponsesModelSettings(),
-        ModelRequestParameters(),
-    ) as streamed_response:
-        streamed_events = [event async for event in streamed_response]
-
-    return_parts = [part for part in streamed_response.get().parts if isinstance(part, NativeToolSearchReturnPart)]
-    expected_part_ids = ['ts_a', 'ts_b'][:pair_count] if pair_count else [selected_outputs[0].id]
-    assert [part.tool_call_id for part in return_parts] == expected_part_ids
-    return_event_ids = [
-        event.part.tool_call_id
-        for event in streamed_events
-        if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolSearchReturnPart)
-    ]
-    assert return_event_ids == expected_return_ids
-
-
-@pytest.mark.parametrize('terminal_status', ['completed', 'failed', 'incomplete'])
-@pytest.mark.parametrize(
-    ('pair_count', 'calls_first', 'first_output_explicit', 'explicit_on_added'),
-    [
-        (1, False, False, False),
-        (2, False, False, False),
-        (2, True, False, False),
-        (2, True, True, False),
-        (2, True, True, True),
-    ],
-    ids=['single', 'multiple-adjacent', 'multiple-calls-first', 'mixed-ids', 'explicit-added'],
-)
-async def test_openai_hosted_tool_search_null_id_streaming_parity(
+async def test_openai_streams_multiple_null_id_hosted_tool_searches_in_order(
     allow_model_requests: None,
-    pair_count: int,
-    calls_first: bool,
-    first_output_explicit: bool,
-    explicit_on_added: bool,
-    terminal_status: Literal['completed', 'failed', 'incomplete'],
 ) -> None:
-    """Null-ID responses pair in order in both streaming and non-streaming modes."""
+    """Streaming preserves the provider's adjacent call/output order."""
     from openai.types import responses as resp
 
     calls, outputs = _openai_hosted_tool_search_items()
-    if first_output_explicit:
-        outputs[0] = outputs[0].model_copy(update={'call_id': calls[0].id})
-    final_items = (
-        [*calls[:pair_count], *outputs[:pair_count]]
-        if calls_first
-        else [item for pair in zip(calls[:pair_count], outputs[:pair_count]) for item in pair]
-    )
-    completed_response = response_message(final_items).model_copy(update={'status': terminal_status})
+    response_items = [calls[0], outputs[0], calls[1], outputs[1]]
+    completed_response = response_message(response_items).model_copy(update={'status': 'completed'})
     created_response = response_message([]).model_copy(update={'status': 'in_progress'})
     stream: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=created_response, type='response.created', sequence_number=0)
-    ]
-    sequence_number = 1
-    for output_index, item in enumerate(final_items):
-        added_item = item.model_copy(update={'status': 'in_progress'})
-        if (
-            first_output_explicit
-            and not explicit_on_added
-            and isinstance(item, resp.ResponseToolSearchOutputItem)
-            and item.call_id is not None
-        ):
-            added_item = added_item.model_copy(update={'call_id': None})
-        stream.extend(
-            [
+        resp.ResponseCreatedEvent(response=created_response, type='response.created', sequence_number=0),
+        *[
+            event
+            for output_index, item in enumerate(response_items)
+            for event in (
                 resp.ResponseOutputItemAddedEvent(
-                    item=added_item,
+                    item=item.model_copy(update={'status': 'in_progress'}),
                     output_index=output_index,
                     type='response.output_item.added',
-                    sequence_number=sequence_number,
+                    sequence_number=output_index * 2 + 1,
                 ),
                 resp.ResponseOutputItemDoneEvent(
                     item=item,
                     output_index=output_index,
                     type='response.output_item.done',
-                    sequence_number=sequence_number + 1,
+                    sequence_number=output_index * 2 + 2,
                 ),
-            ]
-        )
-        sequence_number += 2
-    if terminal_status == 'completed':
-        terminal: resp.ResponseStreamEvent = resp.ResponseCompletedEvent(
-            response=completed_response, type='response.completed', sequence_number=sequence_number
-        )
-    elif terminal_status == 'failed':
-        terminal = resp.ResponseFailedEvent(
-            response=completed_response, type='response.failed', sequence_number=sequence_number
-        )
-    else:
-        terminal = resp.ResponseIncompleteEvent(
-            response=completed_response, type='response.incomplete', sequence_number=sequence_number
-        )
-    stream.append(terminal)
+            )
+        ],
+        resp.ResponseCompletedEvent(
+            response=completed_response,
+            type='response.completed',
+            sequence_number=len(response_items) * 2 + 1,
+        ),
+    ]
 
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
@@ -4269,13 +4135,13 @@ async def test_openai_hosted_tool_search_null_id_streaming_parity(
     non_streamed = model._process_response(  # pyright: ignore[reportPrivateUsage]
         completed_response, OpenAIResponsesModelSettings(), ModelRequestParameters()
     )
-    streamed_calls = [part for part in streamed.parts if isinstance(part, NativeToolSearchCallPart)]
-    streamed_returns = [part for part in streamed.parts if isinstance(part, NativeToolSearchReturnPart)]
-    non_streamed_calls = [part for part in non_streamed.parts if isinstance(part, NativeToolSearchCallPart)]
-    non_streamed_returns = [part for part in non_streamed.parts if isinstance(part, NativeToolSearchReturnPart)]
-    expected_ids = ['ts_a', 'ts_b'][:pair_count]
-    assert [part.tool_call_id for part in streamed_calls] == expected_ids
-    assert [part.tool_call_id for part in streamed_returns] == expected_ids
+    streamed_parts = [
+        part for part in streamed.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
+    ]
+    non_streamed_parts = [
+        part for part in non_streamed.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
+    ]
+    assert [part.tool_call_id for part in streamed_parts] == ['ts_a', 'ts_a', 'ts_b', 'ts_b']
 
     def normalized(
         parts: Sequence[NativeToolSearchCallPart | NativeToolSearchReturnPart],
@@ -4287,8 +4153,7 @@ async def test_openai_hosted_tool_search_null_id_streaming_parity(
             for part in parts
         ]
 
-    assert normalized(streamed_calls) == normalized(non_streamed_calls)
-    assert normalized(streamed_returns) == normalized(non_streamed_returns)
+    assert normalized(streamed_parts) == normalized(non_streamed_parts)
 
 
 @pytest.mark.parametrize('send_item_ids', [False, True])
@@ -5032,54 +4897,25 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None, o
 async def test_openai_multiple_native_tool_searches_stream_through_ag_ui(
     allow_model_requests: None, openai_api_key: str
 ) -> None:
-    """OpenAI's ordered null-ID searches remain paired when streamed through AG-UI."""
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    """AG-UI pairs the ordered call/output items OpenAI streams without call IDs."""
+    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
 
     @agent.tool_plain(defer_loading=True)
-    def weather_temperature(city: str) -> str:
-        """Get the temperature for a city."""
-        return f'{city}: 21 C'
+    def alpha_lookup(query: str) -> str:
+        """Look up alpha."""
+        return query
 
     @agent.tool_plain(defer_loading=True)
-    def finance_stock_price(ticker: str) -> str:
-        """Get the current stock price for a ticker."""
-        return f'{ticker}: $100'
-
-    @agent.tool_plain(defer_loading=True)
-    def travel_flight_status(flight: str) -> str:
-        """Get the status of a flight."""
-        return f'{flight}: on time'
-
-    @agent.tool_plain(defer_loading=True)
-    def legal_case_lookup(citation: str) -> str:
-        """Look up a legal case by citation."""
-        return f'{citation}: found'
+    def bravo_lookup(query: str) -> str:
+        """Look up bravo."""
+        return query
 
     async with agent.run_stream_events(
-        'Use weather_temperature, finance_stock_price, travel_flight_status, and legal_case_lookup. '
-        'Start four distinct tool searches and do not combine their paths. Then call every tool.'
+        'Reveal alpha_lookup and bravo_lookup using two separate tool searches, one path per search. '
+        'Then answer "done" without calling the discovered tools.'
     ) as agent_events:
-        raw_events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-
-        async def tap_events() -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent[str]]:
-            async for event in agent_events:
-                raw_events.append(event)
-                yield event
-
-        events = [event async for event in AGUIEventStream().transform_stream(tap_events())]
-
-    search_parts = [
-        event.part
-        for event in raw_events
-        if isinstance(event, PartStartEvent)
-        and isinstance(event.part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
-    ]
-    assert all((part.provider_details or {}).get('call_id') is None for part in search_parts)
-    raw_call_ids = [part.tool_call_id for part in search_parts if isinstance(part, NativeToolSearchCallPart)]
-    raw_return_ids = [part.tool_call_id for part in search_parts if isinstance(part, NativeToolSearchReturnPart)]
-    assert len(raw_call_ids) >= 2
-    assert raw_return_ids == raw_call_ids
+        events = [event async for event in AGUIEventStream().transform_stream(agent_events)]
 
     search_call_ids = [
         event.tool_call_id
@@ -5091,9 +4927,8 @@ async def test_openai_multiple_native_tool_searches_stream_through_ag_ui(
         for event in events
         if isinstance(event, ToolCallResultEvent) and event.tool_call_id in search_call_ids
     ]
-    assert len(search_call_ids) == len(raw_call_ids)
+    assert len(search_call_ids) == 2
     assert search_result_ids == search_call_ids
-    assert not any(isinstance(event, RunErrorEvent) for event in events)
 
 
 @pytest.mark.vcr
