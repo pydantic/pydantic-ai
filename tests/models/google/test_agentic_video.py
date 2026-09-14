@@ -138,8 +138,8 @@ async def test_agentic_video_processing(
 def test_explicit_media_processing_parts_preserve_their_wire_shape() -> None:
     response = _process_response_from_parts(
         parts=[
-            Part.model_validate({'thought_signature': b'call', 'tool_call': {'tool_type': 'MEDIA_PROCESSING'}}),
-            Part.model_validate({'thought_signature': b'return', 'tool_response': {'tool_type': 'MEDIA_PROCESSING'}}),
+            Part.model_validate({'tool_call': {'tool_type': 'MEDIA_PROCESSING'}}),
+            Part.model_validate({'tool_response': {'tool_type': 'MEDIA_PROCESSING'}}),
         ],
         grounding_metadata=None,
         model_name='gemini-3.7-flash',
@@ -156,10 +156,17 @@ def test_explicit_media_processing_parts_preserve_their_wire_shape() -> None:
     assert _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True) == {
         'role': 'model',
         'parts': [
-            {'thought_signature': b'call', 'tool_call': {'tool_type': 'MEDIA_PROCESSING'}},
-            {'thought_signature': b'return', 'tool_response': {'tool_type': 'MEDIA_PROCESSING'}},
+            {'tool_call': {'tool_type': 'MEDIA_PROCESSING'}},
+            {'tool_response': {'tool_type': 'MEDIA_PROCESSING'}},
         ],
     }
+    assert (
+        _GoogleMediaProcessingCodec.encode(
+            NativeToolCallPart(tool_name='media_processing', provider_name='google-gla', tool_call_id='user-created'),
+            None,
+        )
+        is None
+    )
 
 
 def test_vertex_bare_processing_signatures_are_exposed_but_not_replayed() -> None:
@@ -232,3 +239,19 @@ def test_empty_native_tool_part_without_signature_is_rejected() -> None:
             provider_response_id='response-id',
             media_processing=_GoogleMediaProcessingCodec(enabled=True),
         )
+
+
+@pytest.mark.parametrize('tool_field', ['tool_call', 'tool_response'])
+def test_media_processing_does_not_swallow_mixed_parts(tool_field: str) -> None:
+    response = _process_response_from_parts(
+        parts=[Part.model_validate({'text': 'kept', tool_field: {'id': 'not-processing'}})],
+        grounding_metadata=None,
+        model_name='gemini-3.7-flash',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        provider_response_id='response-id',
+        media_processing=_GoogleMediaProcessingCodec(enabled=True),
+    )
+
+    assert response.parts == [TextPart(content='kept')]
