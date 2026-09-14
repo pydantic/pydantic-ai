@@ -64,6 +64,8 @@ async def main():
             #> assistant: We do: 7 pm, table for two. Want me to book it?
             if part.speaker == 'assistant':
                 break  # keep listening in a real call; we stop after one exchange
+        # Let the speaker consume every generated chunk before closing the session.
+        await session.wait_for_playback()
 
     # Leaving the `async with` block closes the session, which ends the speaker's audio stream —
     # but the microphone reads an external source, so stop it explicitly.
