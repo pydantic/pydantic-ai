@@ -47,6 +47,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.google import (
         GeminiStreamedResponse,
+        _AgenticVideoResponseMapper,  # pyright: ignore[reportPrivateUsage]
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
@@ -302,7 +303,7 @@ async def _drive_stream(
         _provider_name='google-gla',
         _model_id_namespace='google',
         _provider_url='https://generativelanguage.googleapis.com/',
-        _agentic_video_processing=agentic_video_processing,
+        _agentic_video=_AgenticVideoResponseMapper(agentic_video_processing),
     )
     events = [event async for event in streamed]
     return events, list(streamed.get().parts)

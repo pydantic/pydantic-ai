@@ -310,14 +310,10 @@ async def test_media_processing_composes_with_media_resolution(mapping_model: Go
     Part.model_validate(content[0])
 
 
-@pytest.mark.parametrize(
-    ('allow_media_processing', 'args'),
-    [(True, {'query': 'test'}), (False, None)],
-    ids=['payload-is-not-media-processing', 'media-processing-disabled'],
-)
-def test_missing_native_tool_type_is_rejected(allow_media_processing: bool, args: dict[str, str] | None) -> None:
+@pytest.mark.parametrize('args', [{'query': 'test'}, None], ids=['with-payload', 'without-payload'])
+def test_missing_native_tool_type_is_rejected(args: dict[str, str] | None) -> None:
     with pytest.raises(UnexpectedModelBehavior, match='Missing tool_type on native tool part'):
-        _map_tool_call(ToolCall(id='call-1', args=args), 'google', allow_media_processing=allow_media_processing)
+        _map_tool_call(ToolCall(id='call-1', args=args), 'google')
 
 
 @pytest.mark.parametrize(

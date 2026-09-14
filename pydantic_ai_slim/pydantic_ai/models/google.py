@@ -1159,7 +1159,7 @@ class GoogleModel(Model[Client]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
-            _agentic_video_processing=agentic_video_processing,
+            _agentic_video=_AgenticVideoResponseMapper(agentic_video_processing),
         )
 
     async def _map_messages(  # noqa: C901
@@ -1435,6 +1435,88 @@ class GoogleModel(Model[Client]):
 
 
 @dataclass
+class _AgenticVideoResponseMapper:
+    """Map Google's agentic video processing parts without affecting ordinary response parsing."""
+
+    enabled: bool = False
+    _pending_call_id: str | None = field(default=None, init=False)
+
+    def map_part(self, part: Part, provider_name: str) -> NativeToolCallPart | NativeToolReturnPart | None:
+        if not self.enabled:
+            return None
+
+        item: NativeToolCallPart | NativeToolReturnPart
+        if tool_call := part.tool_call:
+            if not self._is_media_processing_tool_call(tool_call):
+                return None
+            item = NativeToolCallPart(
+                provider_name=provider_name,
+                tool_name=_MEDIA_PROCESSING_TOOL_NAME,
+                tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
+                args=tool_call.args,
+            )
+        elif tool_response := part.tool_response:
+            if not self._is_media_processing_tool_response(tool_response):
+                return None
+            item = NativeToolReturnPart(
+                provider_name=provider_name,
+                tool_name=_MEDIA_PROCESSING_TOOL_NAME,
+                tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
+                content=tool_response.response,
+            )
+        elif _is_bare_thought_signature(part):
+            assert part.thought_signature is not None
+            if self._pending_call_id is None:
+                self._pending_call_id = _utils.generate_tool_call_id()
+                item = NativeToolCallPart(
+                    provider_name=provider_name,
+                    tool_name=_MEDIA_PROCESSING_TOOL_NAME,
+                    tool_call_id=self._pending_call_id,
+                )
+            else:
+                item = NativeToolReturnPart(
+                    provider_name=provider_name,
+                    tool_name=_MEDIA_PROCESSING_TOOL_NAME,
+                    content=None,
+                    tool_call_id=self._pending_call_id,
+                )
+                self._pending_call_id = None
+        else:
+            return None
+
+        if part.thought_signature:
+            item.provider_details = {'thought_signature': base64.b64encode(part.thought_signature).decode('utf-8')}
+        return item
+
+    def has_other_native_tool_invocations(self, parts: list[Part]) -> bool:
+        """Whether parts contain native tool invocations unrelated to media processing."""
+        return any(
+            (part.tool_call or part.tool_response) and not self._is_media_processing_native_part(part) for part in parts
+        )
+
+    def _is_media_processing_native_part(self, part: Part) -> bool:
+        if not self.enabled:
+            return False
+        if tool_call := part.tool_call:
+            return self._is_media_processing_tool_call(tool_call)
+        if tool_response := part.tool_response:
+            return self._is_media_processing_tool_response(tool_response)
+        return False
+
+    @staticmethod
+    def _is_media_processing_tool_call(tool_call: ToolCall) -> bool:
+        return tool_call.tool_type == ToolType.MEDIA_PROCESSING or (
+            tool_call.tool_type is None and tool_call.args is None
+        )
+
+    @staticmethod
+    def _is_media_processing_tool_response(tool_response: ToolResponse) -> bool:
+        return tool_response.tool_type == ToolType.MEDIA_PROCESSING or (
+            tool_response.tool_type is None and tool_response.response is None
+        )
+
+
+@dataclass
 class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
@@ -1444,13 +1526,12 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
-    _agentic_video_processing: bool = False
+    _agentic_video: _AgenticVideoResponseMapper = field(default_factory=_AgenticVideoResponseMapper)
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
-    _media_processing_call_id: str | None = field(default=None, init=False)
     # Empty file_search returns whose contexts are still to arrive in `grounding_metadata` (see
     # `_fill_empty_file_search_return_content`). Each is reserved in the parts manager keyed by its
     # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
@@ -1538,8 +1619,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 # so we can safely yield it here.
                 #
                 # `_has_tool_invocations` reflects parts seen in *prior* chunks because we can't peek
-                # ahead in a stream. The non-streaming path (`_has_native_tool_invocations(parts)` in
-                # `_process_response_from_parts`) inspects all parts upfront and is safer. The
+                # ahead in a stream. The non-streaming path inspects all parts upfront and is safer. The
                 # streaming assumption — confirmed by Gemini 3 cassettes — is that
                 # `url_context_metadata` and native `tool_call`/`tool_response` parts are mutually
                 # exclusive: when `include_server_side_tool_invocations=True` the API returns
@@ -1560,11 +1640,13 @@ class GeminiStreamedResponse(StreamedResponse):
                     continue  # pragma: no cover
 
                 if not self._has_tool_invocations:
-                    self._has_tool_invocations = _has_native_tool_invocations(
-                        parts, agentic_video_processing=self._agentic_video_processing
-                    )
+                    self._has_tool_invocations = self._agentic_video.has_other_native_tool_invocations(parts)
 
                 for part in parts:
+                    if media_processing_part := self._agentic_video.map_part(part, self.provider_name):
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=media_processing_part)
+                        continue
+
                     provider_details: dict[str, Any] | None = None
                     if part.thought_signature:
                         # Per https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#thought-signatures:
@@ -1623,19 +1705,11 @@ class GeminiStreamedResponse(StreamedResponse):
                             ),
                         )
                     elif part.tool_call:
-                        tool_call_part = _map_tool_call(
-                            part.tool_call,
-                            self.provider_name,
-                            allow_media_processing=self._agentic_video_processing,
-                        )
+                        tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
                         tool_call_part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
                     elif part.tool_response:
-                        tool_response_part = _map_tool_response(
-                            part.tool_response,
-                            self.provider_name,
-                            allow_media_processing=self._agentic_video_processing,
-                        )
+                        tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
                         tool_response_part.provider_details = provider_details
                         if tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
                             # Reserve the part's slot but defer its `PartStartEvent` until it's filled below,
@@ -1655,11 +1729,6 @@ class GeminiStreamedResponse(StreamedResponse):
                         part = self._map_code_execution_result(part.code_execution_result)
                         part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
-                    elif self._agentic_video_processing and _is_bare_thought_signature(part):
-                        step, self._media_processing_call_id = _map_media_processing_step(
-                            part, self._media_processing_call_id, self.provider_name
-                        )
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=step)
                     else:
                         assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
@@ -1974,41 +2043,10 @@ def _is_bare_thought_signature(part: Part) -> bool:
     return bool(part.thought_signature) and not part.model_dump(exclude_none=True, exclude={'thought_signature'})
 
 
-def _map_media_processing_step(
-    part: Part, pending_call_id: str | None, provider_name: str
-) -> tuple[NativeToolCallPart | NativeToolReturnPart, str | None]:
-    """Map one bare-signature agentic-video step to alternating call and return parts."""
-    assert part.thought_signature is not None
-    provider_details = {'thought_signature': base64.b64encode(part.thought_signature).decode('utf-8')}
-    if pending_call_id is None:
-        tool_call_id = _utils.generate_tool_call_id()
-        return (
-            NativeToolCallPart(
-                tool_name=_MEDIA_PROCESSING_TOOL_NAME,
-                tool_call_id=tool_call_id,
-                provider_name=provider_name,
-                provider_details=provider_details,
-            ),
-            tool_call_id,
-        )
-    return (
-        NativeToolReturnPart(
-            tool_name=_MEDIA_PROCESSING_TOOL_NAME,
-            content=None,
-            tool_call_id=pending_call_id,
-            provider_name=provider_name,
-            provider_details=provider_details,
-        ),
-        None,
-    )
-
-
 def _process_part(
     part: Part,
     code_execution_tool_call_id: str | None,
     provider_name: str,
-    *,
-    allow_media_processing: bool = False,
 ) -> tuple[ModelResponsePart | None, str | None]:
     """Process a Google Part and return the corresponding ModelResponsePart.
 
@@ -2044,9 +2082,9 @@ def _process_part(
         if part.function_call.id is not None:
             item.tool_call_id = part.function_call.id
     elif part.tool_call:
-        item = _map_tool_call(part.tool_call, provider_name, allow_media_processing=allow_media_processing)
+        item = _map_tool_call(part.tool_call, provider_name)
     elif part.tool_response:
-        item = _map_tool_response(part.tool_response, provider_name, allow_media_processing=allow_media_processing)
+        item = _map_tool_response(part.tool_response, provider_name)
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
@@ -2077,8 +2115,9 @@ def _process_response_from_parts(
     agentic_video_processing: bool = False,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
+    agentic_video = _AgenticVideoResponseMapper(agentic_video_processing)
 
-    if not _has_native_tool_invocations(parts, agentic_video_processing=agentic_video_processing):
+    if not agentic_video.has_other_native_tool_invocations(parts):
         web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
         if web_search_call and web_search_return:
             items.append(web_search_call)
@@ -2095,18 +2134,11 @@ def _process_response_from_parts(
 
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
-    media_processing_call_id: str | None = None
     for part in parts:
-        if agentic_video_processing and _is_bare_thought_signature(part):
-            step, media_processing_call_id = _map_media_processing_step(part, media_processing_call_id, provider_name)
-            items.append(step)
+        if media_processing_part := agentic_video.map_part(part, provider_name):
+            items.append(media_processing_part)
             continue
-        item, code_execution_tool_call_id = _process_part(
-            part,
-            code_execution_tool_call_id,
-            provider_name,
-            allow_media_processing=agentic_video_processing,
-        )
+        item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
         if item is not None:
             if isinstance(item, NativeToolReturnPart):
                 _fill_empty_file_search_return_content(item, grounding_metadata)
@@ -2121,36 +2153,6 @@ def _process_response_from_parts(
         provider_name=provider_name,
         provider_url=provider_url,
         finish_reason=finish_reason,
-    )
-
-
-def _has_native_tool_invocations(parts: list[Part], *, agentic_video_processing: bool = False) -> bool:
-    """Whether the response carries explicit `tool_call`/`tool_response` parts.
-
-    When the API returned these (because `include_server_side_tool_invocations` was set),
-    metadata-based reconstruction (`_map_grounding_metadata`, `_map_url_context_metadata`,
-    `_map_file_search_grounding_metadata`) must be skipped — otherwise we emit duplicate
-    `NativeToolCallPart`/`NativeToolReturnPart` pairs for the same tool invocation. Agentic video
-    processing parts are excluded because they do not replace grounding metadata.
-    See https://ai.google.dev/api/caching#ToolConfig.
-    """
-    return any(
-        (part.tool_call or part.tool_response)
-        and not (agentic_video_processing and _is_media_processing_native_part(part))
-        for part in parts
-    )
-
-
-def _is_media_processing_native_part(part: Part) -> bool:
-    """Whether Gemini emitted this part for agentic video processing."""
-    if tool_call := part.tool_call:
-        return tool_call.tool_type == ToolType.MEDIA_PROCESSING or (
-            tool_call.tool_type is None and tool_call.args is None
-        )
-    tool_response = part.tool_response
-    assert tool_response is not None
-    return tool_response.tool_type == ToolType.MEDIA_PROCESSING or (
-        tool_response.tool_type is None and tool_response.response is None
     )
 
 
@@ -2295,13 +2297,8 @@ def _map_code_execution_result(
     )
 
 
-def _resolve_native_tool_name(
-    tool_type: ToolType | None, payload: object | None, *, allow_media_processing: bool = False
-) -> str:
-    # Gemini currently omits both `tool_type` and the payload from agentic video processing parts.
+def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
     if tool_type is None:
-        if allow_media_processing and payload is None:
-            return _MEDIA_PROCESSING_TOOL_NAME
         raise UnexpectedModelBehavior('Missing tool_type on native tool part')
     tool_name = _TOOL_TYPE_TO_NATIVE_TOOL_NAME.get(tool_type)
     if tool_name is None:  # pragma: no cover
@@ -2309,27 +2306,19 @@ def _resolve_native_tool_name(
     return tool_name
 
 
-def _map_tool_call(
-    tool_call: ToolCall, provider_name: str, *, allow_media_processing: bool = False
-) -> NativeToolCallPart:
+def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPart:
     return NativeToolCallPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(
-            tool_call.tool_type, tool_call.args, allow_media_processing=allow_media_processing
-        ),
+        tool_name=_resolve_native_tool_name(tool_call.tool_type),
         tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
         args=tool_call.args,
     )
 
 
-def _map_tool_response(
-    tool_response: ToolResponse, provider_name: str, *, allow_media_processing: bool = False
-) -> NativeToolReturnPart:
+def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
     return NativeToolReturnPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(
-            tool_response.tool_type, tool_response.response, allow_media_processing=allow_media_processing
-        ),
+        tool_name=_resolve_native_tool_name(tool_response.tool_type),
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
