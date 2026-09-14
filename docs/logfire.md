@@ -299,6 +299,8 @@ Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these 
 
 Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
 
+Agent run spans carry the agent name under both `agent_name` and `gen_ai.agent.name` at every version, so a dashboard keyed on either name keeps working when you change versions.
+
 #### Version 2 (deprecated)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
@@ -316,6 +318,7 @@ Builds on version 2 with the following improvements:
 - **Spec-compliant span names:**
     - `agent run` becomes `invoke_agent {gen_ai.agent.name}` (with the agent name filled in)
     - `running tool` becomes `execute_tool {gen_ai.tool.name}` (with the tool name filled in)
+    - `running output function` becomes `execute_tool {gen_ai.tool.name}`, so output tools and output functions share the span name used for other tools
 - **Spec-compliant attribute names:**
     - `tool_arguments` becomes `gen_ai.tool.call.arguments`
     - `tool_response` becomes `gen_ai.tool.call.result`
