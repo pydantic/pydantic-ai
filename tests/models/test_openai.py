@@ -4978,6 +4978,26 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
     assert result.output == 'hello'
 
 
+class _ChatCompletionWithMetadata(chat.ChatCompletion):
+    """`ChatCompletion.metadata: dict[str, str] | None` as declared by openai >= 3.2.0."""
+
+    metadata: dict[str, str] | None = None
+
+
+async def test_metadata_non_string_value(allow_model_requests: None):
+    """OpenAI-compatible providers can return `metadata` values outside the SDK's `dict[str, str]`."""
+    c = _ChatCompletionWithMetadata.model_validate(
+        dict(completion_message(ChatCompletionMessage(content='hello', role='assistant')))
+    )
+    c.metadata = {'weight_version': 'default', 'weight_versions': [{'version': 'default', 'start': 0, 'end': 44}]}  # pyright: ignore[reportAttributeAccessIssue]  # simulate Nebius response
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    assert result.output == 'hello'
+
+
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     profile = merge_profile(
         OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
