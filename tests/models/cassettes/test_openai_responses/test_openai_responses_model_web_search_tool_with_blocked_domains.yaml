@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '326'
+      - '367'
       content-type:
       - application/json
       host:
@@ -20,7 +20,9 @@ interactions:
       input:
       - content: Search the web for Pydantic AI. Return one source URL.
         role: user
-      model: gpt-5-mini
+      model: gpt-5.6-luna
+      reasoning:
+        context: all_turns
       stream: false
       tool_choice: auto
       tools:
@@ -41,11 +43,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '10039'
+      - '3574'
       content-type:
       - application/json
       openai-processing-ms:
-      - '13952'
+      - '5567'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -56,51 +58,40 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1789366496
-      created_at: 1789366482
+      completed_at: 1789367318
+      created_at: 1789367312
       error: null
       frequency_penalty: 0.0
-      id: resp_051744b7ff9aff0c006aa790d251d887d2bb8cc945cbfd83e4
+      id: resp_0624e8e30cd3b72d006aa79410bcc487d28266b58fb509ebca
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
-      model: gpt-5-mini-2025-08-07
+      model: gpt-5.6-luna
       moderation: null
       object: response
       output:
       - content: []
-        encrypted_content: gAAAAABqp5Dgp9WHB6Wl7W_3G0HmHaAmrMMrwVSv9uwt_E6ouylHB_tY7ggPuME0xL1XT6tEbidK5ypSMtRzOv2dQaNXuPOQJz_wUM7KqkEVvVR_p5A7X2kSdEqafSTy0BO438tluMOEP9VahFcii18POmdib12X1L8xbGbc3P7wyNKUcIO5VVVVnFPrTLs31kA4Kz0PdvVxJYWj-pJnfOiI7i6ItnIIauuHCfNSBKEAvKgY89f9T6j-hgpBUoj6PCyLNSmGyE9nHFJH3AQbETNUDmX0KVDeJOwm5Lk5mEHHoaKYBJqR0yumANoV1o1_bR3gLL9Ve1NGiDj8yuFrD8TBHg0kKk5oc-it7kR2n6vAt8T7hh3XstQTarU_8rPhN5t1_bcFgoUxY6ElQ7j3c_q4SOWLgj871ytd6yRk3Bn4wQYuF4pXnbsZpd7aC9fay-Ux_xz6uSdJcwY7oYoTjwuVSyXmQtiUQqhCVv0LzgdH_nr3gfK00NKYSMVimHL9tdLvMJ1XEMubmIk67i1nFZhtVxdS8WGJP3cbbMqxVyGVXQUJ2XEmOFnOmzTA8Jj7IoJ9c5YPU1Z7ft0W8iWQjp0Y97_F_W2U06MbMbzzmJuGBJ7cr6y36Py7GrQFUG8C2hFwbIRN-M06Mrs-ITbzuSZhmNPIZJyWDiCueNhJpbNVtKkUAQvQrg3qfxbCiofpC_AVqZmme3gBk0GDowlPa2bvmWjetBk9vFyWzRc_pQiFl9XRVn_2Gupk1dv18Rr29PWA-I2Wv63hFe6qQREy1T76nv5ss8UJ21Vv365uch4mF5EqU0DywGWHsaIp4LDqMeL5mBxJAfGjQuhOuikZfgAaKZJ8n1nooBT3xKxLt1eVXXVvQqKKV42nhnEcMhd_G9fO8E85a1e2mdyFGpU6lFRLM7C9pNDa_7V7voXdX4UXRa6S7OVaRBzC-a2n3VW92O9JWmR4W0YmVEoQ3BNzorecHkX8oOvEwV2LutAJACZN5DPFHBrGnxxRtswU4ArCGTfRSPt3byyaAxlCyZdxiY7kxQdOEJrF0k2XoK-FtCx6c1fb47IMBiUULnOEH2dio7VRvAhN3WLhllrVv05mzGwKDqGB7x88lAltylizgiKDnUVfuDwlGgrPJL1wuJYQ97GUsVxByFYi1egUcqT-AXk3vlrCTJO4tmDO3N2H8axLtKa6HpMtk7PBHPFcLfrqx_YeTupx0iRb1fdpe4Yz2Z1y33cV2Z6P-JEhwo8m_dmBr5E-zCSufFCuwWx5bQAwg-uuSqg5d1fV_I4p1LYQQmXs-DimDr-K_fRhQNx60zJHG8cUuDqIvwOQkBqlw4qkyyW1j2nJHM14mXjsE3WOmpl6C283ptycw67KL2bms-iucbQxoFUN3GqMxRiWQQV1vW3lPYGIL7V5Dp0L4EBmzgQlBbJ8UHIMi-a9Xyw8a-14WdrVo0-7JTc0MKDA6yqdZbKTttEgV0UFuMU95kSB91qlSPfSqOCHTmjyRalXWfkFE4a6X3UKkYrwNM6PREDEuqH14L2ekiHm-ofZxW5mjssAdZ3Mv083mDLeI_NTxkZM2N6Ya8yLdFRF32_lzNpE6L8iiRRBHsvAj59v6l1gnKNRt_LGnk6LaRZmDOFiFDklFzULNob9Jz3FbJCQYNffuxaEdLAFimB6w2PuGaZ6q_P7yfgXohqCY3hOG4-gLPFQN6DQ1FIo-FvHyp2nJ16RBblFB4YYP6ph-nSQHw4uNQsaHFj59SWaj2Jf5dhD1ji3GyOUBxN2qn4yNwW7-IO8f7KQwKHzn3tSlqF3OYkIOScOsF5htGpXYVPq6z7rmIxhoh5lanTj6Q1pACoRC5xfwqst13MQkYBGRwB5WXq_cd_HBp7VFj_IK2_naB09kHLN5muIP3GvR4pRVwDpAZn0WGhhFD0aIRGxzG4L51I4_yC8TSbjEfVIl8VYbzcI1shHfNIE3jhmhVJY_DFEQee2drMvaIVlTpeirsnSqcgDigPiFNZw01Csjrwv-zJiKE90rt0h1l9qr1HNgzbjyu42jXUTUIRcre3xGiX91XhSm4bBbbibdETH-Qlo4t_9GYRSxKfydRZfcoxR7keMfwBXfaC73PmUpVUCsjUSFt_CJOktc-3h3q2Fu5yXycmvRFxA20CEPe4R0C4KMT0fpOLpVgI0158a7GGUhIsBmDWyEYN750pSljB2S5sLuVDEQc_10u6X-9-jYj35iMwgP962hlXknvjz2mnV
-        id: rs_051744b7ff9aff0c006aa790d2ee2487d28189bbcf3fd0ac32
+        encrypted_content: gAAAAABqp5QWJFnMYMHpSE7TkpHex1xP64XH__XUBlnAdNVGnAYTobRHqq3oAklX-QzqSv_Hvd5bKBsKedg7QkItSGgk8Rx7rm95YF9rtLrb8IuYqEc6jHYTY4fZk2B0yYsNYksOaaGsXLV7Pp7u4TVshxrkksBsRwGyFfEfGVMrbUjFv-Pkp4JnAkY-_yD82jYMJj_6Un7vTcRN2ttuyDGy6js4H7jPVei7vGj8nk8Qjpu2kYNQiGY8PGL-ya-zIFzZJ8VqQkLcUasOT13s_fJ25DAwonPvRiBJsYARr-I0a2qdHYNiJkQnCEBky4qCZ12sSBSc6FwVeMRrVMFQELfdAg7yNTebWKHptqdKomyz6ZfKVuH-NIEivEnFzi8ZOQowMbRWkF0OeyQjq325XXNYedm4681b1aaoFJI5mFGjrHBPgeQ9tTMssEMQ6AwNHO1k6wdhQ38j2MoMW1Id_uQMjYVmc8g6dPz2-tdbzoaOFiqFPS3J6ts0rj4AkpQvoLj0lgSkYgrekQJxsTjDRiHi6tApea8srG6MFoXw8zSotD-c_UInUcvScLFElT9BkUNX02CUnJ0gguQzN3j9h2lTuKH2AvI5mmVni4eWDzfNI1XnErjgdRI2xvFpqp36Bak3_b3yv-b125TCSgzu1LY_2SZ3dSGOWvYOkuobncN1_xAnWZaPdCa2bo_3ShhU_Iyez3wEb9iz0NU5I-UjsmdqDEY-fjFXdTXPGmCZGDhXfT1hYT0B8s5obPPHYXPHxy55MKMuAyq2mVvXbxPxh9wIfPHeWecuJmhv_CKYq98_UdxdiZVSc7Uc7JE-GSo9Z5ENI5pu4KYfdJOsEhHOnT7ZAKiKRHBHuFfL0ElnIijpcsRSd31KObEuFWZSH9cuzexUnLEINGRink6X7fWsn8O-d4cOGdtK3BANCcswvWIM7ysvRvuz92m-1JD2H60dCCG3keZT2hh87HgOzz8EBuuQSB4D44Q6QdEmMkbdEoZc4M299WDYsgt7_hCMvYN4qNa6lDsx9uSZLx1CMH62MGTQ4K2tXXSRabga9BR7bPmRRaweTU0Tq0YiH2GO7LVQ3iPQ0IgmKjXOaIk3pMfciOUzlTgwv0cd67UBtIUvEkk6ofJgo0gVKjINcc7iM6_qgBMKXO8KGuniKBh3P9FfIbPZ2IRqO9T74E8aXT3oI-O3DObeBEaxS5ypLY8UMu3Q7mbU4AMBpa8wxXvnkeXzDNvL6DfwGKLpvdGtbDurQUcNllGPcuauy-g=
+        id: rs_0624e8e30cd3b72d006aa79411793487d28151d44e2a0202a1
         summary: []
         type: reasoning
       - action:
           queries:
-          - Pydantic AI
-          - Pydantic AI GitHub
-          - PydanticAI official site
-          query: Pydantic AI
+          - Pydantic AI official
+          query: Pydantic AI official
           type: search
-        id: ws_051744b7ff9aff0c006aa790d54fc887d2880c9f4b571c724e
+        id: ws_0624e8e30cd3b72d006aa79411c1b487d2ab773875ee20c281
         status: completed
         type: web_search_call
-      - content: []
-        encrypted_content: gAAAAABqp5DgZG1R-Fsf08OfzxdNcSKAAX4p90rmbgE0QwWcxlpx_JUUt1lPUjchw7okk1xFPxHPZvxXrzbaJ5DvBCArz0NqFYqOUOO66kUVteBcUSZqXQYV_19WuNBQISYCrCo94Sv2izK5J6BJXrITmimQMzbT14V-D8A6HOxf0TU9c5-sg6-gu87_hMd3XjGYGKBrRXm8PsQMm_uAihudKHSgjN0aRKUOBI77c82bFjzbgOlJqxiVI5GJB510saQX8bj2GFeGsrM-312qqAP-S8BfbarjXOaYbWhuR7hgubGTuXObVSv8HsvmE8rUzn7NR69FniovieSvW5kJ6I_SLYGBvAnF3SDmZnP6bkLLLLosz6z_xhFoUOaMkCEVNtCsuefpQnervuJw5HYgrZSmvrJlMveAjneLDmV4r3gc8F7ddbiDdTE9Ab3sP1sMIYJbK8F7zInDExddptmMMYPAfAavw2C5tecS4I0cA8qYohlGxMIWYfghiTX3-Eo-vZamlEWVjsIh9yL_wQK-HwwICQVhj_t93kfh36kZKE_oIj3N1Qj1Ba7KdlHc_xGHQk46Tdu0M6V1nY8ExmTBmYKA1yMcgRAzeKOWC3VFbPIFeLsN7C96YPm_L-XyN5bywQvLu-V81OCR8UlRYIWLho48DaTgZoTJ6lbFzJhTV3OAiiMOLclFiaUNJ3CFtloKTSxeT5M8sd_P5mE7-KzHpEqxAqP-YQB0RiGL430sU4B0qlRHVf7VFfOOtnmTdsbCd-oXv2I58l6GgyW55jrThBWPX7bKCopdnpz51i_IIYpAxUdLm4nUM-l1pVTRCspN0OP8XRoStfDFBnC9SmN-97qUxAHrMXxCDlXhyrkW92lzOz31ZN9b4Ij_m4UfK_jcab9VlE9siIxgYGARM8WiaJkNCUiwGa2uC0iTt_Hmw31ISmgJAJCD8bP18GJJpMN6xhWCUic7z7HsIVgIUPpGq6qMdK0nvdoqMIxbzVCFbHahbjX7Y6KB5qTcMA6r8hLvBkGHfrWZpPZ1FUi1r9VkrnEwwmWEL2kuxpFhzs48Rsgp1SSEl6xbnxcif2_uvUpbFmLjtaxYWMwuE8ggopZNzd5sTYKJG-d8QxEWQ-b_sYgDT9WD8Wg2v682niZ_Q-U88xQ4kwscwy3MZv5WNQT9GfvYhC4kBWqBtoWLrPB1VHA3n4lYV6BCledAzARZSWDXmyIg-WwkCGufQOKYY_O9VMC8NSMGwqIa21VaKBBMNC1sckhyPtcbXCryonr5GpNhLSR5e4O9eqIwDse0DY1mvQoU-wZkvABl5cCM0iQlGG7GcjLxCA8QmCCR8xLbpONPpKdQrh6aWxHNhm55DXvBEaSuScMmITIzZXuDGdzTEsoHYEPb6aOjGacyrW0wjYKmQPdyeQF-H-6Wp9TblJUHJoXEH0rnFtFroYeOaA90sNZSvUl_-BbfZ2093JYZ2mkhB-UyhbxAYH92ynXBycLCGD4HWldu5kqUDYOKXqe0DaMjhiH2tltkvVGH9mHPSZId67OFyNXJMKORWvgp6dCt-a6SPAYwxinUYHKWjCLvViLOHKCZNytkzllo3mvlqVIKUMvGMcgQ9g0b3WKA4DBVEuQ6JRx_89AoPSSViaEesITLsYbqm0ZwXbYuPIaCw9KrHlYbvBVB4j6ZgeV0vCaadmgJ8gf9hcB91euXLM7oa7j1vG3nSfGKgAq15wRvljsVfCfaxH9r6vBUoKJ3shC9fbgnmb9byA4Y0KTPdGtArUuseAqDa75wjhShuAyCp3mYAxCq8hZxsXeI0bIdNPFUQz_MZeLHegrxQoihSdHemskT_FePak_tC6cATGGCaXzwoG7jvZO0UAPaWukLjRHYXFCq391-DJH5UNUywiwc2297a1s8YdibHbjqHOnRsiF5YUkP3tWUgyURb3UdfpndR2BRIwjNUTZ4IX1NUjjaRNU4uCbdLdpmGL9fkO508dVv8BEa2yExov6al5aDQbuI8Kb6BMA-X8-1jN5o0_VinvJzoXS0SSqySBSVqZyxIOTTtIc7nAt-ZQWV_PQVg4CY5BIZIsFGgpeSx7t2ScmNo0rPwhtTyvUk_Rule6RwdF90tGeF5gwzfoptoBQimsThQkTgTgAKhUz54-ee6nKeRvzFaV9eS2UwgyLIz_phVoSLtq0Lt2nrbwCJM0UYFdilzy_EvxMhP_I9oCAOR7MpTSnU2uLFMI7suyR33DncoKMQKSUmvPQq2cMV7Bum-pNs7Vfiwy3VMKvuU0I_g7Fkpjdr8HNqOKCKtOHvclE_TG2bRDxROfjF5jYzNre1BsazSy-4byrRCMVf4kYXJRItXPUQwNOQ94r6wEhM0riTa6GCznci9NIIPQfsk9FASdhRhWAdjWboWJJKMtyz_ZCO9yFsKE8s2GxWP8wUNgPeTfJs_ph8JakQzty_Yxyk8KMQhMH2kYzL3qWL3t5Anlk30aeNwx1PRv8suxH5UGNo0EJBmQ7wUsehQnlPyA1MAB75gM50HgtFh6xCpRtKx0rYKt5cmHu8j2NLVVF5n8ltcWrklkl04U5uNTP9f0DsasV-DefSZ27jNjpqpfgdwUkPv3VP_bbP0xUJFDgukfD2NXkZ4FAIVrPXQVm2CVulQRXWWGNO1n4UBXJi2RaLO3y9eYTBUHxPJMULeLgp45HNwZnV4s3DEo1vBujXeNR1k965AGi2RTxlQlkXnbM06VvHD8GiAJBatC-RjMhfRivvYqudQbid-K607JbNbFvppy8piEFWuTjyQfS70HZtrpMVu7EdPHCPcYsrrIWjJ-tTxcqeAyUTpXsgGcODUWl52Tc5ycuw43HeKvoHa12gOTAXy8pn4YVLB_yR4TJeFBn8HtryyOS3dGYN8lMom0uh6dlJYrEmAiiA3RHM2RvmllN1Gq8eq4sHT5VITwt4GxWtm0lBgCp2voeJKJbiRWr_gw3aGMdhuifRubwcdkLsa6FkP7VZBKX2s5MWRXLlxwbLwGXNVxRZQcxCnRvvdbACP1_SeiZ0nmMhehzaFXvz3IfzbO9fb5F6Lm1SWeg8LyTQCz0XqEIKDYrcMkpU_-YwbLoiHhb0dNKVDZdwITbxO2u0mqWOAdbGHywGes_pHL5zUVKCvtijSbEOR-MGoHenbZFX8W9j1Od-mQAS-XItCtbm0PhWoTpsrLNGw-hNjqQDCaSi__ikjjH7F0zLMG9OcjuW_UgQXG6tIpMk4wOX_MaHeKdSxG8oBi3Abq4ecDty34E7ZbiZg_JhsMMK5YxHCYx0zVuPda84HrQ34tHd0eynGWNKYBmHGYXLOuJKIDzH6opVVfbuEkaYyBzUobZHFM1lQdM-CcCCtIhFnJsU1_DNi3vAtJUebYVcjmwaPnFqXtx_YxvcB66TEy2xYnFtDoYtN098VEZrznQlE7yLvmwW7x5QfC1fDDQ0IKIw4c5jtbEYeCd3ETTqmrIUu0yutY72t7GsnLKv3bb64Ug4H9NngXEyZtJHPYfjhFoj24_h8Xqe7e5Jq7qseRKgsm8sbQmD03eYSnOq0awkt3Ueu_AJDgFcbOLxys53dLXP5_HIZk1FIO7Um0gQkr1cf0ivhF4QYJuL5tCyBsbXix5GzzyRdcqmbHynneedSVLgeoElUU8-2H40oYV1YI43wS9QK5xiynBZIa4_T2YBLZyWARgrzlMFSrrKw8L7-NeHhfb0ROmwpz_7mHXlw3Gmx6Q97MT91bzA4slG9NCrv1cV0Y_jGFcnq3IN5fv3qgnRUGHNU6-PIeLj76627vXlZ0uhPdNxY5QIiAILibkokui6z3criO-sqyuiopnUA0tkbcX4jxysSOM9PGeHBon0OBvjgB49DFHgwgvQQamiZNG27ELbro2-IEM6eWXgDvfNqHNKJ8IosNyY9JVz7C18w0eI1K_5hpQFGwGZ4fReVslf8xhymxM1neVYPqiSzg4AnvU_cGlzfZd3Z0-qtH-IV7F0TDJO29isKmNvk9DM7fRm0KNZF9FueemQhEg0EaL-XeKdbTKOpHgCWY1KNqCyPpvVVrawY17rCL52XXUrQrmIWudYQShvzaP-kFrko_sXq8Ft8nacepxww0soCeGNeuHxyff8B4Xn7EhgYLJM-vx2g0VEY68sZ6ibJR_evmt9k50tAabDB7jhJNEzo21vxfJxVY8VY2s0UfOIDAJFubfUHG2yOx-r-qbPTcYD33r9oxCKNOFuZz29OUH22t_Te071qoPWxfnM05OE90CzAWI_tjclulPeVtxJHjO304ye7-EgGFtX1A8tJnVO-en-YLbpShFgPkvtdGigrEhLKo7JGOsPR4v06fWa5ObAusGtf0CIapkx7RS9oK9iIXLtT6OHc1O1pkzGwBoWp4qmgWUtQqADde64LTJNG3d11qW4oQeXdiZuCD3npI9FtU4hrVlBnpcjASjatOhyZeGNY3lhvNLpHjHZGk1SaLs-W6WmLPYnaIxqnmXDJBkPGXLq-22uJ4NwU3AqmLP0YoG0_uEzfI_mx0rUny43v5UAXsh6LCqEHVLT44Amh94-BVaFYpQ0gaeJ9eHTGJ-1B_6oMowa-RroL8C_KVlcy5Fpk2xx_D7eyEUq0EzUkP5T6su94Vdjcpw2212fBrEySQx-oN_xGFcnD4ToldVpJUz6BvwgpdXBFagNKSx4w85laxOEBI6xMPishiQFgzPebVGm5cK4L1_DOovZVeL-Jk2uyFh2Eis7nrP5-X61BnVW8dFK0RPQO5y-6idCYLEj9FHeGTP0NfWiRHAl_NaaxtZkRzZ9y_jZKlt_EW7AzI697qCq9VpZS9BIRLYRczjvyYDpSZn2sXlGsQVHj5jtWbfQSd1ccydf0QrKKKYuo123qYRIE2PNY4KfYjiCRJI-fl87J_wnz_zUUimi2mfGuQCKIv9fnyTUZj6BVdcq001A1pfhSPEtk-6_RuoTzRRjQaDXIO2VsRFfKi2jGpDqhLmvn6aZ1568AH1ROPj0hHweAnu2
-        id: rs_051744b7ff9aff0c006aa790d8717487d2b5f049555673fe28
-        summary: []
-        type: reasoning
       - content:
-        - annotations:
-          - end_index: 132
-            start_index: 41
-            title: GitHub - pydantic/pydantic-ai at robotpaper.ai · GitHub
-            type: url_citation
-            url: https://github.com/pydantic/pydantic-ai?ref=robotpaper.ai&utm_source=openai
+        - annotations: []
           logprobs: []
-          text: https://github.com/pydantic/pydantic-ai. ([github.com](https://github.com/pydantic/pydantic-ai?ref=robotpaper.ai&utm_source=openai))
+          text: https://pydantic.dev/docs/ai/overview/
           type: output_text
-        id: msg_051744b7ff9aff0c006aa790df7d1c87d2ad2f28b2383cd2f9
+        id: msg_0624e8e30cd3b72d006aa7941585ac87d28d743dcb1838f4f5
+        phase: final_answer
         role: assistant
         status: completed
         type: message
@@ -108,9 +99,9 @@ interactions:
       presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
-      prompt_cache_retention: in_memory
+      prompt_cache_retention: 24h
       reasoning:
-        context: current_turn
+        context: all_turns
         effort: medium
         mode: standard
         summary: null
@@ -153,17 +144,17 @@ interactions:
           timezone: null
           type: approximate
       top_logprobs: 0
-      top_p: 1.0
+      top_p: 0.98
       truncation: disabled
       usage:
-        input_tokens: 8950
+        input_tokens: 8652
         input_tokens_details:
-          cache_write_tokens: 0
-          cached_tokens: 3584
-        output_tokens: 828
+          cache_write_tokens: 4388
+          cached_tokens: 0
+        output_tokens: 63
         output_tokens_details:
-          reasoning_tokens: 704
-        total_tokens: 9778
+          reasoning_tokens: 47
+        total_tokens: 8715
       user: null
     status:
       code: 200

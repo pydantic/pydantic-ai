@@ -2507,7 +2507,7 @@ async def test_openai_responses_model_web_search_tool_with_blocked_domains(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ):
     model = OpenAIResponsesModel(
-        'gpt-5-mini',
+        'gpt-5.6-luna',
         provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client),
     )
     agent = Agent(
