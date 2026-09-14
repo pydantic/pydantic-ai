@@ -9,13 +9,8 @@ from __future__ import annotations
 
 import ast
 import inspect
-import json
-import os
-import subprocess
-import sys
 import textwrap
 from collections.abc import Callable
-from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
@@ -26,6 +21,7 @@ from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.models.test import TestModel
 
 from .conftest import try_import
+from .kw_only_walker import collect_public_dataclasses
 
 with try_import() as temporal_imports:
     from pydantic_ai.durable_exec.temporal import TemporalAgent  # pyright: ignore[reportDeprecated]
@@ -109,21 +105,9 @@ def test_new_public_dataclasses_are_keyword_only():
     trap lives. Make the new dataclass keyword-only, or add it to the allowlist with maintainer
     sign-off.
 
-    The walk runs out of process with the `COVERAGE_*` environment scrubbed -- see
-    `kw_only_walker.py` for why -- so failures arrive as the child's stderr rather than as an
-    exception here.
+    The walk pauses coverage while importing optional modules. See `kw_only_walker.py` for why.
     """
-    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
-    process = subprocess.run(
-        [sys.executable, str(Path(__file__).parent / 'kw_only_walker.py')],
-        capture_output=True,
-        text=True,
-        timeout=600,
-        env=env,
-    )
-    assert process.returncode == 0, f'dataclass walk failed:\n{process.stderr}'
-
-    result: dict[str, list[str]] = json.loads(process.stdout)
+    result = collect_public_dataclasses()
     offenders = set(result['offenders'])
     skipped = result['skipped']
 

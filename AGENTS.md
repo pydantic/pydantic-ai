@@ -118,6 +118,10 @@ The project uses:
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
 
+## Test process isolation
+
+Do not run subprocesses from tests. Starting another interpreter and importing the project again makes the full test suite materially slower. Move executable logic into importable functions and test it in-process.
+
 ## When to verify
 
 Pre-commit runs `make lint`, `make format`, and `make typecheck-changed` automatically on every commit; that last one skips `tests/` files you did not change since it last passed (the first run checks every file), and CI additionally runs the whole type check and test suite. While iterating, only run targeted checks on the files/tests you have a specific reason to suspect:
