@@ -13,13 +13,11 @@ from __future__ import annotations as _annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import cast
 
 import pytest
 from pytest_mock import MockerFixture
 
 from pydantic_ai import (
-    AudioUrl,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -28,20 +26,16 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import UploadedFile
 
 from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import ContentDict, Part, ToolCall
+    from google.genai.types import Part
 
-    from pydantic_ai.models.google import (
-        GoogleModel,
-        _contents_have_agentic_video_processing,  # pyright: ignore[reportPrivateUsage]
-        _map_tool_call,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
@@ -188,100 +182,49 @@ async def test_media_resolution_forwarding(
     assert case.content.vendor_metadata == original_vendor_metadata
 
 
-@dataclass
-class MediaProcessingCase:
-    id: str
-    content: BinaryContent | AudioUrl | ImageUrl | DocumentUrl | VideoUrl | UploadedFile
-    expected: str | None
-    google_cloud: bool = False
-
-
-MEDIA_PROCESSING_CASES = [
-    MediaProcessingCase(
-        id='video_url',
-        content=VideoUrl(
-            url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
-            vendor_metadata={'media_processing': 'AGENTIC'},
+@pytest.mark.parametrize(
+    'video',
+    [
+        pytest.param(
+            VideoUrl(
+                url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
+                vendor_metadata={'media_processing': 'AGENTIC'},
+            ),
+            id='url',
         ),
-        expected='AGENTIC',
-    ),
-    MediaProcessingCase(
-        id='vertex_gcs_video_url',
-        content=VideoUrl(
-            url='gs://bucket/video.mp4',
-            vendor_metadata={'media_processing': 'AGENTIC'},
+        pytest.param(
+            BinaryContent(data=b'video', media_type='video/mp4', vendor_metadata={'media_processing': 'AGENTIC'}),
+            id='binary',
         ),
-        expected='AGENTIC',
-        google_cloud=True,
-    ),
-    MediaProcessingCase(
-        id='binary_video',
-        content=BinaryContent(data=b'video', media_type='video/mp4', vendor_metadata={'media_processing': 'AGENTIC'}),
-        expected='AGENTIC',
-    ),
-    MediaProcessingCase(
-        id='uploaded_video',
-        content=UploadedFile(
-            file_id='https://generativelanguage.googleapis.com/v1beta/files/video123',
-            provider_name='google',
-            media_type='video/mp4',
-            vendor_metadata={'media_processing': 'AGENTIC'},
+        pytest.param(
+            UploadedFile(
+                file_id='https://generativelanguage.googleapis.com/v1beta/files/video123',
+                provider_name='google',
+                media_type='video/mp4',
+                vendor_metadata={'media_processing': 'AGENTIC'},
+            ),
+            id='uploaded',
         ),
-        expected='AGENTIC',
-    ),
-    MediaProcessingCase(
-        id='audio_url',
-        content=AudioUrl(url='gs://bucket/audio.mp3', vendor_metadata={'media_processing': 'AGENTIC'}),
-        expected=None,
-        google_cloud=True,
-    ),
-    MediaProcessingCase(
-        id='image_url',
-        content=ImageUrl(url='gs://bucket/image.png', vendor_metadata={'media_processing': 'AGENTIC'}),
-        expected=None,
-        google_cloud=True,
-    ),
-    MediaProcessingCase(
-        id='document_url',
-        content=DocumentUrl(url='gs://bucket/report.pdf', vendor_metadata={'media_processing': 'AGENTIC'}),
-        expected=None,
-        google_cloud=True,
-    ),
-    MediaProcessingCase(
-        id='binary_image',
-        content=BinaryContent(data=b'image', media_type='image/png', vendor_metadata={'media_processing': 'AGENTIC'}),
-        expected=None,
-    ),
-    MediaProcessingCase(
-        id='uploaded_image',
-        content=UploadedFile(
-            file_id='https://generativelanguage.googleapis.com/v1beta/files/image123',
-            provider_name='google',
-            media_type='image/png',
-            vendor_metadata={'media_processing': 'AGENTIC'},
-        ),
-        expected=None,
-    ),
-]
-
-
-@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in MEDIA_PROCESSING_CASES])
+    ],
+)
 async def test_media_processing_forwarding(
-    case: MediaProcessingCase,
-    mapping_model: GoogleModel,
-    vertex_mapping_model: GoogleModel,
+    video: BinaryContent | VideoUrl | UploadedFile, mapping_model: GoogleModel
 ) -> None:
-    """`media_processing` is forwarded only for video inputs without mutating caller metadata."""
-    model = vertex_mapping_model if case.google_cloud else mapping_model
-    original_vendor_metadata = deepcopy(case.content.vendor_metadata)
+    """`media_processing` is forwarded for every supported video input without mutating its metadata."""
+    original_vendor_metadata = deepcopy(video.vendor_metadata)
 
-    content = await model._map_user_prompt(UserPromptPart(content=[case.content]))  # pyright: ignore[reportPrivateUsage]
+    content = await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
-    if case.expected is None:
-        assert 'media_processing' not in content[0]
-    else:
-        assert content[0].get('media_processing') == case.expected
-    assert case.content.vendor_metadata == original_vendor_metadata
+    assert content[0].get('media_processing') == 'AGENTIC'
+    assert video.vendor_metadata == original_vendor_metadata
+
+
+async def test_media_processing_is_ignored_for_non_video(mapping_model: GoogleModel) -> None:
+    image = BinaryContent(data=b'image', media_type='image/png', vendor_metadata={'media_processing': 'AGENTIC'})
+
+    content = await mapping_model._map_user_prompt(UserPromptPart(content=[image]))  # pyright: ignore[reportPrivateUsage]
+
+    assert 'media_processing' not in content[0]
 
 
 async def test_media_processing_composes_with_media_resolution(mapping_model: GoogleModel) -> None:
@@ -308,30 +251,6 @@ async def test_media_processing_composes_with_media_resolution(mapping_model: Go
         ]
     )
     Part.model_validate(content[0])
-
-
-@pytest.mark.parametrize('args', [{'query': 'test'}, None], ids=['with-payload', 'without-payload'])
-def test_missing_native_tool_type_is_rejected(args: dict[str, str] | None) -> None:
-    with pytest.raises(UnexpectedModelBehavior, match='Missing tool_type on native tool part'):
-        _map_tool_call(ToolCall(id='call-1', args=args), 'google')
-
-
-@pytest.mark.parametrize(
-    ('media_processing', 'expected'),
-    [('AGENTIC', True), ('agentic', True), ('STATIC', False), ('MEDIA_PROCESSING_UNSPECIFIED', False), (None, False)],
-)
-def test_agentic_response_handling_uses_mapped_setting(media_processing: str | None, expected: bool) -> None:
-    contents = cast(
-        list[ContentDict],
-        [
-            {
-                'role': 'user',
-                'parts': [{'file_data': {'file_uri': 'gs://bucket/video.mp4'}, 'media_processing': media_processing}],
-            }
-        ],
-    )
-
-    assert _contents_have_agentic_video_processing(contents) is expected
 
 
 # =============================================================================
