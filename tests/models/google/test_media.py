@@ -35,7 +35,7 @@ from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import ContentDict, PartMediaResolution, ToolCall
+    from google.genai.types import ContentDict, Part, ToolCall
 
     from pydantic_ai.models.google import (
         GoogleModel,
@@ -270,10 +270,8 @@ async def test_media_processing_forwarding(
     case: MediaProcessingCase,
     mapping_model: GoogleModel,
     vertex_mapping_model: GoogleModel,
-    mocker: MockerFixture,
 ) -> None:
     """`media_processing` is forwarded only for video inputs without mutating caller metadata."""
-    mocker.patch('pydantic_ai.models.google._SDK_SUPPORTS_MEDIA_PROCESSING', True)
     model = vertex_mapping_model if case.google_cloud else mapping_model
     original_vendor_metadata = deepcopy(case.content.vendor_metadata)
 
@@ -286,21 +284,7 @@ async def test_media_processing_forwarding(
     assert case.content.vendor_metadata == original_vendor_metadata
 
 
-async def test_media_processing_requires_supported_sdk(mapping_model: GoogleModel, mocker: MockerFixture) -> None:
-    mocker.patch('pydantic_ai.models.google._SDK_SUPPORTS_MEDIA_PROCESSING', False)
-    video = VideoUrl(
-        url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
-        vendor_metadata={'media_processing': 'AGENTIC'},
-    )
-
-    with pytest.raises(UserError, match=r'requires `google-genai>=2\.20\.0`'):
-        await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_media_processing_composes_with_media_resolution(
-    mapping_model: GoogleModel, mocker: MockerFixture
-) -> None:
-    mocker.patch('pydantic_ai.models.google._SDK_SUPPORTS_MEDIA_PROCESSING', True)
+async def test_media_processing_composes_with_media_resolution(mapping_model: GoogleModel) -> None:
     video = VideoUrl(
         url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
         vendor_metadata={
@@ -323,9 +307,7 @@ async def test_media_processing_composes_with_media_resolution(
             }
         ]
     )
-    media_resolution = content[0].get('media_resolution')
-    assert media_resolution is not None
-    PartMediaResolution.model_validate(media_resolution)
+    Part.model_validate(content[0])
 
 
 @pytest.mark.parametrize(

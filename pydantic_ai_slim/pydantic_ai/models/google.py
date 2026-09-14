@@ -129,17 +129,13 @@ except ImportError as _import_error:
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
 
+_MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
 _TOOL_TYPE_TO_NATIVE_TOOL_NAME: dict[ToolType, str] = {
     ToolType.GOOGLE_SEARCH_WEB: WebSearchTool.kind,
     ToolType.URL_CONTEXT: WebFetchTool.kind,
     ToolType.FILE_SEARCH: FileSearchTool.kind,
+    ToolType.MEDIA_PROCESSING: _MEDIA_PROCESSING_TOOL_NAME,
 }
-
-_MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
-_SDK_SUPPORTS_MEDIA_PROCESSING = 'media_processing' in PartDict.__annotations__
-_MEDIA_PROCESSING_TOOL_TYPE: ToolType | None = getattr(ToolType, 'MEDIA_PROCESSING', None)
-if _MEDIA_PROCESSING_TOOL_TYPE is not None:
-    _TOOL_TYPE_TO_NATIVE_TOOL_NAME[_MEDIA_PROCESSING_TOOL_TYPE] = _MEDIA_PROCESSING_TOOL_NAME
 
 _NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_NATIVE_TOOL_NAME.items()}
 
@@ -1352,8 +1348,6 @@ class GoogleModel(Model[Client]):
             if 'media_processing' in vendor_metadata:
                 media_processing = vendor_metadata.pop('media_processing')
                 if resolved[2].startswith('video/'):
-                    if not _SDK_SUPPORTS_MEDIA_PROCESSING:
-                        raise UserError('`vendor_metadata["media_processing"]` requires `google-genai>=2.20.0`')
                     part_dict['media_processing'] = media_processing
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
@@ -2118,12 +2112,12 @@ def _has_native_tool_invocations(parts: list[Part], *, agentic_video_processing:
 def _is_media_processing_native_part(part: Part) -> bool:
     """Whether Gemini emitted this part for agentic video processing."""
     if tool_call := part.tool_call:
-        return (_MEDIA_PROCESSING_TOOL_TYPE is not None and tool_call.tool_type == _MEDIA_PROCESSING_TOOL_TYPE) or (
+        return tool_call.tool_type == ToolType.MEDIA_PROCESSING or (
             tool_call.tool_type is None and tool_call.args is None
         )
     tool_response = part.tool_response
     assert tool_response is not None
-    return (_MEDIA_PROCESSING_TOOL_TYPE is not None and tool_response.tool_type == _MEDIA_PROCESSING_TOOL_TYPE) or (
+    return tool_response.tool_type == ToolType.MEDIA_PROCESSING or (
         tool_response.tool_type is None and tool_response.response is None
     )
 

@@ -9,18 +9,12 @@ from pydantic_ai.agent import Agent
 from ..._inline_snapshot import snapshot
 from ...conftest import IsStr, RequestCapture, try_import
 
-supports_media_processing = False
 with try_import() as imports_successful:
-    from google.genai.types import PartDict
-
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
-    supports_media_processing = 'media_processing' in PartDict.__annotations__
-
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.skipif(not supports_media_processing, reason='requires google-genai>=2.20.0'),
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]

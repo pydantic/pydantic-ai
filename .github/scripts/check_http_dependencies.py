@@ -69,11 +69,11 @@ google_extras = {'google', 'google-realtime'}
 google_requirements = [requirement for requirement in slim if requirement.name == 'google-genai']
 assert len(google_requirements) == len(google_extras)
 for requirement in google_requirements:
-    assert requirement.specifier.contains('2.18.0')
+    assert str(requirement.specifier) == '>=2.20.0'
     assert requirement.marker is not None
     assert str(requirement.marker).removeprefix('extra == ').strip('"') in google_extras
 
-# Google Gen AI 2.18 accepts injected HTTPX2 clients, but still depends directly on legacy HTTPX.
+# Google Gen AI 2.20 accepts injected HTTPX2 clients, but still depends directly on legacy HTTPX.
 google_dependencies = [Requirement(value) for value in requires('google-genai') or []]
 assert any(requirement.name == 'httpx' for requirement in google_dependencies)
 
