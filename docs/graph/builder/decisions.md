@@ -20,7 +20,7 @@ Use [`g.decision()`][pydantic_graph.graph_builder.GraphBuilder.decision] to crea
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_graph import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -49,8 +49,8 @@ async def main():
         g.edge_from(g.start_node).to(choose_path),
         g.edge_from(choose_path).to(
             g.decision()
-            .branch(g.match(TypeExpression[Literal['left']]).to(left_path))
-            .branch(g.match(TypeExpression[Literal['right']]).to(right_path))
+            .branch(g.match(Literal['left']).to(left_path))
+            .branch(g.match(Literal['right']).to(right_path))
         ),
         g.edge_from(left_path, right_path).to(g.end_node),
     )
@@ -116,12 +116,12 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 ### Matching Union Types
 
-For more complex type expressions like unions, you need to use [`TypeExpression`][pydantic_graph.util.TypeExpression] because Python's type system doesn't allow union types to be used directly as runtime values:
+Any type expression can be matched against, not just classes: unions like `int | float` work, as do the `Literal` values shown above:
 
 ```python {title="union_type_matching.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -149,8 +149,7 @@ async def main():
         g.edge_from(g.start_node).to(return_value),
         g.edge_from(return_value).to(
             g.decision()
-            # Use TypeExpression for union types
-            .branch(g.match(TypeExpression[int | float]).to(handle_number))
+            .branch(g.match(int | float).to(handle_number))
             .branch(g.match(str).to(handle_text))
         ),
         g.edge_from(handle_number, handle_text).to(g.end_node),
@@ -165,9 +164,7 @@ async def main():
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 !!! note
-    [`TypeExpression`][pydantic_graph.util.TypeExpression] is only necessary for complex type expressions like unions (`int | str`), `Literal`, and other type forms that aren't valid as runtime `type` objects. For simple types like `int`, `str`, or custom classes, you can pass them directly to `g.match()`.
-
-    The `TypeForm` class introduced in [PEP 747](https://peps.python.org/pep-0747/) should eventually eliminate the need for this workaround.
+    Before type checkers supported [PEP 747](https://peps.python.org/pep-0747/) `TypeForm`, type expressions that aren't classes had to be wrapped as `TypeExpression[int | float]` to satisfy static type checking. [`TypeExpression`][pydantic_graph.util.TypeExpression] is now deprecated and the type expression can be passed directly.
 
 
 ## Custom Matchers
@@ -177,7 +174,7 @@ Provide custom matching logic with the `matches` parameter:
 ```python {title="custom_matcher.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -204,8 +201,8 @@ async def main():
         g.edge_from(g.start_node).to(return_number),
         g.edge_from(return_number).to(
             g.decision()
-            .branch(g.match(TypeExpression[int], matches=lambda x: x % 2 == 0).to(even_path))
-            .branch(g.match(TypeExpression[int], matches=lambda x: x % 2 == 1).to(odd_path))
+            .branch(g.match(int, matches=lambda x: x % 2 == 0).to(even_path))
+            .branch(g.match(int, matches=lambda x: x % 2 == 1).to(odd_path))
         ),
         g.edge_from(even_path, odd_path).to(g.end_node),
     )
@@ -225,7 +222,7 @@ Branches are evaluated in the order they're added. The first matching branch is 
 ```python {title="branch_priority.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -252,8 +249,8 @@ async def main():
         g.edge_from(g.start_node).to(return_value),
         g.edge_from(return_value).to(
             g.decision()
-            .branch(g.match(TypeExpression[int], matches=lambda x: x >= 5).to(branch_a))
-            .branch(g.match(TypeExpression[int], matches=lambda x: x >= 0).to(branch_b))
+            .branch(g.match(int, matches=lambda x: x >= 5).to(branch_a))
+            .branch(g.match(int, matches=lambda x: x >= 0).to(branch_b))
         ),
         g.edge_from(branch_a, branch_b).to(g.end_node),
     )
@@ -275,7 +272,7 @@ Use `object` or `Any` to create a catch-all branch:
 ```python {title="catch_all.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -296,7 +293,7 @@ async def main():
 
     g.add(
         g.edge_from(g.start_node).to(return_value),
-        g.edge_from(return_value).to(g.decision().branch(g.match(TypeExpression[object]).to(catch_all))),
+        g.edge_from(return_value).to(g.decision().branch(g.match(object).to(catch_all))),
         g.edge_from(catch_all).to(g.end_node),
     )
 
@@ -315,7 +312,7 @@ Decisions can be nested for complex conditional logic:
 ```python {title="nested_decisions.py"}
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -350,13 +347,13 @@ async def main():
         g.edge_from(g.start_node).to(get_number),
         g.edge_from(get_number).to(
             g.decision()
-            .branch(g.match(TypeExpression[int], matches=lambda x: x > 0).to(is_positive))
-            .branch(g.match(TypeExpression[int], matches=lambda x: x <= 0).to(is_negative))
+            .branch(g.match(int, matches=lambda x: x > 0).to(is_positive))
+            .branch(g.match(int, matches=lambda x: x <= 0).to(is_negative))
         ),
         g.edge_from(is_positive).to(
             g.decision()
-            .branch(g.match(TypeExpression[int], matches=lambda x: x < 10).to(small_positive))
-            .branch(g.match(TypeExpression[int], matches=lambda x: x >= 10).to(large_positive))
+            .branch(g.match(int, matches=lambda x: x < 10).to(small_positive))
+            .branch(g.match(int, matches=lambda x: x >= 10).to(large_positive))
         ),
         g.edge_from(is_negative, small_positive, large_positive).to(g.end_node),
     )
@@ -377,7 +374,7 @@ Add labels to branches for documentation and diagram generation:
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_graph import GraphBuilder, StepContext, TypeExpression
+from pydantic_graph import GraphBuilder, StepContext
 
 
 @dataclass
@@ -404,8 +401,8 @@ async def main():
         g.edge_from(g.start_node).to(choose),
         g.edge_from(choose).to(
             g.decision()
-            .branch(g.match(TypeExpression[Literal['a']]).label('Take path A').to(path_a))
-            .branch(g.match(TypeExpression[Literal['b']]).label('Take path B').to(path_b))
+            .branch(g.match(Literal['a']).label('Take path A').to(path_a))
+            .branch(g.match(Literal['b']).label('Take path B').to(path_b))
         ),
         g.edge_from(path_a, path_b).to(g.end_node),
     )

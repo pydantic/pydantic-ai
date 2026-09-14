@@ -33,7 +33,7 @@ from typing import (
 from anyio import BrokenResourceError, CancelScope, ClosedResourceError, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from typing_extensions import Never, TypeAliasType, TypeVar, assert_never
+from typing_extensions import Never, TypeAliasType, TypeForm, TypeVar, assert_never
 
 from pydantic_graph import _utils, exceptions
 from pydantic_graph._utils import UNSET, AbstractSpan, Unset, get_traceparent, infer_obj_name, logfire_span
@@ -67,7 +67,7 @@ from pydantic_graph.paths import (
     TransformMarker,
 )
 from pydantic_graph.step import NodeStep, Step, StepContext, StepFunction, StepNode, StreamFunction
-from pydantic_graph.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
+from pydantic_graph.util import get_callable_name, unpack_type_expression
 
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
@@ -172,16 +172,16 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     name: str | None
     """Optional name for the graph, if not provided the name will be inferred from the calling frame on the first call to a graph method."""
 
-    state_type: type[StateT]
+    state_type: TypeForm[StateT]
     """The type of the graph state."""
 
-    deps_type: type[DepsT]
+    deps_type: TypeForm[DepsT]
     """The type of the dependencies."""
 
-    input_type: type[InputT]
+    input_type: TypeForm[InputT]
     """The type of the input data."""
 
-    output_type: type[OutputT]
+    output_type: TypeForm[OutputT]
     """The type of the output data."""
 
     auto_instrument: bool
@@ -930,7 +930,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             if match_tester is not None:
                 inputs_match = match_tester(inputs)
             else:
-                branch_source = unpack_type_expression(branch.source)
+                # Typed as `Any` so the runtime introspection below can treat it as a class where `isinstance` accepts it
+                branch_source: Any = unpack_type_expression(branch.source)
 
                 if branch_source in {Any, object}:
                     inputs_match = True
@@ -1153,16 +1154,16 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     name: str | None
     """Optional name for the graph, if not provided the name will be inferred from the calling frame on the first call to a graph method."""
 
-    state_type: TypeOrTypeExpression[StateT]
+    state_type: TypeForm[StateT]
     """The type of the graph state."""
 
-    deps_type: TypeOrTypeExpression[DepsT]
+    deps_type: TypeForm[DepsT]
     """The type of the dependencies."""
 
-    input_type: TypeOrTypeExpression[GraphInputT]
+    input_type: TypeForm[GraphInputT]
     """The type of the graph input data."""
 
-    output_type: TypeOrTypeExpression[GraphOutputT]
+    output_type: TypeForm[GraphOutputT]
     """The type of the graph output data."""
 
     auto_instrument: bool
@@ -1184,10 +1185,10 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         self,
         *,
         name: str | None = None,
-        state_type: TypeOrTypeExpression[StateT] = NoneType,
-        deps_type: TypeOrTypeExpression[DepsT] = NoneType,
-        input_type: TypeOrTypeExpression[GraphInputT] = NoneType,
-        output_type: TypeOrTypeExpression[GraphOutputT] = NoneType,
+        state_type: TypeForm[StateT] = NoneType,
+        deps_type: TypeForm[DepsT] = NoneType,
+        input_type: TypeForm[GraphInputT] = NoneType,
+        output_type: TypeForm[GraphOutputT] = NoneType,
         auto_instrument: bool = True,
     ):
         """Initialize a graph builder.
@@ -1542,7 +1543,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
     def match(
         self,
-        source: TypeOrTypeExpression[SourceT],
+        source: TypeForm[SourceT],
         *,
         matches: Callable[[Any], bool] | None = None,
     ) -> DecisionBranchBuilder[StateT, DepsT, SourceT, SourceT, Never]:
@@ -1639,7 +1640,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             )
 
     def _edge_from_return_hint(
-        self, node: SourceNode[StateT, DepsT, Any], return_hint: TypeOrTypeExpression[Any]
+        self, node: SourceNode[StateT, DepsT, Any], return_hint: TypeForm[Any]
     ) -> EdgePath[StateT, DepsT] | None:
         """Create edges from a return type hint.
 
