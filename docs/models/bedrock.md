@@ -62,6 +62,34 @@ agent = Agent(model)
 ...
 ```
 
+### Timeouts
+
+Long generations can outlast the Bedrock client's default timeouts. Both are configurable on
+[`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider], and each falls back to an
+environment variable when omitted:
+
+| Argument | Environment variable | Default |
+| --- | --- | --- |
+| `aws_read_timeout` | `AWS_READ_TIMEOUT` | 300 seconds |
+| `aws_connect_timeout` | `AWS_CONNECT_TIMEOUT` | 60 seconds |
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockConverseModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+model = BedrockConverseModel(
+    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    provider=BedrockProvider(region_name='us-east-1', aws_read_timeout=600),
+)
+agent = Agent(model)
+...
+```
+
+These apply to clients the provider builds itself. A prebuilt `bedrock_client` is used as-is, so
+configure its timeouts on the client. See [Timeouts](../timeouts.md) for how request timeouts work
+across model classes, including why `ModelSettings['timeout']` does not reach Bedrock.
+
 ### Customizing Bedrock Runtime API
 
 You can customize the Bedrock Runtime API calls by adding additional parameters, such as [guardrail
