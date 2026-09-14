@@ -1068,8 +1068,9 @@ class GoogleModel(Model[Client]):
         return contents, config
 
     def _process_response(
-        self, response: GenerateContentResponse, media_processing: _GoogleMediaProcessingCodec
+        self, response: GenerateContentResponse, media_processing: _GoogleMediaProcessingCodec | None = None
     ) -> ModelResponse:
+        media_processing = media_processing or _GoogleMediaProcessingCodec()
         candidate = response.candidates[0] if response.candidates else None
 
         provider_response_id = response.response_id
