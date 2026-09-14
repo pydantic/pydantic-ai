@@ -4539,21 +4539,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 yield maybe_event
                     elif isinstance(chunk.item, responses.ResponseToolSearchOutputItem):
                         if chunk.item.execution == 'server':
-                            if chunk.item.call_id is not None:
-                                # An explicit ID wins and retires the corresponding pending call.
-                                call_id = chunk.item.call_id
-                                if call_id in pending_tool_search_call_ids:
-                                    pending_tool_search_call_ids.remove(call_id)
-                            else:
-                                # OpenAI omits this ID for hosted searches, so pair them FIFO.
-                                call_id = (
-                                    pending_tool_search_call_ids.popleft()
-                                    if pending_tool_search_call_ids
-                                    else chunk.item.id
-                                )
+                            call_id = _match_tool_search_output_to_call(
+                                chunk.item.call_id, pending_tool_search_call_ids
+                            )
                             yield self._parts_manager.handle_part(
                                 vendor_part_id=f'{chunk.item.id}-return',
-                                part=_build_tool_search_return_part(call_id, chunk.item, self.provider_name),
+                                part=_build_tool_search_return_part(
+                                    call_id if call_id is not None else chunk.item.id,
+                                    chunk.item,
+                                    self.provider_name,
+                                ),
                             )
                     elif isinstance(chunk.item, responses.ResponseFileSearchToolCall):
                         call_part, return_part = _map_file_search_tool_call(chunk.item, self.provider_name)
@@ -5476,20 +5471,24 @@ def _tool_search_output_call_ids(response: responses.Response) -> dict[str, str]
     for item in response.output:
         if not isinstance(item, responses.ResponseToolSearchOutputItem) or item.execution != 'server':
             continue
-        if item.call_id is not None:
-            if item.call_id not in server_call_ids:
-                continue
-            # An explicit ID wins and retires the corresponding pending call.
-            call_id = item.call_id
-            if call_id in pending_call_ids:
-                pending_call_ids.remove(call_id)
-        elif pending_call_ids:
-            # OpenAI omits this ID for hosted searches, so pair them FIFO.
-            call_id = pending_call_ids.popleft()
-        else:
+        if item.call_id is not None and item.call_id not in server_call_ids:
             continue
-        output_call_ids[item.id] = call_id
+        if (call_id := _match_tool_search_output_to_call(item.call_id, pending_call_ids)) is not None:
+            output_call_ids[item.id] = call_id
     return output_call_ids
+
+
+def _match_tool_search_output_to_call(output_call_id: str | None, pending_call_ids: deque[str]) -> str | None:
+    """Match an output to a call and remove that call from the pending queue."""
+    if output_call_id is not None:
+        # The provider's explicit association is authoritative.
+        if output_call_id in pending_call_ids:
+            pending_call_ids.remove(output_call_id)
+        return output_call_id
+    if pending_call_ids:
+        # Anonymous hosted-search outputs follow their calls in FIFO order.
+        return pending_call_ids.popleft()
+    return None
 
 
 def _map_tool_search_call(item: ResponseToolSearchCall, provider_name: str) -> NativeToolSearchCallPart:
