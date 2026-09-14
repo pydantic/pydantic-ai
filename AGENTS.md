@@ -120,7 +120,7 @@ The project uses:
 
 ## Test process isolation
 
-Do not run subprocesses from tests. Starting another interpreter and importing the project again makes the full test suite materially slower. Move executable logic into importable functions and test it in-process.
+Do not use subprocesses to test logic that can run in-process. Starting another interpreter and importing the project again makes the full test suite materially slower. Reserve subprocesses for behavior that depends on the process boundary, such as CLI invocation, interpreter startup, or import isolation.
 
 ## When to verify
 
