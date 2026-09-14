@@ -484,7 +484,9 @@ print(result.output)
     being raised. Note that it rejects *every* response with that finish reason, including non-empty
     ones the agent loop would have accepted. To instead raise on `content_filter` responses that still
     carry partial or refusal text, add the
-    [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
+    [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability; whether a
+    given provider's refusals raise by default is summarized in
+    [per-provider refusal and safety-filter behavior](../capabilities/raise-content-filter-error.md#per-provider-behavior).
 
 #### Native Tool Failure Example
 
