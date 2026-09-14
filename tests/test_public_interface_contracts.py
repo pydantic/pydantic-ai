@@ -11,7 +11,6 @@ import ast
 import inspect
 import textwrap
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from inline_snapshot import snapshot
@@ -22,7 +21,8 @@ from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.models.test import TestModel
 
 from .conftest import try_import
-from .kw_only_walker import collect_public_dataclasses
+
+pytest_plugins = ('tests.kw_only_walker',)
 
 with try_import() as temporal_imports:
     from pydantic_ai.durable_exec.temporal import TemporalAgent  # pyright: ignore[reportDeprecated]
@@ -96,7 +96,7 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def test_new_public_dataclasses_are_keyword_only():
+def test_new_public_dataclasses_are_keyword_only(public_dataclasses: dict[str, list[str]]):
     """New public dataclasses must not add a second positional `__init__` parameter.
 
     "Pretty much all plain dataclasses need `_: KW_ONLY`" is the most-repeated unenforced review
@@ -106,17 +106,13 @@ def test_new_public_dataclasses_are_keyword_only():
     trap lives. Make the new dataclass keyword-only, or add it to the allowlist with maintainer
     sign-off.
 
-    The walk runs in a worker thread with coverage disabled while importing optional modules. See
-    `kw_only_walker.py` for why.
+    The fixture pauses coverage while importing optional modules. See `kw_only_walker.py` for why.
     """
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        result = executor.submit(collect_public_dataclasses).result()
+    offenders = set(public_dataclasses['offenders'])
+    skipped = public_dataclasses['skipped']
 
-    offenders = set(result['offenders'])
-    skipped = result['skipped']
-
-    assert result['unreadable'] == [], (
-        f'could not read a constructor signature for: {result["unreadable"]}; '
+    assert public_dataclasses['unreadable'] == [], (
+        f'could not read a constructor signature for: {public_dataclasses["unreadable"]}; '
         'the walk cannot classify these, so they are neither gated nor grandfathered'
     )
     # Floor: a walk that collapses -- a renamed package, an import that stops resolving -- must

@@ -1,7 +1,7 @@
 """Collect public dataclasses whose constructor takes two or more positional fields.
 
-The caller runs the walk in a worker thread with coverage disabled. Missing optional dependencies
-execute `pragma: no cover` import guards, which would otherwise fail the strict pragma audit.
+The fixture pauses coverage while it walks the package. Missing optional dependencies execute
+`pragma: no cover` import guards, which would otherwise fail the strict pragma audit.
 
 Modules that fail to import are reported in `skipped` rather than dropped, so a walk that shrinks
 because an optional dependency is absent is visible to the caller instead of quietly reducing the
@@ -14,7 +14,9 @@ import dataclasses
 import importlib
 import inspect
 import pkgutil
-import sys
+
+import pytest
+from coverage import Coverage
 
 import pydantic_ai
 from pydantic_ai.models import StreamedResponse
@@ -42,53 +44,62 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
     return positional >= 2
 
 
-def collect_public_dataclasses() -> dict[str, list[str]]:
-    sys.settrace(None)
+@pytest.fixture
+def public_dataclasses() -> dict[str, list[str]]:
+    coverage = Coverage.current()
+    # Coverage has no public API for pausing and resuming an active collector.
+    collector = coverage._collector if coverage is not None else None  # pyright: ignore[reportPrivateUsage]
+    if collector is not None:
+        collector.pause()
 
-    offenders: set[str] = set()
-    skipped: list[str] = []
-    unreadable: list[str] = []
+    try:
+        offenders: set[str] = set()
+        skipped: list[str] = []
+        unreadable: list[str] = []
 
-    for module_info in pkgutil.walk_packages(
-        pydantic_ai.__path__,
-        'pydantic_ai.',
-        # Without `onerror`, a package whose `__init__` raises `ImportError` takes its whole subtree
-        # out of the walk silently: those modules reach neither `offenders` nor the `import_module`
-        # guard below, so the gate would pass on a walk that quietly shrank. The callback is handed
-        # the package name, not the exception -- the reason for that package's own failure is what
-        # the guard below records.
-        onerror=lambda name: skipped.append(f'{name}: package failed to import, subtree not walked'),
-    ):
-        try:
-            module = importlib.import_module(module_info.name)
-        except ImportError as exc:
-            skipped.append(f'{module_info.name}: {exc}')
-            continue
-
-        for obj in vars(module).values():
-            if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)):
-                continue
-            if obj.__module__ != module_info.name:
-                continue
-
-            name = f'{obj.__module__}.{obj.__qualname__}'
-            # A leading underscore anywhere in the path means the module or the class is private.
-            # The convention being enforced is about public construction breaking when a field is
-            # added; internals can be refactored freely, and gating them would bury the real
-            # signal under entries no caller can construct.
-            if any(part.startswith('_') for part in name.split('.')):
-                continue
-            # `StreamedResponse` subclasses are the streaming protocol's implementation types: the
-            # framework constructs them inside `Model.request_stream()` and the user only ever
-            # receives one. Gating them would fail every new-provider PR and push each new
-            # provider into a shape inconsistent with its siblings.
-            if issubclass(obj, StreamedResponse):
+        for module_info in pkgutil.walk_packages(
+            pydantic_ai.__path__,
+            'pydantic_ai.',
+            # Without `onerror`, a package whose `__init__` raises `ImportError` takes its whole subtree
+            # out of the walk silently: those modules reach neither `offenders` nor the `import_module`
+            # guard below, so the gate would pass on a walk that quietly shrank. The callback is handed
+            # the package name, not the exception -- the reason for that package's own failure is what
+            # the guard below records.
+            onerror=lambda name: skipped.append(f'{name}: package failed to import, subtree not walked'),
+        ):
+            try:
+                module = importlib.import_module(module_info.name)
+            except ImportError as exc:
+                skipped.append(f'{module_info.name}: {exc}')
                 continue
 
-            takes_positional_pair = _takes_two_positional_arguments(obj)
-            if takes_positional_pair is None:
-                unreadable.append(name)
-            elif takes_positional_pair:
-                offenders.add(name)
+            for obj in vars(module).values():
+                if not (isinstance(obj, type) and dataclasses.is_dataclass(obj)):
+                    continue
+                if obj.__module__ != module_info.name:
+                    continue
 
-    return {'offenders': sorted(offenders), 'skipped': sorted(skipped), 'unreadable': sorted(unreadable)}
+                name = f'{obj.__module__}.{obj.__qualname__}'
+                # A leading underscore anywhere in the path means the module or the class is private.
+                # The convention being enforced is about public construction breaking when a field is
+                # added; internals can be refactored freely, and gating them would bury the real
+                # signal under entries no caller can construct.
+                if any(part.startswith('_') for part in name.split('.')):
+                    continue
+                # `StreamedResponse` subclasses are the streaming protocol's implementation types: the
+                # framework constructs them inside `Model.request_stream()` and the user only ever
+                # receives one. Gating them would fail every new-provider PR and push each new
+                # provider into a shape inconsistent with its siblings.
+                if issubclass(obj, StreamedResponse):
+                    continue
+
+                takes_positional_pair = _takes_two_positional_arguments(obj)
+                if takes_positional_pair is None:
+                    unreadable.append(name)
+                elif takes_positional_pair:
+                    offenders.add(name)
+
+        return {'offenders': sorted(offenders), 'skipped': sorted(skipped), 'unreadable': sorted(unreadable)}
+    finally:
+        if collector is not None:
+            collector.resume()
