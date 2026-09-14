@@ -374,6 +374,28 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_responses_requires_streaming: bool
+    """Whether the Responses endpoint serves streaming responses only. Default: `False`.
+
+    When `True`, nominally non-streaming requests are sent with `stream=True` and aggregated from the
+    terminal `response.completed` event, so callers see an ordinary non-streaming [`ModelResponse`][pydantic_ai.messages.ModelResponse].
+    Set for subscription-auth endpoints (e.g. OpenAI Codex) that reject `stream=False`.
+    """
+
+    openai_responses_requires_store_false: bool
+    """Whether the Responses endpoint requires `store=false` on every request. Default: `False`.
+
+    When `True`, `store=false` is sent even when no `openai_store` setting is given (the field cannot be
+    omitted), and an explicit `openai_store=True` setting is silently overridden, consistent with how
+    other backend-rejected settings are dropped.
+    """
+
+    openai_supports_input_token_counting: bool
+    """Whether the provider exposes server-side input-token counting (`responses/input_tokens`). Default: `True`.
+
+    When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
+    """
+
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
@@ -464,8 +486,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,
         # Reasoning effort is only accepted by the `gpt-realtime-2*` reasoning models; the GA
-        # `gpt-realtime` rejects it ("Unsupported option for this model").
-        'supports_thinking': model_name.startswith('gpt-realtime-2'),
+        # `gpt-realtime` (and its dated `gpt-realtime-2025-…` snapshots) rejects it ("Unsupported
+        # option for this model"), so match the version number at a `-`/`.` boundary.
+        'supports_thinking': bool(re.match(r'gpt-realtime-2(?:[.-]|$)', model_name)),
     }
 
 

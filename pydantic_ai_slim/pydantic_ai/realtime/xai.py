@@ -60,11 +60,12 @@ from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import ModelMessage, RealtimeSessionReconnectEvent
 from ..models import ModelRequestParameters
-from ..providers import infer_provider
+from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
     RealtimeHandshakeError,
+    config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
     map_event as _map_openai_event,
@@ -89,6 +90,8 @@ from .profiles import RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings, ReconnectPolicy
 
 if TYPE_CHECKING:
+    from xai_sdk import AsyncClient
+
     from ..providers.xai import XaiProvider
 
 # `input_transcription_model='auto'` resolves to this — xAI's realtime transcription model. Kept behind
@@ -255,6 +258,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         dial: Callable[[], Awaitable[ClientConnection]] | None = None,
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
+        interrupts_response_on_speech: bool = False,
         model_name: str | None = None,
         model_name_getter: Callable[[], str | None] | None = None,
         conversation_id: str | None = None,
@@ -265,6 +269,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             dial=dial,
             reconnect=reconnect,
             input_transcription_enabled=input_transcription_enabled,
+            interrupts_response_on_speech=interrupts_response_on_speech,
             model_name=model_name,
             model_name_getter=model_name_getter,
         )
@@ -360,15 +365,17 @@ class XaiRealtimeModel(RealtimeModel):
         self,
         model: XaiRealtimeModelName,
         *,
-        provider: XaiProvider | str = 'xai',
+        provider: Provider[AsyncClient] | str = 'xai',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
         super().__init__(settings=settings, profile=profile)
         self.model = model
+        from ..providers.xai import XaiProvider
+
         if isinstance(provider, str):
-            provider = cast('XaiProvider', infer_provider(provider))
-        if provider.name != 'xai':
+            provider = infer_provider(provider)
+        if not isinstance(provider, XaiProvider):
             # Reading the xAI-specific `api_key`/`api_host` off a foreign provider below would fail with
             # an `AttributeError` naming a field the user never heard of, instead of the real mistake.
             raise UserError(f"`XaiRealtimeModel` requires an `XaiProvider` or `provider='xai'`; got {provider.name!r}.")
@@ -526,6 +533,7 @@ class XaiRealtimeModel(RealtimeModel):
                 dial=dial,
                 reconnect=reconnect,
                 input_transcription_enabled=transcription_enabled,
+                interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
                 model_name=server_model,
                 model_name_getter=model_name_getter,
                 conversation_id=conversation_id,

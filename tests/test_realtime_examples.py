@@ -44,19 +44,21 @@ with try_import() as imports_successful:
             self,
             *,
             chunk: bytes,
-            wait_for_playback: asyncio.Event | None = None,
+            wait_for: asyncio.Event,
+            barge_in: bool,
             completed_turn: tuple[bytes, asyncio.Event] | None = None,
         ) -> None:
             self._chunk = chunk
-            self._wait_for_playback = wait_for_playback
+            self._wait_for = wait_for
+            self._barge_in = barge_in
             self._completed_turn = completed_turn
             self.sent: list[RealtimeInput] = []
-            self._response_cancelled = asyncio.Event()
+            self.response_cancelled = asyncio.Event()
 
         async def send(self, content: RealtimeInput) -> None:
             self.sent.append(content)
             if isinstance(content, CancelResponse):
-                self._response_cancelled.set()
+                self.response_cancelled.set()
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
             if self._completed_turn is not None:
@@ -66,17 +68,18 @@ with try_import() as imports_successful:
                 yield ResponseDone()
                 await prior_played.wait()
             yield AudioDelta(data=self._chunk)
-            if self._wait_for_playback is not None:
-                # Only report the user speaking once the speaker finished the chunk, so the turn was
-                # heard in full by the time the example handles the speech-start event.
-                await self._wait_for_playback.wait()
+            # Only report the user speaking once the chunk reached the speaker, so what the example
+            # handles is playback state, not a race with its own audio delivery.
+            await self._wait_for.wait()
+            if self._barge_in:
                 yield RealtimeInputSpeechStartEvent()
+                # A real provider settles the cancelled response before speaking again; the reply
+                # is a new part, so it must flow to the same, still-subscribed playback stream.
+                await self.response_cancelled.wait()
+                yield ResponseDone(interrupted=True)
+                yield AudioDelta(data=FAST_CHUNK)
             else:
                 yield RealtimeInputSpeechStartEvent()
-                # A real provider only speaks again after the barge-in cancelled the response; the
-                # reply must reach the freshly subscribed playback task, not the cancelled one.
-                await self._response_cancelled.wait()
-                yield AudioDelta(data=FAST_CHUNK)
             yield ResponseDone()
 
 
@@ -119,13 +122,16 @@ class FakeMicrophone:
 class FakeSpeaker:
     """A `listentome.OutputStream` stand-in whose `write()` mimics device pacing.
 
-    `SLOW_CHUNK` never finishes playing — like a real speaker mid-chunk when the user barges in —
-    while any other chunk is consumed immediately. `played` fires when a chunk finishes.
+    `SLOW_CHUNK` plays until `resume` fires — like a real speaker mid-chunk when the user barges
+    in — while any other chunk is consumed immediately. `received_slow` fires when the slow chunk
+    reaches the device, `played` when any chunk finishes.
     """
 
     def __init__(self, **kwargs: Any) -> None:
         self.written: list[bytes] = []
+        self.received_slow = asyncio.Event()
         self.played = asyncio.Event()
+        self.resume = asyncio.Event()
 
     async def __aenter__(self) -> FakeSpeaker:
         return self
@@ -135,7 +141,8 @@ class FakeSpeaker:
 
     async def write(self, data: bytes) -> None:
         if data == SLOW_CHUNK:
-            await asyncio.Event().wait()  # cancelled when barge-in replaces the playback task
+            self.received_slow.set()
+            await self.resume.wait()
         self.written.append(data)
         self.played.set()
 
@@ -164,21 +171,22 @@ def _script_connection(mocker: MockerFixture, connection: ScriptedConnection) ->
 async def test_voice_assistant_barge_in_drops_unheard_audio(
     mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Barge-in mid-chunk truncates to what was played and replaces the playback subscription.
+    """Barge-in mid-chunk truncates at 0 ms, and the reply reaches the same playback stream.
 
-    The model's chunk never finishes playing, so when the user speaks the example must report 0 ms
-    played, and the model's next reply must come out of the speaker — proving the replacement
-    playback task subscribed to live audio after the stale subscription was cancelled.
+    The model's chunk is still playing when the user speaks, so `interrupt(played_bytes=0)` must
+    truncate at 0 ms — and because the session flushes and suppresses the cancelled audio itself,
+    the one playback task keeps running and the model's next reply comes out of the same stream.
     """
     speaker = _fake_audio_io(monkeypatch)
-    connection = ScriptedConnection(chunk=SLOW_CHUNK)
+    connection = ScriptedConnection(chunk=SLOW_CHUNK, wait_for=speaker.received_slow, barge_in=True)
+    speaker.resume = connection.response_cancelled  # the device finishes the chunk mid-cancel
     _script_connection(mocker, connection)
 
     await realtime_voice.main()
 
     assert TruncateOutput(audio_end_ms=0) in connection.sent
     assert CancelResponse() in connection.sent
-    assert speaker.written == [FAST_CHUNK]
+    assert speaker.written == [SLOW_CHUNK, FAST_CHUNK]
     # The microphone block was forwarded through `send_audio(mic)`.
     assert BinaryAudio(data=MIC_CHUNK, media_type='audio/pcm') in connection.sent
 
@@ -186,20 +194,26 @@ async def test_voice_assistant_barge_in_drops_unheard_audio(
 async def test_voice_assistant_barge_in_excludes_earlier_turns_from_played_ms(
     mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`played_ms` reports playback of the interrupted turn only, not of earlier completed turns.
+    """The truncation point covers the interrupted turn only, not earlier completed turns.
 
-    A whole first turn plays to the end (100 ms of audio); the second turn's chunk never finishes
-    playing. Interrupting the second turn must truncate it at 0 ms — a per-session counter without
-    the turn-start watermark would misreport the first turn's 100 ms as heard second-turn audio.
+    A whole first turn plays to the end (100 ms of audio); the second turn's chunk is still playing
+    when the user speaks. The session must attribute the cumulative device position to the second
+    turn and truncate it at 0 ms, not misreport the first turn's 100 ms as heard second-turn audio.
     """
     speaker = _fake_audio_io(monkeypatch)
-    connection = ScriptedConnection(chunk=SLOW_CHUNK, completed_turn=(FAST_CHUNK, speaker.played))
+    connection = ScriptedConnection(
+        chunk=SLOW_CHUNK,
+        wait_for=speaker.received_slow,
+        barge_in=True,
+        completed_turn=(FAST_CHUNK, speaker.played),
+    )
+    speaker.resume = connection.response_cancelled
     _script_connection(mocker, connection)
 
     await realtime_voice.main()
 
     assert TruncateOutput(audio_end_ms=0) in connection.sent
-    assert speaker.written == [FAST_CHUNK, FAST_CHUNK]
+    assert speaker.written == [FAST_CHUNK, SLOW_CHUNK, FAST_CHUNK]
 
 
 async def test_voice_assistant_no_interrupt_when_turn_was_heard_in_full(
@@ -211,7 +225,7 @@ async def test_voice_assistant_no_interrupt_when_turn_was_heard_in_full(
     reply; reporting an interruption then would make the provider discard part of a completed turn.
     """
     speaker = _fake_audio_io(monkeypatch)
-    connection = ScriptedConnection(chunk=FAST_CHUNK, wait_for_playback=speaker.played)
+    connection = ScriptedConnection(chunk=FAST_CHUNK, wait_for=speaker.played, barge_in=False)
     _script_connection(mocker, connection)
 
     await realtime_voice.main()

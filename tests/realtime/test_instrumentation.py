@@ -1052,6 +1052,27 @@ async def test_session_span_counts_dropped_transcript_items() -> None:
     assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
 
 
+async def test_session_span_counts_dropped_transcript_deltas() -> None:
+    # Live captions have their own subscription with the same bounded window; a slow `delta=True`
+    # consumer drops oldest updates and the drops land in the same span attribute as finals.
+    settings, exporter = _settings()
+    transcripts = [str(index) for index in range(520)]
+    session = RealtimeSession(
+        _Connection([InputTranscript(text=transcript, is_final=False) for transcript in transcripts]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        updates = [update async for update in session.stream_transcripts(delta=True)]
+        assert [update.delta for update in updates] == transcripts[-512:]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
+
+
 async def test_session_span_includes_resolved_run_attributes() -> None:
     settings, exporter = _settings()
     agent: Agent[None, str] = Agent(

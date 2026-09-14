@@ -3,11 +3,11 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import pydantic_core
 import pytest
-from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, ValidationError, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -1766,6 +1766,40 @@ def test_tool_raises_approval_required():
     assert result.output == snapshot('Done!')
 
 
+@pytest.mark.parametrize('approval', [None, 'yes'])
+def test_invalid_deferred_tool_approval_does_not_execute(approval: object):
+    """Not a VCR test: invalid approval values are application inputs, not provider responses."""
+    executed = False
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('Done!')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool() -> str:  # pragma: no cover
+        nonlocal executed
+        executed = True
+        return 'executed'
+
+    result = agent.run_sync('Run the tool')
+    assert isinstance(result.output, DeferredToolRequests)
+    invalid_approval = cast(bool | ToolApproved | ToolDenied, approval)  # Simulate invalid runtime input.
+
+    with pytest.raises(
+        UserError,
+        match="Invalid approval result for tool call 'call-1': expected `bool`, `ToolApproved`, or `ToolDenied`",
+    ):
+        agent.run_sync(
+            message_history=result.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'call-1': invalid_approval}),
+        )
+
+    assert not executed
+
+
 @pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
 def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy):
     """Not a VCR test: pins internal resume validation and message-history shape via `FunctionModel`,
@@ -2904,6 +2938,11 @@ def test_deferred_tool_results_serializable():
     assert TypeAdapter(DeferredToolCallResult).validate_python(results.calls['tool-failed']) == ToolFailed(
         'The tool failed.'
     )
+
+
+def test_deferred_tool_results_does_not_coerce_approval():
+    with pytest.raises(ValidationError):
+        TypeAdapter(DeferredToolResults).validate_python({'approvals': {'call-1': 'yes'}})
 
 
 def test_deferred_tool_call_result_tool_failed():
