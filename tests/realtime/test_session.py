@@ -7560,3 +7560,37 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
         assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
         assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
         assert len(conn.sent) == 1
+
+
+async def test_empty_cumulative_correction_clears_the_caption_view() -> None:
+    """A cumulative snapshot corrected to empty text clears the caption instead of leaving it stale.
+
+    The provider first transcribes `'hello'`, then revises the same turn to an empty string. The main
+    event stream reports the empty correction correctly; the `stream_transcripts(delta=True)` caption
+    view must follow it instead of falling back to the previous text.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', cumulative=True),
+            InputTranscript(text='', cumulative=True),
+            InputTranscript(text='', cumulative=True, is_final=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events, _transcripts, deltas = await asyncio.gather(
+            drain_events(session),
+            aiter_to_list(session.stream_transcripts()),
+            aiter_to_list(session.stream_transcripts(delta=True)),
+        )
+
+    assert [event for event in events if isinstance(event, PartDeltaEvent)] == [
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='hello', transcript='hello')),
+        PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='', transcript='')),
+    ]
+    assert deltas == [
+        TranscriptUpdate(index=0, speaker='user', delta='hello', transcript='hello'),
+        TranscriptUpdate(index=0, speaker='user', delta='', transcript=''),
+    ]

@@ -2990,7 +2990,10 @@ class RealtimeSession:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs.
                 text = delta.transcript_delta or ''
-                transcript = delta.transcript or self._transcript_so_far.get(event.index, '') + text
+                # `delta.transcript` is the turn's full text whenever it is set, per its contract - an
+                # empty string is a real correction (the provider cleared the turn), not a missing
+                # value, so it must not fall back to the accumulated text.
+                transcript = delta.transcript
                 self._transcript_so_far[event.index] = transcript
                 if self._transcript_delta_taps:
                     update = TranscriptUpdate(
