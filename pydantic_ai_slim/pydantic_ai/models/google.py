@@ -1955,7 +1955,7 @@ def _decode_inline_thought_signature(
         return None
     raw = item.provider_details.get('thought_signature')
     if not raw:
-        return None  # pragma: no cover
+        return None
     return base64.b64decode(raw)
 
 
@@ -2324,7 +2324,7 @@ def _map_code_execution_result(
 
 
 def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
-    if tool_type is None:  # pragma: no cover
+    if tool_type is None:
         raise UnexpectedModelBehavior('Missing tool_type on native tool part')
     tool_name = _TOOL_TYPE_TO_NATIVE_TOOL_NAME.get(tool_type)
     if tool_name is None:  # pragma: no cover
