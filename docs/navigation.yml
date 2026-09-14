@@ -86,6 +86,12 @@ navigation:
           - "messages"
           - "core-concepts/messages"
           - "message-history"
+      - page: "Storage"
+        path: "storage.md"
+        slug: "core-concepts/storage"
+        aliases:
+          - "storage"
+          - "persistence"
       - page: "Direct Model Requests"
         path: "direct.md"
         slug: "core-concepts/direct"
