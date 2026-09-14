@@ -95,19 +95,7 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def test_new_public_dataclasses_are_keyword_only():
-    """New public dataclasses must not add a second positional `__init__` parameter.
-
-    "Pretty much all plain dataclasses need `_: KW_ONLY`" is the most-repeated unenforced review
-    nit. Existing offenders are grandfathered in `_KW_ONLY_ALLOWLIST` (changing them to
-    keyword-only would break positional callers); this test only fails when a NEW public dataclass
-    ships with two or more positional parameters, which is where the "add a field, break callers"
-    trap lives. Make the new dataclass keyword-only, or add it to the allowlist with maintainer
-    sign-off.
-
-    The walk pauses coverage while importing optional modules. See `kw_only_walker.py` for why.
-    """
-    result = collect_public_dataclasses()
+def _assert_public_dataclasses(result: dict[str, list[str]]) -> None:
     offenders = set(result['offenders'])
     skipped = result['skipped']
 
@@ -133,6 +121,21 @@ def test_new_public_dataclasses_are_keyword_only():
         assert stale_entries == set(), (
             f'`_KW_ONLY_ALLOWLIST` entries no longer offend and must be removed: {sorted(stale_entries)}'
         )
+
+
+def test_new_public_dataclasses_are_keyword_only():
+    """New public dataclasses must not add a second positional `__init__` parameter.
+
+    "Pretty much all plain dataclasses need `_: KW_ONLY`" is the most-repeated unenforced review
+    nit. Existing offenders are grandfathered in `_KW_ONLY_ALLOWLIST` (changing them to
+    keyword-only would break positional callers); this test only fails when a NEW public dataclass
+    ships with two or more positional parameters, which is where the "add a field, break callers"
+    trap lives. Make the new dataclass keyword-only, or add it to the allowlist with maintainer
+    sign-off.
+
+    The walk pauses coverage while importing optional modules. See `kw_only_walker.py` for why.
+    """
+    _assert_public_dataclasses(collect_public_dataclasses())
 
 
 _AGENT_IMPLEMENTATIONS: dict[str, type] = {
