@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import ast
 import inspect
+import sys
 import textwrap
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from inline_snapshot import snapshot
@@ -95,7 +97,22 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def _assert_public_dataclasses(result: dict[str, list[str]]) -> None:
+def test_new_public_dataclasses_are_keyword_only():
+    """New public dataclasses must not add a second positional `__init__` parameter.
+
+    "Pretty much all plain dataclasses need `_: KW_ONLY`" is the most-repeated unenforced review
+    nit. Existing offenders are grandfathered in `_KW_ONLY_ALLOWLIST` (changing them to
+    keyword-only would break positional callers); this test only fails when a NEW public dataclass
+    ships with two or more positional parameters, which is where the "add a field, break callers"
+    trap lives. Make the new dataclass keyword-only, or add it to the allowlist with maintainer
+    sign-off.
+
+    The walk runs in a worker thread with coverage disabled while importing optional modules. See
+    `kw_only_walker.py` for why.
+    """
+    with ThreadPoolExecutor(max_workers=1, initializer=lambda: sys.settrace(None)) as executor:
+        result = executor.submit(collect_public_dataclasses).result()
+
     offenders = set(result['offenders'])
     skipped = result['skipped']
 
@@ -121,21 +138,6 @@ def _assert_public_dataclasses(result: dict[str, list[str]]) -> None:
         assert stale_entries == set(), (
             f'`_KW_ONLY_ALLOWLIST` entries no longer offend and must be removed: {sorted(stale_entries)}'
         )
-
-
-def test_new_public_dataclasses_are_keyword_only():
-    """New public dataclasses must not add a second positional `__init__` parameter.
-
-    "Pretty much all plain dataclasses need `_: KW_ONLY`" is the most-repeated unenforced review
-    nit. Existing offenders are grandfathered in `_KW_ONLY_ALLOWLIST` (changing them to
-    keyword-only would break positional callers); this test only fails when a NEW public dataclass
-    ships with two or more positional parameters, which is where the "add a field, break callers"
-    trap lives. Make the new dataclass keyword-only, or add it to the allowlist with maintainer
-    sign-off.
-
-    The walk pauses coverage while importing optional modules. See `kw_only_walker.py` for why.
-    """
-    _assert_public_dataclasses(collect_public_dataclasses())
 
 
 _AGENT_IMPLEMENTATIONS: dict[str, type] = {

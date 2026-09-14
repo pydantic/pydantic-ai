@@ -1,6 +1,6 @@
 """Collect public dataclasses whose constructor takes two or more positional fields.
 
-The walk pauses active coverage before importing every package module. Missing optional dependencies
+The caller runs the walk in a worker thread with coverage disabled. Missing optional dependencies
 execute `pragma: no cover` import guards, which would otherwise fail the strict pragma audit.
 
 Modules that fail to import are reported in `skipped` rather than dropped, so a walk that shrinks
@@ -14,8 +14,6 @@ import dataclasses
 import importlib
 import inspect
 import pkgutil
-
-from coverage import Coverage
 
 import pydantic_ai
 from pydantic_ai.models import StreamedResponse
@@ -44,19 +42,6 @@ def _takes_two_positional_arguments(cls: type) -> bool | None:
 
 
 def collect_public_dataclasses() -> dict[str, list[str]]:
-    coverage = Coverage.current()
-    # Coverage has no public API for pausing and resuming an active collector.
-    collector = coverage._collector if coverage is not None else None  # pyright: ignore[reportPrivateUsage]
-    if collector is not None:
-        collector.pause()
-    try:
-        return _collect_public_dataclasses()
-    finally:
-        if collector is not None:
-            collector.resume()
-
-
-def _collect_public_dataclasses() -> dict[str, list[str]]:
     offenders: set[str] = set()
     skipped: list[str] = []
     unreadable: list[str] = []
