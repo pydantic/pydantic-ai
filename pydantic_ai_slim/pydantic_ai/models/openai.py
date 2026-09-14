@@ -3059,10 +3059,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
                         type='approximate', **tool.user_location
                     )
+                filters = responses.web_search_tool_param.Filters()
                 if tool.allowed_domains:
-                    web_search_tool['filters'] = responses.web_search_tool_param.Filters(
-                        allowed_domains=tool.allowed_domains
-                    )
+                    filters['allowed_domains'] = tool.allowed_domains
+                if tool.blocked_domains:
+                    # The OpenAI API supports this field, but the SDK's `Filters` does not include it yet.
+                    cast(dict[str, object], filters)['blocked_domains'] = tool.blocked_domains
+                if filters:
+                    web_search_tool['filters'] = filters
                 if tool.external_web_access is not None:
                     # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
                     cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
