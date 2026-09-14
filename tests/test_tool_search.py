@@ -4009,11 +4009,18 @@ def test_openai_preserves_unmatched_hosted_tool_search_output(call_id: str | Non
     assert return_part.tool_call_id == (call_id or 'tso_a')
 
 
-@pytest.mark.parametrize('first_output_call_id', [None, 'ts_a'], ids=['anonymous', 'mixed-ids'])
-async def test_openai_pairs_multiple_hosted_tool_search_items_in_order(first_output_call_id: str | None) -> None:
+@pytest.mark.parametrize(
+    ('first_call_id', 'first_output_call_id'),
+    [(None, None), (None, 'ts_a'), ('call_a', 'call_a')],
+    ids=['anonymous', 'output-id-only', 'explicit'],
+)
+async def test_openai_pairs_multiple_hosted_tool_search_items_in_order(
+    first_call_id: str | None, first_output_call_id: str | None
+) -> None:
     """Hosted searches pair in provider order when output call IDs are absent or mixed."""
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
     calls, outputs = _openai_hosted_tool_search_items()
+    calls[0] = calls[0].model_copy(update={'call_id': first_call_id})
     outputs[0] = outputs[0].model_copy(update={'call_id': first_output_call_id})
 
     response = model._process_response(  # pyright: ignore[reportPrivateUsage]
@@ -4024,7 +4031,8 @@ async def test_openai_pairs_multiple_hosted_tool_search_items_in_order(first_out
     search_parts = [
         part for part in response.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
     ]
-    assert [part.tool_call_id for part in search_parts] == ['ts_a', 'ts_a', 'ts_b', 'ts_b']
+    first_tool_call_id = first_call_id or 'ts_a'
+    assert [part.tool_call_id for part in search_parts] == [first_tool_call_id, first_tool_call_id, 'ts_b', 'ts_b']
 
     _, replayed_items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         [response],
@@ -4032,7 +4040,7 @@ async def test_openai_pairs_multiple_hosted_tool_search_items_in_order(first_out
         _openai_hosted_tool_search_parameters(),
     )
     assert [(item.get('type'), item.get('id'), item.get('call_id')) for item in replayed_items] == [
-        ('tool_search_call', 'ts_a', None),
+        ('tool_search_call', 'ts_a', first_call_id),
         ('tool_search_output', 'tso_a', first_output_call_id),
         ('tool_search_call', 'ts_b', None),
         ('tool_search_output', 'tso_b', None),
@@ -4087,15 +4095,21 @@ async def test_openai_streaming_ignores_client_tool_search_output(allow_model_re
     assert streamed_response.get().parts == []
 
 
-@pytest.mark.parametrize('first_output_call_id', [None, 'ts_a'], ids=['anonymous', 'mixed-ids'])
+@pytest.mark.parametrize(
+    ('first_call_id', 'first_output_call_id'),
+    [(None, None), (None, 'ts_a'), ('call_a', 'call_a')],
+    ids=['anonymous', 'output-id-only', 'explicit'],
+)
 async def test_openai_streams_multiple_hosted_tool_searches_in_order(
     allow_model_requests: None,
+    first_call_id: str | None,
     first_output_call_id: str | None,
 ) -> None:
     """Streaming preserves the provider's adjacent call/output order."""
     from openai.types import responses as resp
 
     calls, outputs = _openai_hosted_tool_search_items()
+    calls[0] = calls[0].model_copy(update={'call_id': first_call_id})
     outputs[0] = outputs[0].model_copy(update={'call_id': first_output_call_id})
     response_items = [calls[0], outputs[0], calls[1], outputs[1]]
     completed_response = response_message(response_items).model_copy(update={'status': 'completed'})
@@ -4146,7 +4160,8 @@ async def test_openai_streams_multiple_hosted_tool_searches_in_order(
     non_streamed_parts = [
         part for part in non_streamed.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
     ]
-    assert [part.tool_call_id for part in streamed_parts] == ['ts_a', 'ts_a', 'ts_b', 'ts_b']
+    first_tool_call_id = first_call_id or 'ts_a'
+    assert [part.tool_call_id for part in streamed_parts] == [first_tool_call_id, first_tool_call_id, 'ts_b', 'ts_b']
 
     def normalized(
         parts: Sequence[NativeToolSearchCallPart | NativeToolSearchReturnPart],
