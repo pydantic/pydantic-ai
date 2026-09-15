@@ -2,22 +2,33 @@
 
 from __future__ import annotations
 
+import codecs
 import errno
 import fnmatch
 import functools
 import hashlib
+import itertools
 import os
 import re
 import stat
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from pathlib import Path
-from typing import Concatenate, ParamSpec, TypedDict
+from typing import BinaryIO, Concatenate, ParamSpec, TypedDict
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
-from pydantic_ai_harness.filesystem._events import DirectoryListedEvent, FileReadEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem._changes import Change
+from pydantic_ai_harness.filesystem._events import (
+    MAX_DIFF_SOURCE_CHARS,
+    DirectoryCreatedEvent,
+    DirectoryListedEvent,
+    FileReadEvent,
+    FilesSearchedEvent,
+    FileWrittenEvent,
+    SearchKind,
+)
 
 _P = ParamSpec('_P')
 
@@ -54,6 +65,14 @@ _OUTSIDE_WORKSPACE = '<outside-workspace>'
 
 _NOT_A_PATH = '<not-a-path>'
 """Shown when an error's `filename` is not a path value at all."""
+
+_ABSENT_HASH = '<absent>'
+"""The guard for a write announced against a path with nothing at it.
+
+No file hashes to a bracketed marker, so one that appears while the create is
+announced fails the descriptor check even when it is empty -- which the empty
+file's own hash, and so `_disk_hash([b''])`, would have matched.
+"""
 
 
 class _EventLocation(TypedDict):
@@ -179,7 +198,51 @@ def _content_hash(content: str) -> str:
     the same bytes on disk and the optimistic-concurrency handshake holds
     regardless of line endings.
     """
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()[:12]
+    return _bytes_hash(content.encode('utf-8'))
+
+
+def _bytes_hash(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:12]
+
+
+_HASH_CHUNK_BYTES = 1 << 20
+
+_DIFF_SOURCE_BYTES = 4 * MAX_DIFF_SOURCE_CHARS
+"""Bytes that can hold `MAX_DIFF_SOURCE_CHARS` of UTF-8; a longer file is past the bound whatever it holds."""
+
+_SPECIAL_FILE_FLAGS = os.O_BINARY if os.name == 'nt' else os.O_NONBLOCK | os.O_NOFOLLOW
+"""Open flags that keep a special file swapped onto a checked path from stalling or redirecting the open.
+
+POSIX non-blocking mode stops a FIFO from waiting for the other end, and
+O_NOFOLLOW stops a symlink swap from redirecting the descriptor. Windows has
+neither hazard; O_BINARY keeps its text I/O from translating the bytes.
+"""
+
+
+def _chunks(source: BinaryIO) -> Iterator[bytes]:
+    """`source` in `_HASH_CHUNK_BYTES` pieces, so hashing a file never holds it whole."""
+    return iter(functools.partial(source.read, _HASH_CHUNK_BYTES), b'')
+
+
+def _disk_hash(chunks: Iterable[bytes]) -> str:
+    """The hash `read_file` reports for a file: of the bytes for a binary file, of the decoded text otherwise.
+
+    Decoding is lenient, as `read_file` decodes, so a text file holding an
+    invalid byte hashes to what the model was told and its `expected_hash`
+    handshake holds. Every check against the disk uses this one rule. The
+    first chunk decides whether the file is binary, so it must cover the
+    `_is_binary` sample: a whole file, or at least that sample's 8192 bytes.
+    """
+    digest = hashlib.sha256()
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+    binary = False
+    for index, chunk in enumerate(chunks):
+        if index == 0:
+            binary = _is_binary(chunk)
+        digest.update(chunk if binary else decoder.decode(chunk).encode('utf-8'))
+    if not binary:
+        digest.update(decoder.decode(b'', final=True).encode('utf-8'))
+    return digest.hexdigest()[:12]
 
 
 def _read_canonical_text(path: Path) -> str:
@@ -194,12 +257,130 @@ def _read_canonical_text(path: Path) -> str:
         return f.read()
 
 
+def _announced_state(resolved: Path, path: str, *, expected_hash: str | None) -> tuple[str | None, str | None]:
+    """The text a listener is shown a write replacing, and the hash the write is then guarded with.
+
+    A stale `expected_hash` for a file that exists is rejected here first, so
+    a listener only sees a write that would go ahead; for a missing file the
+    hash is ignored, as documented, and the write is announced as a create.
+    A new file diffs from empty and is guarded as absent, so one that appears
+    while the write is announced is a conflict whether or not it is empty: the
+    guard cannot be `_disk_hash([b''])`, which an empty file does hash to. The
+    text is `None` when it cannot be shown: a file the process cannot read (a
+    write-only mode, say) is announced as headers alone, marked as cut, and
+    written unguarded, while an `expected_hash` it cannot check propagates the
+    error; past `MAX_DIFF_SOURCE_CHARS` it would not be diffed, so only as
+    many bytes as can hold that many characters are read into memory and the
+    rest is hashed in chunks.
+    """
+    if not resolved.is_file():
+        return '', _ABSENT_HASH
+    try:
+        # Opened like `_open_for_write`, so a special file swapped onto the
+        # path after the `is_file` check cannot stall this read.
+        with os.fdopen(os.open(resolved, os.O_RDONLY | _SPECIAL_FILE_FLAGS), 'rb') as source:
+            head = source.read(_DIFF_SOURCE_BYTES + 1)
+            current_hash = _disk_hash(itertools.chain([head], _chunks(source)))
+    except OSError:
+        if expected_hash is not None:
+            raise
+        return None, None
+    if expected_hash is not None:
+        _check_expected_hash(path, current_hash, expected_hash)
+    old = head.decode('utf-8', errors='replace') if len(head) <= _DIFF_SOURCE_BYTES else None
+    return old, current_hash
+
+
+def _check_expected_hash(path: str, current_hash: str, expected_hash: str) -> None:
+    """Reject a write or edit whose `expected_hash` no longer matches the file."""
+    if current_hash != expected_hash:
+        raise ValueError(
+            f'Conflict: file {path!r} has changed (expected hash:{expected_hash}, '
+            f'got hash:{current_hash}). Re-read the file and retry.'
+        )
+
+
+def _nearest_existing(path: Path) -> Path:
+    """The path itself or its closest ancestor that exists, or its anchor when nothing on the chain does."""
+    # The anchor is its own parent, so an absent one (a Windows drive that
+    # went away) would otherwise never end the walk.
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return path
+
+
+def _open_for_write(resolved: Path, path: str, *, read_back: bool, create: bool) -> tuple[int, bool]:
+    """Open `resolved` for writing without truncating it; returns the descriptor and whether it was created.
+
+    Opening without O_TRUNC lets the caller classify the descriptor and check
+    the expected hash before changing the file (`read_back` opens it
+    read-write for that). An edit passes `create=False`: a file that vanished
+    while its change was announced is reported missing, not recreated.
+    `_SPECIAL_FILE_FLAGS` keeps a swapped-in special file from stalling or
+    redirecting the open, and binary I/O on Windows means the written bytes
+    are exactly the encoded content, so the reported hash matches the bytes a
+    later `read_file` hashes.
+    """
+    access_flags = os.O_RDWR if read_back else os.O_WRONLY
+    try:
+        if not create:
+            return os.open(resolved, access_flags | _SPECIAL_FILE_FLAGS), False
+        # The target can disappear after O_EXCL reports that it exists. Retry
+        # the complete atomic classification so an ordinary write still
+        # recreates it, while bounding churn from a concurrently replaced path.
+        for _ in range(3):
+            try:
+                descriptor = os.open(resolved, access_flags | _SPECIAL_FILE_FLAGS | os.O_CREAT | os.O_EXCL, 0o666)
+            except FileExistsError:
+                try:
+                    return os.open(resolved, access_flags | _SPECIAL_FILE_FLAGS), False
+                except FileNotFoundError:
+                    continue
+            return descriptor, True
+        raise ModelRetry(f'Path {path!r} changed repeatedly while opening. Retry the write.')
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise ModelRetry(f'Path {path!r} encountered a symlink loop or changed to a symlink before opening.') from e
+        if e.errno in (errno.EISDIR, errno.ENODEV, errno.ENXIO):
+            raise ModelRetry(f'Path {path!r} exists and is not a regular file.') from e
+        raise
+
+
+def _write_content(resolved: Path, path: str, content: str, *, expected_hash: str | None, create: bool) -> None:
+    """Replace the file's content, checking that an existing file hashes to `expected_hash` under the open descriptor.
+
+    Checking under the descriptor is what guards the write: the file cannot
+    change between the check and the write the way it can while a change is
+    announced. The bytes are hashed as `read_file` hashes them, so a file that
+    is not valid UTF-8 is compared instead of failing to decode.
+    """
+    descriptor, created = _open_for_write(resolved, path, read_back=expected_hash is not None, create=create)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
+
+        binary_file = os.fdopen(descriptor, 'rb+' if expected_hash is not None else 'wb')
+        descriptor = -1
+        with binary_file:
+            if expected_hash is not None and not created:
+                _check_expected_hash(path, _disk_hash(_chunks(binary_file)), expected_hash)
+
+            binary_file.seek(0)
+            binary_file.truncate(0)
+            binary_file.write(content.encode('utf-8'))
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 class FileSystemToolset(FunctionToolset[AgentDepsT]):
     """Toolset providing filesystem operations scoped to a root directory.
 
     Security model:
     - All paths resolved relative to root with canonical path checks
-    - Symlinks resolved before authorization (prevents TOCTTOU)
+    - Symlinks resolved before authorization, and again after a listener has
+      held a change request; a rename on the path between that check and the
+      by-name I/O remains possible, as the documented security model says
     - Glob-based allow/deny filtering
     - Protected path patterns (e.g. `.git/`, `.env`)
     - Binary file detection blocks text operations
@@ -233,9 +414,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self._write_file_tool, name='write_file')
         self.add_function(self._edit_file_tool, name='edit_file')
         self.add_function(self._list_directory_tool, name='list_directory')
-        self.add_function(self.search_files, name='search_files')
-        self.add_function(self.find_files, name='find_files')
-        self.add_function(self.create_directory, name='create_directory')
+        self.add_function(self._search_files_tool, name='search_files')
+        self.add_function(self._find_files_tool, name='find_files')
+        self.add_function(self._create_directory_tool, name='create_directory')
         self.add_function(self.file_info, name='file_info')
 
     def _matches(self, path: str, pattern: str) -> bool:
@@ -394,16 +575,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise FileNotFoundError(f'File not found: {path}')
 
         raw = resolved.read_bytes()
+        content_hash = _disk_hash([raw])
         if _is_binary(raw):
             size = len(raw)
             if ctx is not None:
-                content_hash = hashlib.sha256(raw).hexdigest()[:12]
                 await ctx.emit(FileReadEvent(**self._event_location(resolved), content_hash=content_hash))
             return f'[Binary file: {size} bytes. Use a binary-aware tool to inspect.]'
 
         text = raw.decode('utf-8', errors='replace')
         lines = text.splitlines(keepends=True)
-        content_hash = _content_hash(text)
         # Format before emitting: an out-of-range offset is a failed read, and
         # a failed read must not look like a successful one to subscribers.
         body = _format_lines(lines, offset, limit)
@@ -456,73 +636,47 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if not resolved.parent.exists():
             parent_rel = str(resolved.parent.relative_to(self._root))
             raise FileNotFoundError(f"Parent directory '{parent_rel}' does not exist. Use create_directory first.")
+        # Checked before the announcement, like `create_directory` does, so a
+        # listener is only asked about a write the filesystem would accept.
+        if not resolved.parent.is_dir():
+            raise ModelRetry(f'Path {path!r} has a parent that is not a directory.')
 
-        # Opening without O_TRUNC lets us classify the descriptor and check the
-        # expected hash before changing the file. POSIX non-blocking mode keeps
-        # a FIFO swapped into place from waiting for a reader; O_NOFOLLOW keeps
-        # a final-component symlink swap from redirecting the descriptor. Windows
-        # has no filesystem FIFO equivalent, and O_BINARY plus `newline=''` on
-        # the text wrapper means the written bytes reproduce the content
-        # argument exactly: no newline translation, so the reported hash always
-        # matches the bytes a later `read_file` hashes.
-        platform_flags = os.O_BINARY if os.name == 'nt' else os.O_NONBLOCK | os.O_NOFOLLOW
-        access_flags = os.O_RDWR if expected_hash is not None else os.O_WRONLY
-        created = False
-        descriptor = -1
-        try:
-            # The target can disappear after O_EXCL reports that it exists. Retry
-            # the complete atomic classification so an ordinary write still
-            # recreates it, while bounding churn from a concurrently replaced path.
-            for _ in range(3):
-                try:
-                    descriptor = os.open(resolved, access_flags | platform_flags | os.O_CREAT | os.O_EXCL, 0o666)
-                except FileExistsError:
-                    try:
-                        descriptor = os.open(resolved, access_flags | platform_flags)
-                    except FileNotFoundError:
-                        continue
-                else:
-                    created = True
-                break
-            else:
-                raise ModelRetry(f'Path {path!r} changed repeatedly while opening. Retry the write.')
-        except OSError as e:
-            if e.errno == errno.ELOOP:
-                raise ModelRetry(
-                    f'Path {path!r} encountered a symlink loop or changed to a symlink before opening.'
-                ) from e
-            if e.errno in (errno.EISDIR, errno.ENODEV, errno.ENXIO):
-                raise ModelRetry(f'Path {path!r} exists and is not a regular file.') from e
-            raise
+        # `O_CREAT` in `_open_for_write` would already have created the file
+        # the listener is about to refuse, so the request cannot wait for the
+        # descriptor. Outside a run nothing is read: the diff is for listeners,
+        # and the descriptor check of `expected_hash` is the whole contract.
+        guard = expected_hash
+        if ctx is not None:
+            old, guard = _announced_state(resolved, path, expected_hash=expected_hash)
+            change = Change.propose(**self._event_location(resolved), operation='write', old=old, new=content)
+            if (refusal := await self._request(ctx, change, path=path, resolved=resolved)) is not None:
+                return refusal
 
-        try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
-
-            mode = 'r+' if expected_hash is not None else 'w'
-            text_file = os.fdopen(descriptor, mode, encoding='utf-8', newline='')
-            descriptor = -1
-            with text_file:
-                if expected_hash is not None and not created:
-                    current_hash = _content_hash(text_file.read())
-                    if current_hash != expected_hash:
-                        raise ValueError(
-                            f'Conflict: file {path!r} has changed (expected hash:{expected_hash}, '
-                            f'got hash:{current_hash}). Re-read the file and retry.'
-                        )
-
-                text_file.seek(0)
-                text_file.truncate(0)
-                text_file.write(content)
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
+        _write_content(resolved, path, content, expected_hash=guard, create=True)
 
         new_hash = _content_hash(content)
         lines = len(content.splitlines())
         if ctx is not None:
             await ctx.emit(FileWrittenEvent(**self._event_location(resolved), content_hash=new_hash))
         return f'Wrote {len(content)} chars ({lines} lines) to {path}. [hash:{new_hash}]'
+
+    async def _request(
+        self, ctx: RunContext[AgentDepsT] | None, change: Change, *, path: str, resolved: Path
+    ) -> str | None:
+        """Announce `change` and confirm that `path` still names `resolved` afterwards.
+
+        A listener can hold the request for as long as a human takes, and the
+        change is then applied by name, so the path is resolved and checked
+        again: the announcement must not widen the window between the
+        containment check and the I/O. Outside a run there is nobody to ask.
+        """
+        if ctx is None:
+            return None
+        if (refusal := await change.request(ctx)) is not None:
+            return refusal
+        if self._safe_resolve(path, write=True) != resolved:
+            raise ModelRetry(f'Path {path!r} was replaced while the change was announced. Retry.')
+        return None
 
     async def edit_file(self, path: str, old_text: str, new_text: str, *, expected_hash: str | None = None) -> str:
         """Edit a text file directly, outside an agent run."""
@@ -576,12 +730,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         text = _read_canonical_text(resolved)
         current_hash = _content_hash(text)
 
-        # Optimistic concurrency check
-        if expected_hash is not None and current_hash != expected_hash:
-            raise ValueError(
-                f'Conflict: file {path!r} has changed (expected hash:{expected_hash}, '
-                f'got hash:{current_hash}). Re-read the file and retry.'
-            )
+        if expected_hash is not None:
+            _check_expected_hash(path, current_hash, expected_hash)
 
         count = text.count(old_text)
         if count == 0:
@@ -592,10 +742,16 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             )
 
         new_content = text.replace(old_text, new_text, 1)
-        resolved.write_text(new_content, encoding='utf-8', newline='')
+        change = Change.propose(**self._event_location(resolved), operation='edit', old=text, new=new_content)
+        if (refusal := await self._request(ctx, change, path=path, resolved=resolved)) is not None:
+            return refusal
+        # A listener may take a while (a human approving the diff, say). The
+        # edit was computed from `text`, so the write checks that the file
+        # still holds it, and reports a file deleted in the meantime as missing.
+        _write_content(resolved, path, new_content, expected_hash=current_hash, create=False)
         new_hash = _content_hash(new_content)
         if ctx is not None:
-            await ctx.emit(FileWrittenEvent(**self._event_location(resolved), content_hash=new_hash))
+            await ctx.emit(change.edited(content_hash=new_hash))
         return f'Edited {path}. [hash:{new_hash}]'
 
     async def list_directory(self, path: str = '.') -> str:
@@ -659,11 +815,17 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             await ctx.emit(DirectoryListedEvent(**self._event_location(resolved), entry_count=entry_count))
         return '\n'.join(entries) if entries else '(empty directory)'
 
-    @_recoverable
     async def search_files(self, pattern: str, *, path: str = '.', include_glob: str | None = None) -> str:
+        """Search file contents directly, outside an agent run."""
+        return await self._search_files(None, pattern, path=path, include_glob=include_glob)
+
+    async def _search_files_tool(
+        self, ctx: RunContext[AgentDepsT], pattern: str, *, path: str = '.', include_glob: str | None = None
+    ) -> str:
         """Search file contents using a regular expression.
 
         Args:
+            ctx: The current agent run context.
             pattern: Regex pattern to search for.
             path: Directory to search in, relative to the root directory.
             include_glob: If provided, only search files matching this glob (e.g. '*.py').
@@ -671,6 +833,17 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             str: Matching lines formatted as file:line_number:text.
         """
+        return await self._search_files(ctx, pattern, path=path, include_glob=include_glob)
+
+    @_recoverable
+    async def _search_files(
+        self,
+        ctx: RunContext[AgentDepsT] | None,
+        pattern: str,
+        *,
+        path: str = '.',
+        include_glob: str | None = None,
+    ) -> str:
         # See list_directory: the search root isn't gated by allowed_patterns;
         # matched files are filtered per-entry below.
         resolved = self._safe_resolve(path, check_allowed=False)
@@ -680,6 +853,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise ValueError(f'Invalid regex pattern: {e}') from e
 
         results: list[str] = []
+        capped = False
 
         if resolved.is_file():
             files = [resolved]
@@ -708,19 +882,37 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if _is_binary(raw):
                 continue
             text = raw.decode('utf-8', errors='replace')
-            matches, truncated = _matching_lines(text, compiled, rel_str, self._max_search_results - len(results))
+            matches, capped = _matching_lines(text, compiled, rel_str, self._max_search_results - len(results))
             results.extend(matches)
-            if truncated:
-                results.append(f'[... truncated at {self._max_search_results} matches]')
+            if capped:
                 break
 
+        if ctx is not None:
+            await ctx.emit(self._searched(resolved, pattern, search='grep', match_count=len(results), truncated=capped))
+        if capped:
+            results.append(f'[... truncated at {self._max_search_results} matches]')
         return '\n'.join(results) if results else 'No matches found.'
 
-    @_recoverable
+    def _searched(
+        self, resolved: Path, pattern: str, *, search: SearchKind, match_count: int, truncated: bool
+    ) -> FilesSearchedEvent:
+        return FilesSearchedEvent(
+            **self._event_location(resolved),
+            pattern=pattern,
+            search=search,
+            match_count=match_count,
+            truncated=truncated,
+        )
+
     async def find_files(self, pattern: str, *, path: str = '.') -> str:
+        """Find files by glob pattern directly, outside an agent run."""
+        return await self._find_files(None, pattern, path=path)
+
+    async def _find_files_tool(self, ctx: RunContext[AgentDepsT], pattern: str, *, path: str = '.') -> str:
         """Find files by glob pattern (name matching, not content search).
 
         Args:
+            ctx: The current agent run context.
             pattern: Glob pattern to match, relative to `path` (e.g. '*.py',
                 '**/*.json'). Absolute patterns are rejected.
             path: Directory to search in, relative to the root directory.
@@ -728,6 +920,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Newline-separated list of matching file paths relative to root.
         """
+        return await self._find_files(ctx, pattern, path=path)
+
+    @_recoverable
+    async def _find_files(self, ctx: RunContext[AgentDepsT] | None, pattern: str, *, path: str = '.') -> str:
         if os.path.isabs(pattern):
             raise ValueError(f'Pattern {pattern!r} must be relative to the search path, not absolute.')
 
@@ -754,6 +950,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(f'Pattern {pattern!r} is not a valid glob pattern.') from e
 
         matches: list[str] = []
+        capped = False
         for match in found:
             try:
                 rel_path = match.relative_to(self._real_root)
@@ -768,34 +965,62 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 # A dangling symlink resolves inside the root but names nothing.
                 continue
             if len(matches) >= self._max_find_results:
-                matches.append(f'[... truncated at {self._max_find_results} matches]')
+                capped = True
                 break
             rel = str(rel_path)
             suffix = '/' if target.is_dir() else ''
             matches.append(f'{rel}{suffix}')
 
+        if ctx is not None:
+            await ctx.emit(self._searched(resolved, pattern, search='find', match_count=len(matches), truncated=capped))
+        if capped:
+            matches.append(f'[... truncated at {self._max_find_results} matches]')
         return '\n'.join(matches) if matches else 'No matches found.'
 
-    @_recoverable
     async def create_directory(self, path: str) -> str:
+        """Create a directory directly, outside an agent run."""
+        return await self._create_directory(None, path)
+
+    async def _create_directory_tool(self, ctx: RunContext[AgentDepsT], path: str) -> str:
         """Create a directory and any missing parents.
 
         Args:
+            ctx: The current agent run context.
             path: Directory path relative to the root directory.
 
         Returns:
             Confirmation message.
         """
+        return await self._create_directory(ctx, path)
+
+    @_recoverable
+    async def _create_directory(self, ctx: RunContext[AgentDepsT] | None, path: str) -> str:
         resolved = self._safe_resolve(path, write=True)
+        if resolved.is_dir():
+            # Nothing changes, so there is nothing to announce or report.
+            return f'Created directory: {path}'
+        # The same collisions `mkdir` reports below, checked first so a listener
+        # is only asked about a directory that can be created.
+        if resolved.exists():
+            raise ModelRetry(f'Path {path!r} exists and is not a directory.')
+        if not _nearest_existing(resolved.parent).is_dir():
+            raise ModelRetry(f'Path {path!r} has a parent that is not a directory.')
+        change = Change.propose(**self._event_location(resolved), operation='create_directory')
+        if (refusal := await self._request(ctx, change, path=path, resolved=resolved)) is not None:
+            return refusal
+        # The checks above already named these collisions; here they mean the
+        # path changed while the change was announced. A directory that
+        # appeared in the meantime was not created here, so it is not reported.
         try:
-            resolved.mkdir(parents=True, exist_ok=True)
+            resolved.mkdir(parents=True)
         except FileExistsError as e:
-            # `exist_ok` only suppresses the error when the existing path is a
-            # directory; name the conflicting model-supplied path directly.
+            if resolved.is_dir():
+                return f'Created directory: {path}'
             raise ModelRetry(f'Path {path!r} exists and is not a directory.') from e
         except NotADirectoryError as e:
-            # Distinguish a parent collision from a collision at the leaf.
             raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from e
+        if ctx is not None:
+            await ctx.emit(DirectoryCreatedEvent(**self._event_location(resolved)))
         return f'Created directory: {path}'
 
     @_recoverable
@@ -829,7 +1054,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if not is_bin:
                 text = raw.decode('utf-8', errors='replace')
                 parts.append(f'lines: {len(text.splitlines())}')
-                parts.append(f'hash: {_content_hash(text)}')
+                parts.append(f'hash: {_disk_hash([raw])}')
 
         if is_link:
             target = _model_safe_filename(os.readlink(original), self._real_root)
