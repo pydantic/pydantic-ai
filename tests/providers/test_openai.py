@@ -3,6 +3,8 @@ import pytest
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI
+
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -51,3 +53,19 @@ def test_init_of_openai_with_base_url_env_var_and_without_api_key(env: TestEnv):
     env.set('OPENAI_BASE_URL', 'https://example.com/v1')
     provider = OpenAIProvider()
     assert provider.client.api_key == 'api-key-not-set'
+
+
+async def test_openai_provider_async_api_key_callback():
+    """`api_key` accepts an async callable, forwarded verbatim to the OpenAI SDK.
+
+    The SDK resolves the callable per request, so `client.api_key` stays empty at rest.
+    """
+
+    async def provide_key() -> str:
+        return 'test-api-key'
+
+    provider = OpenAIProvider(api_key=provide_key)
+    assert isinstance(provider.client, AsyncOpenAI)
+    assert provider.client._api_key_provider is provide_key  # pyright: ignore[reportPrivateUsage]
+    assert provider.client.api_key == ''
+    assert await provider.client._refresh_api_key() == 'test-api-key'  # pyright: ignore[reportPrivateUsage]

@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 
 from openai import AsyncOpenAI
 
@@ -36,7 +36,7 @@ class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
         self,
         *,
         base_url: str | None,
-        api_key: str | None,
+        api_key: str | None | Callable[[], Awaitable[str]],
         http_client: AsyncHTTPClient | None,
         default_headers: Mapping[str, str] | None = None,
     ) -> AsyncOpenAI:

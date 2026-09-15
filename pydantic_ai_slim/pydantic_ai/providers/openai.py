@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
@@ -69,7 +70,7 @@ class OpenAIProvider(_OpenAICompatibleProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | None | Callable[[], Awaitable[str]] = None,
         openai_client: None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
@@ -77,7 +78,7 @@ class OpenAIProvider(_OpenAICompatibleProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | None | Callable[[], Awaitable[str]] = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -87,7 +88,8 @@ class OpenAIProvider(_OpenAICompatibleProvider):
             base_url: The base url for the OpenAI requests. If not provided, the `OPENAI_BASE_URL` environment variable
                 will be used if available. Otherwise, defaults to OpenAI's base url.
             api_key: The API key to use for authentication, if not provided, the `OPENAI_API_KEY` environment variable
-                will be used if available.
+                will be used if available. May also be an async callable returning the key, which the OpenAI SDK
+                resolves per request — useful for short-lived or rotating credentials.
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
