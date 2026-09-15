@@ -397,6 +397,46 @@ _(This example is complete, it can be run "as is")_
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
     those fields are dropped entirely. That loss is by design, not a state-loss bug.
 
+### Storing complete run results
+
+An [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] can be stored directly as a field on a Pydantic model:
+
+```python {title="serialize a run result to json"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, AgentRunResult
+
+
+class StoredRun(BaseModel):
+    result: AgentRunResult[str]
+
+
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+result = agent.run_sync('Tell me a joke.')
+
+stored_json = StoredRun(result=result).model_dump_json()
+loaded = StoredRun.model_validate_json(stored_json)
+
+assert loaded.result.output == result.output
+assert loaded.result.all_messages() == result.all_messages()
+```
+
+The round-trip preserves the output, messages and new-message boundary, output tool name, usage, run and
+conversation IDs, metadata, and trace context. Run-local state used only while the agent is executing is not stored.
+
+A [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] reads its values off the stream that is
+producing them, so it lasts only as long as that stream. Once the stream has finished, take
+[`StreamedRunResult.result`][pydantic_ai.result.StreamedRunResult.result] to get the same run in settled
+form and store that:
+
+```python {title="store a streamed run" test="skip" lint="skip"}
+async with agent.run_stream('Tell me a joke.') as streamed:
+    async for text in streamed.stream_text():
+        print(text)
+
+    stored_json = StoredRun(result=streamed.result).model_dump_json()
+```
+
 ### Loading untrusted history
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
@@ -423,6 +463,40 @@ Each sanitization can be turned off individually when the corresponding parts we
 ## Persisting sessions
 
 [Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
+
+### Carrying a conversation whole
+
+A history is not quite everything a conversation carries. [`usage`][pydantic_ai.usage.RunUsage] and the
+[`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) travel alongside it, each passed to the
+next run as its own argument — so a conversation reassembled by hand tends to lose them one at a time. Losing `usage` is the one that bites: pass `message_history` without it and every turn's
+[`UsageLimits`][pydantic_ai.usage.UsageLimits] budget starts over from zero, so a cap set across the
+conversation is never reached.
+
+[`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation] bundles all three as a
+[`Conversation`][pydantic_ai.conversation.Conversation], which serializes like any other Pydantic value, so the
+whole thing can be stored under one key and handed back intact:
+
+```python {title="carry a conversation between runs"}
+from pydantic_ai import Agent, Conversation
+
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+
+conversation: Conversation = agent.run_sync('Tell me a joke.').conversation
+print(len(conversation.messages))
+#> 2
+print(conversation.usage.requests)
+#> 1
+print(conversation.conversation_id == conversation.messages[-1].conversation_id)
+#> True
+```
+
+_(This example is complete, it can be run "as is")_
+
+Pass its pieces to the next run — `message_history=conversation.messages` alongside
+`usage=conversation.usage` — and the running total carries; pass the history alone and it restarts.
+
+A [realtime session][pydantic_ai.realtime.RealtimeSession] exposes the same bundle, so a spoken conversation
+can be continued as a text run and handed back again without losing its running total.
 
 For a chat application that is usually the whole design: load a thread's history, pass it as `message_history`, and write back [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] once the run finishes. Appending each run's new messages rather than rewriting the full list keeps each write proportional to the turn instead of to the conversation, and leaves the stored order intact.
 
