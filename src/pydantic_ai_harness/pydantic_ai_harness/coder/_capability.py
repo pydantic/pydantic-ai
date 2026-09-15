@@ -2,97 +2,76 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
 from pathlib import Path
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
-from pydantic_ai.tools import AgentDepsT
+import json_repair
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, RawToolArgs
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
+from pydantic_ai_harness.coder._instructions import INSTRUCTIONS
+from pydantic_ai_harness.coder._toolset import CoderToolset
 from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
-from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.planning import Planning
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
-from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
-
-DEFAULT_ALLOWED_COMMANDS: tuple[str, ...] = (
-    'git',
-    'rg',
-    'grep',
-    'find',
-    'ls',
-    'cat',
-    'sed',
-    'head',
-    'tail',
-    'python',
-    'uv',
-    'pytest',
-    'ruff',
-    'make',
-)
-"""Commands available to `Coder` unless an explicit allowlist is supplied."""
+from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 
-def _explorer(workspace: str | Path) -> SubAgent[AgentDepsT]:
-    agent = Agent[AgentDepsT](  # pyright: ignore[reportCallIssue, reportArgumentType]
-        name='explorer',
-        description='Explore the codebase and answer questions without modifying anything',
-        instructions='Answer with concrete paths and evidence.',
-        capabilities=[
-            FileSystem[AgentDepsT](workspace, read_only=True),
-            RepoContext[AgentDepsT](workspace_dir=Path(workspace)),
-        ],
-    )
-    return SubAgent(agent)
+class _RepairToolArguments(AbstractCapability[AgentDepsT]):
+    async def before_tool_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+    ) -> RawToolArgs:
+        """Repair malformed JSON arguments before normal tool schema validation."""
+        if not isinstance(args, str):
+            return args
+        try:
+            json.loads(args)
+        except (json.JSONDecodeError, RecursionError):
+            with ctx.tracer.start_as_current_span('coder.repair_tool_arguments'):
+                try:
+                    return json_repair.repair_json(args, skip_json_loads=True, ensure_ascii=False)
+                except (ValueError, RecursionError):
+                    return args
+        return args
+
+
+class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
+    id: str | None = None
+
+    def get_toolset(self) -> None:
+        """Coder uses bounded truncation, so no spill-retrieval tool is needed."""
+        return None
 
 
 class Coder(CombinedCapability[AgentDepsT]):
-    """A complete coding-agent harness built as a regular combined capability.
+    """Autonomous local coding with six tools and context management.
 
-    See the class definition and [Coder docs](https://pydantic.dev/docs/ai/harness/coder/) for the exact composition.
-
-    It ships with no default instructions: modern models don't need procedural coaching, and the composed capabilities
-    contribute their own tool guidance. Pass `instructions=` to add your own.
-
-    The command allowlist is a guardrail against accidents, not a security boundary. Validation checks only the first
-    token, and allowed commands such as `python`, `git`, `uv`, and `make` can spawn arbitrary processes. Run untrusted
-    work in an OS-level sandbox such as `ModalSandbox` or a container.
+    Commands are unrestricted and can outlive runs. Use an OS sandbox for
+    untrusted work. Additional instructions supplement the default guidance.
     """
 
     def __init__(
         self,
         workspace: str | Path = '.',
         *,
-        allowed_commands: Sequence[str] | None = None,
-        subagents: Sequence[SubAgent[AgentDepsT]] | None = None,
         instructions: str | None = None,
     ) -> None:
-        delegates = [_explorer(workspace)] if subagents is None else subagents
-        capabilities: list[AbstractCapability[AgentDepsT]] = []
-        if instructions is not None:
-            capabilities.append(Capability[AgentDepsT](instructions=instructions))
-        capabilities.extend(
+        super().__init__(
             [
-                FileSystem[AgentDepsT](workspace),
-                Shell[AgentDepsT](
-                    cwd=workspace,
-                    allowed_commands=DEFAULT_ALLOWED_COMMANDS if allowed_commands is None else allowed_commands,
-                    denied_env_patterns=LLM_API_KEY_ENV_PATTERNS,
+                _RepairToolArguments[AgentDepsT](),
+                Capability[AgentDepsT](
+                    instructions=INSTRUCTIONS + ('\n' + instructions if instructions else ''),
+                    toolsets=[CoderToolset[AgentDepsT](Path(workspace))],
                 ),
-                RepoContext[AgentDepsT](workspace_dir=Path(workspace)),
-                Planning[AgentDepsT](),
-            ]
-        )
-        if delegates:
-            capabilities.append(SubAgents[AgentDepsT](agents=delegates, agent_folders=None))
-        capabilities.extend(
-            [
+                RepoContext[AgentDepsT](workspace_dir=Path(workspace), expose_inventory_tool=False),
                 ClearToolResults[AgentDepsT](max_fraction=0.7),
                 WarnNearLimits[AgentDepsT](max_context_fraction=0.9),
-                ToolOutputLimits[AgentDepsT](),
+                _BoundToolOutputs[AgentDepsT](id=None, bands=[Band(over=64000, action=Truncate(max_chars=64000))]),
             ]
         )
-        super().__init__(capabilities)

@@ -234,6 +234,8 @@ COMBINE_POLICY: dict[str, Policy] = {
         _check_advisor,
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
+    '_RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
+    '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
@@ -558,33 +560,13 @@ def _child(name: str) -> Agent[Any, str]:
     reason='`Researcher` needs the `researcher` optional group.',
 )
 async def test_coder_and_researcher_compose() -> None:
-    """The composition #7781 was filed for: two packaged harnesses on one agent.
-
-    Both build a `ToolOutputLimits` and both delegate, so before `combine` they collided twice --
-    on the capability id, and then on the `delegate_task` tool name.
-    """
+    """Coder's private limits coexist with Researcher's independent tools and limits."""
     tree = CombinedCapability([Coder[Any](), Researcher[Any]()])
-    counts = Counter(type(leaf).__name__ for leaf in leaf_capabilities(tree))
-    assert counts['ToolOutputLimits'] == 2
-    assert counts['SubAgents'] == 2
-
-    # One layer: both harnesses are on the same agent, which is what makes them merge rather
-    # than one replacing the other.
     combined = combine_duplicate_capabilities(tree, [tree.capabilities])
-
     leaves = leaf_capabilities(combined)
-    merged_counts = Counter(type(leaf).__name__ for leaf in leaves)
-    assert merged_counts['ToolOutputLimits'] == 1
-    assert merged_counts['SubAgents'] == 1
-    # Neither harness loses a delegate: the rosters union under one `delegate_task` tool.
+    counts = Counter(type(leaf).__name__ for leaf in leaves)
+    assert counts['ToolOutputLimits'] == 1
+    assert counts['_BoundToolOutputs'] == 1
+    assert counts['SubAgents'] == 1
     sub_agents = next(leaf for leaf in leaves if isinstance(leaf, SubAgents))
-    assert [entry.agent.name for entry in sub_agents.agents] == ['explorer', 'researcher']
-
-    # And what the model is told, not just what the field holds. `_by_name` is a `compare=False`
-    # cache built in `__post_init__`, so a merge that unions `agents` without rebuilding it leaves
-    # the roster reading as composed while the delegate tool offers only the last harness's agents.
-    instructions = sub_agents.get_instructions()
-    assert isinstance(instructions, str)
-    assert 'explorer' in instructions and 'researcher' in instructions, (
-        'the delegate tool is built from the derived roster, so merging has to rebuild it'
-    )
+    assert [entry.agent.name for entry in sub_agents.agents] == ['researcher']

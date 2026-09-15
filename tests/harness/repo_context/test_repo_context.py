@@ -449,3 +449,24 @@ class TestNestedTraversal:
 class TestForRunAndMisc:
     def test_serialization_name(self) -> None:
         assert RepoContext.get_serialization_name() == 'RepoContext'
+
+
+@pytest.mark.anyio
+async def test_disabled_nested_traversal_ignores_filesystem_event(tmp_path: Path) -> None:
+    _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+    _write(tmp_path / 'sub' / 'one.py', 'one')
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if _tool_returns(messages) == 0:
+            yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/one.py"}')}
+        else:
+            assert not _repo_notes(messages)
+            yield 'done'
+
+    await Agent(
+        FunctionModel(stream_function=stream),
+        capabilities=[
+            FileSystem(root_dir=tmp_path),
+            RepoContext(workspace_dir=tmp_path, nested_traversal=False, expose_inventory_tool=False),
+        ],
+    ).run('go')

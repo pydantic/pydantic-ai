@@ -30,6 +30,7 @@ classifiers = [
 dependencies = [
     "genai-prices>=0.0.71",
     "httpx>=0.28.1",
+    "json-repair>=0.58.0",
     "pydantic-ai-slim>=2.40.0",
 ]
 
@@ -108,6 +109,9 @@ prompt-injection-defender = [
 prompt-injection-defender-ml = [
     "stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11'",
 ]
+coder = [
+    "ripgrep==14.1.0 ; sys_platform != 'android'",
+]
 
 [project.urls]
 Homepage = 'https://github.com/pydantic/pydantic-ai-harness'
@@ -116,7 +120,7 @@ Issues = 'https://github.com/pydantic/pydantic-ai-harness/issues'
 
 [dependency-groups]
 dev = [
-    'pydantic-ai-harness[code-mode]',
+    'pydantic-ai-harness[code-mode,coder]',
     # Floors selected to keep the `test-floor` job (using `--resolution lowest-direct`)
     # working: `anyio>=4.11.0` is when the pytest plugin started registering the
     # `anyio_mode` ini option. `pytest-anyio` has only version 0.0.0 on PyPI, so no
