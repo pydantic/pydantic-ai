@@ -23,6 +23,8 @@ Use `BinaryContent(...)` when the asset is already in memory instead of at a URL
 
 Not every model supports every input type. Keep provider expectations in mind when the user chooses a specific model.
 
+For Gemini agentic video processing, set `vendor_metadata={'media_processing': 'AGENTIC'}` on the `VideoUrl`, video `BinaryContent`, or video `UploadedFile`.
+
 ## Work with Message History
 
 Use `message_history=` to continue a conversation across runs.

@@ -33,6 +33,8 @@ from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 
 with try_import() as imports_successful:
+    from google.genai.types import Part
+
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -178,6 +180,69 @@ async def test_media_resolution_forwarding(
 
     assert content == [case.expected]
     assert case.content.vendor_metadata == original_vendor_metadata
+
+
+@pytest.mark.parametrize(
+    'video',
+    [
+        pytest.param(
+            VideoUrl(
+                url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
+                vendor_metadata={'media_processing': 'AGENTIC'},
+            ),
+            id='url',
+        ),
+        pytest.param(
+            BinaryContent(data=b'video', media_type='video/mp4', vendor_metadata={'media_processing': 'AGENTIC'}),
+            id='binary',
+        ),
+        pytest.param(
+            UploadedFile(
+                file_id='https://generativelanguage.googleapis.com/v1beta/files/video123',
+                provider_name='google',
+                media_type='video/mp4',
+                vendor_metadata={'media_processing': 'AGENTIC'},
+            ),
+            id='uploaded',
+        ),
+    ],
+)
+async def test_media_processing_forwarding(
+    video: BinaryContent | VideoUrl | UploadedFile, mapping_model: GoogleModel
+) -> None:
+    """`media_processing` is forwarded for every supported video input without mutating its metadata."""
+    original_vendor_metadata = deepcopy(video.vendor_metadata)
+
+    content = await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert content[0].get('media_processing') == 'AGENTIC'
+    assert video.vendor_metadata == original_vendor_metadata
+
+
+async def test_media_processing_composes_with_media_resolution(mapping_model: GoogleModel) -> None:
+    video = VideoUrl(
+        url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
+        vendor_metadata={
+            'media_processing': 'AGENTIC',
+            'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'},
+        },
+    )
+
+    content = await mapping_model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert content == snapshot(
+        [
+            {
+                'file_data': {
+                    'file_uri': 'https://www.youtube.com/watch?v=lCdaVNyHtjU',
+                    'mime_type': 'video/mp4',
+                },
+                'media_processing': 'AGENTIC',
+                'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'},
+            }
+        ]
+    )
+    Part.model_validate(content[0])
 
 
 # =============================================================================
