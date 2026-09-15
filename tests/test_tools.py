@@ -1544,6 +1544,49 @@ async def test_positional_or_keyword_with_var_args():
     assert args == {'r0': 1, 'values': [0]}
 
 
+def test_var_positional_param_not_required():
+    """A `*args` parameter is optional in Python, so it must not be a required tool parameter.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/8350.
+
+    Not VCR-backed: this exercises local schema generation and argument binding and makes no provider request.
+    """
+
+    def sum_numbers(x: int, *rest: int) -> str:
+        return f'{x}:{list(rest)}'
+
+    agent = Agent(FunctionModel(get_json_schema), tools=[sum_numbers])
+    json_schema = json.loads(agent.run_sync('Hello').output)
+    assert json_schema['parameters_json_schema'] == snapshot(
+        {
+            'properties': {
+                'x': {'type': 'integer'},
+                'rest': {'default': [], 'items': {'type': 'integer'}, 'type': 'array'},
+            },
+            'required': ['x'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+
+    # A model that omits `rest` gets a normal tool call rather than a retry; one that supplies it still binds it.
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('sum_numbers', {'x': 1}),
+                    ToolCallPart('sum_numbers', {'x': 2, 'rest': [3, 4]}),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(llm), tools=[sum_numbers], retries={'tools': 0, 'output': 0})
+    result = agent.run_sync('go')
+    assert [
+        part.content for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    ] == snapshot(['1:[]', '2:[3, 4]'])
+
+
 def test_tool_retries():
     prepare_tools_retries: list[int] = []
     prepare_retries: list[int] = []
