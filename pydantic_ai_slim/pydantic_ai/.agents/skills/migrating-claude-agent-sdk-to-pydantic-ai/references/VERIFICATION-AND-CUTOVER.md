@@ -53,26 +53,6 @@ Evidence states are `preserved`, `accepted change`, `application-owned`, `tested
 4. Remove `claude-agent-sdk`, Claude Code subprocess setup, and Claude transcript assumptions only when no retained path needs them.
 5. Report which checks used deterministic fakes, recordings, live providers, restart tests, or sandbox tests, and state any remaining limitation.
 
-## Migration-skill forward-test evidence
-
-This skill was designed against pinned, licensed public fixtures:
-
-- **Ordinary:** `anthropics/claude-cookbooks@a97b9a2dc300635f0c26b5e05d0b54bbe0279ee5` (MIT), `claude_agent_sdk/research_agent/agent.py`.
-- **Stateful/branching:** the same cookbook pin, `claude_agent_sdk/05_Building_a_session_browser.ipynb` session-helper slice.
-- **Capability-rich:** `anthropics/agent-sdk-workshop@a273fbe2b3776d84cf29f025927d71dcc0982c9f` (Apache-2.0), `01-guided-demo` agent/tools/subagents/memory slice.
-- **Withheld generalization case:** `prowler-cloud/prowler-studio@c86a8d18dbe28ae7a344d4b30bc1566cbed955b2` (Apache-2.0), implementation/testing agent loop and directly used Prowler tools.
-
-Fresh agents applied the skill independently on 2026-09-15:
-
-| Fixture | Target ownership selected | Offline evidence |
-|---|---|---|
-| Ordinary research agent | Core agent, tools, events, and normalized history; no Harness | 6 focused tests, Ruff, and explicit-path Pyright passed |
-| Stateful session browser | Core messages plus application-owned storage, metadata, and branching; no Harness | 4 focused tests including a fresh-process resume, Ruff, and explicit-path Pyright passed |
-| Capability-rich workshop | Core agent/tools, Harness model-directed subagents, application-owned memory and UI | 5 focused tests including fresh-process memory, Ruff, and explicit-path Pyright passed |
-| Withheld Prowler workflow | Core agent/history, Harness filesystem/shell, application-owned verification and five-attempt repair loops | 31 migration and existing tool tests, Ruff, and focused mypy passed |
-
-The round produced no material skill-caused failure. All provider behavior remained explicitly proxy evidence: deterministic models exercised the public Core/Harness seams without live credentials. When refining this skill, record only failures caused by missing or misleading guidance, fix the narrowest cause, and rerun the affected fixture with a fresh agent.
-
 ## Completion criterion
 
 Cut over only when each ledger row has a non-`unverified` evidence state, the original supported boundary passes, requested gaps are resolved or explicitly accepted, dependencies resolve cleanly, and rollback remains possible.

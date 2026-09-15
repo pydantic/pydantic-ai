@@ -47,10 +47,6 @@ AGENTS.override.md
 !.agents/skills/pushing-commits-to-the-repo/
 .agents/skills/pushing-commits-to-the-repo/*
 !.agents/skills/pushing-commits-to-the-repo/SKILL.md
-!.agents/skills/migrating-claude-agent-sdk-to-pydantic-ai/
-!.agents/skills/migrating-claude-agent-sdk-to-pydantic-ai/SKILL.md
-!.agents/skills/migrating-claude-agent-sdk-to-pydantic-ai/references/
-!.agents/skills/migrating-claude-agent-sdk-to-pydantic-ai/references/*.md
 .claude/*
 !.claude/plans/
 !.claude/skills/
