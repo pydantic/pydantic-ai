@@ -23,7 +23,7 @@ Map behavior only after tracing the active ADK caller path. Keep existing applic
 | `AgentTool` | A typed tool that runs another `Agent`; Harness `SubAgents` when the task is self-contained | Input prompt, usage propagation, history isolation, returned output |
 | `before_*` / `after_*` callbacks | Core [`Hooks`](https://pydantic.dev/docs/ai/core-concepts/hooks/) | Order, mutation, short-circuit, errors, sync/async behavior |
 | Runner-wide `BasePlugin` | One reusable capability or application instrumentation/policy | Global coverage, lifecycle, early exit, cleanup |
-| `require_confirmation`, `ToolConfirmation` | `requires_approval`, `ApprovalRequiredToolset`, or deferred-call handling; use `ToolApproved.override_args` and deferred metadata when the confirmation payload changes execution | Correlation, approve/deny, overridden arguments, metadata, no side effect before approval |
+| `require_confirmation`, `ToolConfirmation` | `requires_approval` or `ApprovalRequiredToolset` to gate the tool; resolve inline with `HandleDeferredToolCalls`, or return `DeferredToolRequests` and resume a later run with `DeferredToolResults`; use `ToolApproved.override_args` and deferred metadata when the confirmation payload changes execution | Correlation, approve/deny, overridden arguments, metadata, no side effect before approval |
 | Workflow `RequestInput` | Application or graph pause/resume boundary | Prompt, response correlation, restart; do not imply authorization |
 | `LongRunningFunctionTool` | Deferred external execution, application jobs, or durable steps | Pending response, correlation, completion/error delivery |
 | `McpToolset` | Core [MCP](https://pydantic.dev/docs/ai/capabilities/mcp/) toolsets | Transport lifecycle, tool filtering/names, auth, errors |

@@ -46,7 +46,8 @@ Use the same evidence states as the LangChain migration skill:
 
 - Assert the deferred call ID and validated arguments.
 - Exercise deny and approve, including any source decline reason exposed to the model or caller.
-- Assert no protected effect before approval and exactly one after resumption.
+- For inline resolution, assert the handler runs and the agent completes in one call. When the decision arrives later, assert the first run ends with `DeferredToolRequests`, then assert a new run over the persisted messages with `DeferredToolResults` completes with the final output.
+- Assert no protected effect before approval and exactly one after resolution.
 - Exercise authenticated identity, policy lookup, durable correlation, and audit trail. A local yes/no callback is not authorization proof.
 
 ### Streaming, processors, and subagents

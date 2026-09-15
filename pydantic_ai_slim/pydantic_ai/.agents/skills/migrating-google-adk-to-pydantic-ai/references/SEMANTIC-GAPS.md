@@ -32,7 +32,7 @@ ADK 2.x [collaboration behavior](https://adk.dev/workflows/collaboration/) depen
 
 ADK workflow `RequestInput`, tool confirmation, and tool authentication all pause execution, but they protect different contracts. A text answer is not authorization. A confirmation is not an identity proof.
 
-Use Pydantic AI [deferred tools](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) for protected tool approval or external execution. Keep authenticated principals, credentials, and policy services in trusted dependencies/application code. Persist tool-call IDs with pending decisions and prove approve, deny, timeout, duplicate response, restart, and no-side-effect-before-approval behavior as applicable.
+Use Pydantic AI [deferred tools](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) for protected tool approval or external execution. When the decision is available during the same call, use `HandleDeferredToolCalls` so the run can continue inline. When the run must end first, include `DeferredToolRequests` in `output_type`, persist messages and tool-call IDs, then resume in a later run with `DeferredToolResults`. Keep authenticated principals, credentials, and policy services in trusted dependencies/application code. Prove approve, deny, timeout, duplicate response, restart, and no-side-effect-before-approval behavior as applicable.
 
 ## Events and streaming
 
