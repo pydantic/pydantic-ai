@@ -13,7 +13,6 @@ from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext, UserError, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
-from pydantic_ai.durable_exec._workspace import guard_workflow_workspace
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
@@ -1415,17 +1414,6 @@ async def test_deferred_approval_stamps_copied_response_after_workspace_acquisit
     copied_tool_response = next(message for message in second.all_messages() if isinstance(message, ModelResponse))
     assert copied_tool_response is not source_tool_response
     assert copied_tool_response.workspace_ref == backend.ref
-
-
-async def test_guard_workflow_workspace_only_rejects_a_live_handle() -> None:
-    ref = WorkspaceRef(provider='fake', id='existing')
-
-    assert guard_workflow_workspace(ref, live_error='live workspace') is ref
-    assert guard_workflow_workspace(None, live_error='live workspace') is None
-    with pytest.raises(UserError, match='live workspace'):
-        guard_workflow_workspace(FakeWorkspace('live'), live_error='live workspace')
-    with pytest.raises(UserError, match='deprecated wrapper'):
-        guard_workflow_workspace(ref, live_error='live workspace', ref_error='deprecated wrapper')
 
 
 async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:

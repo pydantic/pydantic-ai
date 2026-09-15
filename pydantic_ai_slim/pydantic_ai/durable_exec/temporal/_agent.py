@@ -48,18 +48,13 @@ from pydantic_ai.tools import (
     Tool,
     ToolFuncEither,
 )
-from pydantic_ai.workspaces import UnavailableWorkspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
-from .._workspace import (
-    guard_workflow_workspace,
-    live_workspace_error,
-)
 from ._activity_execution import execute_activity
 from ._durability import serialization_user_error
 from ._model import TemporalModel, TemporalProviderFactory
 from ._run_context import (
-    TEMPORAL_WORKSPACE_UNAVAILABLE_REASON,
     TemporalRunContext,
     deserialize_run_context,
 )
@@ -94,17 +89,6 @@ def _merge_activity_config(base: ActivityConfig, override: ActivityConfig) -> Ac
     return merged
 
 
-_LIVE_WORKSPACE_ERROR = live_workspace_error(
-    run_location='to an agent run inside a Temporal workflow',
-    workspace_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
-)
-_WORKSPACE_REF_UNSUPPORTED_ERROR = (
-    '`TemporalAgent` cannot use a workspace inside a workflow. Migrate to a regular `Agent` with '
-    '`TemporalDurability` with an application custom `TemporalRunContext.deserialize_run_context`; configure workspace restoration and use inside '
-    'your durable tool or capability activity.'
-)
-
-
 @dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
@@ -126,7 +110,7 @@ class _EventStreamHandlerParams:
 - `tool_activity_config=` → use per-tool `metadata={'temporal': ...}` or a `SetToolMetadata` capability.
 - `run_context_type=` → set `run_context_type=` on `TemporalDurability`.
 - `temporalize_toolset_func=` → not supported on the capability path; open an issue if you need it.
-- `workspace=` → pass a stable reference and restore the workspace in an application custom `TemporalRunContext.deserialize_run_context`; use it inside your durable tool or capability activity.
+- `workspace=` → unchanged.
 Workflows started under `TemporalAgent` replay correctly after migrating when agent name, toolset IDs, and model registry keys are kept and `event_stream_handler=` stays on `TemporalDurability`; no draining is needed.""",
     category=PydanticAIDeprecationWarning,
 )
@@ -509,8 +493,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `TemporalAgent` does not support workspace access inside a workflow; migrate to `TemporalDurability` and restore it in an application custom `TemporalRunContext.deserialize_run_context`.
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. Inside a Temporal workflow, only a concrete workspace reference is serialized to activities. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -522,13 +505,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 raise UserError(
                     'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
                 )
-            workspace = guard_workflow_workspace(
-                workspace,
-                live_error=_LIVE_WORKSPACE_ERROR,
-                ref_error=_WORKSPACE_REF_UNSUPPORTED_ERROR,
-            )
-            if workspace is None:
-                workspace = UnavailableWorkspace(reason=TEMPORAL_WORKSPACE_UNAVAILABLE_REASON)
             resolved_model = None
         else:
             resolved_model = self._temporal_model.resolve_model(model)
@@ -677,8 +653,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `TemporalAgent` does not support workspace access inside a workflow; migrate to `TemporalDurability` and restore it in an application custom `TemporalRunContext.deserialize_run_context`.
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. Inside a Temporal workflow, only a concrete workspace reference is serialized to activities. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -832,8 +807,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `TemporalAgent` does not support workspace access inside a workflow; migrate to `TemporalDurability` and restore it in an application custom `TemporalRunContext.deserialize_run_context`.
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. Inside a Temporal workflow, only a concrete workspace reference is serialized to activities. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1005,8 +979,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `TemporalAgent` does not support workspace access inside a workflow; migrate to `TemporalDurability` and restore it in an application custom `TemporalRunContext.deserialize_run_context`.
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. Inside a Temporal workflow, only a concrete workspace reference is serialized to activities. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1215,8 +1188,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
-               The deprecated `TemporalAgent` does not support workspace access inside a workflow; migrate to `TemporalDurability` and restore it in an application custom `TemporalRunContext.deserialize_run_context`.
+            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. Inside a Temporal workflow, only a concrete workspace reference is serialized to activities. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:

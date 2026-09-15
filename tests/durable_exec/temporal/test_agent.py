@@ -58,6 +58,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     ProcessHistory,
 )
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -180,6 +181,7 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr
+    from ...workspace_fakes import FakeWorkspace
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -2739,6 +2741,94 @@ async def test_temporal_application_deserializer_restores_validated_workspace_re
     assert copied.workspace.ref == WorkspaceRef(provider='fake', id='readonly-ref')
     with pytest.raises(UserError, match='read-only'):
         await copied.workspace.run(['touch', 'blocked'])
+
+
+class TemporalAgentWorkspaceContext(TemporalRunContext[None]):
+    workspace_ref: object = None
+
+
+class TemporalAgentWorkspaceCapability(AbstractCapability[None]):
+    def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> FakeWorkspace:
+        assert ref is not None
+        return FakeWorkspace(ref.id, ref=ref)
+
+
+temporal_agent_workspace_agent = Agent(
+    TestModel(call_tools=['probe_temporal_workspace_ref']),
+    name='temporal_agent_workspace',
+    deps_type=type(None),
+    capabilities=[TemporalAgentWorkspaceCapability()],
+)
+
+
+@temporal_agent_workspace_agent.tool
+async def probe_temporal_workspace_ref(ctx: RunContext[None]) -> str:
+    assert activity.in_activity()
+    assert isinstance(ctx, TemporalAgentWorkspaceContext)
+    if ctx.workspace_ref is None:
+        return 'none'
+    return TypeAdapter(WorkspaceRef).validate_python(ctx.workspace_ref).id
+
+
+temporal_agent_workspace_wrapper = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    temporal_agent_workspace_agent,
+    run_context_type=TemporalAgentWorkspaceContext,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class TemporalAgentWorkspaceRefWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await temporal_agent_workspace_wrapper.run(
+            'Use the workspace probe.',
+            workspace=WorkspaceRef(provider='probe', id='existing-123'),
+        )
+        return result.output
+
+
+@workflow.defn
+class TemporalAgentLiveWorkspaceWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await temporal_agent_workspace_wrapper.run(
+            'Use the workspace probe.',
+            workspace=FakeWorkspace('live'),
+        )
+        return result.output
+
+
+async def test_temporal_agent_forwards_workspace_ref_to_activity(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalAgentWorkspaceRefWorkflow],
+        plugins=[AgentPlugin(temporal_agent_workspace_wrapper)],
+    ):
+        output = await client.execute_workflow(
+            TemporalAgentWorkspaceRefWorkflow.run,
+            id=f'{TemporalAgentWorkspaceRefWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == '{"probe_temporal_workspace_ref":"existing-123"}'
+
+
+async def test_temporal_agent_accepts_live_workspace_without_activity_ref(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalAgentLiveWorkspaceWorkflow],
+        plugins=[AgentPlugin(temporal_agent_workspace_wrapper)],
+    ):
+        output = await client.execute_workflow(
+            TemporalAgentLiveWorkspaceWorkflow.run,
+            id=f'{TemporalAgentLiveWorkspaceWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == '{"probe_temporal_workspace_ref":"none"}'
 
 
 def test_temporal_run_context_context_window_used_is_none_without_messages():

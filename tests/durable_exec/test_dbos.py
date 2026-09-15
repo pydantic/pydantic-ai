@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -81,6 +82,7 @@ from pydantic_ai.realtime import (
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai.workspaces import LocalWorkspace
 
 from ..conftest import IsDatetime, IsNow, IsStr
 
@@ -233,6 +235,27 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
 
     output = await run_simple_agent()
     assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def round_trip_workspace(ctx: RunContext[None]) -> str:
+    await ctx.workspace.write_text('note.txt', 'workspace content')
+    return await ctx.workspace.read_text('note.txt')
+
+
+async def test_dbos_agent_forwards_local_workspace(dbos: DBOS, tmp_path: Path) -> None:
+    agent = Agent(
+        TestModel(call_tools=['round_trip_workspace']),
+        name='dbos_agent_workspace',
+        deps_type=type(None),
+        tools=[round_trip_workspace],
+    )
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    result = await dbos_agent.run('Use the workspace.', workspace=LocalWorkspace(tmp_path))
+
+    assert result.output == '{"round_trip_workspace":"workspace content"}'
+    await result.workspace.write_text('after.txt', 'after run')
+    assert await result.workspace.read_text('after.txt') == 'after run'
 
 
 class Deps(BaseModel):
@@ -2404,6 +2427,26 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello DBOS'
+
+
+async def test_dbos_durability_forwards_local_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
+    agent = Agent(
+        TestModel(call_tools=['round_trip_workspace']),
+        name='dbos_durability_workspace',
+        deps_type=type(None),
+        tools=[round_trip_workspace],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent(workspace: LocalWorkspace) -> AgentRunResult[str]:
+        return await agent.run('Use the workspace.', workspace=workspace)
+
+    result = await run_durable_agent(LocalWorkspace(tmp_path))
+
+    assert result.output == '{"round_trip_workspace":"workspace content"}'
+    await result.workspace.write_text('after.txt', 'after run')
+    assert await result.workspace.read_text('after.txt') == 'after run'
 
 
 async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS) -> None:
