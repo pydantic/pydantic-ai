@@ -33,9 +33,7 @@ async def test_combined_toolset_dispatches_with_live_prepared_tool_definition():
     def my_tool(x: int) -> int:
         return x
 
-    async def prepare(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition]:
+    async def prepare(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         return [
             replace(
                 tool_def,
@@ -46,7 +44,11 @@ async def test_combined_toolset_dispatches_with_live_prepared_tool_definition():
         ]
 
     prepared = PreparedToolset(CombinedToolset([spy]), prepare)
-    agent = Agent(model=TestModel(call_tools=['my_tool']), toolsets=[prepared])
+    agent: Agent[None, str] = Agent(
+        model=TestModel(call_tools=['my_tool']),
+        deps_type=type(None),
+        toolsets=[prepared],
+    )
 
     await agent.run('Call my_tool.')
 
