@@ -27,6 +27,7 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/guardrails/) provides input and output guardrails that validate or block requests and responses, and Pydantic AI enforces usage, token, and request limits via [`UsageLimits`](../agent.md#usage-limits). As a community alternative bundling several ready-made shields, including USD cost tracking:
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
+* [`pydantic-ai-governor`](https://github.com/crescerelabs/sentience-governor/tree/main/integrations/pydantic-ai-governor) - `SentienceGovernor` records governance-oriented execution evidence against the objective and scope declared for a run: a session per run, a scope assertion before each dispatched tool call, a snapshot after each normal return, and per-turn token usage from `ModelResponse.usage`, joined on `tool_use_id`. Nothing is inferred from a tool's name. It observes and records rather than intervening in tool execution.
 
 ## File Operations & Sandboxing {#file-operations-sandboxing}
 
