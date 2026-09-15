@@ -6969,13 +6969,14 @@ async def test_bedrock_anthropic_5_drops_sampling_settings(
         result = await agent.run('What is 2+2? Answer with the number only.')
 
     assert result.output.strip() == snapshot('4')
-    sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
-    assert sampling_warnings == snapshot(
+    sampling_warnings = [w for w in recorded if 'Sampling parameters' in str(w.message)]
+    assert [str(w.message) for w in sampling_warnings] == snapshot(
         [
             "Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
             "'eu.anthropic.claude-opus-5'. These settings will be ignored."
         ]
     )
+    assert all(w.filename.endswith('/pydantic_ai/models/bedrock.py') for w in sampling_warnings)
 
     sent = single_request_body(vcr)
     assert sent['inferenceConfig'] == snapshot({'maxTokens': 16})

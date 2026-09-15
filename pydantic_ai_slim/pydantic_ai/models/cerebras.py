@@ -108,21 +108,19 @@ class CerebrasModel(OpenAIChatModel):
         return omit
 
     @override
-    def prepare_request(
+    def _prepare_model_settings(
         self,
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+    ) -> ModelSettings:
         # `'tags'` means we replay prior reasoning as `<think>` content (zai/GLM); Cerebras strips that
         # by default, so the transform preserves it. See `_cerebras_settings_to_openai_settings`.
         replays_thinking_as_tags = self.profile.get('openai_chat_send_back_thinking_parts') == 'tags'
-        new_settings = _cerebras_settings_to_openai_settings(
-            cast(CerebrasModelSettings, merged_settings or {}),
-            customized_parameters,
+        return _cerebras_settings_to_openai_settings(
+            cast(CerebrasModelSettings, model_settings or {}),
+            model_request_parameters,
             replays_thinking_as_tags=replays_thinking_as_tags,
         )
-        return new_settings, customized_parameters
 
 
 def _cerebras_settings_to_openai_settings(
