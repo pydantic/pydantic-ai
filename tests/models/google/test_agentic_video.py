@@ -1,40 +1,102 @@
 from __future__ import annotations
 
-import base64
 from collections.abc import AsyncIterator
 
 import pytest
-from httpx2 import Timeout
 
 from pydantic_ai import NativeToolCallPart, NativeToolReturnPart, TextPart, UnexpectedModelBehavior, VideoUrl
 from pydantic_ai.agent import Agent
-from pydantic_ai.messages import PartStartEvent
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsStr, RequestCapture, try_import
+from ...conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import GenerateContentResponse, Part
+    from google.genai.types import GenerateContentResponse, Part, ToolType
 
     from pydantic_ai import _utils
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.google import (
         GeminiStreamedResponse,
         GoogleModel,
-        _content_model_response,  # pyright: ignore[reportPrivateUsage]
-        _GoogleMediaProcessingCodec,  # pyright: ignore[reportPrivateUsage]
         _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.google import GoogleProvider
 
+    from .test_native_tools import _process_response  # pyright: ignore[reportPrivateUsage]
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
-    pytest.mark.vcr,
 ]
 
 
+# Each media-processing step Gemini reported in the recording, keyed by `stream`.
+EXPECTED_PARTS: dict[bool, list[NativeToolCallPart | NativeToolReturnPart | TextPart]] = {
+    False: snapshot(
+        [
+            NativeToolCallPart(
+                tool_name='media_processing',
+                tool_call_id='call_3095045',
+                provider_name='google',
+                provider_details={'thought_signature': IsStr()},
+            ),
+            NativeToolReturnPart(
+                tool_name='media_processing',
+                content=None,
+                tool_call_id='call_3095045',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_details={'thought_signature': IsStr()},
+            ),
+            TextPart(
+                content=IsStr(),
+                provider_name='google',
+                provider_details={'thought_signature': IsStr()},
+            ),
+        ]
+    ),
+    True: snapshot(
+        [
+            NativeToolCallPart(
+                tool_name='media_processing',
+                tool_call_id='call_3627313',
+                provider_name='google',
+                provider_details={'thought_signature': IsStr()},
+            ),
+            NativeToolReturnPart(
+                tool_name='media_processing',
+                content=None,
+                tool_call_id='call_3627313',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_details={'thought_signature': IsStr()},
+            ),
+            NativeToolCallPart(
+                tool_name='media_processing',
+                tool_call_id='call_3627373',
+                provider_name='google',
+                provider_details={'thought_signature': IsStr()},
+            ),
+            NativeToolReturnPart(
+                tool_name='media_processing',
+                content=None,
+                tool_call_id='call_3627373',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_details={'thought_signature': IsStr()},
+            ),
+            TextPart(
+                content=IsStr(),
+                provider_name='google',
+                provider_details={'thought_signature': IsStr()},
+            ),
+        ]
+    ),
+}
+
+
+@pytest.mark.vcr
 @pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
 async def test_agentic_video_processing(
     stream: bool,
@@ -42,9 +104,11 @@ async def test_agentic_video_processing(
     gemini_api_key: str,
     request_capture: RequestCapture,
 ) -> None:
-    """Agentic video requests expose Google's processing trace and preserve replayable history."""
-    request_capture.client.timeout = Timeout(60)
-    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.client)
+    """Each processing step becomes a `media_processing` call/return pair; the follow-up replays only the final text.
+
+    The replayed shape asserted at the end is the one Gemini accepted in the recorded live follow-up request.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=60))
     agent = Agent(GoogleModel('gemini-3.7-flash', provider=provider))
     prompt = [
         'In one sentence, which animals appear and roughly when?',
@@ -62,9 +126,7 @@ async def test_agentic_video_processing(
         result = await agent.run(prompt)
         messages = result.all_messages()
 
-    first_request_contents = request_capture.body()['contents']
-    assert isinstance(first_request_contents, list)
-    assert first_request_contents == snapshot(
+    assert request_capture.body()['contents'] == snapshot(
         [
             {
                 'parts': [
@@ -81,65 +143,31 @@ async def test_agentic_video_processing(
             }
         ]
     )
-    response_parts = messages[-1].parts
-    assert isinstance(response_parts[-1], TextPart)
-    processing_parts = response_parts[:-1]
-    assert processing_parts
-    assert len(processing_parts) % 2 == 0
-    for tool_call, tool_return in zip(processing_parts[::2], processing_parts[1::2]):
-        assert isinstance(tool_call, NativeToolCallPart)
-        assert isinstance(tool_return, NativeToolReturnPart)
-        assert tool_call.tool_name == tool_return.tool_name == 'media_processing'
-        assert tool_call.tool_call_id == tool_return.tool_call_id
-        assert tool_call.provider_details == {
-            'thought_signature': IsStr(),
-            'media_processing_wire_part': {'tool_call': {'id': tool_call.tool_call_id}},
-        }
-        assert tool_return.provider_details == {
-            'thought_signature': IsStr(),
-            'media_processing_wire_part': {'tool_response': {'id': tool_return.tool_call_id}},
-        }
+    assert messages[-1].parts == EXPECTED_PARTS[stream]
 
-    follow_up = 'What happens immediately before the first visible scene change?'
-    await agent.run(follow_up, message_history=messages)
+    await agent.run('What happens immediately before the first visible scene change?', message_history=messages)
     follow_up_contents = request_capture.body(index=1)['contents']
     assert isinstance(follow_up_contents, list)
-    assert follow_up_contents[:1] == first_request_contents
-    assert follow_up_contents[-1] == {'parts': [{'text': follow_up}], 'role': 'user'}
-    replayed_content = follow_up_contents[-2]
-    assert isinstance(replayed_content, dict)
-    replayed_parts = replayed_content['parts']
-    assert isinstance(replayed_parts, list)
-    assert len(replayed_parts) == len(response_parts)
-    for index, (tool_call, tool_return) in enumerate(zip(processing_parts[::2], processing_parts[1::2])):
-        assert isinstance(tool_call, NativeToolCallPart)
-        assert isinstance(tool_return, NativeToolReturnPart)
-        assert tool_call.provider_details is not None
-        assert tool_return.provider_details is not None
-        replayed_call = replayed_parts[index * 2]
-        replayed_return = replayed_parts[index * 2 + 1]
-        assert isinstance(replayed_call, dict)
-        assert isinstance(replayed_return, dict)
-        assert replayed_call['toolCall'] == {'id': tool_call.tool_call_id}
-        assert replayed_return['toolResponse'] == {'id': tool_return.tool_call_id}
-        replayed_call_signature = replayed_call['thoughtSignature']
-        replayed_return_signature = replayed_return['thoughtSignature']
-        assert isinstance(replayed_call_signature, str)
-        assert isinstance(replayed_return_signature, str)
-        assert base64.urlsafe_b64decode(replayed_call_signature) == base64.b64decode(
-            tool_call.provider_details['thought_signature']
-        )
-        assert base64.urlsafe_b64decode(replayed_return_signature) == base64.b64decode(
-            tool_return.provider_details['thought_signature']
-        )
-    assert replayed_parts[-1] == {'text': IsStr(), 'thoughtSignature': IsStr()}
+    replayed_model_content = follow_up_contents[-2]
+    assert isinstance(replayed_model_content, dict)
+    replayed_model_parts = replayed_model_content['parts']
+    assert isinstance(replayed_model_parts, list)
+    assert replayed_model_parts == snapshot([{'text': IsStr(), 'thoughtSignature': IsStr()}])
 
 
-def test_explicit_media_processing_parts_preserve_their_wire_shape() -> None:
+def test_typed_media_processing_parts_map_to_the_same_tool() -> None:
+    """Unit test: the API doesn't set `tool_type` on these parts today, so a `MEDIA_PROCESSING` value can't be recorded."""
     response = _process_response_from_parts(
         parts=[
-            Part.model_validate({'tool_call': {'tool_type': 'MEDIA_PROCESSING'}}),
-            Part.model_validate({'tool_response': {'tool_type': 'MEDIA_PROCESSING'}}),
+            Part.model_validate(
+                {'tool_call': {'id': 'typed-call', 'tool_type': ToolType.MEDIA_PROCESSING}, 'thought_signature': b'a'}
+            ),
+            Part.model_validate(
+                {
+                    'tool_response': {'id': 'typed-call', 'tool_type': ToolType.MEDIA_PROCESSING},
+                    'thought_signature': b'b',
+                }
+            ),
         ],
         grounding_metadata=None,
         model_name='gemini-3.7-flash',
@@ -149,109 +177,131 @@ def test_explicit_media_processing_parts_preserve_their_wire_shape() -> None:
         provider_response_id='response-id',
     )
 
-    tool_call, tool_return = response.parts
-    assert isinstance(tool_call, NativeToolCallPart)
-    assert isinstance(tool_return, NativeToolReturnPart)
-    assert tool_call.tool_call_id == tool_return.tool_call_id
-    assert _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True) == {
-        'role': 'model',
-        'parts': [
-            {'tool_call': {'tool_type': 'MEDIA_PROCESSING'}},
-            {'tool_response': {'tool_type': 'MEDIA_PROCESSING'}},
-        ],
-    }
-    assert (
-        _GoogleMediaProcessingCodec.encode(
-            NativeToolCallPart(tool_name='media_processing', provider_name='google-gla', tool_call_id='user-created'),
-            None,
-        )
-        is None
+    assert response.parts == snapshot(
+        [
+            NativeToolCallPart(
+                tool_name='media_processing',
+                tool_call_id='typed-call',
+                provider_name='google-gla',
+                provider_details={'thought_signature': 'YQ=='},
+            ),
+            NativeToolReturnPart(
+                tool_name='media_processing',
+                content=None,
+                tool_call_id='typed-call',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'thought_signature': 'Yg=='},
+            ),
+        ]
     )
 
 
-def test_vertex_bare_processing_signatures_are_exposed_but_not_replayed() -> None:
-    response = _process_response_from_parts(
-        parts=[Part(thought_signature=b'call'), Part(thought_signature=b'return'), Part(text='done')],
-        grounding_metadata=None,
-        model_name='gemini-3.7-flash',
-        provider_name='google-vertex',
-        provider_url='https://aiplatform.googleapis.com/',
-        usage=RequestUsage(),
-        provider_response_id='response-id',
-        media_processing=_GoogleMediaProcessingCodec(enabled=True),
-    )
-
-    assert len(response.parts) == 3
-    tool_call, tool_return, text = response.parts
-    assert isinstance(tool_call, NativeToolCallPart)
-    assert isinstance(tool_return, NativeToolReturnPart)
-    assert tool_call.tool_call_id == tool_return.tool_call_id
-    assert tool_call.provider_details == {'thought_signature': 'Y2FsbA=='}
-    assert tool_return.provider_details == {'thought_signature': 'cmV0dXJu'}
-    assert text == TextPart(content='done')
-
-    assert _content_model_response(response, frozenset({'google-vertex'}), supports_tool_combination=True) == {
-        'role': 'model',
-        'parts': [{'text': 'done'}],
-    }
-
-
-async def test_vertex_bare_processing_signatures_streaming_are_exposed() -> None:
-    async def stream() -> AsyncIterator[GenerateContentResponse]:
-        for parts in [[{'thought_signature': b'call'}], [{'thought_signature': b'return'}], [{'text': 'done'}]]:
-            yield GenerateContentResponse.model_validate(
-                {'candidates': [{'content': {'role': 'model', 'parts': parts}}]}
-            )
-
-    streamed = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='gemini-3.7-flash',
-        _response=_utils.PeekableAsyncStream(stream()),
-        _provider_name='google-vertex',
-        _model_id_namespace='google',
-        _provider_url='https://aiplatform.googleapis.com/',
-        _media_processing=_GoogleMediaProcessingCodec(enabled=True),
-    )
-
-    events = [event async for event in streamed]
-    started_parts = [event.part for event in events if isinstance(event, PartStartEvent)]
-    assert isinstance(started_parts[0], NativeToolCallPart)
-    assert isinstance(started_parts[1], NativeToolReturnPart)
-    assert isinstance(started_parts[2], TextPart)
-
-    parts = streamed.get().parts
-    assert len(parts) == 3
-    assert isinstance(parts[0], NativeToolCallPart)
-    assert isinstance(parts[1], NativeToolReturnPart)
-    assert parts[0].tool_call_id == parts[1].tool_call_id
-    assert parts[2] == TextPart(content='done')
-
-
-def test_empty_native_tool_part_without_signature_is_rejected() -> None:
+def test_untyped_tool_call_with_a_payload_is_not_media_processing() -> None:
+    """Unit test: pins that only the observed id-only shape is inferred; no model produces this input today."""
     with pytest.raises(UnexpectedModelBehavior, match='Missing tool_type on native tool part'):
         _process_response_from_parts(
-            parts=[Part.model_validate({'tool_call': {'id': 'unknown'}})],
+            parts=[Part.model_validate({'tool_call': {'id': 'other', 'args': {'query': 'x'}}})],
             grounding_metadata=None,
             model_name='gemini-3.7-flash',
             provider_name='google-gla',
             provider_url='https://generativelanguage.googleapis.com/',
             usage=RequestUsage(),
             provider_response_id='response-id',
-            media_processing=_GoogleMediaProcessingCodec(enabled=True),
         )
 
 
-@pytest.mark.parametrize('tool_field', ['tool_call', 'tool_response'])
-def test_media_processing_does_not_swallow_mixed_parts(tool_field: str) -> None:
-    response = _process_response_from_parts(
-        parts=[Part.model_validate({'text': 'kept', tool_field: {'id': 'not-processing'}})],
-        grounding_metadata=None,
-        model_name='gemini-3.7-flash',
-        provider_name='google-gla',
-        provider_url='https://generativelanguage.googleapis.com/',
-        usage=RequestUsage(),
-        provider_response_id='response-id',
-        media_processing=_GoogleMediaProcessingCodec(enabled=True),
+@pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
+async def test_signature_only_parts_are_dropped(stream: bool) -> None:
+    """Unit test: Vertex AI emits these for agentic video, but no Vertex cassette exists; the shape comes from the issue report."""
+    parts = [
+        Part(thought_signature=b'a'),
+        Part(thought_signature=b'b'),
+        Part(text='done', thought_signature=b'c'),
+    ]
+
+    if stream:
+
+        async def response_stream() -> AsyncIterator[GenerateContentResponse]:
+            yield GenerateContentResponse.model_validate(
+                {'candidates': [{'content': {'role': 'model', 'parts': parts}}]}
+            )
+
+        streamed = GeminiStreamedResponse(
+            model_request_parameters=ModelRequestParameters(),
+            _model_name='gemini-3.7-flash',
+            _response=_utils.PeekableAsyncStream(response_stream()),
+            _provider_name='google-vertex',
+            _model_id_namespace='google',
+            _provider_url='https://aiplatform.googleapis.com/',
+        )
+        _ = [event async for event in streamed]
+        response_parts = streamed.get().parts
+    else:
+        response_parts = _process_response_from_parts(
+            parts=parts,
+            grounding_metadata=None,
+            model_name='gemini-3.7-flash',
+            provider_name='google-vertex',
+            provider_url='https://aiplatform.googleapis.com/',
+            usage=RequestUsage(),
+            provider_response_id='response-id',
+        ).parts
+
+    assert response_parts == snapshot(
+        [
+            TextPart(
+                content='done',
+                provider_name='google-vertex',
+                provider_details={'thought_signature': 'Yw=='},
+            )
+        ]
     )
 
-    assert response.parts == [TextPart(content='kept')]
+
+def test_media_processing_parts_do_not_suppress_metadata_reconstruction() -> None:
+    """Unit test: agentic video combined with a metadata-delivered builtin tool has no recording."""
+    response = _process_response(
+        [
+            {'tool_call': {'id': 'media-call'}, 'thought_signature': b'a'},
+            {'tool_response': {'id': 'media-call'}, 'thought_signature': b'b'},
+        ],
+        grounding={
+            'web_search_queries': ['Pydantic AI'],
+            'grounding_chunks': [
+                {'web': {'uri': 'https://ai.pydantic.dev', 'title': 'Pydantic AI'}},
+            ],
+        },
+    )
+
+    assert response.parts == snapshot(
+        [
+            NativeToolCallPart(
+                tool_name='web_search',
+                args={'queries': ['Pydantic AI']},
+                tool_call_id=IsStr(),
+                provider_name='google-gla',
+            ),
+            NativeToolReturnPart(
+                tool_name='web_search',
+                content=[{'uri': 'https://ai.pydantic.dev', 'title': 'Pydantic AI', 'domain': None}],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            ),
+            NativeToolCallPart(
+                tool_name='media_processing',
+                tool_call_id='media-call',
+                provider_name='google-gla',
+                provider_details={'thought_signature': 'YQ=='},
+            ),
+            NativeToolReturnPart(
+                tool_name='media_processing',
+                content=None,
+                tool_call_id='media-call',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'thought_signature': 'Yg=='},
+            ),
+        ]
+    )

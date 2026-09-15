@@ -219,14 +219,6 @@ async def test_media_processing_forwarding(
     assert video.vendor_metadata == original_vendor_metadata
 
 
-async def test_media_processing_is_ignored_for_non_video(mapping_model: GoogleModel) -> None:
-    image = BinaryContent(data=b'image', media_type='image/png', vendor_metadata={'media_processing': 'AGENTIC'})
-
-    content = await mapping_model._map_user_prompt(UserPromptPart(content=[image]))  # pyright: ignore[reportPrivateUsage]
-
-    assert 'media_processing' not in content[0]
-
-
 async def test_media_processing_composes_with_media_resolution(mapping_model: GoogleModel) -> None:
     video = VideoUrl(
         url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
