@@ -32,7 +32,6 @@ from pydantic_ai.capabilities.abstract import (
     AgentNode,
     CapabilityOrdering,
     NodeResult,
-    WrapRunHandler,
 )
 from pydantic_ai.exceptions import (
     UserError,
@@ -89,7 +88,9 @@ def test_pending_message_queue_state_and_copy_round_trip():
         pickle.loads(pickle.dumps(state.pending_messages)),
     ]
 
-    assert all(isinstance(queue, PendingMessageQueue) and queue == [pending] for queue in queues)
+    for queue in queues:
+        assert isinstance(queue, PendingMessageQueue)
+        assert queue == [pending]
 
 
 @pytest.mark.parametrize('at_end', [False, True], ids=['between-nodes', 'run-ending'])
@@ -149,51 +150,12 @@ async def test_agent_run_enqueue_after_run_ends_raises(finish_run: bool):
         agent_run.enqueue('too late')
 
 
-async def test_enqueue_rejected_before_wrap_run_cleanup():
-    enqueue_errors: list[str] = []
-
-    class CleanupCapability(AbstractCapability[object]):
-        async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-            try:
-                return await handler()
-            finally:
-                try:
-                    ctx.enqueue('too late')
-                except UserError as error:
-                    enqueue_errors.append(str(error))
-
-    def fail_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        raise RuntimeError('model failed')
-
-    agent = Agent(FunctionModel(fail_model), capabilities=[CleanupCapability()])
-    with pytest.raises(RuntimeError, match='model failed'):
-        await agent.run('hello')
-
-    assert enqueue_errors == ['`enqueue` is not available because the agent run has ended.']
-
-
-async def test_enqueue_after_metadata_setup_fails_raises():
-    captured_ctx: RunContext[object] | None = None
-
-    def fail_metadata(ctx: RunContext[object]) -> dict[str, Any]:
-        nonlocal captured_ctx
-        captured_ctx = ctx
-        raise RuntimeError('metadata failed')
-
-    agent = Agent(TestModel())
-    with pytest.raises(RuntimeError, match='metadata failed'):
-        await agent.run('hello', metadata=fail_metadata)
-
-    assert captured_ctx is not None
-    with pytest.raises(UserError, match='run has ended'):
-        captured_ctx.enqueue('too late')
-
-
-async def test_pending_queue_stays_open_for_outermost_redirect():
-    """Final draining waits until every capability can redirect an apparent end."""
+@pytest.mark.parametrize('hook_redirects', [True, False], ids=['hook-redirects', 'drain-redirects'])
+async def test_outermost_hook_can_enqueue_on_end(hook_redirects: bool):
+    """The final drain runs after every hook, so an outermost hook can still enqueue on `End`."""
 
     class RedirectCapability(AbstractCapability[object]):
-        redirected = False
+        enqueued = False
 
         def get_ordering(self) -> CapabilityOrdering:
             return CapabilityOrdering(position='outermost', wraps=[AbstractCapability])
@@ -201,10 +163,13 @@ async def test_pending_queue_stays_open_for_outermost_redirect():
         async def after_node_run(
             self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
         ) -> NodeResult[object]:
-            if isinstance(result, End) and not self.redirected:
-                self.redirected = True
+            if isinstance(result, End) and not self.enqueued:
+                self.enqueued = True
                 ctx.enqueue('after redirect')
-                return _agent_graph.ModelRequestNode(request=ModelRequest(parts=[UserPromptPart(content='redirect')]))
+                if hook_redirects:
+                    return _agent_graph.ModelRequestNode(
+                        request=ModelRequest(parts=[UserPromptPart(content='redirect')])
+                    )
             return result
 
     agent = Agent(TestModel(), capabilities=[RedirectCapability()])

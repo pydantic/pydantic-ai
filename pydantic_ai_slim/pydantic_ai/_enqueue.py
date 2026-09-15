@@ -170,8 +170,6 @@ class PendingMessage:
 class PendingMessageQueue(list[PendingMessage]):
     """A run's pending messages with thread-safe append and drain operations."""
 
-    __slots__ = ('_closed', '_lock')
-
     def __init__(self, messages: Iterable[PendingMessage] = ()) -> None:
         super().__init__(messages)
         self._closed = False

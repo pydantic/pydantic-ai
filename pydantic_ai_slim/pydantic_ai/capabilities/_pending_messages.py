@@ -19,6 +19,14 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
 
 
+def _queue(ctx: RunContext[Any]) -> PendingMessageQueue:
+    # Graph runs always carry the thread-safe queue. Other `RunContext` producers (durable-exec
+    # guards, synthetic contexts) never reach this drain.
+    queue = ctx.pending_messages
+    assert isinstance(queue, PendingMessageQueue)
+    return queue
+
+
 def _stamped_messages(
     pending: PendingMessage,
     *,
@@ -46,7 +54,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
     - `'asap'` messages drain at the earliest opportunity: into the next
       [`ModelRequest`][pydantic_ai.messages.ModelRequest] via `before_model_request`,
       or — if the agent would otherwise terminate — redirected through a new
-      `ModelRequestNode` from `after_node_run`.
+      `ModelRequestNode` at the end of the run.
     - `'when_idle'` messages drain only when the agent would otherwise terminate
       and no `'asap'` messages remain, after any `'asap'` redirect.
 
@@ -82,11 +90,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
         messages exactly as delivered here.
         """
-        # Standard graph runs always use the thread-safe list subclass; other `RunContext` producers
-        # may supply a plain list, but they never invoke this internal drain capability.
-        queue = ctx.pending_messages
-        assert isinstance(queue, PendingMessageQueue)
-        drained = queue.pop_priority('asap')
+        drained = _queue(ctx).pop_priority('asap')
         for pending in drained:
             messages = _stamped_messages(
                 pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
@@ -119,15 +123,11 @@ def drain_pending_messages_at_end(
     if not isinstance(result, End):
         return result
 
-    # Standard graph runs always use the thread-safe list subclass; other `RunContext` producers
-    # may supply a plain list, but they never invoke this internal drain capability.
-    queue = ctx.pending_messages
-    assert isinstance(queue, PendingMessageQueue)
     # Pi-mono parity: drain `'asap'` first so anything that arrived during the
     # final step (e.g. a background task completing while the model produced
     # its final response) gets delivered before `'when_idle'` messages, and the
     # agent gets another turn rather than terminating with the message lost.
-    leftover_asap, when_idle = queue.drain_at_end()
+    leftover_asap, when_idle = _queue(ctx).drain_at_end()
     if not leftover_asap and not when_idle:
         return result
 
