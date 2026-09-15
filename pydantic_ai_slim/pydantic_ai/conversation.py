@@ -3,10 +3,13 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+from collections.abc import Sequence
+from copy import copy
 from dataclasses import KW_ONLY
 
 from . import messages as _messages, usage as _usage
 from ._uuid import uuid7
+from .exceptions import UserError
 
 __all__ = ('Conversation',)
 
@@ -48,3 +51,40 @@ class Conversation:
 
     conversation_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     """The identifier every run in this conversation shares, and the key to store it under."""
+
+
+def resolve_conversation(
+    conversation: Conversation | None,
+    *,
+    message_history: Sequence[_messages.ModelMessage] | None,
+    usage: _usage.RunUsage | None,
+    conversation_id: str | None,
+) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None]:
+    """Resolve a `conversation` argument into the three arguments it stands in for.
+
+    The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
+    passing the conversation's own object would make running from a conversation change it —
+    double-counting across two runs started from the same one, and corrupting it as a point to
+    branch from.
+    """
+    if conversation is None:
+        return message_history, usage, conversation_id
+
+    if conflicts := [
+        name
+        for name, value in (
+            ('message_history', message_history),
+            ('usage', usage),
+            ('conversation_id', conversation_id),
+        )
+        if value is not None
+    ]:
+        listed = ' and '.join(f'`{name}`' for name in conflicts)
+        raise UserError(
+            f'`conversation` already carries {listed}, so passing both is ambiguous. '
+            f'Pass the conversation on its own, or pass its pieces yourself.'
+        )
+
+    copied_usage = copy(conversation.usage)
+    copied_usage.details = dict(conversation.usage.details)
+    return conversation.messages, copied_usage, conversation.conversation_id
