@@ -267,6 +267,16 @@ async def test_function_toolset_with_defaults():
             return a + b  # pragma: no cover
 
 
+async def test_function_toolset_requires_var_keyword_description():
+    toolset = FunctionToolset(require_parameter_descriptions=True)
+
+    with pytest.raises(UserError, match='Missing parameter descriptions for kwargs'):
+
+        @toolset.tool_plain
+        def collect(**kwargs: int) -> dict[str, int]:
+            return kwargs  # pragma: no cover
+
+
 async def test_abstract_toolset_instructions_default():
     """Test that the default instructions method returns None."""
     toolset = MockToolsetWithInstructions(instructions=None)
