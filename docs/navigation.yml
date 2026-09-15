@@ -600,14 +600,14 @@ navigation:
         slug: "integrations/cli"
         aliases:
           - "cli"
-      - page: "ACP"
-        path: "acp.md"
-        source: "harness"
-        slug: "harness/acp"
       - page: "GitHub Agentic Workflows"
         path: "gh-aw.md"
         source: "harness"
         slug: "harness/gh-aw"
+      - page: "ACP"
+        path: "acp.md"
+        source: "harness"
+        slug: "harness/acp"
   - section: "Guides"
     slug: ""
     top-level: true
