@@ -26,7 +26,7 @@ interactions:
       generationConfig:
         responseModalities:
         - TEXT
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-3.7-flash:streamGenerateContent?alt=sse
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai-dev/locations/global/publishers/google/models/gemini-3.7-flash:streamGenerateContent?alt=sse
   response:
     body:
       string: "data: {\"candidates\": [{\"content\": {\"role\": \"model\",\"parts\": [{\"thoughtSignature\": \"CAIS1gQBjz1rXw3ApKv+M7/yQJKmrcmRVvFRf4wxfi3xBKq/Tt/J/NWgw90R+41+1XPSeOK4EHfJG5Jo7GG5GukNByqDF6wPDmU2uif4yuY912uYncaPBIcESNmPl5jNfyxD6Ln+shV8jWeCQm4McKdTBMaOVurMFUAypbVL/GU2t6YOWERTxRHOqvQTrrrdJPOZaVB3nScVAZPwD4TnmWqCmfp0hcg1K/7Qmr6aXyDAbOonVprV9FKHW1AIes1mFqg+DwMtQLarOw9/q1OHdV3BEdNEXQajkNKWvn2dahjorSqtiRbKUhcdhwWT6S5C7z59H6sz/d3KPR00KB2hriHx1mCzT8Urs16IWTq1HnbwH4Cr+PQ7ULSSy/y1bHwtIjeHfZHuBN1aJYCaQmAXvQvR/P4ZRc0/eOZu1kvlwCwDcnL/Peu4DQPi1YQR5fFCgYgyhK526d9PUT4vZo4YZ+M09enLKMUFG/HRbpZ2OIEOh1VbTJjBzbel7krXtWEzPxnBDgmEea7vb2tTE2c0Fkrm0UfIK6BCkohnOznusKnZ57xC9goWAwpp/G9KE1w5w59jdmajo5d8UPQtPDQkEXATFoDiTi2es3M2svySrNaO0kiBc3Eze0k4QB8Mc2TlLm185kRfYiXwE0qHGkVuoY8Y502sef9LzzWW6xlneRKa9Wh+nYQZ22ra6J0UXc2PsCLfs0qv6KLo6qoIuVAgGtYLj0e/71GuZ/IB828Xx1tFdNlccbyy/GZ3ficFSS3oaaKkxaFYU0fEXBjrW8JWRpLbKjsqDvzORbf6\"}]}}],\"usageMetadata\":
@@ -96,7 +96,7 @@ interactions:
       generationConfig:
         responseModalities:
         - TEXT
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-3.7-flash:generateContent
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai-dev/locations/global/publishers/google/models/gemini-3.7-flash:generateContent
   response:
     headers:
       alt-svc:
