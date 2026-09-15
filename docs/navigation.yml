@@ -20,6 +20,12 @@ navigation:
       - page: "Coding Agent Skills"
         path: "coding-agent-skills.md"
         slug: "overview/coding-agent-skills"
+      - page: "Migrate to Pydantic AI"
+        path: "framework-migration.md"
+        slug: "overview/migrate-from-other-frameworks"
+        aliases:
+          - "framework-migration"
+          - "migrate-from-other-frameworks"
       - page: "Getting Help"
         path: "help.md"
         slug: "overview/help"
