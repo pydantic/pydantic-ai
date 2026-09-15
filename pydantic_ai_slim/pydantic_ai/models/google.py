@@ -1859,8 +1859,9 @@ def _native_tool_call_part_dict(
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
     if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
-        # Media-processing steps are left out of follow-up requests: Vertex rejects them, and recorded
-        # Gemini follow-ups succeed with just the final response part and its signature.
+        # Not replayed: Gemini rejects echoed media-processing steps in every shape, including the one
+        # Google's own ADK sends ("Tool type of tool_call part does not match with tool call context").
+        # The final part's own signature is what carries the video context into the next turn.
         return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
@@ -1967,8 +1968,8 @@ def _process_part(
         content = BinaryContent(data=data, media_type=mime_type)
         item = FilePart(content=BinaryContent.narrow_type(content))
     elif part.thought_signature:
-        # A part with nothing but a signature has nothing to show and can't be replayed (Vertex rejects
-        # it). Vertex AI emits these for agentic media-processing steps.
+        # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
+        # show, and both backends reject them when replayed ("Invalid thought signature").
         return None, code_execution_tool_call_id
     else:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
