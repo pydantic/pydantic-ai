@@ -9,7 +9,7 @@ import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -86,10 +86,19 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import (
+    LocalWorkspace,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceRef,
+)
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
+from ...workspace_fakes import (
+    RecordingWorkspaceBackend,
+)
 
 try:
     from temporalio import activity, workflow
@@ -115,10 +124,15 @@ try:
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.durable_exec.temporal._function_toolset import (
+        TemporalFunctionToolset,
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
+    from pydantic_ai.durable_exec.temporal._run_context import (
+        TemporalRunContext,
+        deserialize_run_context,
+    )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
 
 except ImportError:  # pragma: lax no cover
@@ -2681,6 +2695,50 @@ def test_temporal_run_context_preserves_run_id():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.run_id == 'run-123'
+
+
+def _workspace_context(workspace: Workspace) -> RunContext[None]:
+    return RunContext(deps=None, model=TestModel(), usage=RunUsage(), workspace=workspace)
+
+
+def test_temporal_run_context_omits_ref_for_local_workspace():
+    workspace = Workspace(LocalWorkspace())
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert 'workspace_ref' not in serialized
+
+
+async def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
+    workspace = Workspace(RecordingWorkspaceBackend('preprovisioned'))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert serialized['workspace_ref'] == WorkspaceRef(provider='fake', id='preprovisioned')
+
+    decoded = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+    assert decoded.workspace is decoded.workspace
+    assert replace(decoded).workspace is decoded.workspace
+    assert decoded.workspace.ref is None
+    with pytest.raises(UserError, match=r'custom .*deserialize_run_context'):
+        await decoded.workspace.run(['pwd'])
+
+
+async def test_temporal_application_deserializer_restores_validated_workspace_ref():
+    class ApplicationTemporalRunContext(TemporalRunContext[None]):
+        @classmethod
+        def deserialize_run_context(cls, ctx: dict[str, Any], deps: None) -> TemporalRunContext[None]:
+            ref = TypeAdapter(WorkspaceRef).validate_python(ctx['workspace_ref'])
+            workspace = ReadOnlyWorkspace(Workspace(RecordingWorkspaceBackend(ref.id, ref=ref)))
+            return cls(**{**ctx, 'workspace': workspace}, deps=deps)
+
+    restored = deserialize_run_context(
+        ApplicationTemporalRunContext,
+        {'workspace_ref': {'provider': 'fake', 'id': 'readonly-ref'}},
+        deps=None,
+        agent=None,
+    )
+    copied = replace(restored, run_id='copy')
+    assert copied.workspace is restored.workspace
+    assert copied.workspace.ref == WorkspaceRef(provider='fake', id='readonly-ref')
+    with pytest.raises(UserError, match='read-only'):
+        await copied.workspace.run(['touch', 'blocked'])
 
 
 def test_temporal_run_context_context_window_used_is_none_without_messages():

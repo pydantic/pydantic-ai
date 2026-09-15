@@ -38,6 +38,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._merge import merge_capability_fields
 from ._on_event import collect_on_event_methods, marked_listens_to
@@ -626,6 +627,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         """Return native tools to register with the agent."""
         return []
+
+    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """Supply the run's workspace backend, or `None` if this capability does not provide one.
+
+        Called once per run, synchronously, and must do no I/O: return a backend configured from
+        this capability's own settings, carrying `ref` when one was recovered or passed in. The
+        backend creates or attaches on its first operation, so nothing here reaches the network.
+
+        `ref` is the identity of an environment the run should continue in when the caller passed
+        a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] through `workspace=`. `None` means the
+        backend should create a fresh environment. When continuing from message history, the latest
+        response's `workspace_ref` is used unless the caller passes an explicit backend, facade, or ref.
+        At most one attached capability may answer.
+        """
+        return None
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.

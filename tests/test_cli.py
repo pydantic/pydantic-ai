@@ -27,6 +27,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsInstance, IsStr, TestEnv, try_import
@@ -613,6 +614,24 @@ async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, e
 
 
 @pytest.mark.anyio
+async def test_run_chat_forwards_workspace(mocker: MockerFixture, tmp_path: Path):
+    workspace = WorkspaceRef(provider='fake', id='test')
+    with create_pipe_input() as inp:
+        inp.send_text('hello\n')
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+        mock_ask_agent = mocker.patch('pydantic_ai._cli.ask_agent', return_value=[])
+
+        agent = Agent(TestModel())
+        console = Console(file=StringIO())
+        assert await run_chat(True, agent, console, 'monokai', 'clai', config_dir=tmp_path, workspace=workspace) == 0
+
+    mock_ask_agent.assert_awaited_once()
+    assert mock_ask_agent.call_args.kwargs['workspace'] is workspace
+
+
+@pytest.mark.anyio
 async def test_chat_keeps_toolsets_open_after_failed_turn(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """A failed turn is reported without releasing session toolsets or ending the REPL."""
     env.set('OPENAI_API_KEY', 'test')
@@ -943,6 +962,7 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
         model=None,
         model_settings=None,
         usage_limits=None,
+        workspace=None,
     )
 
 
@@ -962,6 +982,7 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         model=None,
         model_settings=None,
         usage_limits=None,
+        workspace=None,
     )
 
 
@@ -985,6 +1006,7 @@ async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: Tes
         model=None,
         model_settings=None,
         usage_limits=None,
+        workspace=None,
     )
 
 
@@ -1007,6 +1029,7 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
         model=None,
         model_settings=None,
         usage_limits=None,
+        workspace=None,
     )
 
 
@@ -1368,14 +1391,16 @@ def test_agent_to_cli_sync_with_args(mocker: MockerFixture, env: TestEnv):
         model=None,
         model_settings=model_settings,
         usage_limits=usage_limits,
+        workspace=None,
     )
 
 
 def test_agent_to_cli_sync_with_model(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+    workspace = WorkspaceRef(provider='fake', id='test')
 
-    cli_agent.to_cli_sync(model='test')
+    cli_agent.to_cli_sync(model='test', workspace=workspace)
 
     mock_run_chat.assert_awaited_once_with(
         stream=True,
@@ -1388,6 +1413,7 @@ def test_agent_to_cli_sync_with_model(mocker: MockerFixture, env: TestEnv):
         model='test',
         model_settings=None,
         usage_limits=None,
+        workspace=workspace,
     )
 
 
@@ -1412,6 +1438,7 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
         model=None,
         model_settings=model_settings,
         usage_limits=usage_limits,
+        workspace=None,
     )
 
 
@@ -1419,8 +1446,9 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
 async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+    workspace = WorkspaceRef(provider='fake', id='test')
 
-    await cli_agent.to_cli(model='test')
+    await cli_agent.to_cli(model='test', workspace=workspace)
 
     mock_run_chat.assert_awaited_once_with(
         stream=True,
@@ -1433,6 +1461,7 @@ async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv
         model='test',
         model_settings=None,
         usage_limits=None,
+        workspace=workspace,
     )
 
 
@@ -1459,6 +1488,7 @@ async def test_ask_agent_non_stream_forwards_run_kwargs(mocker: MockerFixture):
         model='test',
         model_settings=model_settings,
         usage_limits=usage_limits,
+        workspace=None,
     )
 
     agent.run.assert_awaited_once_with(
@@ -1470,6 +1500,7 @@ async def test_ask_agent_non_stream_forwards_run_kwargs(mocker: MockerFixture):
         usage_limits=usage_limits,
         toolsets=None,
         usage=IsInstance(RunUsage),
+        workspace=None,
     )
     assert messages == []
 

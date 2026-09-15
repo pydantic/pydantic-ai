@@ -22,6 +22,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.messages import STANDING_PROMPT_PLANTED_KEY, sanitize_messages
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
@@ -320,3 +321,22 @@ def test_sanitize_messages_drops_uploaded_files_by_default():
     assert part.content == snapshot(
         ['summarize', UploadedFile(file_id='file-abc', provider_name='openai', media_type='application/pdf')]
     )
+
+
+def test_sanitize_messages_strips_workspace_ref():
+    """A client-supplied `ModelResponse.workspace_ref` is reset to `None`.
+
+    The most recent reference in history is offered to a capability's `get_workspace`, so a client
+    that can set it could point a reconnecting capability at an environment it attaches to with
+    server-side provider credentials. The response's parts are otherwise kept intact.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[TextPart(content='done')],
+            workspace_ref=WorkspaceRef(provider='modal', id='victim-env'),
+        ),
+    ]
+
+    response = message(sanitize_messages(messages), ModelResponse)
+    assert response.workspace_ref is None
+    assert response.parts == [TextPart(content='done')]

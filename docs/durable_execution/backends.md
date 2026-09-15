@@ -149,15 +149,16 @@ MCP tools perform I/O and always run in their durable unit, so returning `False`
 The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
 `ModelCancelSuspendedResponseId`, `EventStreamHandlerId`, `ToolsetGetToolsId`,
 `ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
-`CapabilityOperationId`. Their Python class names do not determine persisted operation names.
+`CapabilityOperationId`. Their Python class names do not determine
+persisted operation names.
 
 ### API evolution
 
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId] grows in minor releases as
-Pydantic AI adds durable units. Sandbox operations are one planned example. Engine configuration
-must therefore include a default branch when matching IDs. Use that branch to apply a safe base
-configuration or raise an actionable unsupported-operation error. Do not rely on an exhaustive
-match that assumes the current union will never gain another arm.
+Pydantic AI adds durable units. Engine configuration must therefore include a default branch when
+matching IDs. Use that branch to apply a safe base configuration or raise an actionable
+unsupported-operation error. Do not rely on an exhaustive match that assumes the current union
+will never gain another arm.
 
 ## Persisted names and recovery
 

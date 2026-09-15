@@ -23,6 +23,7 @@ from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
 from ..settings import ModelSettings
 from ..toolsets import AbstractToolset
+from ..workspaces import WorkspaceBackend, WorkspaceRef
 
 try:
     import argcomplete
@@ -439,6 +440,8 @@ async def run_chat(
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    *,
+    workspace: WorkspaceBackend | WorkspaceRef | None = None,
 ) -> int:
     # `Agent.to_cli()` arrives here with nothing printed yet, so this is where its session gets the
     # banner. `clai` printed its own intro and claimed the banner already, so it doesn't get a second.
@@ -501,6 +504,7 @@ async def run_chat(
                         usage_limits=usage_limits,
                         toolsets=toolsets,
                         usage=session_usage,
+                        workspace=workspace,
                     )
                     session_turns += 1
                 except anyio.get_cancelled_exc_class():
@@ -526,6 +530,7 @@ async def ask_agent(
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     *,
     usage: _usage.RunUsage | None = None,
+    workspace: WorkspaceBackend | WorkspaceRef | None = None,
 ) -> list[ModelMessage]:
     # A chat session owns the terminal: it has already printed whatever intro it wanted, and a
     # banner from the run itself would land in the middle of the answer to this prompt.
@@ -548,6 +553,7 @@ async def ask_agent(
                     usage_limits=usage_limits,
                     toolsets=toolsets,
                     usage=turn_usage,
+                    workspace=workspace,
                 )
             content = str(result.output)
             console.print(Markdown(content, code_theme=code_theme))
@@ -563,6 +569,7 @@ async def ask_agent(
                 usage_limits=usage_limits,
                 toolsets=toolsets,
                 usage=turn_usage,
+                workspace=workspace,
             ) as agent_run:
                 live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
                 content_pieces: list[str] = []

@@ -468,6 +468,7 @@ def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: 
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
                 'state': 'complete',
             },
         ),

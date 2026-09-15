@@ -19,13 +19,17 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
-from ._run_context import CustomEventT
+from ._run_context import (
+    CustomEventT,
+    unattached_workspace,
+)
 from .output import OutputDataT
 from .tools import AgentDepsT
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
     from .result import FinalResult
+    from .workspaces import Workspace
 
 
 @dataclasses.dataclass(repr=False)
@@ -153,13 +157,17 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         graph_run_output = self._graph_run.output
         if graph_run_output is None:
             return None
-        return AgentRunResult(
+        result = AgentRunResult(
             graph_run_output.output,
             graph_run_output.tool_name,
             self._graph_run.state,
             self._graph_run.deps.new_message_index,
             self._traceparent(required=False),
         )
+        # Set outside the constructor because `workspace` is deliberately not a dataclass field: see
+        # the property on `AgentRunResult`.
+        result.__dict__['_workspace'] = self._graph_run.deps.workspace
+        return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
         """Return all messages for the run so far.
@@ -644,6 +652,27 @@ class AgentRunResult(Generic[OutputDataT]):
     )
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
+
+    @property
+    def workspace(self) -> Workspace:
+        """The [`Workspace`][pydantic_ai.workspaces.Workspace] the run used.
+
+        Pass it to a later run or a subagent as `workspace=result.workspace` to keep working in the same
+        environment. Nothing tears it down when the run ends, so it is still usable here: copy files
+        out, or retain the concrete provider backend and await its native workspace for lifecycle methods.
+
+        A result that did not come from a run — one deserialized from JSON, or built by hand — has
+        a placeholder whose operations explain that no workspace is attached.
+        """
+        # Deliberately not a dataclass field. Temporal serializes a whole result through
+        # `pydantic_core.to_json`, which walks `__dataclass_fields__` and cannot be told to skip a
+        # field (`Field(exclude=True)` needs a `TypeAdapter`/core schema, which that path does not
+        # build), so a declared field — even excluded — makes it try to serialize the live handle and
+        # fail. Storing it in `__dict__`, off `__dataclass_fields__`, keeps it out of every serializer.
+        workspace = self.__dict__.get('_workspace')
+        if workspace is None:
+            workspace = self.__dict__['_workspace'] = unattached_workspace()
+        return workspace
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...

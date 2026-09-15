@@ -17,6 +17,7 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
@@ -108,6 +109,8 @@ def create_api_app(
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
+    *,
+    workspace: WorkspaceBackend | WorkspaceRef | None = None,
 ) -> Starlette:
     """Create API app for the web chat UI.
 
@@ -125,6 +128,7 @@ def create_api_app(
         native_tools: Optional list of additional native tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
+        workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for all requests; overrides capability contributions. See the [workspace docs](../../workspace.md).
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
         sdk_version: Vercel AI SDK version to target on the chat endpoint: 5, 6, or 7. Defaults to
@@ -236,6 +240,7 @@ def create_api_app(
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
+            workspace=workspace,
         )
         return streaming_response
 
