@@ -31,7 +31,7 @@ Evidence states are `preserved`, `accepted change`, `application-owned`, `tested
 - Assert the deferred call ID and validated arguments.
 - Exercise deny, approve, and argument override where supported.
 - For inline resolution, assert the handler runs and the agent completes in one call. When the decision arrives later, assert the first run ends with `DeferredToolRequests`, then assert a new run over the persisted messages with `DeferredToolResults` completes with the final output.
-- Assert no protected side effect before approval and exactly one after resolution.
+- Assert no protected side effect before resolution, zero after denial, and exactly one after approval.
 - Exercise the application's authenticated identity, policy lookup, and audit trail. A local yes/no callback is not authorization proof.
 
 ### Streaming, hooks, and subagents
