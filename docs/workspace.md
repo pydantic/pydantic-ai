@@ -43,7 +43,8 @@ as separate packages.
 
 ## Reading and writing files
 
-Relative paths resolve against the workspace's working directory.
+Relative paths resolve against the workspace's working directory. Path resolution normalizes
+spelling, including `..`, but does not confine access; isolation comes from the workspace itself.
 [`read_text`][pydantic_ai.workspaces.Workspace.read_text] and
 [`write_text`][pydantic_ai.workspaces.Workspace.write_text] read and write whole text files.
 [`read_bytes`][pydantic_ai.workspaces.Workspace.read_bytes] returns exact bytes.
@@ -239,9 +240,6 @@ environment.
 - A command that exceeds its deadline raises
   [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] with the output received so
   far. How the command is terminated depends on the provider.
-
-`resolve()` normalizes path spelling, including `..`, but does not enforce confinement. The
-workspace supplies isolation.
 
 ## Durable execution
 

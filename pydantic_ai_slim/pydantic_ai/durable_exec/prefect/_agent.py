@@ -369,8 +369,6 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             The result of the run.
         """
         reject_cancellation_token(cancellation_token, engine='Prefect')
-        # Unlike the Temporal and DBOS wrappers there is no workspace guard: a Prefect flow is ordinary
-        # in-process code, so acquiring a workspace there, or passing a live backend, is allowed.
 
         @flow(name=f'{self._name} Run')
         async def wrapped_run_flow() -> AgentRunResult[Any]:
