@@ -415,8 +415,8 @@ _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
 
 _NO_WORKSPACE_REASON = (
-    'No workspace is attached to this run. Pass `workspace=LocalWorkspace()` to the run method to use the '
-    'local machine (unsafe: commands and file operations run with the full permissions of this process), '
+    "No workspace is attached to this run. Pass `workspace=LocalWorkspace('/absolute/path')` to the run method to "
+    'use the local machine (unsafe: commands and file operations run with the full permissions of this process), '
     'attach a capability that supplies a workspace through its `get_workspace` hook, or pass a `WorkspaceRef` '
     'to connect to an existing environment. See https://ai.pydantic.dev/workspace/ for details.'
 )
@@ -1751,14 +1751,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if workspace is None or isinstance(workspace, WorkspaceRef):
             selection_ref = workspace if isinstance(workspace, WorkspaceRef) else historical_workspace_ref
             selection = run_capability.get_workspace(initial_ctx, ref=selection_ref)
-            if selection is None:
-                if isinstance(workspace, WorkspaceRef):
-                    raise exceptions.UserError(
-                        f'No capability can supply workspace {workspace.id!r}: every `get_workspace` returned '
-                        '`None`. Attach a capability whose `get_workspace` recognizes it.'
-                    )
-            else:
+            if selection is not None:
                 run_workspace = selection if isinstance(selection, Workspace) else Workspace(selection)
+            elif isinstance(workspace, WorkspaceRef):
+                raise exceptions.UserError(
+                    f'No capability can supply workspace {workspace.id!r}: every `get_workspace` returned '
+                    '`None`. Attach a capability whose `get_workspace` recognizes it.'
+                )
+            # Without an explicit ref, no answer leaves the placeholder in place; this includes
+            # a run with no workspace and no historical ref.
         initial_ctx.workspace = run_workspace
 
         # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the

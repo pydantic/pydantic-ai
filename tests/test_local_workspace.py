@@ -5,23 +5,16 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
-import shutil
 import signal
 import sys
-import tempfile
-import threading
 import time
-from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-import anyio
-import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._utils import abandon_threads_on_cancel
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import (
@@ -37,109 +30,6 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspace tests drive POSIX shell commands'),
 ]
-
-
-async def test_local_workspace_concurrent_first_use_creates_one_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    created: list[str] = []
-    real_mkdtemp: Callable[..., str] = tempfile.mkdtemp
-
-    def counted_mkdtemp(*args: Any, **kwargs: Any) -> str:
-        root = cast(str, real_mkdtemp(*args, **kwargs))
-        created.append(root)
-        return root
-
-    monkeypatch.setattr('pydantic_ai.workspaces.local.tempfile.mkdtemp', counted_mkdtemp)
-    workspace = LocalWorkspace()
-    assert workspace.ref is None
-    async with workspace:
-        paths = await asyncio.gather(workspace.working_dir(), workspace.working_dir())
-        assert paths[0] == paths[1]
-        assert len(created) == 1
-        root = Path(paths[0])
-        assert root.exists()
-    assert not root.exists()
-
-
-async def test_cancelled_context_exit_removes_owned_root() -> None:
-    workspace = LocalWorkspace()
-    root = Path(await workspace.root)
-    try:
-        async with anyio.create_task_group() as tg:
-            async with workspace:
-                assert root.exists()
-                tg.cancel_scope.cancel()
-        assert not root.exists()
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
-@pytest.mark.parametrize('raw_cancel', [False, True], ids=['anyio-cancel', 'raw-task-cancel'])
-async def test_cancelled_root_acquisition_keeps_ownership_with_abandoned_thread(
-    monkeypatch: pytest.MonkeyPatch,
-    raw_cancel: bool,
-) -> None:
-    real_mkdtemp: Callable[..., str] = tempfile.mkdtemp
-    started = threading.Event()
-    release = threading.Event()
-    created: list[Path] = []
-
-    def held_mkdtemp(*args: Any, **kwargs: Any) -> str:
-        root = Path(cast(str, real_mkdtemp(*args, **kwargs)))
-        created.append(root)
-        started.set()
-        release.wait()
-        return str(root)
-
-    monkeypatch.setattr('pydantic_ai.workspaces.local.tempfile.mkdtemp', held_mkdtemp)
-    workspace = LocalWorkspace()
-    acquisition_scope: anyio.CancelScope | None = None
-    acquisition_task: asyncio.Task[None] | None = None
-    acquisition_finished = anyio.Event()
-
-    async def acquire_root() -> None:
-        nonlocal acquisition_scope, acquisition_task
-        acquisition_task = asyncio.current_task()
-        with anyio.CancelScope() as scope:
-            acquisition_scope = scope
-            try:
-                with abandon_threads_on_cancel():
-                    await workspace.root
-            finally:
-                acquisition_finished.set()
-
-    roots: set[Path] = set()
-    task = asyncio.create_task(acquire_root())
-    try:
-        while not started.is_set():
-            await anyio.sleep(0)
-        assert acquisition_scope is not None
-        if raw_cancel:
-            assert acquisition_task is task
-            task.cancel()
-        else:
-            acquisition_scope.cancel()
-        await anyio.sleep(0)
-        release.set()
-        await acquisition_finished.wait()
-        with suppress(asyncio.CancelledError):
-            await task
-        root = Path(await workspace.root)
-        roots.update(created)
-        roots.add(root)
-
-        assert len(created) == 1
-        assert created[0].resolve() == root
-        assert root.exists()
-        async with workspace:
-            assert Path(await workspace.root) == root
-        assert not root.exists()
-    finally:
-        release.set()
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
-        for root in roots | set(created):
-            shutil.rmtree(root, ignore_errors=True)
 
 
 _HAS_PROCFS = Path('/proc/self').exists()
@@ -189,10 +79,10 @@ async def _wait_for_pid_file(pid_file: Path) -> None:
     pytest.fail(f'background process did not write its PID to {pid_file}')  # pragma: no cover
 
 
-def test_non_posix_platforms_are_rejected_at_construction(monkeypatch: pytest.MonkeyPatch):
+def test_non_posix_platforms_are_rejected_at_construction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(os, 'name', 'nt')
     with pytest.raises(NotImplementedError, match='only supports POSIX'):
-        LocalWorkspace()
+        LocalWorkspace(tmp_path)
 
 
 async def test_local_workspace_conforms_to_the_protocol(tmp_path: Path):
@@ -311,7 +201,11 @@ async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
 async def test_stdin_is_devnull(tmp_path: Path):
     workspace = LocalWorkspace(tmp_path)
     result = await workspace.run(
-        [sys.executable, '-c', 'import sys; print("eof" if sys.stdin.read() == "" else "data")']
+        [
+            sys.executable,
+            '-c',
+            'import sys; print("eof" if sys.stdin.read() == "" else "data")',
+        ]
     )
 
     assert result.stdout == 'eof\n'
@@ -333,9 +227,6 @@ async def test_cancellation_kills_the_whole_process_group(tmp_path: Path):
 
 
 async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """The child is forked before the spawn coroutine finishes, so a cancellation delivered
-    mid-spawn must still tear down the group — asyncio's own transport cleanup kills only the
-    direct child, and the shell here has already exited."""
     workspace = LocalWorkspace(tmp_path)
     pid_file = tmp_path / 'pid'
     release = asyncio.Event()
@@ -350,10 +241,12 @@ async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path:
     task = asyncio.create_task(workspace.run(_background_sleep_command(pid_file), shell=True))
     await _wait_for_pid_file(pid_file)
     task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    release.set()
     await _assert_process_gone(int(pid_file.read_text()))
 
 
@@ -369,21 +262,26 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
         return process
 
     monkeypatch.setattr(asyncio, 'create_subprocess_shell', held_spawn)
+    timeout = 0.05
+    task = asyncio.create_task(workspace.run(_background_sleep_command(pid_file), shell=True, timeout=timeout))
     try:
+        await _wait_for_pid_file(pid_file)
+        await asyncio.sleep(timeout * 2)
+        assert not task.done()
+        release.set()
         with pytest.raises(WorkspaceTimeoutError, match='was killed'):
-            # Long enough that the spawn always begins: `held_spawn` then holds it open past the
-            # deadline, so the timeout always lands mid-spawn without racing the interpreter's
-            # first subprocess start.
-            await workspace.run(_background_sleep_command(pid_file), shell=True, timeout=0.5)
+            await task
     finally:
         release.set()
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     await _assert_process_gone(int(pid_file.read_text()))
 
 
-async def test_cancellation_during_failing_spawn_is_tolerated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """A spawn that fails after its run was cancelled has nobody left to receive the error;
-    the abandoned-spawn cleanup must consume it instead of leaving it unretrieved."""
+async def test_failing_spawn_after_cancellation_raises_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workspace = LocalWorkspace(tmp_path)
     started = asyncio.Event()
     release = asyncio.Event()
@@ -391,18 +289,17 @@ async def test_cancellation_during_failing_spawn_is_tolerated(tmp_path: Path, mo
     async def failing_spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
         started.set()
         await release.wait()
-        raise OSError('spawn failed after abandonment')
+        raise OSError('spawn failed')
 
     monkeypatch.setattr(asyncio, 'create_subprocess_shell', failing_spawn)
     task = asyncio.create_task(workspace.run('true', shell=True))
     await started.wait()
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
+    await asyncio.sleep(0)
+    assert not task.done()
     release.set()
-    # Let the abandoned spawn finish and its done-callback consume the failure.
-    await asyncio.sleep(0.01)
+    with pytest.raises(OSError, match='spawn failed'):
+        await task
 
 
 async def test_kill_tolerates_an_already_exited_group():
@@ -412,61 +309,6 @@ async def test_kill_tolerates_an_already_exited_group():
     process = await asyncio.create_subprocess_exec('true', start_new_session=True)
     await process.wait()
     LocalWorkspace._kill(process)  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_abandoned_spawn_kill_falls_back_to_direct_child_on_denied_killpg(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Parity with `_kill`'s `PermissionError` fallback, minus the propagation: nobody is
-    left to receive the error on the abandoned path, so the direct child still dies."""
-    process = await asyncio.create_subprocess_exec('sleep', '30', start_new_session=True)
-
-    async def completed_spawn() -> asyncio.subprocess.Process | Exception:
-        return process
-
-    spawn = asyncio.ensure_future(completed_spawn())
-    await spawn
-
-    def deny_killpg(pgid: int, sig: int) -> None:
-        raise PermissionError('signal denied')
-
-    monkeypatch.setattr(os, 'killpg', deny_killpg)
-    LocalWorkspace._kill_abandoned_spawn(spawn)  # pyright: ignore[reportPrivateUsage]
-    await process.wait()
-    assert process.returncode == -signal.SIGKILL
-
-
-async def test_owned_root_context_manager_reuse_creates_a_fresh_root():
-    """Exiting removes an owned root; re-entering must lazily create a fresh one instead of
-    resurrecting the deleted path."""
-    workspace = LocalWorkspace()
-    async with workspace:
-        first = Path(await workspace.working_dir())
-        assert first.exists()
-    assert not first.exists()
-    assert workspace.ref is None
-    async with workspace:
-        second = Path(await workspace.working_dir())
-        assert second.exists()
-        assert second != first
-        assert workspace.ref is None
-    assert not second.exists()
-
-
-async def test_workspace_follows_backend_across_root_recreation():
-    """A `Workspace` wrapper held across exit and re-entry must follow the backend to its fresh
-    root instead of resurrecting the deleted one (which would also leak it on disk)."""
-    backend = LocalWorkspace()
-    workspace = Workspace(backend)
-    async with backend:
-        first = Path(await workspace.working_dir())
-    async with backend:
-        await workspace.write_text('probe.txt', 'hi')
-        second = Path(await workspace.working_dir())
-        assert second != first
-        assert not first.exists()
-        assert (await workspace.run(['cat', 'probe.txt'])).stdout == 'hi'
-    assert not second.exists()
 
 
 async def test_local_environment_contains_only_allowed_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -542,19 +384,6 @@ async def test_read_file_on_a_directory_raises(tmp_path: Path):
     workspace = Workspace(LocalWorkspace(tmp_path))
     with pytest.raises(IsADirectoryError):
         await workspace.read_file('adir', limit=5)
-
-
-async def test_default_temp_root_is_reported_canonically():
-    """`working_dir()` must be filesystem-canonical even for the lazily created temp root.
-
-    On macOS, `mkdtemp` hands back a path under the symlinked `/var`; reporting that spelling
-    makes every string comparison against kernel-resolved paths (e.g. a command's `pwd -P`)
-    silently false. Only the backend can canonicalize its own world, so it must do so before
-    reporting.
-    """
-    async with LocalWorkspace() as workspace:
-        working_dir = await workspace.working_dir()
-        assert working_dir == os.path.realpath(working_dir)
 
 
 async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
@@ -645,107 +474,6 @@ async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
     assert entries['broken.txt'].size is None
 
 
-def fail_mkdtemp(*args: Any, **kwargs: Any) -> str:
-    # Trap: tests using this pass exactly when it is never called.
-    raise AssertionError('unused default workspace created a temporary directory')  # pragma: no cover
-
-
-async def test_unused_default_workspace_creates_no_directory(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr('pydantic_ai.workspaces.local.tempfile.mkdtemp', fail_mkdtemp)
-    async with LocalWorkspace():
-        pass  # never used: the lazy default root must never be created
-
-
-async def test_temp_root_already_deleted_on_exit_does_not_raise():
-    async with LocalWorkspace() as workspace:
-        root = Path(await workspace.working_dir())
-        await workspace.remove(str(root))  # a command or tool may delete the root itself
-    assert not root.exists()
-
-
-async def test_raw_cancelled_context_exit_drains_root_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
-    workspace = LocalWorkspace()
-    root = Path(await workspace.root)
-    started = threading.Event()
-    release = threading.Event()
-    real_rmtree = shutil.rmtree
-
-    def held_rmtree(path: str | Path, *args: Any, **kwargs: Any) -> None:
-        started.set()
-        release.wait()
-        real_rmtree(path, *args, **kwargs)
-
-    monkeypatch.setattr('pydantic_ai.workspaces.local.shutil.rmtree', held_rmtree)
-
-    async def close_workspace() -> None:
-        async with workspace:
-            pass
-
-    task = asyncio.create_task(close_workspace())
-    try:
-        await anyio.to_thread.run_sync(started.wait)
-        task.cancel()
-        await anyio.sleep(0)
-        assert not task.done()
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert not root.exists()
-
-        async with workspace:
-            fresh_root = Path(await workspace.root)
-        assert fresh_root != root
-        assert not fresh_root.exists()
-    finally:
-        release.set()
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
-        real_rmtree(root, ignore_errors=True)
-
-
-async def test_failed_owned_root_cleanup_retains_root_for_retry(monkeypatch: pytest.MonkeyPatch) -> None:
-    workspace = LocalWorkspace()
-    real_rmtree = shutil.rmtree
-    calls = 0
-    roots: set[Path] = set()
-
-    def fail_once(path: str | Path) -> None:
-        nonlocal calls
-        root = Path(path)
-        roots.add(root)
-        calls += 1
-        if calls == 1:
-            raise PermissionError('cleanup denied')
-        real_rmtree(root)
-
-    monkeypatch.setattr('pydantic_ai.workspaces.local.shutil.rmtree', fail_once)
-    root: Path | None = None
-    try:
-        with pytest.raises(PermissionError, match='cleanup denied'):
-            async with workspace:
-                root = Path(await workspace.root)
-                roots.add(root)
-
-        assert root is not None
-        assert root.exists()
-        assert Path(await workspace.root) == root
-
-        async with workspace:
-            assert Path(await workspace.root) == root
-
-        assert not root.exists()
-    finally:
-        for path in roots:
-            real_rmtree(path, ignore_errors=True)
-
-
-async def test_caller_supplied_root_is_never_removed(tmp_path: Path):
-    async with LocalWorkspace(tmp_path) as workspace:
-        await Workspace(workspace).write_text('keep.txt', 'kept')
-    assert (tmp_path / 'keep.txt').read_text() == 'kept'
-
-
 async def test_agent_run_end_to_end(tmp_path: Path):
     def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -761,8 +489,8 @@ async def test_agent_run_end_to_end(tmp_path: Path):
         outputs.append(result.stdout)
         return result.stdout
 
-    async with LocalWorkspace(tmp_path) as workspace:
-        result = await agent.run('compute 6*7 in the workspace', workspace=workspace)
+    workspace = LocalWorkspace(tmp_path)
+    result = await agent.run('compute 6*7 in the workspace', workspace=workspace)
 
     assert result.output == 'done'
     assert outputs == ['42\n']

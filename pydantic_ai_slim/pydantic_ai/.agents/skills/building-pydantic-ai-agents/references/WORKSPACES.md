@@ -3,6 +3,8 @@
 Attach a workspace to a run and use `ctx.workspace` in tools:
 
 ```python
+from pathlib import Path
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.workspaces import LocalWorkspace
 
@@ -16,11 +18,12 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
 
 
 async def main() -> None:
-    async with LocalWorkspace() as workspace:
-        await agent.run('Inspect the project.', workspace=workspace)
+    workspace = LocalWorkspace(Path.cwd())
+    await agent.run('Inspect the project.', workspace=workspace)
 ```
 
 `LocalWorkspace` runs host subprocesses and provides no isolation. Use it only for trusted work.
+Its absolute root is required, and the caller owns that directory.
 Without an attached workspace, operations raise `UserError`. `Workspace` offers the same run,
 file, and bounded-read methods for every backend; wrappers can override primitives and
 `ReadOnlyWorkspace` blocks commands and changes.
@@ -30,13 +33,14 @@ file, and bounded-read methods for every backend; wrappers can override primitiv
 includes a continuation notice when a cap fired. Pass `limit=None` and `max_bytes=None` together
 for an uncapped read, or use `read_text` / `read_bytes` for exact whole-file access.
 
-An explicit backend or facade passed through `workspace=` is used directly. Otherwise configured
-capabilities receive an explicit `WorkspaceRef`, the latest `ModelResponse.workspace_ref` from
-message history, or `None` when there is no reference. A latest `None` suppresses older references.
-History supplies identity, not provider configuration. Exactly one capability may supply a workspace;
-multiple suppliers and unrecognized explicit `WorkspaceRef` inputs raise. With no supplier, the unavailable
-default explains how to attach a workspace. `get_workspace` runs after `for_run`, is synchronous, and
-must perform no I/O. A capability should return `None` for references it does not own.
+An explicit backend or facade passed through `workspace=` is used directly. An explicit
+`WorkspaceRef` is offered to configured capabilities, and raises if none recognizes it. With
+`workspace=None`, capabilities receive the latest `ModelResponse.workspace_ref` from message
+history, or `None` when there is no reference. A latest `None` suppresses older references. History
+supplies identity, not provider configuration. Exactly one capability may supply a workspace;
+multiple suppliers raise. With no supplier, the unavailable default explains how to attach a
+workspace without raising. `get_workspace` runs after `for_run`, is synchronous, and must have no
+side effects. A capability should return `None` for references it does not own.
 
 A provider backend keeps credentials and its SDK client, exposes a typed awaitable native handle as
 `workspace`, and owns a lock/cache plus private `_create_or_attach(ref)`. No ref creates and publishes

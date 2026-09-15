@@ -2702,7 +2702,7 @@ def _workspace_context(workspace: Workspace) -> RunContext[None]:
 
 
 def test_temporal_run_context_omits_ref_for_local_workspace():
-    workspace = Workspace(LocalWorkspace())
+    workspace = Workspace(LocalWorkspace(os.getcwd()))
     serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
     assert 'workspace_ref' not in serialized
 

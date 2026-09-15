@@ -242,8 +242,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             '_deferred_capability_ids': ctx._deferred_capability_ids,
             'capability_active': ctx.capability_active,
         }
-        workspace = ctx.__dict__.get('workspace')
-        if isinstance(workspace, Workspace) and (workspace_ref := workspace.ref) is not None:
+        # Only the reference crosses into the activity; the live handle stays in the workflow, and
+        # `TemporalRunContext.__init__` supplies the inert default when no reference was serialized.
+        if (workspace_ref := ctx.workspace.ref) is not None:
             serialized['workspace_ref'] = workspace_ref
         return serialized
 
