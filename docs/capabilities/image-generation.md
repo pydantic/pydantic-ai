@@ -166,6 +166,46 @@ direct model raises it. Using
 [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. See
 [error handling](../image-generation.md#error-handling) for the direct API's exceptions.
 
+## Retrieving generated images
+
+The run's final text output is often *not* the image. After a multi-step prompt such as "generate an illustration, then
+write alt text", `result.output` is the alt text and [`result.response.images`][pydantic_ai.messages.ModelResponse.images]
+is empty when the image came from a local generator (the capability's `local=` tool) rather than the model's own native
+tool on the last response.
+
+Walk the message history for [`BinaryImage`][pydantic_ai.messages.BinaryImage] tool returns when you need every image the
+run produced:
+
+```python {title="image_generation_retrieve_from_history.py"}
+from pathlib import Path
+
+from pydantic_ai import Agent, BinaryImage, ImageGenerator
+from pydantic_ai.capabilities import ImageGeneration
+
+images = ImageGenerator('openai:gpt-image-2')
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[ImageGeneration(native=False, local=images)],
+)
+
+result = agent.run_sync('Generate an illustration of a cafe. Then write alt text for it.')
+# result.output is the alt text; the image is earlier in the history
+
+generated = [
+    part.content
+    for message in result.all_messages()
+    for part in message.parts
+    if isinstance(getattr(part, 'content', None), BinaryImage)
+]
+Path('cafe.png').write_bytes(generated[0].data)
+```
+
+When the image *is* the run's output, set [`output_type=BinaryImage`][pydantic_ai.messages.BinaryImage] (see
+[Image output](../output.md#image-output)). That path is gated on the **conversational** model declaring
+`supports_image_output`, even when `native=False` and a local generator produces the image. A model that cannot emit
+images natively therefore raises `UserError: Image output is not supported by this model.` with
+`output_type=BinaryImage` — use the history walk above for that configuration.
+
 ## Agent Specs
 
 Direct model names such as `fallback_image_model='openai:gpt-image-1.5'` can be represented in JSON or YAML agent
