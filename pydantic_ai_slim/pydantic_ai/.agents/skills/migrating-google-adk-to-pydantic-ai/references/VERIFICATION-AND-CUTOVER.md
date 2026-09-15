@@ -15,7 +15,7 @@ Use these statuses precisely:
 - `preserved`: an executable check compares the relevant source and target behavior;
 - `changed`: the user accepted a stated difference and impact;
 - `not applicable`: the active slice does not use the feature;
-- `unverified`: evidence is missing;
+- `unverified`: evidence is missing, so the contract is unfinished and cutover cannot proceed;
 - `blocked`: a requested contract cannot be completed without a decision or external dependency.
 
 ## Proportionate checks
@@ -53,5 +53,6 @@ Add these checks only when the source path uses them:
 2. Run source characterization tests and target parity tests. Record whether each is offline, recorded-provider, real-service, or operational evidence.
 3. Exercise restart/replay before traffic moves when the source promised resumability. A normal second run is not a restart test.
 4. Keep compatibility adapters until all callers consume the new message/event/output shapes.
-5. Remove ADK services and deployment configuration only after no retained endpoint, evaluation, session migration, or rollback path needs them.
-6. Report remaining `unverified` or intentionally changed contracts. Do not call a migration complete based only on passing test counts.
+5. Do not move traffic or remove ADK while any contract is `unverified` or `blocked`.
+6. Remove ADK services and deployment configuration only after no retained endpoint, evaluation, session migration, or rollback path needs them.
+7. Report accepted `changed` contracts and their impact. Do not call a migration complete based only on passing test counts.

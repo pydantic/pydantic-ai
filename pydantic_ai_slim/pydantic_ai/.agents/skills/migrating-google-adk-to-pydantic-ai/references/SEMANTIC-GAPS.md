@@ -4,7 +4,7 @@ Use this reference only when the active slice reaches one of these boundaries. F
 
 ## Sessions are several contracts
 
-An ADK `Session` holds an event log and mutable state, while a `SessionService` also applies state and artifact deltas. State prefixes define session, user, application, and temporary lifetimes. `MemoryService` is a separate searchable cross-session archive, and artifacts are separately versioned binary data.
+An ADK `Session` holds an event log and mutable state, while a `SessionService` applies state deltas and records events containing artifact-version deltas. State prefixes define session, user, application, and temporary lifetimes. `MemoryService` is a separate searchable cross-session archive, and artifacts are separately versioned binary data.
 
 Pydantic AI [`message_history`](https://pydantic.dev/docs/ai/core-concepts/message-history/) is normalized model conversation context. It does not implement ADK state scopes, memory ingestion/search, artifact versioning, event IDs, or session CRUD. Split those responsibilities, preserve current stores where possible, and test tenant isolation and reload behavior.
 
@@ -36,7 +36,7 @@ Use Pydantic AI [deferred tools](https://pydantic.dev/docs/ai/tools-toolsets/def
 
 ## Events and streaming
 
-ADK's `Event` is simultaneously a stream item, persisted session record, content carrier, action delta, workflow signal, and correlation record. Partial events are normally forwarded without committing actions; a later final event commits state/artifact changes.
+ADK's `Event` is simultaneously a stream item, persisted session record, content carrier, action delta, workflow signal, and correlation record. Partial events are normally forwarded without applying their state deltas. Each non-partial event is appended independently and applies its own state delta at that point; this does not wait for a final-response event. Saving an artifact persists it first, then records the returned version in the current event's `artifact_delta`, so a later failure can leave an artifact without a corresponding persisted event.
 
 Pydantic AI exposes output streaming and typed lifecycle events, but its event classes and chunk boundaries are not ADK's wire protocol. Keep an adapter when UI or API clients consume ADK event fields such as `invocation_id`, `author`, `branch`, `actions`, or final-response detection. Test ordered serialized events and cancellation, not only the concatenated final text.
 

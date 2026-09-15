@@ -34,7 +34,7 @@ Read [Concept Mapping](references/CONCEPT-MAPPING.md) for the features the slice
 - ADK resumability replays recorded node/tool results and can execute tools more than once. Choose a [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) design explicitly and prove restart plus idempotency for side effects.
 - Keep conversational input, approval, and authorization distinct. Map tool confirmation to [deferred tool approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/); keep identity and access checks in trusted application code.
 - Preserve callback/plugin ordering and short-circuit rules deliberately. Pydantic AI hooks have their own capability ordering and exception-based skip/recovery semantics; a list of lookalike hooks is not parity.
-- ADK partial events are delivered before their state/artifact actions are committed. If callers consume ADK event fields or final-event detection, retain a boundary adapter and test the exact stream order.
+- ADK partial events are delivered without applying state deltas; each non-partial event applies its delta when appended. Artifact writes happen during the artifact operation, before the current event records the returned version. If callers consume ADK event fields or final-event detection, retain a boundary adapter and test the exact stream and persistence order.
 - Use Harness only for an observed reusable capability. Ordinary agents need core only, and a command allowlist is not an OS security boundary.
 
 ## Pydantic AI defaults
@@ -48,4 +48,4 @@ Read [Concept Mapping](references/CONCEPT-MAPPING.md) for the features the slice
 
 ## Completion
 
-The slice is complete when every observed caller contract has one ledger status with executable evidence or explicit residual risk, and none is `blocked`. Do not remove `google-adk` while a retained runtime, session migration, deployment command, evaluation, or compatibility path still imports or invokes it.
+The slice is complete only when every observed caller contract is `preserved` by executable evidence, explicitly accepted as `changed`, or `not applicable`. Treat `unverified` and `blocked` contracts as unfinished. Do not remove `google-adk` while a retained runtime, session migration, deployment command, evaluation, or compatibility path still imports or invokes it.
