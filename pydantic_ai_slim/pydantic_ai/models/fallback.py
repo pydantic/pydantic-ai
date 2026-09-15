@@ -244,6 +244,7 @@ class FallbackModel(Model):
         """
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
+        rejected_usage_extraction_failed = False
         rejected_cost: Decimal | None = None
         # Set once a pinned continuation fails and we rewind to the chain: the first successful response
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
@@ -294,6 +295,7 @@ class FallbackModel(Model):
                 raise exc
 
             if await self._should_fallback(response):
+                rejected_usage_extraction_failed |= response.usage._usage_extraction_failed  # pyright: ignore[reportPrivateUsage]
                 fill_response_cost(response)
                 if response.usage.cost is not None:
                     rejected_cost = (rejected_cost or Decimal()) + response.usage.cost
@@ -305,6 +307,8 @@ class FallbackModel(Model):
                 usage = copy(response.usage)
                 usage.cost = (usage.cost or Decimal()) + rejected_cost
                 response = replace(response, usage=usage)
+            if rejected_usage_extraction_failed:
+                response.usage._usage_extraction_failed = True  # pyright: ignore[reportPrivateUsage]
 
             # After a rewind, the first successful response is fresh generation that supersedes the
             # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.
