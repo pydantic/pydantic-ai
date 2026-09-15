@@ -55,7 +55,7 @@ class DeferredToolRequests:
             approvals: Results for tool calls that required approval. Keys must match
                 `tool_call_id`s in `self.approvals`.
             calls: Results for tool calls that required external execution. Keys must
-                match `tool_call_id`s in `self.calls`.
+                `tool_call_id`s in `self.calls`.
             metadata: Per-call metadata, keyed by `tool_call_id`.
             approve_all: If `True`, every approval-requesting call not already listed in
                 `approvals` is approved (with default `ToolApproved()`).
@@ -83,7 +83,11 @@ class DeferredToolRequests:
             for tool_call_id in approval_ids - set(approvals):
                 approvals[tool_call_id] = ToolApproved()
 
-        return DeferredToolResults(approvals=approvals, calls=calls, metadata=metadata or {})
+        return DeferredToolResults(
+            approvals=approvals,
+            calls=calls,
+            metadata={tool_call_id: dict(value) for tool_call_id, value in (metadata or {}).items()},
+        )
 
     def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
@@ -94,7 +98,7 @@ class DeferredToolRequests:
         remaining = DeferredToolRequests(
             calls=[c for c in self.calls if c.tool_call_id not in call_result_ids],
             approvals=[c for c in self.approvals if c.tool_call_id not in approval_result_ids],
-            metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
+            metadata={k: dict(v) for k, v in self.metadata.items() if k not in resolved_ids},
         )
         return remaining if remaining.calls or remaining.approvals else None
 
