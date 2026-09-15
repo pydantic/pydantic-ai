@@ -1527,7 +1527,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: durable dispatch must be the last wrapper around the model handler so every
         # other capability's contribution is already applied inside the durable unit.
-        return CapabilityOrdering(position='innermost')
+        #
+        # `exclusive_execution` says the same thing about tools, and is what makes a second engine
+        # -- of this engine or any other -- refused rather than silently dispatched through both.
+        # An agent runs under one durable engine: each wraps every tool call as its own durable
+        # unit, so a second one nests a durable unit inside a durable unit.
+        return CapabilityOrdering(position='innermost', exclusive_execution=True)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

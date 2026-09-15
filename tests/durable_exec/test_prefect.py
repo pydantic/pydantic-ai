@@ -3630,10 +3630,10 @@ async def test_prefect_durability_allows_instrumented_default_model() -> None:
 
 
 def test_prefect_durability_get_ordering() -> None:
-    """PrefectDurability declares innermost ordering."""
+    """PrefectDurability is innermost and owns execution: an agent runs under one durable engine."""
     from pydantic_ai.capabilities.abstract import CapabilityOrdering
 
-    assert PrefectDurability().get_ordering() == CapabilityOrdering(position='innermost')
+    assert PrefectDurability().get_ordering() == CapabilityOrdering(position='innermost', exclusive_execution=True)
 
 
 def test_prefect_durability_get_serialization_name() -> None:
