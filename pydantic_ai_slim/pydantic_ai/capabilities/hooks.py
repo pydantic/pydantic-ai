@@ -918,6 +918,56 @@ class Hooks(AbstractCapability[AgentDepsT]):
         )
 
     @property
+    def _has_wrap_run(self) -> bool:
+        return type(self).wrap_run is not Hooks.wrap_run or bool(self._get('wrap_run'))
+
+    @property
+    def _has_on_run_error(self) -> bool:
+        return type(self).on_run_error is not Hooks.on_run_error or bool(self._get('on_run_error'))
+
+    @property
+    def _has_wrap_tool_validate(self) -> bool:
+        return type(self).wrap_tool_validate is not Hooks.wrap_tool_validate or bool(self._get('wrap_tool_validate'))
+
+    @property
+    def _has_on_tool_validate_error(self) -> bool:
+        return type(self).on_tool_validate_error is not Hooks.on_tool_validate_error or bool(
+            self._get('on_tool_validate_error')
+        )
+
+    @property
+    def _has_wrap_tool_execute(self) -> bool:
+        return type(self).wrap_tool_execute is not Hooks.wrap_tool_execute or bool(self._get('wrap_tool_execute'))
+
+    @property
+    def _has_on_tool_execute_error(self) -> bool:
+        return type(self).on_tool_execute_error is not Hooks.on_tool_execute_error or bool(
+            self._get('on_tool_execute_error')
+        )
+
+    @property
+    def _has_wrap_output_validate(self) -> bool:
+        return type(self).wrap_output_validate is not Hooks.wrap_output_validate or bool(
+            self._get('wrap_output_validate')
+        )
+
+    @property
+    def _has_on_output_validate_error(self) -> bool:
+        return type(self).on_output_validate_error is not Hooks.on_output_validate_error or bool(
+            self._get('on_output_validate_error')
+        )
+
+    @property
+    def _has_wrap_output_process(self) -> bool:
+        return type(self).wrap_output_process is not Hooks.wrap_output_process or bool(self._get('wrap_output_process'))
+
+    @property
+    def _has_on_output_process_error(self) -> bool:
+        return type(self).on_output_process_error is not Hooks.on_output_process_error or bool(
+            self._get('on_output_process_error')
+        )
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         return (
             bool(self._get('wrap_run_event_stream'))

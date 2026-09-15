@@ -221,8 +221,68 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return any(c._has_on_model_request_error for c in self.capabilities)
 
     @property
+    def _has_wrap_run(self) -> bool:
+        return type(self).wrap_run is not CombinedCapability.wrap_run or any(c._has_wrap_run for c in self.capabilities)
+
+    @property
+    def _has_on_run_error(self) -> bool:
+        return type(self).on_run_error is not CombinedCapability.on_run_error or any(
+            c._has_on_run_error for c in self.capabilities
+        )
+
+    @property
+    def _has_wrap_tool_validate(self) -> bool:
+        return type(self).wrap_tool_validate is not CombinedCapability.wrap_tool_validate or any(
+            c._has_wrap_tool_validate for c in self.capabilities
+        )
+
+    @property
+    def _has_on_tool_validate_error(self) -> bool:
+        return type(self).on_tool_validate_error is not CombinedCapability.on_tool_validate_error or any(
+            c._has_on_tool_validate_error for c in self.capabilities
+        )
+
+    @property
+    def _has_wrap_tool_execute(self) -> bool:
+        return type(self).wrap_tool_execute is not CombinedCapability.wrap_tool_execute or any(
+            c._has_wrap_tool_execute for c in self.capabilities
+        )
+
+    @property
+    def _has_on_tool_execute_error(self) -> bool:
+        return type(self).on_tool_execute_error is not CombinedCapability.on_tool_execute_error or any(
+            c._has_on_tool_execute_error for c in self.capabilities
+        )
+
+    @property
+    def _has_wrap_output_validate(self) -> bool:
+        return type(self).wrap_output_validate is not CombinedCapability.wrap_output_validate or any(
+            c._has_wrap_output_validate for c in self.capabilities
+        )
+
+    @property
+    def _has_on_output_validate_error(self) -> bool:
+        return type(self).on_output_validate_error is not CombinedCapability.on_output_validate_error or any(
+            c._has_on_output_validate_error for c in self.capabilities
+        )
+
+    @property
+    def _has_wrap_output_process(self) -> bool:
+        return type(self).wrap_output_process is not CombinedCapability.wrap_output_process or any(
+            c._has_wrap_output_process for c in self.capabilities
+        )
+
+    @property
+    def _has_on_output_process_error(self) -> bool:
+        return type(self).on_output_process_error is not CombinedCapability.on_output_process_error or any(
+            c._has_on_output_process_error for c in self.capabilities
+        )
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
-        return any(c.has_wrap_run_event_stream for c in self.capabilities)
+        return type(self).wrap_run_event_stream is not CombinedCapability.wrap_run_event_stream or any(
+            c.has_wrap_run_event_stream for c in self.capabilities
+        )
 
     @property
     def has_on_event(self) -> bool:
@@ -506,7 +566,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
+            if capability._has_wrap_run and _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_run_wrap(capability, ctx, chain)
         return await chain()
 
@@ -517,6 +577,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: BaseException,
     ) -> AgentRunResult[Any]:
         for capability in reversed(self.capabilities):
+            if not capability._has_on_run_error:
+                continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -608,7 +670,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> AsyncIterable[AgentStreamEvent]:
         wrapped_streams = [stream]
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+            if capability.has_wrap_run_event_stream and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 stream = capability.wrap_run_event_stream(cap_ctx, stream=stream)
                 wrapped_streams.append(stream)
         try:
@@ -714,7 +776,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> dict[str, Any]:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
+            if capability._has_wrap_tool_validate and _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_tool_validate_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
@@ -728,6 +790,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: ValidationError | ModelRetry,
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
+            if not capability._has_on_tool_validate_error:
+                continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -783,7 +847,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
+            if capability._has_wrap_tool_execute and _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_tool_execute_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
@@ -797,6 +861,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> Any:
         for capability in reversed(self.capabilities):
+            if not capability._has_on_tool_execute_error:
+                continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -844,7 +910,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
+            if capability._has_wrap_output_validate and _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_output_validate_wrap(capability, ctx, output_context, chain)
         return await chain(output)
 
@@ -857,6 +923,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: ValidationError | ModelRetry,
     ) -> Any:
         for capability in reversed(self.capabilities):
+            if not capability._has_on_output_validate_error:
+                continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue
@@ -907,7 +975,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
+            if capability._has_wrap_output_process and _ctx_for_active_cap(capability, ctx) is not None:
                 chain = _make_output_process_wrap(capability, ctx, output_context, chain)
         return await chain(output)
 
@@ -920,6 +988,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> Any:
         for capability in reversed(self.capabilities):
+            if not capability._has_on_output_process_error:
+                continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
             if cap_ctx is None:
                 continue

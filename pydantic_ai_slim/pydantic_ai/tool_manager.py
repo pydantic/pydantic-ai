@@ -389,9 +389,12 @@ class ToolManager(Generic[AgentDepsT]):
             # wrap_tool_validate wraps the validation; on_tool_validate_error on failure
             deferral: _ValidationDeferral | None = None
             try:
-                validated_args = await cap.wrap_tool_validate(
-                    ctx, call=call, tool_def=tool_def, args=raw_args, handler=do_validate
-                )
+                if cap._has_wrap_tool_validate:  # pyright: ignore[reportPrivateUsage]
+                    validated_args = await cap.wrap_tool_validate(
+                        ctx, call=call, tool_def=tool_def, args=raw_args, handler=do_validate
+                    )
+                else:
+                    validated_args = await do_validate(raw_args)
             except _ValidationDeferral as e:
                 # The `args_validator` deferred the call. Hold the deferral rather than letting it
                 # escape: `after_tool_validate` is a policy gate on validated arguments and has to
@@ -408,13 +411,16 @@ class ToolManager(Generic[AgentDepsT]):
                 deferral = _ValidationDeferral(e, handler_validated_args)
                 validated_args = handler_validated_args
             except (ValidationError, ModelRetry) as e:
-                try:
-                    validated_args = await cap.on_tool_validate_error(
-                        ctx, call=call, tool_def=tool_def, args=raw_args, error=e
-                    )
-                except (CallDeferred, ApprovalRequired) as hook_deferral:
-                    # Only reached because validation failed, so there are no validated arguments.
-                    raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
+                if cap._has_on_tool_validate_error:  # pyright: ignore[reportPrivateUsage]
+                    try:
+                        validated_args = await cap.on_tool_validate_error(
+                            ctx, call=call, tool_def=tool_def, args=raw_args, error=e
+                        )
+                    except (CallDeferred, ApprovalRequired) as hook_deferral:
+                        # Only reached because validation failed, so there are no validated arguments.
+                        raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
+                else:
+                    raise
 
             # after_tool_validate gates validated arguments, so it runs even when the call has
             # already been deferred, and may still reject or defer it itself.
@@ -466,15 +472,23 @@ class ToolManager(Generic[AgentDepsT]):
 
                 # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
                 try:
-                    tool_result = await cap.wrap_tool_execute(
-                        ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
-                    )
+                    if cap._has_wrap_tool_execute:  # pyright: ignore[reportPrivateUsage]
+                        tool_result = await cap.wrap_tool_execute(
+                            ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
+                        )
+                    else:
+                        tool_result = await do_execute(args)
                 except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, ToolFailedError):
                     raise  # Control flow, not errors
                 except (ToolFailed, ModelRetry):
                     raise  # Propagate to outer handler
                 except Exception as e:
-                    tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
+                    if cap._has_on_tool_execute_error:  # pyright: ignore[reportPrivateUsage]
+                        tool_result = await cap.on_tool_execute_error(
+                            ctx, call=call, tool_def=tool_def, args=args, error=e
+                        )
+                    else:
+                        raise
 
                 # after_tool_execute
                 tool_result = await cap.after_tool_execute(
