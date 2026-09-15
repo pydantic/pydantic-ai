@@ -12,6 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -90,8 +91,6 @@ async def test_local_workspace_conforms_to_the_protocol(tmp_path: Path):
     assert isinstance(workspace, WorkspaceBackend)
     assert isinstance(workspace, SupportsFilesystem)
     typed: WorkspaceBackend = workspace  # static conformance, checked because tests are type-checked
-    assert typed.ref is None
-    await typed.working_dir()
     assert typed.ref is None
 
 
@@ -230,14 +229,14 @@ async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path:
     workspace = LocalWorkspace(tmp_path)
     pid_file = tmp_path / 'pid'
     release = asyncio.Event()
-    real_create_subprocess_shell = asyncio.create_subprocess_shell
+    real_open_process = anyio.open_process
 
-    async def held_spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
-        process = await real_create_subprocess_shell(*args, **kwargs)
+    async def held_spawn(*args: Any, **kwargs: Any) -> anyio.abc.Process:
+        process = await real_open_process(*args, **kwargs)
         await release.wait()
         return process
 
-    monkeypatch.setattr(asyncio, 'create_subprocess_shell', held_spawn)
+    monkeypatch.setattr(anyio, 'open_process', held_spawn)
     task = asyncio.create_task(workspace.run(_background_sleep_command(pid_file), shell=True))
     await _wait_for_pid_file(pid_file)
     task.cancel()
@@ -254,14 +253,14 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
     workspace = LocalWorkspace(tmp_path)
     pid_file = tmp_path / 'pid'
     release = asyncio.Event()
-    real_create_subprocess_shell = asyncio.create_subprocess_shell
+    real_open_process = anyio.open_process
 
-    async def held_spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
-        process = await real_create_subprocess_shell(*args, **kwargs)
+    async def held_spawn(*args: Any, **kwargs: Any) -> anyio.abc.Process:
+        process = await real_open_process(*args, **kwargs)
         await release.wait()
         return process
 
-    monkeypatch.setattr(asyncio, 'create_subprocess_shell', held_spawn)
+    monkeypatch.setattr(anyio, 'open_process', held_spawn)
     timeout = 0.05
     task = asyncio.create_task(workspace.run(_background_sleep_command(pid_file), shell=True, timeout=timeout))
     try:
@@ -286,12 +285,12 @@ async def test_failing_spawn_after_cancellation_raises_oserror(tmp_path: Path, m
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def failing_spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+    async def failing_spawn(*args: Any, **kwargs: Any) -> anyio.abc.Process:
         started.set()
         await release.wait()
         raise OSError('spawn failed')
 
-    monkeypatch.setattr(asyncio, 'create_subprocess_shell', failing_spawn)
+    monkeypatch.setattr(anyio, 'open_process', failing_spawn)
     task = asyncio.create_task(workspace.run('true', shell=True))
     await started.wait()
     task.cancel()
@@ -306,9 +305,9 @@ async def test_kill_tolerates_an_already_exited_group():
     """A command can finish in the instant between the deadline firing and the kill; the
     only benign `killpg` failure is "already exited". Unreachable deterministically through
     `run()` (it's a race), so the teardown helper is pinned directly."""
-    process = await asyncio.create_subprocess_exec('true', start_new_session=True)
-    await process.wait()
-    LocalWorkspace._kill(process)  # pyright: ignore[reportPrivateUsage]
+    async with await anyio.open_process(['true'], start_new_session=True) as process:
+        await process.wait()
+        LocalWorkspace._kill(process)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_local_environment_contains_only_allowed_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
