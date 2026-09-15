@@ -8,7 +8,7 @@ For each traced source behavior, maintain one row:
 
 | Source lifecycle | Observable contract | Owner | Target difference | Evidence |
 |---|---|---|---|---|
-| What initiates and completes it | Inputs, outputs, events, errors, ordering, state or effects callers observe | Application, Core, Graph, Harness, or Gap | What will not remain identical | Baseline and focused target test |
+| What initiates and completes it | Inputs, outputs, events, errors, ordering, state or effects callers observe | Application, Core, Graph, Harness, Evals, or Gap | What will not remain identical | Baseline and focused target test |
 
 Use the same evidence states as the LangChain migration skill:
 
