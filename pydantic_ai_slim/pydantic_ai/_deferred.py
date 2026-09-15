@@ -55,7 +55,7 @@ class DeferredToolRequests:
             approvals: Results for tool calls that required approval. Keys must match
                 `tool_call_id`s in `self.approvals`.
             calls: Results for tool calls that required external execution. Keys must
-                `tool_call_id`s in `self.calls`.
+                match `tool_call_id`s in `self.calls`.
             metadata: Per-call metadata, keyed by `tool_call_id`.
             approve_all: If `True`, every approval-requesting call not already listed in
                 `approvals` is approved (with default `ToolApproved()`).
