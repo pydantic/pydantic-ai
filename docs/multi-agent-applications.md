@@ -29,6 +29,9 @@ You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] 
 !!! note "Multiple models"
     Agent delegation doesn't need to use the same model for each agent. If you choose different models within a run, the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] still accumulates any per-response cost that could be calculated. However, monetary cost cannot be reconstructed from its aggregate token counts because models may have different pricing. You can use [`UsageLimits`][pydantic_ai.usage.UsageLimits] — including `cost_limit`, `request_limit`, `total_tokens_limit`, and `tool_calls_limit` — to avoid unexpected costs or runaway tool loops.
 
+!!! tip "Deferred tools in a delegate agent"
+    If the delegate agent calls a [tool that requires approval or is executed externally](deferred-tools.md), its `DeferredToolRequests` output needs to be propagated up through the delegating tool call. See [Nested approval in delegated tool calls](deferred-tools.md#nested-approval-in-delegated-tool-calls).
+
 ```python {title="agent_delegation_simple.py"}
 from pydantic_ai import Agent, RunContext, UsageLimits
 
