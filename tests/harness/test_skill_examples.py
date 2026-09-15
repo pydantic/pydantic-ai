@@ -35,6 +35,32 @@ def find_skill_examples() -> Iterable[ParameterSet]:
         yield pytest.param(ex, id=f'{ex.path}:{ex.start_line}')
 
 
+def test_migration_skill_examples_are_executable():
+    root_dir = Path(__file__).parent.parent
+    skill_dir = root_dir / 'pydantic_ai_harness/.agents/skills/migrating-deep-agents-to-pydantic-ai-harness'
+    examples = list(find_examples(skill_dir))
+    fence_count = 0
+
+    for path in skill_dir.rglob('*.md'):
+        open_fence = False
+        for line in path.read_text().splitlines():
+            if not line.startswith('```'):
+                continue
+            if open_fence:
+                open_fence = False
+            else:
+                assert line == '```python', f'{path} contains an untested non-Python example'
+                fence_count += 1
+                open_fence = True
+        assert not open_fence, f'{path} contains an unclosed example'
+
+    assert len(examples) == fence_count > 0
+    for example in examples:
+        prefix = example.prefix_settings()
+        assert not prefix.get('lint', '').startswith('skip')
+        assert not prefix.get('test', '').startswith('skip')
+
+
 @pytest.mark.parametrize('example', find_skill_examples())
 def test_skill_examples(example: CodeExample, eval_example: EvalExample):
     # Lint every snippet to catch stale imports/syntax, and additionally execute the ones
