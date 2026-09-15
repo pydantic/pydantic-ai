@@ -1,4 +1,3 @@
----
 interface:
   display_name: "Migrate Claude Agent SDK to Pydantic AI"
   short_description: "Migrate Claude Agent SDK applications safely"

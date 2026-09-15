@@ -54,4 +54,4 @@ Explain any consequential semantic change before implementing it: state the sour
 
 ## Completion
 
-The migration is complete only when every observed contract is preserved by an executable check, intentionally changed by an accepted decision, application-owned and unchanged, or recorded as an explicit tested gap. Report proxy evidence as proxy evidence. An unverified contract or unresolved requested gap is unfinished work.
+Apply the completion criterion in [Verification and cutover](references/VERIFICATION-AND-CUTOVER.md). Label evidence from fakes, recordings, and live providers accurately.
