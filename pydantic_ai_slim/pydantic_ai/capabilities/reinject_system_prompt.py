@@ -95,10 +95,16 @@ def _has_system_prompt(messages: list[ModelMessage]) -> bool:
 
 def _strip_system_prompts(messages: list[ModelMessage]) -> None:
     kept: list[ModelMessage] = []
-    for msg in messages:
+    last_index = len(messages) - 1
+    for index, msg in enumerate(messages):
         if isinstance(msg, ModelRequest):
             filtered_parts = [p for p in msg.parts if not isinstance(p, SystemPromptPart)]
-            if not filtered_parts:
+            # A request left with no parts is dropped, except when it's the trailing one: that's
+            # the request being sent this step, and `ModelRequestNode` requires the processed
+            # history to end with a `ModelRequest`. A run resuming without a new user prompt
+            # synthesizes an empty trailing request to carry the instructions, so it has no
+            # parts to survive the strip.
+            if not filtered_parts and index != last_index:
                 continue
             if len(filtered_parts) != len(msg.parts):
                 msg = replace(msg, parts=filtered_parts)

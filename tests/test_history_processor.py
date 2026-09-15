@@ -1959,6 +1959,46 @@ async def test_reinject_system_prompt_resuming_without_prompt_excludes_resumed_r
     assert result.new_messages() == result.all_messages()[-1:]
 
 
+async def test_reinject_system_prompt_keeps_partless_trailing_request(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    Resuming a history that ends with a `ModelResponse` and no new user prompt synthesizes an
+    empty trailing `ModelRequest` to carry the instructions. Stripping system prompts (the UI
+    adapters' default with `manage_system_prompt='server'`) must not drop that request as
+    partless: `ModelRequestNode` requires the processed history to end with a `ModelRequest`.
+    """
+
+    agent = Agent(
+        function_model,
+        instructions='Server instructions',
+        capabilities=[ReinjectSystemPrompt(replace_existing=True)],
+    )
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+        ModelResponse(parts=[TextPart(content='Original answer')]),
+    ]
+
+    result = await agent.run(message_history=message_history)
+
+    # The empty trailing request survived the strip and reached the model.
+    assert received_messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Original prompt', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Original answer')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[],
+                instructions='Server instructions',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('Provider response')
+
+
 async def test_history_processor_mutates_resumed_request_excludes_resumed_request(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
