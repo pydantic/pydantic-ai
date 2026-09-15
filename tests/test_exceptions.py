@@ -143,6 +143,16 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'suggested_model_id': 'openai:gpt-5',
             },
         ),
+        (
+            lambda: ModelHTTPError(400, 'us.anthropic.claude-fable-5', hint='opt in to aws_review'),
+            {
+                'status_code': 400,
+                'model_name': 'us.anthropic.claude-fable-5',
+                'body': None,
+                'headers': None,
+                'hint': 'opt in to aws_review',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
     ],
     ids=[
@@ -164,6 +174,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-with-body',
         'ModelHTTPError-with-headers',
         'ModelHTTPError-with-model-suggestion',
+        'ModelHTTPError-with-hint',
         'IncompleteToolCall',
     ],
 )
@@ -482,6 +493,35 @@ def test_model_http_error_headers_provider_bedrock():
     assert exc.headers is not None
     assert exc.headers.get('retry-after') == '5'
     assert exc.retry_after == 5.0
+
+
+def test_bedrock_data_retention_mode_hint():
+    """Fable-style data-retention 400s get an account-setting hint, not just the raw body."""
+    pytest.importorskip('botocore', reason='botocore (bedrock extra) not installed')
+    from botocore.exceptions import ClientError
+
+    from pydantic_ai.models.bedrock import (  # pyright: ignore[reportPrivateUsage]
+        _DATA_RETENTION_HINT,
+        _map_api_errors,
+    )
+
+    error_response: Any = {
+        'Error': {
+            'Code': 'ValidationException',
+            'Message': "data retention mode 'default' is not available for this model",
+        },
+        'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': {}},
+    }
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        with _map_api_errors('us.anthropic.claude-fable-5'):
+            raise ClientError(error_response, 'Converse')
+
+    exc = exc_info.value
+    assert exc.status_code == 400
+    assert exc.hint == _DATA_RETENTION_HINT
+    assert 'aws_review' in str(exc)
+    assert 'data-retention.html' in str(exc)
 
 
 def test_model_http_error_headers_provider_xai_no_headers():

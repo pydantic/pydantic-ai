@@ -134,6 +134,24 @@ if TYPE_CHECKING:
     )
 
 
+_DATA_RETENTION_UNAVAILABLE = "not available for this model"
+_DATA_RETENTION_HINT = (
+    "This model is blocked by the account or Bedrock project's data-retention mode. "
+    'Claude Fable 5 / 5.1 require `aws_review` (or legacy `provider_data_share`) via '
+    '`bedrock:PutAccountDataRetention`; Pydantic AI cannot set that on the request. '
+    'See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html'
+)
+
+
+def _bedrock_data_retention_hint(message: object) -> str | None:
+    if not isinstance(message, str):
+        return None
+    lowered = message.lower()
+    if 'data retention mode' in lowered and _DATA_RETENTION_UNAVAILABLE in lowered:
+        return _DATA_RETENTION_HINT
+    return None
+
+
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
     try:
@@ -143,15 +161,21 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         status_code = metadata.get('HTTPStatusCode')
         if isinstance(status_code, int):
             suggested_model_id = None
+            hint = None
             error = e.response.get('Error')
-            if _utils.is_str_dict(error) and error.get('Message') == 'The provided model identifier is invalid.':
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            if _utils.is_str_dict(error):
+                message = error.get('Message')
+                if message == 'The provided model identifier is invalid.':
+                    suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+                else:
+                    hint = _bedrock_data_retention_hint(message)
             raise ModelHTTPError(
                 status_code=status_code,
                 model_name=model_name,
                 body=e.response,
                 headers=metadata.get('HTTPHeaders'),
                 suggested_model_id=suggested_model_id,
+                hint=hint,
             ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
     except (HTTPClientError, BotocoreConnectionError) as e:

@@ -127,6 +127,10 @@ The unified field maps as follows for Bedrock:
 
 To request Bedrock's `'reserved'` tier (which requires a pre-purchased capacity reservation), set [`bedrock_service_tier`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_service_tier] directly — it isn't reachable through the unified field.
 
+### Anthropic models
+
+Claude Fable 5 and 5.1 reject the default data-retention mode with a 400 (`data retention mode 'default' is not available for this model`). That is an account or Bedrock project setting (`bedrock:PutAccountDataRetention` to `aws_review`, or the legacy `provider_data_share`), not a request field Pydantic AI can send. See [AWS data retention](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html).
+
 ### Prompt Caching
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:

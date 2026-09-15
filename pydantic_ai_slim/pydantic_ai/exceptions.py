@@ -542,6 +542,9 @@ class ModelHTTPError(ModelAPIError):
     suggested_model_id: str | None
     """A close known model identifier suggested from a provider-confirmed model-name error."""
 
+    hint: str | None
+    """Optional extra guidance appended to the exception message, for example a Bedrock account setting."""
+
     def __init__(
         self,
         status_code: int,
@@ -550,14 +553,18 @@ class ModelHTTPError(ModelAPIError):
         *,
         headers: Mapping[str, str] | None = None,
         suggested_model_id: str | None = None,
+        hint: str | None = None,
     ):
         self.status_code = status_code
         self.body = body
         self.headers = {k.lower(): v for k, v in headers.items()} if headers is not None else None
         self.suggested_model_id = suggested_model_id
+        self.hint = hint
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         if suggested_model_id is not None:
             message += f'. Did you mean {suggested_model_id!r}?'
+        if hint is not None:
+            message += f'. {hint}'
         super().__init__(model_name=model_name, message=message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -567,14 +574,19 @@ class ModelHTTPError(ModelAPIError):
             {
                 'headers': self.headers,
                 'suggested_model_id': self.suggested_model_id,
+                'hint': self.hint,
             },
         )
 
     def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         self.headers = state.get('headers')
         self.suggested_model_id = state.get('suggested_model_id')
+        self.hint = state.get('hint')
         if self.suggested_model_id is not None:
             self.message += f'. Did you mean {self.suggested_model_id!r}?'
+            self.args = (self.message,)
+        if self.hint is not None:
+            self.message += f'. {self.hint}'
             self.args = (self.message,)
 
     @property
