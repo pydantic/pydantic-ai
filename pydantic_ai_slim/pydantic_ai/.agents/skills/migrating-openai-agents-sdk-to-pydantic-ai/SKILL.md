@@ -41,7 +41,7 @@ Read [Concept Mapping](references/CONCEPT-MAPPING.md) for the source features yo
 - Use core function tools and MCP toolsets for application-executed tools. Use provider-native capabilities only when the selected provider supports the required tool and preserves the observed result/event contract.
 - Keep ordinary agents on core. Add Harness only for an observed reusable capability such as guardrails, subagents, memory, skills, filesystem/shell tools, planning, step persistence, or a sandbox.
 - Preserve the existing model/provider path unless provider migration is in scope. Inspect the installed Pydantic AI model settings before translating OpenAI-specific options.
-- Treat `UsageLimits.request_limit` as a candidate for `max_turns`, then verify the exact counting and failure contract rather than assuming identical budgets.
+- Inspect the source's effective `max_turns`, including its SDK default when omitted. Preserve that bound with `UsageLimits.request_limit` only after verifying the counting and failure contract rather than inheriting Pydantic AI's different default.
 
 ## Completion
 
