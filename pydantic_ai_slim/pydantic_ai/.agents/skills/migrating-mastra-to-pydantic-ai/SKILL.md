@@ -10,7 +10,7 @@ Preserve observable behavior, not TypeScript or Mastra's object model. Migrate t
 ## Trace the source before choosing a target
 
 1. Read repository instructions, dependencies, tests, and the runtime entrypoint. Record the installed Mastra, Pydantic AI, and Harness versions.
-2. Trace one real request through `Agent.generate()` or `Agent.stream()`, tools, processors, memory, workflows, events, results, and side effects that callers use. Establish a focused baseline or characterization test.
+2. Trace one real request from its public entrypoint, whether an `Agent.generate()` / `Agent.stream()` call or a workflow run, through the tools, processors, memory, events, results, state, and side effects that callers use. Establish a focused baseline or characterization test.
 3. Separate these source contracts when present:
    - request context, model-chosen tool input, workflow input/output, and shared workflow state;
    - conversation messages, semantic recall, working or observational memory, workflow snapshots, and model-owned plans;
