@@ -16,19 +16,26 @@ from __future__ import annotations as _annotations
 
 import json
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Any, Literal
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import BaseModel
 from vcr.cassette import Cassette
 
-from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl
+from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+)
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -44,7 +51,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
-    from openai.types.responses.response_output_message import Content, ResponseOutputMessage
+    from openai.types.responses.response_output_message import ResponseOutputMessage
     from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
 
@@ -55,6 +62,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
     )
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -62,6 +70,10 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
 ]
+
+
+class Answer(BaseModel):
+    answer: str
 
 
 def chat_completion(text: str = 'response', usage: CompletionUsage | None = None) -> chat.ChatCompletion:
@@ -73,7 +85,7 @@ def responses_completion(text: str = 'done', usage: ResponseUsage | None = None)
         [
             ResponseOutputMessage(
                 id='output-1',
-                content=cast('list[Content]', [ResponseOutputText(text=text, type='output_text', annotations=[])]),
+                content=[ResponseOutputText(text=text, type='output_text', annotations=[])],
                 role='assistant',
                 status='completed',
                 type='message',
@@ -97,11 +109,8 @@ async def test_openai_chat_cache_point_and_options(
         model = OpenAIChatModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
     settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    result = await Agent(model, model_settings=settings).run(
-        ['Stable context.', CachePoint(ttl='1h'), 'Use the context.']
-    )
+    await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(ttl='1h'), 'Use the context.'])
 
-    assert result.output == 'response'
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['messages'] == snapshot(
@@ -144,8 +153,9 @@ async def test_openai_chat_multiple_cache_points(allow_model_requests: None):
 
     await Agent(model).run(['Product docs.', CachePoint(), 'Session context.', CachePoint(), 'Question.'])
 
-    assert 'prompt_cache_options' not in get_mock_chat_completion_kwargs(mock_client)[0]
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'prompt_cache_options' not in request
+    assert request['messages'] == snapshot(
         [
             {
                 'role': 'user',
@@ -202,10 +212,8 @@ async def test_openai_chat_cache_point_history_prefix_stability(allow_model_requ
     await agent.run('Follow-up question.', message_history=history)
 
     first_request, second_request = get_mock_chat_completion_kwargs(mock_client)
-    first_messages = cast('list[dict[str, Any]]', first_request['messages'])
-    second_messages = cast('list[dict[str, Any]]', second_request['messages'])
-    assert second_messages[0] == first_messages[0]
-    assert second_messages[0] == snapshot(
+    assert second_request['messages'][0] == first_request['messages'][0]
+    assert second_request['messages'][0] == snapshot(
         {
             'role': 'user',
             'content': [
@@ -218,7 +226,7 @@ async def test_openai_chat_cache_point_history_prefix_stability(allow_model_requ
             ],
         }
     )
-    assert second_messages[-1] == {'role': 'user', 'content': 'Follow-up question.'}
+    assert second_request['messages'][-1] == {'role': 'user', 'content': 'Follow-up question.'}
 
 
 @pytest.mark.parametrize(
@@ -241,11 +249,9 @@ async def test_openai_chat_cache_point_supported_content_types(
     result = await Agent(model).run([content_item, CachePoint()])
 
     assert result.output == 'response'
-    request = get_mock_chat_completion_kwargs(mock_client)[0]
-    messages = cast('list[dict[str, Any]]', request['messages'])
-    content = cast('list[dict[str, Any]]', messages[0]['content'])
+    content = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]['content']
     assert content[0]['type'] == expected_type
-    assert content[0].get('prompt_cache_breakpoint') == {'mode': 'explicit'}
+    assert content[0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
 
 
 async def test_openai_chat_cache_point_first_content_raises(allow_model_requests: None):
@@ -263,9 +269,8 @@ async def test_openai_chat_cache_point_filtered_without_support(allow_model_requ
     mock_client = MockOpenAI.create_mock(chat_completion())
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
-    result = await Agent(model).run(['text before', CachePoint(), 'text after'])
+    await Agent(model).run(['text before', CachePoint(), 'text after'])
 
-    assert result.output == 'response'
     assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
         [
             {
@@ -289,9 +294,8 @@ async def test_openai_chat_prompt_cache_options_sent_for_any_model(allow_model_r
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+    await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
 
-    assert result.output == 'response'
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['messages'] == [
@@ -330,11 +334,10 @@ async def test_openai_responses_cache_point_and_options(
         model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
     settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    result = await Agent(model, model_settings=settings).run(
+    await Agent(model, model_settings=settings).run(
         ['Stable reference material.', CachePoint(ttl='1h'), 'Use the reference.']
     )
 
-    assert result.output == 'done'
     request = get_mock_responses_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['input'] == snapshot(
@@ -377,8 +380,9 @@ async def test_openai_responses_multiple_cache_points(allow_model_requests: None
 
     await Agent(model).run(['Product docs.', CachePoint(), 'Session context.', CachePoint(), 'Question.'])
 
-    assert 'prompt_cache_options' not in get_mock_responses_kwargs(mock_client)[0]
-    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'prompt_cache_options' not in request
+    assert request['input'] == snapshot(
         [
             {
                 'role': 'user',
@@ -411,10 +415,8 @@ async def test_openai_responses_cache_point_history_prefix_stability(allow_model
     await agent.run('Follow-up question.', message_history=history)
 
     first_request, second_request = get_mock_responses_kwargs(mock_client)
-    first_input = cast('list[dict[str, Any]]', first_request['input'])
-    second_input = cast('list[dict[str, Any]]', second_request['input'])
-    assert second_input[0] == first_input[0]
-    assert second_input[0] == snapshot(
+    assert second_request['input'][0] == first_request['input'][0]
+    assert second_request['input'][0] == snapshot(
         {
             'role': 'user',
             'content': [
@@ -427,7 +429,7 @@ async def test_openai_responses_cache_point_history_prefix_stability(allow_model
             ],
         }
     )
-    assert second_input[-1] == {'role': 'user', 'content': 'Follow-up question.'}
+    assert second_request['input'][-1] == {'role': 'user', 'content': 'Follow-up question.'}
 
 
 async def test_openai_responses_image_cache_point(allow_model_requests: None):
@@ -464,12 +466,10 @@ async def test_openai_responses_file_cache_point(allow_model_requests: None):
         [BinaryContent(b'%PDF-1.4', media_type='application/pdf'), CachePoint(), 'Summarize the reference.']
     )
 
-    request_input = get_mock_responses_kwargs(mock_client)[0]['input']
-    content = request_input[0]['content']
+    content = get_mock_responses_kwargs(mock_client)[0]['input'][0]['content']
     assert isinstance(content, list)
-    first_content = cast('dict[str, Any]', content[0])
-    assert first_content['type'] == 'input_file'
-    assert first_content.get('prompt_cache_breakpoint') == {'mode': 'explicit'}
+    assert content[0]['type'] == 'input_file'
+    assert content[0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
 
 
 async def test_openai_responses_cache_point_first_content_raises(allow_model_requests: None):
@@ -487,9 +487,8 @@ async def test_openai_responses_cache_point_filtered_without_support(allow_model
     mock_client = MockOpenAIResponses.create_mock(responses_completion('response'))
     model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=mock_client))
 
-    result = await Agent(model).run(['text before', CachePoint(), 'text after'])
+    await Agent(model).run(['text before', CachePoint(), 'text after'])
 
-    assert result.output == 'response'
     assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
         [
             {
@@ -513,9 +512,8 @@ async def test_openai_responses_prompt_cache_options_sent_for_any_model(allow_mo
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+    await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
 
-    assert result.output == 'done'
     request = get_mock_responses_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['input'] == [
@@ -527,6 +525,971 @@ async def test_openai_responses_prompt_cache_options_sent_for_any_model(allow_mo
             ],
         }
     ]
+
+
+# ===== Instruction caching =====
+
+
+async def test_openai_chat_cache_instructions(allow_model_requests: None):
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+
+    result = await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    assert result.output == 'response'
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_after_last_static(allow_model_requests: None):
+    """Dynamic instructions are sorted last and stay outside the cached prefix."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'system', 'content': 'Today is 2026-08-18.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_all_dynamic_falls_back_to_system_prompt(allow_model_requests: None):
+    """With no static instruction to end the prefix, the boundary is the last system prompt."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, system_prompt='Support policies.', model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'system', 'content': 'Today is 2026-08-18.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_all_dynamic_without_system_prompt(allow_model_requests: None):
+    """Nothing in the prefix is stable, so no breakpoint is added."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Today is 2026-08-18.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_ignored_without_support(allow_model_requests: None):
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Support policies.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_skipped_for_dynamic_system_prompt(allow_model_requests: None):
+    """A dynamic system prompt renders in the cached prefix, so marking it would miss the cache every
+    run; the breakpoint is skipped and nothing is marked."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Follow the rules.', model_settings=settings)
+
+    @agent.system_prompt(dynamic=True)
+    def current_policies() -> str:
+        return 'Support policies.'
+
+    await agent.run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Support policies.'},
+            {'role': 'system', 'content': 'Follow the rules.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions(allow_model_requests: None):
+    """The top-level `instructions` field cannot carry a breakpoint, so instructions move into `input`."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+
+    result = await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    assert result.output == 'done'
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'instructions' not in request
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_after_last_static(allow_model_requests: None):
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'instructions' not in request
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'system', 'content': 'Today is 2026-08-18.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_all_dynamic_falls_back_to_system_prompt(
+    allow_model_requests: None,
+):
+    """With no static instruction to end the prefix, the boundary is the last system prompt."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, system_prompt='Support policies.', model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'instructions' not in request
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'system', 'content': 'Today is 2026-08-18.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_all_dynamic_without_system_prompt(allow_model_requests: None):
+    """With no breakpoint to place, the instructions stay in the top-level field."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Today is 2026-08-18.'
+    assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
+
+
+async def test_openai_responses_cache_instructions_ignored_without_support(allow_model_requests: None):
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Support policies.'
+    assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
+
+
+async def test_openai_responses_cache_instructions_skipped_for_dynamic_system_prompt(allow_model_requests: None):
+    """A dynamic system prompt renders in the cached prefix, so the instructions stay in the top-level
+    field and no breakpoint is added."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Follow the rules.', model_settings=settings)
+
+    @agent.system_prompt(dynamic=True)
+    def current_policies() -> str:
+        return 'Support policies.'
+
+    await agent.run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Follow the rules.'
+    assert request['input'] == [
+        {'role': 'system', 'content': 'Support policies.'},
+        {'role': 'user', 'content': 'Where is order 1234?'},
+    ]
+
+
+async def test_openai_responses_cache_instructions_skipped_with_conversation_id(allow_model_requests: None):
+    """A conversation persists its input messages, so instructions stay in the top-level field."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_conversation_id='conv_123')
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Support policies.'
+    assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
+
+
+async def test_openai_responses_cache_instructions_with_prompted_output(allow_model_requests: None):
+    """Prompted output also moves instructions into `input`; they must not be sent twice.
+
+    Its format instructions are static, so the boundary moves past them to the end of the prefix.
+    """
+    mock_client = MockOpenAIResponses.create_mock(responses_completion('{"answer": "shipped"}'))
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Support policies.', model_settings=settings, output_type=PromptedOutput(Answer))
+
+    await agent.run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'instructions' not in request
+    assert request['input'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Support policies.'},
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': IsStr(regex=r'(?s).*JSON.*'),
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_without_instruction_parts(allow_model_requests: None):
+    """With only a system prompt and no instructions, the boundary is the system prompt."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+
+    await Agent(model, system_prompt='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_without_instruction_parts(allow_model_requests: None):
+    """The system prompt is already an input message, so nothing is relocated."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+
+    await Agent(model, system_prompt='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'instructions' not in request
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_with_developer_role(allow_model_requests: None):
+    """OpenAI's own example marks reusable instructions in a developer message."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_system_prompt_role='developer', openai_supports_prompt_cache_breakpoints=True
+        ),
+    )
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'developer',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_skipped_when_system_messages_are_merged(allow_model_requests: None):
+    """Merging collapses the boundary into one block, so no breakpoint can express it."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_supports_multiple_system_messages=False, openai_supports_prompt_cache_breakpoints=True
+        ),
+    )
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, system_prompt='Support policies.', instructions='Answer briefly.', model_settings=settings)
+
+    await agent.run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': """\
+Support policies.
+
+Answer briefly.\
+""",
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_skipped_for_user_system_prompt_role(allow_model_requests: None):
+    """A `'user'` system prompt role can't be told apart from a real user turn, so the multi-modal
+    user content must be left alone."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_system_prompt_role='user', openai_supports_prompt_cache_breakpoints=True),
+    )
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run(['Look at this', ImageUrl(url='https://example.com/image.png')])
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Look at this', 'type': 'text'},
+                    {'image_url': {'url': 'https://example.com/image.png'}, 'type': 'image_url'},
+                ],
+            },
+            {'role': 'user', 'content': 'Today is 2026-08-18.'},
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_reused_across_chained_requests(allow_model_requests: None):
+    """Static instructions are relocated and marked on the first request; the chained response
+    replays them from its input, so later requests neither resend nor re-mark them."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='auto')
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    first = await agent.run('Where is order 1234?')
+    await agent.run('And order 5678?', message_history=first.all_messages())
+
+    requests = get_mock_responses_kwargs(mock_client)
+    # Neither request carries the top-level `instructions` field: the first moved them into `input`,
+    # the second chains to the response that already replays them.
+    assert all('instructions' not in request for request in requests)
+    # Only the second request chains; the first placed the breakpoint that the chain reuses.
+    assert 'previous_response_id' not in requests[0]
+    assert requests[1]['previous_response_id'] == '123'
+    assert [request['input'] for request in requests] == snapshot(
+        [
+            [
+                {
+                    'role': 'system',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': 'Support policies.',
+                            'prompt_cache_breakpoint': {'mode': 'explicit'},
+                        }
+                    ],
+                },
+                {'role': 'user', 'content': 'Where is order 1234?'},
+            ],
+            [{'role': 'user', 'content': 'And order 5678?'}],
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_stamps_response_without_provider_details(
+    allow_model_requests: None,
+):
+    """The relocation stamp is created even when the response has no other provider details."""
+    response = responses_completion()
+    # `_process_response` only fills `provider_details` from a truthy `created_at` (and a few
+    # optional fields), so a zero timestamp leaves it `None` and the stamp has to create the dict.
+    response.created_at = 0
+    mock_client = MockOpenAIResponses.create_mock(response)
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+
+    result = await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    final_response = result.all_messages()[-1]
+    assert isinstance(final_response, ModelResponse)
+    assert final_response.provider_details == {'instructions_relocated': True}
+
+
+async def test_openai_responses_cache_instructions_stamps_streamed_response(allow_model_requests: None):
+    """A relocated streamed response is stamped, so a later chained request skips resending them."""
+    base_response = resp.Response(
+        id='123',
+        model='gpt-5.6-sol',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    def stream_for(text: str) -> list[resp.ResponseStreamEvent]:
+        return [
+            resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+            resp.ResponseOutputItemAddedEvent(
+                item=ResponseOutputMessage(
+                    id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+                ),
+                output_index=0,
+                type='response.output_item.added',
+                sequence_number=1,
+            ),
+            resp.ResponseTextDeltaEvent(
+                item_id='msg_001',
+                output_index=0,
+                content_index=0,
+                delta=text,
+                logprobs=[],
+                type='response.output_text.delta',
+                sequence_number=2,
+            ),
+            resp.ResponseCompletedEvent(
+                response=base_response.model_copy(update={'status': 'completed'}),
+                type='response.completed',
+                sequence_number=3,
+            ),
+        ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream([stream_for('first'), stream_for('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='auto')
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    async with agent.run_stream('Where is order 1234?') as result:
+        assert await result.get_output() == 'first'
+    first_messages = result.all_messages()
+    final_response = first_messages[-1]
+    assert isinstance(final_response, ModelResponse)
+    assert final_response.provider_details is not None
+    assert final_response.provider_details.get('instructions_relocated') is True
+
+    async with agent.run_stream('And order 5678?', message_history=first_messages) as result:
+        assert await result.get_output() == 'second'
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert all('instructions' not in request for request in requests)
+    assert requests[1]['previous_response_id'] == '123'
+
+
+async def test_openai_responses_cache_instructions_dynamic_without_static_still_chains(
+    allow_model_requests: None,
+):
+    """With no static prefix, instructions stay in the top-level field, so chaining is safe:
+    OpenAI does not replay that field and the current instructions go out on every request."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='auto')
+    agent = Agent(model, model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    first = await agent.run('Where is order 1234?')
+    await agent.run('And order 5678?', message_history=first.all_messages())
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert 'previous_response_id' not in requests[0]
+    assert requests[1]['previous_response_id'] == '123'
+    assert [request['instructions'] for request in requests] == ['Today is 2026-08-18.', 'Today is 2026-08-18.']
+    assert requests[1]['input'] == [{'role': 'user', 'content': 'And order 5678?'}]
+
+
+async def test_openai_responses_cache_instructions_mismatch_drops_chain(allow_model_requests: None):
+    """A later agent must not reuse relocated instructions from another agent's stored response."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='auto')
+
+    refunds = Agent(model, instructions='Refunds under $50 are automatic.', model_settings=settings)
+    first = await refunds.run('Order 1234 costs $20. Can I get a refund?')
+
+    collections = Agent(model, instructions='Never offer a refund. Demand payment.', model_settings=settings)
+    await collections.run('What should we do next?', message_history=first.all_messages())
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert 'previous_response_id' not in requests[1]
+    assert 'instructions' not in requests[1]
+    assert requests[1]['input'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': 'Never offer a refund. Demand payment.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': 'Order 1234 costs $20. Can I get a refund?'},
+            {
+                'content': [{'text': 'first', 'type': 'output_text', 'annotations': []}],
+                'id': 'output-1',
+                'role': 'assistant',
+                'type': 'message',
+                'status': 'completed',
+            },
+            {'role': 'user', 'content': 'What should we do next?'},
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_dynamic_mismatch_drops_chain(allow_model_requests: None):
+    """Relocated dynamic instructions that changed since the chained response must not be replayed."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='auto')
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+    days = iter(['Today is 2026-08-18.', 'Today is 2026-08-19.'])
+
+    @agent.instructions
+    def current_date() -> str:
+        return next(days)
+
+    first = await agent.run('Where is order 1234?')
+    await agent.run('And order 5678?', message_history=first.all_messages())
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert 'previous_response_id' not in requests[1]
+    assert 'instructions' not in requests[1]
+    assert requests[1]['input'][0] == snapshot(
+        {
+            'role': 'system',
+            'content': [
+                {
+                    'type': 'input_text',
+                    'text': 'Support policies.',
+                    'prompt_cache_breakpoint': {'mode': 'explicit'},
+                }
+            ],
+        }
+    )
+    assert requests[1]['input'][1] == {'role': 'system', 'content': 'Today is 2026-08-19.'}
+
+
+async def test_openai_responses_cache_instructions_explicit_previous_response_id_raises(allow_model_requests: None):
+    """An explicit `openai_previous_response_id` that is not in `message_history` cannot be
+    checked for a matching relocated prefix."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='resp_abc')
+
+    with pytest.raises(UserError, match='not in `message_history`'):
+        await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+
+async def test_openai_responses_cache_instructions_explicit_previous_response_id_reuses_when_in_history(
+    allow_model_requests: None,
+):
+    """An explicit id that is in history is compared like `'auto'` and reused when instructions match."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='Support policies.',
+        model_settings=OpenAIResponsesModelSettings(openai_cache_instructions=True),
+    )
+    first = await agent.run('Where is order 1234?')
+    response_id = first.all_messages()[-1].provider_response_id
+    assert response_id is not None
+
+    await agent.run(
+        'And order 5678?',
+        message_history=first.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(
+            openai_cache_instructions=True, openai_previous_response_id=response_id
+        ),
+    )
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert requests[1]['previous_response_id'] == response_id
+    assert 'instructions' not in requests[1]
+    assert requests[1]['input'] == [{'role': 'user', 'content': 'And order 5678?'}]
+
+
+async def test_openai_responses_cache_instructions_not_relocated_after_compaction(allow_model_requests: None):
+    """The compaction item retains the leading input messages, so relocating would send them twice."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Where is order 1234?'),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='summary',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'encrypted'},
+                )
+            ],
+            provider_name='openai',
+        ),
+    ]
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run(
+        'And order 5678?', message_history=messages
+    )
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Support policies.'
+    assert request['input'] == snapshot(
+        [
+            {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'And order 5678?'},
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_preserved_after_compaction_chain(allow_model_requests: None):
+    """Instructions must not disappear when chaining to a response whose request had compaction.
+
+    The compaction item prevented relocation on the first request, so the chained response's
+    input does not contain relocated instructions. The second request must keep instructions
+    top-level rather than omitting them.
+    """
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='auto')
+
+    compacted_history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Where is order 1234?'),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='summary',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'encrypted'},
+                )
+            ],
+            provider_name='openai',
+            provider_details={'compaction': True},
+        ),
+    ]
+    first = await Agent(model, instructions='Support policies.', model_settings=settings).run(
+        'And order 5678?', message_history=compacted_history
+    )
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert requests[0]['instructions'] == 'Support policies.'
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run(
+        'What about order 9999?', message_history=first.all_messages()
+    )
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert requests[1]['instructions'] == 'Support policies.'
+
+
+async def test_openai_responses_cache_instructions_no_instructions_explicit_previous_response_id(
+    allow_model_requests: None,
+):
+    """With no instructions to relocate, an explicit previous_response_id should not raise."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_previous_response_id='resp_abc')
+
+    await Agent(model, model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['previous_response_id'] == 'resp_abc'
+
+
+async def test_openai_responses_cache_instructions_skipped_for_user_system_prompt_role(allow_model_requests: None):
+    """A `'user'` system prompt role can't be told apart from a real user turn, so the instructions
+    stay in the top-level field and the user content is left alone."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_system_prompt_role='user', openai_supports_prompt_cache_breakpoints=True),
+    )
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, model_settings=settings)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run(['Look at this', ImageUrl(url='https://example.com/image.png')])
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Today is 2026-08-18.'
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Look at this', 'type': 'input_text'},
+                    {'image_url': 'https://example.com/image.png', 'type': 'input_image', 'detail': 'auto'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_openai_responses_cache_instructions_relocated_once_per_request_in_tool_loop(
+    allow_model_requests: None,
+):
+    """Each request in a run rebuilds `input` from the full history, so every request must carry
+    exactly one relocated copy of the instructions."""
+    tool_call = resp.ResponseFunctionToolCall(
+        id='fc_1',
+        call_id='call_1',
+        name='get_order_status',
+        arguments='{"order_id": "1234"}',
+        type='function_call',
+        status='completed',
+    )
+    mock_client = MockOpenAIResponses.create_mock([response_message([tool_call]), responses_completion()])
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    @agent.tool_plain
+    def get_order_status(order_id: str) -> str:
+        return 'shipped'
+
+    await agent.run('Where is order 1234?')
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert len(requests) == 2
+    assert all('instructions' not in request for request in requests)
+    assert [request['input'] for request in requests] == snapshot(
+        [
+            [
+                {
+                    'role': 'system',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': 'Support policies.',
+                            'prompt_cache_breakpoint': {'mode': 'explicit'},
+                        }
+                    ],
+                },
+                {'role': 'user', 'content': 'Where is order 1234?'},
+            ],
+            [
+                {
+                    'role': 'system',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': 'Support policies.',
+                            'prompt_cache_breakpoint': {'mode': 'explicit'},
+                        }
+                    ],
+                },
+                {'role': 'user', 'content': 'Where is order 1234?'},
+                {
+                    'name': 'get_order_status',
+                    'arguments': '{"order_id": "1234"}',
+                    'call_id': 'call_1',
+                    'type': 'function_call',
+                    'id': 'fc_1',
+                },
+                {'type': 'function_call_output', 'call_id': 'call_1', 'output': 'shipped'},
+            ],
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_with_cache_point(allow_model_requests: None):
+    """Both breakpoints are sent; OpenAI writes the last four, so the instruction one is dropped first."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run(
+        ['Reference material.', CachePoint(), 'Where is order 1234?']
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': 'Reference material.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    },
+                    {'type': 'text', 'text': 'Where is order 1234?'},
+                ],
+            },
+        ]
+    )
 
 
 # ===== Usage mapping: cache write tokens =====
@@ -718,8 +1681,8 @@ _STABLE_PREFIX = 'Reference catalogue for the prompt cache test corpus.\n' + '\n
 
 
 def _request_body(cassette: Cassette, index: int) -> dict[str, Any]:
-    body = cast('Any', cassette.requests)[index].body  # pyright: ignore[reportUnknownMemberType]
-    return cast('dict[str, Any]', json.loads(body))
+    body = cassette.requests[index].body  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    return json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
 
 
 def _assert_cache_usage(first: RunUsage, second: RunUsage) -> None:
