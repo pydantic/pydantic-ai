@@ -70,17 +70,16 @@ Choose one state strategy per observed contract:
 | `Session` | SDK loads, merges, and persists client-managed history | application history repository, or Harness `StepPersistence` only when its settled snapshots/event/effect semantics are wanted |
 | `previous_response_id` | OpenAI Responses server-side chain | `OpenAIResponsesModelSettings.openai_previous_response_id`; verify storage/ZDR and reasoning continuity |
 | OpenAI `conversation_id` | OpenAI Conversations API state | `OpenAIResponsesModelSettings.openai_conversation_id`; do not confuse it with Pydantic AI's correlation `conversation_id` |
-| `RunState` plus interruptions | resumable paused execution with approval decisions | core deferred tools plus stored messages/results, Harness step persistence, or a durable integration according to crash/replay requirements |
+| `RunState` plus interruptions | resumable paused execution with approval decisions | core deferred tools with inline `HandleDeferredToolCalls` or stored `DeferredToolRequests`/`DeferredToolResults`, Harness step persistence, or a durable integration according to crash/replay requirements |
 
 Pydantic AI's `conversation_id` groups runs and traces; it is not itself a message store. Message history preserves conversation context, not arbitrary workflow/checkpoint state.
 
 For human approval:
 
 1. Use deferred tools or raise `ApprovalRequired` based on the call and trusted dependencies.
-2. Store the paused messages and pending call IDs at an authenticated server-side boundary.
-3. Resume with `DeferredToolResults` and a new run ID while preserving the conversation ID.
-4. Re-check authorization and idempotency inside the tool before the side effect.
-5. Test approve, deny, foreign/unknown ID, duplicate resume, stale schema, and process restart to the extent the source promised them.
+2. Choose the flow per pending call: resolve with `HandleDeferredToolCalls` when the decision is available during the same call; otherwise include `DeferredToolRequests` in `output_type`, store the paused messages and pending call IDs at an authenticated server-side boundary, and resume in a later run with `DeferredToolResults`, a new run ID, and the same conversation ID. A handler may resolve some calls and let the rest bubble up.
+3. Re-check authorization and idempotency inside the tool before the side effect.
+4. Test approve, deny, foreign/unknown ID, stale schema, and duplicate decisions. For the later-run flow, also test duplicate resume and process restart to the extent the source promised them.
 
 Use a Pydantic AI durable integration when the source path promises replay or crash recovery across model/tool steps. Use Harness `StepPersistence` when its snapshot, event-log, continuation/fork, and effect-ledger contract fits. Neither follows merely from the word "session."
 
@@ -88,7 +87,7 @@ Use a Pydantic AI durable integration when the source path promises replay or cr
 
 OpenAI `run_streamed().stream_events()` can expose raw Responses events, run-item events, and agent lifecycle events. Pydantic AI exposes model deltas, tool/lifecycle events, and final results through several APIs; raw event types and completion timing differ.
 
-Choose the smallest Pydantic AI streaming surface that includes the required lifecycle, then adapt it to the existing public schema. Test incremental delivery, order, IDs, tool and final events, approval interruption, cancellation, early consumer exit, and terminal errors with the real client boundary.
+Choose the smallest Pydantic AI streaming surface that includes the required lifecycle, then adapt it to the existing public schema. `run_stream()` commits the first matching output and may skip tool calls emitted alongside or after it; use a loop-completing event or graph surface unless that terminal behavior is part of the source contract. Test incremental delivery, order, IDs, tool and final events, approval interruption, cancellation, early consumer exit, and terminal errors with the real client boundary.
 
 OpenAI tracing is enabled by default and has OpenAI-specific span/export behavior. Pydantic AI uses OpenTelemetry and integrates directly with Logfire. Retaining an existing exporter, dual-running temporarily, and switching to Logfire have different dashboard, alert, privacy, retention, and cost consequences. Trace similarity can corroborate a test, but cannot prove state, authorization, exactly-once side effects, or public streaming delivery.
 

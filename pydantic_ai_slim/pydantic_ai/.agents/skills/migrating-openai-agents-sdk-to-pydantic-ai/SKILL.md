@@ -21,7 +21,7 @@ Preserve caller-visible behavior, not OpenAI Agents SDK object shapes. Migrate t
    - **Product runtime:** retain authentication, storage, queues, deployment, and service integrations unless explicitly placed in scope.
 5. Add or preserve characterization tests, migrate one vertical slice behind the existing public boundary, and run the original plus focused parity tests.
 
-Read [Concept Mapping](references/CONCEPT-MAPPING.md) for the source features you found. Read [Verification and Cutover](references/VERIFICATION-AND-CUTOVER.md) before changing persistence, handoffs, approval, streaming, security, or production traffic.
+Read [Concept Mapping](references/CONCEPT-MAPPING.md) for the source features you found. Read [Verification and Cutover](references/VERIFICATION-AND-CUTOVER.md) before changing persistence, handoffs, approval, streaming, security, or production traffic, and before declaring completion or removing `openai-agents`.
 
 ## Stop at semantic gates
 
@@ -29,9 +29,9 @@ Read [Concept Mapping](references/CONCEPT-MAPPING.md) for the source features yo
 - **Handoffs:** OpenAI handoffs replace the active agent inside one run and expose `last_agent` for continuation. Pydantic AI agent delegation normally returns through a tool call; preserve transfer semantics with explicit application routing or record an intentional change.
 - **Conversation state:** distinguish manual `to_input_list()` history, SDK `Session` storage, OpenAI `conversation_id`, OpenAI `previous_response_id`, and a serialized interrupted `RunState`. Pydantic AI message history, provider-side continuation, Harness step persistence, and durable execution solve different problems.
 - **Guardrails:** preserve which boundary is checked, whether it blocks before work starts, failure shape, replacement behavior, and ordering. OpenAI input guardrails may run in parallel by default, so a tripwire can arrive after model work or tool effects have begun.
-- **Approval:** OpenAI HITL resumes a serialized `RunState`. Pydantic AI deferred calls normally end one run and resume in another with message history plus `DeferredToolResults`. Persist pending calls server-side and re-authorize inside protected tools; approval is not authorization.
+- **Approval:** OpenAI HITL resumes a serialized `RunState`. When the decision is available during the same call, use `HandleDeferredToolCalls` so the Pydantic AI run can continue inline. When the run must end first, include `DeferredToolRequests` in `output_type`, persist messages and pending call IDs server-side, then resume in a later run with `DeferredToolResults`. Re-authorize inside protected tools; approval is not authorization.
 - **Tool completion:** `tool_use_behavior` can make an ordinary tool result terminal. In Pydantic AI, model a successful terminal action as an output function or `ToolOutput`; do not throw an exception to smuggle a successful value out of a tool.
-- **Streaming:** raw Responses API events, run-item events, lifecycle events, and final completion are separate contracts. Choose `run(event_stream_handler=...)`, `run_stream_events()`, or `iter()` from the required event lifecycle and adapt the public schema.
+- **Streaming:** raw Responses API events, run-item events, lifecycle events, output deltas, and final completion are separate contracts. Use `run(event_stream_handler=...)`, `run_stream_events()`, or `iter()` when the full agent loop must complete. Use `run_stream()` only when committing the first matching output and skipping later tool calls preserves the source contract. Adapt the chosen surface to the public schema.
 - **Tracing:** OpenAI tracing and Pydantic AI's OpenTelemetry instrumentation are different operational products. Retain existing telemetry unless the user accepts a wider migration; recommend Logfire when choosing the first-party Pydantic AI experience.
 
 ## Pydantic AI defaults
@@ -45,4 +45,4 @@ Read [Concept Mapping](references/CONCEPT-MAPPING.md) for the source features yo
 
 ## Completion
 
-The slice is complete when every observed public contract is preserved by an executable check, intentionally changed with an accepted impact, owned by a named external component, or explicitly not applicable. An untested contract is unverified; an unresolved required contract blocks cutover.
+Install and import the migrated project from a clean environment so its dependency files match the runtime. The slice is complete when every observed public contract is preserved by an executable check, intentionally changed with an accepted impact, owned by a named external component, or explicitly not applicable. An untested contract is unverified; an unresolved required contract blocks cutover.
