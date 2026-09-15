@@ -3709,3 +3709,26 @@ async def test_parallel_tool_calls_stream(allow_model_requests: None) -> None:
         text = await result.get_output()
     assert text == 'hello'
     assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is True
+
+
+async def test_stream_text_after_tool_call_gets_own_part(allow_model_requests: None):
+    """Text streamed after a tool call must start a new TextPart instead of merging into the pre-tool-call one."""
+    tool_chunk = func_chunk(
+        [MistralToolCall(id='call-0', function=MistralFunctionCall(name='lookup', arguments='{}'))],
+        finish_reason='tool_calls',
+    )
+    stream = text_chunk('Hello, '), tool_chunk, text_chunk('world'), chunk([])
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_output(debounce_by=None):
+            pass
+
+    response_parts = [p for msg in result.new_messages() if isinstance(msg, ModelResponse) for p in msg.parts]
+    assert response_parts == [
+        TextPart(content='Hello, '),
+        ToolCallPart(tool_name='lookup', args='{}', tool_call_id='call-0'),
+        TextPart(content='world'),
+    ]
