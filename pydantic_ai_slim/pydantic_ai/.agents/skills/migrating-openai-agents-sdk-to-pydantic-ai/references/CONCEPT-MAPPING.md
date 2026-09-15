@@ -77,7 +77,7 @@ Pydantic AI's `conversation_id` groups runs and traces; it is not itself a messa
 For human approval:
 
 1. Use deferred tools or raise `ApprovalRequired` based on the call and trusted dependencies.
-2. Choose the flow per pending call: resolve with `HandleDeferredToolCalls` when the decision is available during the same call; otherwise include `DeferredToolRequests` in `output_type`, store the paused messages and pending call IDs at an authenticated server-side boundary, and resume in a later run with `DeferredToolResults`, a new run ID, and the same conversation ID. A handler may resolve some calls and let the rest bubble up.
+2. Choose the flow per pending call: resolve with `HandleDeferredToolCalls` when the decision is available during the same call; otherwise include `DeferredToolRequests` in `output_type`, store the paused messages and complete request—or an equivalent pending-action record with category, validated arguments, and metadata—at an authenticated server-side boundary, and resume in a later run with `DeferredToolResults`, a new run ID, and the same conversation ID. A handler may resolve some calls and let the rest bubble up.
 3. Re-check authorization and idempotency inside the tool before the side effect.
 4. Test approve, deny, foreign/unknown ID, stale schema, and duplicate decisions. For the later-run flow, also test duplicate resume and process restart to the extent the source promised them.
 
