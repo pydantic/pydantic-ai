@@ -20,7 +20,7 @@ Preserve caller-visible behavior, not ADK's class tree. Migrate the smallest com
 4. Classify the active slice:
    - **Ordinary `LlmAgent`:** normally one reusable [`Agent`](https://pydantic.dev/docs/ai/core-concepts/agent/) with typed dependencies, tools, and output.
    - **ADK graph or dynamic workflow:** keep simple deterministic control flow in plain async Python; use [`pydantic_graph`](https://pydantic.dev/docs/ai/graph/graph/) when explicit typed nodes, branching, or graph inspection remain valuable.
-   - **Multi-agent delegation:** inspect ADK's collaboration `mode`. Use core [multi-agent patterns](https://pydantic.dev/docs/ai/guides/multi-agent-applications/) for `chat` transfer semantics. Harness [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) can fit `task` or `single_turn` only when their isolated context, return, interaction, and concurrency behavior match.
+   - **Multi-agent delegation:** inspect ADK's collaboration `mode` in Python 2.x; 1.x `sub_agents` use `chat` behavior. Use core [multi-agent patterns](https://pydantic.dev/docs/ai/guides/multi-agent-applications/) for `chat` transfer semantics. Harness [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) can fit `task` or `single_turn` only when their isolated context, return, interaction, and concurrency behavior match.
    - **Product runtime:** retain auth, session/state stores, artifact stores, queues, transport, A2A endpoints, evaluation, observability, and deployment unless they are explicitly in scope.
 5. Add deterministic characterization tests, then migrate one vertical slice behind its existing caller boundary.
 6. Run the original tests and focused parity tests. Mark unexercised behavior `unverified`; similar names are not equivalence evidence.
@@ -48,4 +48,4 @@ Read [Concept Mapping](references/CONCEPT-MAPPING.md) for the features the slice
 
 ## Completion
 
-The slice is complete when every observed caller contract is preserved by an executable check, intentionally changed by an accepted decision, or explicitly excluded. Do not remove `google-adk` while a retained runtime, session migration, deployment command, evaluation, or compatibility path still imports or invokes it.
+The slice is complete when every observed caller contract has one ledger status with executable evidence or explicit residual risk, and none is `blocked`. Do not remove `google-adk` while a retained runtime, session migration, deployment command, evaluation, or compatibility path still imports or invokes it.

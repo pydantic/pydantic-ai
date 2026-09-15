@@ -42,4 +42,4 @@ Map behavior only after tracing the active ADK caller path. Keep existing applic
 - Keep auth, stores, queues, endpoints, deployment, and product state in the application.
 - Record a gap when the target cannot preserve a contract through a supported public API. Build a bounded adapter only after the impact is known.
 
-Google ADK's current concepts are documented under [agents](https://adk.dev/agents/), [workflows](https://adk.dev/graphs/), [runtime](https://adk.dev/runtime/), [sessions](https://adk.dev/sessions/), and [tools](https://adk.dev/tools-custom/). Check the installed source because experimental and workflow APIs move quickly.
+Google ADK's current concepts are documented under [agents](https://adk.dev/agents/), [workflows](https://adk.dev/workflows/), [runtime](https://adk.dev/runtime/), [sessions](https://adk.dev/sessions/), [tools](https://adk.dev/tools-custom/), [callbacks](https://adk.dev/callbacks/), [plugins](https://adk.dev/plugins/), and [skills](https://adk.dev/skills/). Check the installed source because experimental and workflow APIs move quickly.

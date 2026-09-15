@@ -26,7 +26,7 @@ For every migration, check:
 - final output or structured validation behavior;
 - tool names, schemas, errors, and externally visible side effects;
 - dependency resolution and imports from a clean environment;
-- absence of `google-adk` imports only in the migrated slice.
+- no `google-adk` import remains inside the migrated slice; imports elsewhere are expected until cutover.
 
 Add these checks only when the source path uses them:
 

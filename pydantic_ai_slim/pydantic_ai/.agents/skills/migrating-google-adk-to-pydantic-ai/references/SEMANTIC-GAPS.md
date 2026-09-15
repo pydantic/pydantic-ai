@@ -26,7 +26,7 @@ Pydantic AI [`Hooks`](https://pydantic.dev/docs/ai/core-concepts/hooks/) compose
 
 ## Agent transfer and delegated tasks
 
-ADK collaboration behavior depends on `mode`. In `chat`, `transfer_to_agent` moves control within the same session and conversation, and the target can answer the user until another transfer. In `task`, the child uses an isolated session branch and returns control through `finish_task`; `single_turn` takes no user interaction, returns immediately, and may run in parallel. Harness `SubAgents` gives a child a self-contained task with its own message history and returns its string output to the parent. Use core hand-off patterns for `chat`; consider a typed agent tool or Harness `SubAgents` for `task` or `single_turn` only after testing history, return control, interaction, concurrency, and final-answer ownership.
+ADK 2.x [collaboration behavior](https://adk.dev/workflows/collaboration/) depends on `mode`; 1.x `sub_agents` use `chat` behavior. In `chat`, `transfer_to_agent` moves control within the same session and conversation, and the target can answer the user until another transfer. In `task`, the child uses an isolated session branch, may ask the user for clarification, and returns control through `finish_task`; `single_turn` takes no user interaction, returns immediately, and may run in parallel. Harness `SubAgents` gives a child a self-contained task with its own message history and returns its string output to the parent. Use core hand-off patterns for `chat`; consider a typed agent tool or Harness `SubAgents` for `task` or `single_turn` only after testing history, return control, interaction, concurrency, and final-answer ownership.
 
 ## Human input, approval, and authentication
 
