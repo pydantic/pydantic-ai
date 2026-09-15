@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import os
 
 import pytest
 
@@ -12,16 +12,14 @@ from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import GenerateContentResponse, Part, ToolType
+    from google.genai.types import Part, ToolType
 
-    from pydantic_ai import _utils
-    from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.google import (
-        GeminiStreamedResponse,
         GoogleModel,
         _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
     from .test_native_tools import _process_response  # pyright: ignore[reportPrivateUsage]
 
@@ -106,7 +104,9 @@ async def test_agentic_video_processing(
 ) -> None:
     """Each processing step becomes a `media_processing` call/return pair; the follow-up replays only the final text.
 
-    The replayed shape asserted at the end is the one Gemini accepted in the recorded live follow-up request.
+    The steps are left out of the follow-up because Gemini rejects them when echoed, in every shape tried
+    (`400 Tool type of tool_call part does not match with tool call context`). The final part's own
+    signature is what keeps the video context: the recorded follow-up was accepted and answered.
     """
     provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=60))
     agent = Agent(GoogleModel('gemini-3.7-flash', provider=provider))
@@ -211,52 +211,80 @@ def test_untyped_tool_call_with_a_payload_is_not_media_processing() -> None:
         )
 
 
+@pytest.mark.vcr
 @pytest.mark.parametrize('stream', [False, True], ids=['non-streaming', 'streaming'])
-async def test_signature_only_parts_are_dropped(stream: bool) -> None:
-    """Unit test: Vertex AI emits these for agentic video, but no Vertex cassette exists; the shape comes from the issue report."""
-    parts = [
-        Part(thought_signature=b'a'),
-        Part(thought_signature=b'b'),
-        Part(text='done', thought_signature=b'c'),
+async def test_agentic_video_processing_vertex(
+    stream: bool,
+    allow_model_requests: None,
+    vertex_provider_auth: None,
+    request_capture: RequestCapture,
+) -> None:  # pragma: lax no cover
+    """Vertex AI reports each step as a signature-only part; nothing is shown and only the final text is replayed.
+
+    Echoing those parts back gives `400 Invalid thought signature`, so they are dropped. The recorded
+    follow-up, which replays just the final part and its signature, was accepted and answered.
+    """
+    # Same convention as `vertex_provider` in `tests/conftest.py`: replayed in CI with mocked auth, skipped
+    # locally. To re-record, comment out the skip and run with real credentials and `GOOGLE_PROJECT` set.
+    if not os.getenv('CI', False):
+        pytest.skip('Requires properly configured local google vertex config to pass')
+    provider = GoogleCloudProvider(
+        project=os.getenv('GOOGLE_PROJECT', 'pydantic-ai'),
+        location='global',
+        http_client=request_capture.http_client(timeout=60),
+    )
+    agent = Agent(GoogleModel('gemini-3.7-flash', provider=provider))
+    prompt = [
+        'In one sentence, which animals appear and roughly when?',
+        VideoUrl(
+            url='https://www.youtube.com/watch?v=lCdaVNyHtjU',
+            vendor_metadata={'media_processing': 'AGENTIC'},
+        ),
     ]
 
     if stream:
-
-        async def response_stream() -> AsyncIterator[GenerateContentResponse]:
-            yield GenerateContentResponse.model_validate(
-                {'candidates': [{'content': {'role': 'model', 'parts': parts}}]}
-            )
-
-        streamed = GeminiStreamedResponse(
-            model_request_parameters=ModelRequestParameters(),
-            _model_name='gemini-3.7-flash',
-            _response=_utils.PeekableAsyncStream(response_stream()),
-            _provider_name='google-vertex',
-            _model_id_namespace='google',
-            _provider_url='https://aiplatform.googleapis.com/',
-        )
-        _ = [event async for event in streamed]
-        response_parts = streamed.get().parts
+        async with agent.run_stream(prompt) as result:
+            await result.get_output()
+            messages = result.all_messages()
     else:
-        response_parts = _process_response_from_parts(
-            parts=parts,
-            grounding_metadata=None,
-            model_name='gemini-3.7-flash',
-            provider_name='google-vertex',
-            provider_url='https://aiplatform.googleapis.com/',
-            usage=RequestUsage(),
-            provider_response_id='response-id',
-        ).parts
+        result = await agent.run(prompt)
+        messages = result.all_messages()
 
-    assert response_parts == snapshot(
+    assert request_capture.body()['contents'] == snapshot(
+        [
+            {
+                'parts': [
+                    {'text': 'In one sentence, which animals appear and roughly when?'},
+                    {
+                        'fileData': {
+                            'file_uri': 'https://www.youtube.com/watch?v=lCdaVNyHtjU',
+                            'mime_type': 'video/mp4',
+                        },
+                        'mediaProcessing': 'AGENTIC',
+                    },
+                ],
+                'role': 'user',
+            }
+        ]
+    )
+    assert messages[-1].parts == snapshot(
         [
             TextPart(
-                content='done',
-                provider_name='google-vertex',
-                provider_details={'thought_signature': 'Yw=='},
+                content=IsStr(),
+                provider_name='google-cloud',
+                provider_details={'thought_signature': IsStr()},
             )
         ]
     )
+
+    await agent.run('What happens immediately before the first visible scene change?', message_history=messages)
+    follow_up_contents = request_capture.body(index=1)['contents']
+    assert isinstance(follow_up_contents, list)
+    replayed_model_content = follow_up_contents[-2]
+    assert isinstance(replayed_model_content, dict)
+    replayed_model_parts = replayed_model_content['parts']
+    assert isinstance(replayed_model_parts, list)
+    assert replayed_model_parts == snapshot([{'text': IsStr(), 'thoughtSignature': IsStr()}])
 
 
 def test_media_processing_parts_do_not_suppress_metadata_reconstruction() -> None:

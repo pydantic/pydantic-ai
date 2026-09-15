@@ -1,0 +1,164 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '297'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: In one sentence, which animals appear and roughly when?
+        - fileData:
+            file_uri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+            mime_type: video/mp4
+          mediaProcessing: AGENTIC
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-3.7-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2920'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - thoughtSignature: CAISlQQBjz1rX9iQtYvCCoGBrhU7W9vsz5EHNo+ZwY1452RAnTPqGpvYdpPzZj77Mfb5XjgXc5KbWT1zxPSpD5B3RDU2KYU7qbi4oQe09aRKVjIkxYln8KqaAGO7zMneXb4PZDs9mXQB1Hm+zEfy3Ch/i96J3Cys1zeqEidDppjiixq71ijm0t1jiaAn1Nauk4wY4Y6PnYpugnqfFNDuytT8ZdT0bECPM/vr1dvnt8VarnVN3bmu/BLYlQJZujiXpbHFee4BC5F1Jwdp4oXRJVZ/nuRQRk/Lflb4KrdDvf5yQqYPpAc2Ao8yF+BCvE2iefXS3DrUYQKjNmRbRJETbnj+af9HIxWMQGU/i317YdkqitCJEB+DW1p9pp2hfbXCONBidI9kbiFoOhib3OXMn74YHNVHzXlK7zqYL/84HyPnP35d3Lb1Jo0zIxr9qEsvbHl9mh+/zCJ43okbq6jCYahXlPZTvZcGuabnC0e7Tp692H3su5AD82KYQTPbOM/K2IuEw5b7kZTTzF+sDviyzlq6WMI4W8KnX3Tvb93hBIT8HNFuDTxSgNU6fvZDOzfhKmM/WxvlC8beOkLY3O0FFWTWiNTmS+dx6PiGIexNq7CdMz1/E37NYXbFqevJyndvsehThqmMD17z3en63Fgd/op2CgVij/mZaipICoJIUCUH3D8Z9GbdRKS1/qD+FsuFVgm4Lv06UdxAHg==
+          - thoughtSignature: CAISsQIBjz1rX7DC7h6oYe4jqMzkF4q3diL32vlbzVsXG70RYOz0dIL6aGlQjehBeMTguf90747k8BaOH6Fw7dGL5+HkPDNnWKJ7jeMSyJxYkjSSlXOdWbwqdEhNJwZ//dc5RYn5qkyf4rpfoxVVMGLD182YGEd8vlPlsxzd+6+XOzNTplNQPzy3Q9Hu1Ju+AUXkoesoMZ0x6aydC3LnbvYZ/fQNXKZMp+UUgGwmKyePCos7xrWE3hgNP5gZfheuixShGJ7airoao7EsJQtGK9kfogZfU5HfP2MVwhZIj8N/PM+5mq6JEK23gUKbVCdPInf61CNg7zYQ2ZM2KLYrW3rnl3/xe6IDreNjkDQRLbb5j6lamhDUBnEbcsP04e3Vsm0r/eoaZlcSFAbKpbNInxvII4GfJA==
+          - text: No animals appear in this video, as it is entirely a screen recording of a software development and code
+              editing environment.
+            thoughtSignature: AY89a19ClXz/K97wqr17dEhN/S3KNb2/TRZ6C0EPg93SmBkFup0GlfNerEPjj7Z325jDkvLrxdKgFYmSzU/8Gk2UHQfVvTK3yoSluo1ZsMgAWNmcYNM4rgXRRDNBo4O45gHe0p1bKYca5vxTV1fiXYjBh0yqmA6MVjjp+dlX8OyocaL5XyBuXHWfS4WKWK0Ko0qPKPwthQ6Fk42oLtTRRzr9ZsBBHfvwasDU64uPErAAr5ficrdfT3HkqptmgTcNYXvx7FTkgqPgiPsy1H0nrOHOYNCw3uzvf6Uo5bK+r1dCEgwyXHnguj9/wnv67ZhccGF+fKAUM+2rysU4MRIvvLYB5BTb1Zz2jR0h9o47c05A4hkiksBG1VhjKoNn70LGIsMswOcNjRkCXMXDsgZYT/132LdqkZkYlC2UIpF4dxzk6xhjNOCKnPrXqbqGtRhzkYW0RoEbntdsZIqJXOPgIUiA3HX5KqvndZR0XHEbgor8GqSUhgtMx8FZthdZ90cEpH0R43YgC8BTKvEYAqvP7C8a+ki30BZPYHrUEp3rJm5D8lIZi135WK+R8iclg3JtQdVgqzJadTpQd3sbsAVbk7D8rZsNtuOqzxhaGdCKYb881oVM9VLfYO+s3LnOIUxgHsNbfc7VW8wJLuQuiSDEcfz9kVokZI82WAUSs+dWZC728djxcONimXU7FVFwNbh3E3Q8CJHPvw6mw2fNpwySxO1i1tBk8s4v+7NYVWFgpWvgzaaMrkyctqVK9VfNO14j9SblOrwwJF9V2YjXs1VTAH84hhXHKj7ZcHHUzDcEwcy2DxY4Jl0MWi4Ssu6gLJ+sQl5nxwXTKvak0STQpFZu+GXWIT6Kbi7pEcJ5BDmeR0Xx5G4SWqLd9tL3CnfDwKkJ1UV4nZAKBcyagPtVlva3pRDSMcQ/ygc=
+          role: model
+        finishReason: STOP
+      createTime: '2026-09-15T05:54:47.700211Z'
+      modelVersion: gemini-3.7-flash
+      responseId: p92oarPeKsHzjNAP8rvimAU
+      usageMetadata:
+        candidatesTokenCount: 46
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 46
+        promptTokenCount: 261
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 261
+        thoughtsTokenCount: 183
+        toolUsePromptTokenCount: 2107
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 307
+        - modality: IMAGE
+          tokenCount: 1800
+        totalTokenCount: 2597
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1524'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: In one sentence, which animals appear and roughly when?
+        - fileData:
+            file_uri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+            mime_type: video/mp4
+          mediaProcessing: AGENTIC
+        role: user
+      - parts:
+        - text: No animals appear in this video, as it is entirely a screen recording of a software development and code editing
+            environment.
+          thoughtSignature: AY89a19ClXz_K97wqr17dEhN_S3KNb2_TRZ6C0EPg93SmBkFup0GlfNerEPjj7Z325jDkvLrxdKgFYmSzU_8Gk2UHQfVvTK3yoSluo1ZsMgAWNmcYNM4rgXRRDNBo4O45gHe0p1bKYca5vxTV1fiXYjBh0yqmA6MVjjp-dlX8OyocaL5XyBuXHWfS4WKWK0Ko0qPKPwthQ6Fk42oLtTRRzr9ZsBBHfvwasDU64uPErAAr5ficrdfT3HkqptmgTcNYXvx7FTkgqPgiPsy1H0nrOHOYNCw3uzvf6Uo5bK-r1dCEgwyXHnguj9_wnv67ZhccGF-fKAUM-2rysU4MRIvvLYB5BTb1Zz2jR0h9o47c05A4hkiksBG1VhjKoNn70LGIsMswOcNjRkCXMXDsgZYT_132LdqkZkYlC2UIpF4dxzk6xhjNOCKnPrXqbqGtRhzkYW0RoEbntdsZIqJXOPgIUiA3HX5KqvndZR0XHEbgor8GqSUhgtMx8FZthdZ90cEpH0R43YgC8BTKvEYAqvP7C8a-ki30BZPYHrUEp3rJm5D8lIZi135WK-R8iclg3JtQdVgqzJadTpQd3sbsAVbk7D8rZsNtuOqzxhaGdCKYb881oVM9VLfYO-s3LnOIUxgHsNbfc7VW8wJLuQuiSDEcfz9kVokZI82WAUSs-dWZC728djxcONimXU7FVFwNbh3E3Q8CJHPvw6mw2fNpwySxO1i1tBk8s4v-7NYVWFgpWvgzaaMrkyctqVK9VfNO14j9SblOrwwJF9V2YjXs1VTAH84hhXHKj7ZcHHUzDcEwcy2DxY4Jl0MWi4Ssu6gLJ-sQl5nxwXTKvak0STQpFZu-GXWIT6Kbi7pEcJ5BDmeR0Xx5G4SWqLd9tL3CnfDwKkJ1UV4nZAKBcyagPtVlva3pRDSMcQ_ygc=
+        role: model
+      - parts:
+        - text: What happens immediately before the first visible scene change?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-3.7-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '4046'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - thoughtSignature: CAIS9gMBjz1rX9V1C1TkNWAsTVbSN2pA3JdQ4tuC3bFUJ73UMEoRj1+jRFSZJx21GzjDmfYjBse2Q7f/qpbSXpTilX/CjjbB5OGoTtyryN7wmPrkKiIM2HDItKpTtnOS9HaPMyOaBkHq0NoyDW2t+EZ45IRzo5PBIJJXWC5fwX+3WxIiYzElvy9cAbeSypvJjLS1sk47WvlWeCBPkzfVpRkAcPMiei395iS+RPTNFGGmN3Wce09q40sJWeU5Z4J09YobMnjLTPhfuJg/eeRAAUuo5w38fjcI9IWTnFZ2GdKXAojqDWA1nyIe5xBoIZnT+TJsTCzmOfnA31P+LGDuunnSgk1xnh/JZI1kMwI+t3AcAIr8RGHDbPWMHqqrkBErOKGawkj98rw7JiqQo4n1QzCQiwzx08dA3hhOUeW0XvxaHK1ywaf6sitWDBu8DZLlK/+Rn1BfU5QcM4mH98AKSOuVy91fKRaoeuiQgHwJZgduX+iCeY+V5il90v3B41XlPtBTb0t8F0CgB1+RUT9VEClbvY3Wbz0BxeVuriqhfXTSgY1Pcs+JCJxyEofOeQpaPfjBDr+/bHQidsm+TMOL1rDcPwbNbnFF+EzYxJC/9IQCYvgO5w8yRD3AmZTXx21kOCtMevFbhi+0BliB/tPYZEZgqURLGd4ENeW+
+          - thoughtSignature: CAISvwIBjz1rX6r0BxmY011OA73yhddpo1dhUof1BG6GOQNOSZHLmyrDhtaCo62peB0Ud6BI5A9sjSJSiZTgyvJHcaxq4XOCY/euVRs1c1UMKugTjldtHyxqh5+SH47p66KuuwER3SdjSWO2m6UW35OJIxMI72wJg4ATJNETHhBJJf82OmetwZ1ol2XB52vkzphxPSnaGUPP9+mQ0IB9HbwCuI9zjyvnl2+397DAv/EghJGKOi2lNB8U9PaV0eKcPqpLQ/qIWmlboHwqzgZoEV3RXges1zhfymjuofHi5aHfTwUp15+bh0cgF6KyrD/yYZFj3NDsrXc+bTCwi2JEmjdXZASxgwS4PJdkeUH1MonFPHTMnOEoWwRH4ZlIKb79FgctIjFdASdU6ZzNPVmhNL27Dc1b5NXs6LEIBNOG4QDhM7Z4
+          - text: There are **no visible scene changes or cuts** in the video, as the entire recording is a single continuous
+              shot of a code editor (IDE) and chat interface.
+            thoughtSignature: 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
+          role: model
+        finishReason: STOP
+      createTime: '2026-09-15T05:54:53.674434Z'
+      modelVersion: gemini-3.7-flash
+      responseId: rd2oaoKVKeLKv_gPprWWyA8
+      usageMetadata:
+        candidatesTokenCount: 68
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 68
+        promptTokenCount: 432
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 432
+        thoughtsTokenCount: 398
+        toolUsePromptTokenCount: 3950
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 350
+        - modality: IMAGE
+          tokenCount: 3600
+        totalTokenCount: 4848
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1
