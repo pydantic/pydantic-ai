@@ -206,8 +206,9 @@ request is also what a `per_request_input_tokens_limit` is measured against, sin
 thing in a Live session that spends input tokens.
 
 Session duration has a sharp consequence for [usage limits](observability.md#usage-and-limits): no
-[`UsageLimits`][pydantic_ai.usage.UsageLimits] field caps it, so a token limit bounds the delegated
-backend but never the spoken call itself. Tool-call and request limits still apply. Cap the call with your own timer or by closing the session.
+[`UsageLimits`][pydantic_ai.usage.UsageLimits] field caps it, so token and cost limits bound the
+delegated backend but never the spoken call itself. Tool-call and request limits still apply. Cap
+the call with your own timer or by closing the session.
 
 ## Feature support and limitations
 
