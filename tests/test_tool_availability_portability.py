@@ -1733,8 +1733,8 @@ def test_standing_system_prompt_stays_ahead_of_sorted_tool_returns() -> None:
     ]
 
 
-async def test_responses_output_tool_stays_forceable_alongside_reveal(allow_model_requests: None) -> None:
-    """Output-tool forcing remains independent from a revealed function in `additional_tools`."""
+async def test_responses_output_tool_not_forceable_via_plain_list(allow_model_requests: None) -> None:
+    """A plain-list `tool_choice` names function tools only: the output tool cannot be forced."""
     client = MockOpenAIResponses.create_mock(_empty_responses_message())
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=client))
     revealed = ToolDefinition(name='revealed_tool', description='Revealed.', defer_loading=True)
@@ -1750,15 +1750,10 @@ async def test_responses_output_tool_stays_forceable_alongside_reveal(allow_mode
         ),
     )
 
-    await model.request(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[revealed.name])])], settings, parameters
-    )
-
-    request = get_mock_responses_kwargs(client)[0]
-    assert [tool['name'] for tool in request['tools']] == ['final_result']
-    [additional] = [item for item in request['input'] if item.get('type') == 'additional_tools']
-    assert [tool['name'] for tool in additional['tools']] == ['revealed_tool']
-    assert request['tool_choice'] == {'type': 'function', 'name': 'final_result'}
+    with pytest.raises(UserError, match=r"Invalid tool names in `tool_choice`: \{'final_result'\}"):
+        await model.request(
+            [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[revealed.name])])], settings, parameters
+        )
 
 
 async def test_anthropic_streaming_request_carries_tool_addition(allow_model_requests: None) -> None:

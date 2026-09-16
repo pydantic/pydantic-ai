@@ -6140,6 +6140,82 @@ async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model
         )
 
 
+async def test_list_tool_choice_naming_output_tool_raises(allow_model_requests: None):
+    """A plain-list `tool_choice` names function tools only: naming the output tool raises.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/8376 row 1 — the output tool
+    passed validation because known-tool names merge output tools, so the request would force
+    the model to select it. Only function-tool names are valid here.
+    """
+    c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    mrp = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+        ],
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object', 'properties': {}})],
+        output_mode='tool',
+        allow_text_output=False,
+    )
+
+    settings: ModelSettings = {'tool_choice': ['final_result']}
+    with pytest.raises(
+        UserError,
+        match=re.escape("Invalid tool names in `tool_choice`: {'final_result'}. Known function tools: {'get_weather'}"),
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+            model_settings=settings,
+            model_request_parameters=mrp,
+        )
+
+
+async def test_mixed_list_tool_choice_warns_and_keeps_function_tool_restriction(allow_model_requests: None):
+    """A mixed plain list warns, drops the output-tool name, and keeps the function-tool restriction.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/8376 row 2 — the invalid name
+    used to survive into the returned restriction, and with a single function tool the set then
+    collapsed to bare `'required'`, letting the model select the output tool.
+    """
+    c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    mrp = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+        ],
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object', 'properties': {}})],
+        output_mode='tool',
+        allow_text_output=False,
+    )
+
+    settings: ModelSettings = {'tool_choice': ['get_weather', 'final_result']}
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            "Some tools in `tool_choice` are not currently available and will be ignored: ['final_result']"
+        ),
+    ):
+        await direct_model_request(
+            model,
+            [ModelRequest(parts=[UserPromptPart(content='What is the weather?')])],
+            model_settings=settings,
+            model_request_parameters=mrp,
+        )
+
+    # The restriction survives: `get_weather` is forced — not bare `'required'`, not `final_result`.
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == {
+        'type': 'function',
+        'function': {'name': 'get_weather'},
+    }
+
+
 def test_transformer_adds_properties_to_object_schemas():
     """OpenAI drops object schemas without a 'properties' key. The transformer must add it."""
 

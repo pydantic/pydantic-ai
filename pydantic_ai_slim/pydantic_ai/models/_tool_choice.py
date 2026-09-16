@@ -31,7 +31,9 @@ def resolve_tool_choice(  # noqa: C901
         - `'none'` / `[]`: Disables function tools. If output tools exist, returns them with
             appropriate mode. Otherwise returns `'none'`.
         - `'required'`: Requires function tool use. Raises if no function tools are defined.
-        - `list[str]`: Restricts to specified tools with `'required'` mode. Validates tool names.
+        - `list[str]`: Restricts to the named function tools with `'required'` mode. Output tools
+            are not valid choices here: a list naming only output or unknown tools raises,
+            otherwise invalid names warn and are dropped from the returned restriction.
         - `ToolOrOutput`: Combines specified function tools with all output tools.
             Returns `'auto'` mode if direct output is allowed, otherwise `'required'`.
 
@@ -143,10 +145,16 @@ def resolve_tool_choice(  # noqa: C901
             )
         return 'required'
 
-    # list[str]: required, restricted to these tools
+    # list[str]: required, restricted to these function tools
     elif isinstance(function_tool_choice, list):
         chosen_set = set(function_tool_choice)
-        _check_invalid_tools(chosen_set, known_tool_names, known_label='Known tools')
+        known_function_tool_names = {t.name for t in model_request_parameters.function_tools}
+        # Unlike `ToolOrOutput`, a plain list names function tools only: the framework's output
+        # tools are not a valid choice here.
+        _check_invalid_tools(chosen_set, known_function_tool_names, known_label='Known function tools')
+        # Output-tool names must not survive into the returned restriction (providers could then
+        # select them); unknown names stay, as the dynamic-availability warning intends.
+        chosen_set -= {t.name for t in model_request_parameters.output_tools}
         # A deferred declaration or a tool-addition definition is already on the wire and remains
         # callable; only tools absent from the wire cannot be forced by name.
         chosen_set = _filter_withheld_tools(chosen_set)

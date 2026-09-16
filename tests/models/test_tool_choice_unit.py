@@ -258,13 +258,23 @@ RAISES_CASES = [
         id='list_all_invalid',
         tool_choice=['x', 'y'],
         params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
-        match=r'Invalid tool names in `tool_choice`:.*Known tools:',
+        match=r'Invalid tool names in `tool_choice`:.*Known function tools:',
     ),
     dict(
         id='list_invalid_no_function_tools',
         tool_choice=['x'],
         params_kwargs={'function_tools': [], 'allow_text_output': True},
-        match=r'Invalid tool names.*Known tools: none',
+        match=r'Invalid tool names.*Known function tools: none',
+    ),
+    dict(
+        id='list_output_tool_only',
+        tool_choice=['final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('search')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': False,
+        },
+        match=r"Invalid tool names in `tool_choice`: \{'final_result'\}.*Known function tools: \{'search'\}",
     ),
     dict(
         id='tool_or_output_all_invalid',
@@ -394,9 +404,35 @@ WARNS_CASES = [
         id='list_partial_invalid',
         tool_choice=['a', 'typo'],
         params_kwargs={'function_tools': [make_tool('a'), make_tool('b')], 'allow_text_output': True},
-        match=r"Some tools.*'typo'.*Known tools: \['a', 'b'\]",
+        match=r"Some tools.*'typo'.*Known function tools: \['a', 'b'\]",
         expected_mode='required',
         expected_tools={'a', 'typo'},
+    ),
+    dict(
+        id='list_mixed_output_tool_name_dropped',
+        tool_choice=['search', 'final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('search'), make_tool('other')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': False,
+        },
+        match=r"Some tools.*'final_result'.*Known function tools: \['other', 'search'\]",
+        expected_mode='required',
+        expected_tools={'search'},
+    ),
+    dict(
+        id='list_output_tool_name_dropped_single_function_tool',
+        # The issue's exact repro: one function tool plus the output tool in the list. The invalid
+        # output name must be dropped and the restriction must not collapse to bare `'required'`.
+        tool_choice=['search', 'final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('search')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': False,
+        },
+        match=r"Some tools.*'final_result'.*Known function tools: \['search'\]",
+        expected_mode='required',
+        expected_tools={'search'},
     ),
     dict(
         id='tool_or_output_partial_invalid',
