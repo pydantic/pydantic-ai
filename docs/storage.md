@@ -56,7 +56,7 @@ What lives outside the messages is [`RunUsage`][pydantic_ai.usage.RunUsage]: the
 
 It records more than the messages: an append-only event log of what the agent did at each boundary, continuable snapshots you can resume or fork a conversation from, and a tool-effect ledger that tells you, after a crash, whether a side effect actually happened.
 
-Two related capabilities build on what it stores: [`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) ranks the stored history and gives the model a tool to pull earlier turns back into context, and [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) keeps notes the agent writes for itself, deliberately outliving any single conversation.
+Two related capabilities build on what it stores: [`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) ranks the stored history and gives the model a tool to pull earlier turns back into context, and [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) keeps notes the agent writes for itself, deliberately outliving any single conversation. `Memory` stays its own capability with its own store — a versioned notebook and an append-only run log have little in common — but both take the same database, so storing an agent's notes alongside its messages is one connection and one thing to back up.
 
 ## Letting a provider hold it
 
