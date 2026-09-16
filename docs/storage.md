@@ -14,14 +14,41 @@ The three compose: a durable engine keeps one run alive, `StepPersistence` recor
 
 Pydantic AI is deliberately unopinionated about your database. It gives you a full-fidelity serialization boundary and leaves the schema to you, because teams' choices here vary more than the framework can usefully guess: which table the history hangs off, which tenant column it needs, how long you keep it.
 
-The primitive is [`ModelMessagesTypeAdapter`](message-history.md#storing-and-loading-messages-to-json), which round-trips a message history to JSON and back with no loss — including fields that are never sent to the model. Store the bytes in a `jsonb` column or equivalent; no schema migration is needed when Pydantic AI adds a message part, because a history serialized by an older version still deserializes.
+The primitive is [`ModelMessagesTypeAdapter`](message-history.md#storing-and-loading-messages-to-json), which round-trips a message history to JSON and back — including fields that are never sent to the model, like a part's application-only `metadata`. Because that field is typed `Any`, values with no JSON form are normalized on the way through: a `tuple` reloads as a `list`, a `datetime` as its ISO string. The ["What survives a round-trip"](message-history.md#storing-and-loading-messages-to-json) note covers the edges. Store the bytes in a `jsonb` column or equivalent; no schema migration is needed when Pydantic AI adds a message part, because a history serialized by an older version still deserializes.
 
 To store a finished run rather than just its messages — keeping the output, usage, and conversation ID alongside — put an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] on a Pydantic model of your own and serialize that: see [Storing complete run results](message-history.md#storing-complete-run-results).
 
 [`conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) is the key to store it under, and appending each run's [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] rather than rewriting the whole list keeps each write proportional to the turn. [Persisting sessions](message-history.md#persisting-sessions) walks through the pattern.
 
+### Storing a history a chat UI sent you
+
+A frontend on [Vercel AI](ui/vercel-ai.md) or [AG-UI](ui/ag-ui.md) keeps a message list of its own, and the adapter that serves it converts in both directions without a request in hand: [`load_messages`][pydantic_ai.ui.UIAdapter.load_messages] turns the protocol's messages into [`ModelMessage`][pydantic_ai.messages.ModelMessage]s, and [`dump_messages`][pydantic_ai.ui.UIAdapter.dump_messages] turns them back.
+
+```python {title="storing_ui_history.py"}
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.request_types import TextUIPart, UIMessage
+
+sent_by_the_browser = [
+    UIMessage(id='1', role='user', parts=[TextUIPart(text='Tell me a joke.')])
+]
+
+history = VercelAIAdapter.load_messages(sent_by_the_browser)  # (1)!
+for_the_browser = VercelAIAdapter.dump_messages(history)  # (2)!
+```
+
+1. What the browser sent, as a history an agent can run against — and the shape to store.
+2. What the browser gets back, converted at the edge rather than on the way into the database.
+
+Store the Pydantic AI side and convert at the edge, rather than storing the protocol's shape. The wire formats have no place for everything a history carries — what each one keeps and drops is spelled out under [Vercel AI message metadata](ui/vercel-ai.md#message-metadata) and [AG-UI preserving files across round-trips](ui/ag-ui.md#preserving-files-across-round-trips) — and the fields they drop are the ones the next model request needs.
+
 !!! note "Client-supplied history is not trusted state"
     If the history you load came from a browser, sanitize it before passing it to an agent. See [Loading untrusted history](message-history.md#loading-untrusted-history) and the [trust boundary](message-history.md#trust-boundary-for-client-supplied-history).
+
+### What a history alone doesn't carry
+
+Messages carry more than they look like they do: [`run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) are stamped onto each one, so a conversation reloaded from storage stays correlated in [Logfire](logfire.md) with no bookkeeping of your own, and each run's span reports that run's own token usage either way.
+
+What lives outside the messages is [`RunUsage`][pydantic_ai.usage.RunUsage]: the conversation's running total, including [`tool_calls`][pydantic_ai.usage.RunUsage.tool_calls], which no message records. Store it alongside the history and hand it back with `usage=` when [`UsageLimits`][pydantic_ai.usage.UsageLimits] should budget the whole conversation rather than each run. Carrying it makes each run's span report the conversation's running total rather than that run's share, so sum the per-request `chat` spans, not the agent-run spans, once you do.
 
 ## Not writing that code yourself
 
