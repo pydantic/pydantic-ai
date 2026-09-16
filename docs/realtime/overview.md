@@ -11,7 +11,7 @@ A realtime session uses the same agent [tools](tools.md), [dependencies](../depe
 agent can look up an order, check availability, or act on the logged-in user's data with the same
 tools and dependencies a text agent would use. The call itself becomes ordinary message history
 that you can [hand to `Agent.run()`](history.md#handing-off-to-a-text-agent) for summarization or
-structured follow-up, the same code runs against [four providers](#provider-support), and usage
+structured follow-up, the same code runs against [five providers](#provider-support), and usage
 limits and [Logfire](../logfire.md) tracing are built in. Your application owns the audio transport —
 bridged through your backend, or [browser-direct over WebRTC](deployment.md#browser-webrtc-server-sideband)
 on OpenAI and Azure — while Pydantic AI runs the provider-agnostic agent loop.
@@ -144,6 +144,7 @@ and quirks:
 | Provider | Audio output | Image input | Text output | [Browser WebRTC](deployment.md#browser-webrtc-server-sideband) | Async tool calls | [Thinking](../capabilities/thinking.md) | State-restoring reconnect |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | [OpenAI](openai.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
+| [OpenAI GPT-Live](openai-live.md) | ✓ | ✗ | ✗ | ✗ | ✓ | ✗, set the [backend](openai-openai-live.md#how-delegation-works) effort | ✗, open a new session |
 | [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
 | [Google Gemini](gemini.md) | ✓ | ✓ | ✗ | ✗ | Opt-in, native-audio models | Native-audio and 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✗ | `grok-voice-latest` and `-think-` models | ✓, with a `reconnect` policy |
@@ -198,8 +199,8 @@ models, with one deliberate exception:
 
 !!! note "Asking for text on a speech-only model fails fast"
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`
-    (Gemini Live and xAI) raises a `UserError` before connecting: silently answering with speech
-    would be worse than not starting.
+    (GPT-Live, Gemini Live, and xAI) raises a `UserError` before connecting: silently answering with
+    speech would be worse than not starting.
 
 ## Relationship to standard agent runs
 
@@ -268,3 +269,7 @@ fit for a product, two alternatives sit outside it:
 | Interactive human-in-the-loop tool approval is not supported: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves approvals [from policy, immediately](tools.md#deferred-and-approval-required-tools). | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
 | Realtime [`enqueue()`](tools.md#enqueuing-prompts) accepts text parts and system prompt parts, which are joined into one live-input turn; multimodal content and model responses are unsupported. | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
 | Gemini Live tool results are JSON-only: binary content attached to a [tool return](tools.md#function-tools) raises. | [#7362](https://github.com/pydantic/pydantic-ai/issues/7362) |
+| GPT-Live sends no end-of-turn frame, so `RealtimeTurnCompleteEvent` is inferred from silence rather than read off the wire. | [GPT-Live turn boundary](openai-openai-live.md#the-turn-boundary-is-inferred) |
+| GPT-Live bills audio duration rather than tokens, and no `UsageLimits` field caps a session by duration. | [GPT-Live usage](openai-openai-live.md#usage-is-measured-in-seconds) |
+| GPT-Live has no user-text turn: `send('...')` and `enqueue()` deliver text as context to the speaking model, and only while audio is flowing. | [GPT-Live text input](openai-openai-live.md#text-is-context-not-a-user-turn) |
+| GPT-Live sessions do not reconnect automatically, so a dropped connection ends the session and the `reconnect` policy is ignored. | [GPT-Live feature support](openai-openai-live.md#feature-support-and-limitations) |

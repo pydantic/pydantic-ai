@@ -11,6 +11,7 @@ only the normalized event, message, part, usage, and profile contracts users can
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import anyio
@@ -41,6 +42,7 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.azure import AzureRealtimeModel
     from pydantic_ai.realtime.google import GoogleRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+    from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
     from pydantic_ai.realtime.xai import XaiRealtimeModel
 
 pytestmark = [
@@ -48,8 +50,8 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
 
-_Route = Literal['openai', 'azure', 'xai', 'google', 'gateway-openai', 'gateway-google']
-_ModelKind = Literal['openai', 'azure', 'xai', 'google']
+_Route = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'gateway-openai', 'gateway-google']
+_ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'google']
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,19 @@ class RealtimeParityCase:
     supports_native_tools: bool
     supports_text_output: bool = True
     audio_input_sample_rate: int = 24000
+    drives_turns_with_text: bool = True
+    """Whether a text turn on its own can drive a whole exchange.
+
+    GPT-Live has no user-message event: text reaches it as context placed on an audio timeline that
+    only advances while audio flows, so text alone cannot start a turn. It runs the spoken scenario
+    instead of the text one.
+    """
+    synthesizes_turn_boundary: bool = False
+    """Whether the adapter infers the end of a turn rather than reading it off the wire.
+
+    Where it does, the spoken scenario keeps a silent microphone running so the clock can run out,
+    the way a real call would.
+    """
 
 
 # Adding a supported model generation is one row. Gateway routes intentionally have their own rows:
@@ -91,6 +106,19 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_native_tools=False,
+    ),
+    RealtimeParityCase(
+        id='openai-live',
+        model_kind='openai-live',
+        model_name='gpt-live-1',
+        route='openai-live',
+        supports_image_input=False,
+        supports_manual_turn_control=False,
+        supports_interruption=False,
+        supports_native_tools=False,
+        supports_text_output=False,
+        drives_turns_with_text=False,
+        synthesizes_turn_boundary=True,
     ),
     RealtimeParityCase(
         id='azure-current',
@@ -172,7 +200,32 @@ REALTIME_PARITY_CASES = [
     ),
 ]
 
+# A real microphone never stops. Server VAD only needs a beat of silence to hear the end of speech,
+# and giving it much more makes it open further (empty) user turns. A model whose turn boundary is
+# inferred instead needs the timeline to keep running long enough for the whole reply to arrive.
+_TRAILING_SILENCE_FRAMES = 10
+_INFERRED_BOUNDARY_SILENCE_FRAMES = 120
+
 _CASES = [pytest.param((case, case.route), id=case.id) for case in REALTIME_PARITY_CASES]
+_TEXT_CASES = [
+    pytest.param((case, case.route), id=case.id) for case in REALTIME_PARITY_CASES if case.drives_turns_with_text
+]
+
+# Our Azure realtime resource answers 401, so the spoken scenario could not be recorded for it. The
+# row is skipped rather than dropped, so the hole stays visible: record it (and delete this mark)
+# once the Azure key works again. Azure's text scenario still runs from its existing recording.
+_AUDIO_CASES = [
+    pytest.param(
+        (case, case.route),
+        id=case.id,
+        marks=(
+            pytest.mark.skip(reason='Azure realtime credentials return 401; cassette cannot be recorded')
+            if case.route == 'azure'
+            else ()
+        ),
+    )
+    for case in REALTIME_PARITY_CASES
+]
 
 
 def _model(
@@ -187,6 +240,11 @@ def _model(
     settings = (
         OpenAIRealtimeModelSettings(output_modality='text') if text_output and case.supports_text_output else None
     )
+    if case.model_kind == 'openai-live':
+        # Live never produces text, so it never takes the `text_output` branch above.
+        return OpenAILiveModel(
+            case.model_name, provider=provider, settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=1000)
+        )
     if case.model_kind == 'openai':
         return OpenAIRealtimeModel(case.model_name, provider=provider, settings=settings)
     if case.model_kind == 'azure':
@@ -220,7 +278,7 @@ async def _collect_complete_turn(session: Any, *, after_tool_result: bool = Fals
     return events
 
 
-@pytest.mark.parametrize('parity_ws_cassette', _CASES, indirect=True)
+@pytest.mark.parametrize('parity_ws_cassette', _TEXT_CASES, indirect=True)
 async def test_text_tool_round_parity(
     parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
 ) -> None:
@@ -271,11 +329,15 @@ async def test_text_tool_round_parity(
     assert session.usage.output_tokens >= 0
 
 
-@pytest.mark.parametrize('parity_ws_cassette', _CASES, indirect=True)
+@pytest.mark.parametrize('parity_ws_cassette', _TEXT_CASES, indirect=True)
 async def test_history_seeding_parity(
     parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
 ) -> None:
-    """Seeded user/assistant text precedes the live turn and affects every provider's answer."""
+    """Seeded user/assistant text precedes the live turn and affects every provider's answer.
+
+    Driven by a text turn, so it covers the same routes the text tool round does. GPT-Live seeds
+    history too, but has to be asked out loud; `test_openai_live_ws.py::test_history_seeding` covers it.
+    """
     case, provider, _ = parity_ws_cassette
     model = _model(case, provider, text_output=True)
     history = [
@@ -299,3 +361,61 @@ async def test_history_seeding_parity(
     answer = part.transcript if isinstance(part, SpeechPart) else part.content
     assert answer is not None
     assert 'alice' in answer.lower() and 'teal' in answer.lower()
+
+
+@pytest.mark.parametrize('parity_ws_cassette', _AUDIO_CASES, indirect=True)
+async def test_audio_tool_round_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """A spoken turn executes a local tool and records the same normalized four-message round.
+
+    The text scenario is the portable one for every provider that takes a user text turn. This is the
+    portable scenario for *voice*, which is the whole point of the surface, and it is the only one a
+    model like GPT-Live can run at all. Both must produce the same history.
+    """
+    case, provider, _ = parity_ws_cassette
+    model = _model(case, provider)
+    profile = model.profile
+    assert profile.get('synthesizes_turn_boundary', False) is case.synthesizes_turn_boundary
+    rate = profile.get('audio_input_sample_rate', 24000)
+    assert rate == case.audio_input_sample_rate
+
+    agent = Agent(instructions='Always call get_weather for a weather question, then answer in one short sentence.')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f'It is foggy and 12 degrees in {city}.'
+
+    pcm = assets_path.joinpath(f'weather_question_{rate // 1000}khz.pcm').read_bytes()
+    frame = rate // 10 * 2  # 100 ms of 16-bit mono audio
+    async with agent.realtime(model).session() as session:
+        for start in range(0, len(pcm), frame):
+            await session.send_audio(pcm[start : start + frame])
+        silence_frames = (
+            _INFERRED_BOUNDARY_SILENCE_FRAMES if case.synthesizes_turn_boundary else _TRAILING_SILENCE_FRAMES
+        )
+        for _ in range(silence_frames):
+            await session.send_audio(b'\x00' * frame)
+        events = await _collect_complete_turn(session, after_tool_result=True)
+
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
+    assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
+
+    messages = session.all_messages()
+    # Unlike a text turn, a spoken one is segmented by the provider's own voice-activity detection, so
+    # how many user turns a single utterance becomes is a provider (and pause) detail, not a contract.
+    # What every provider must agree on is the round itself: the user spoke, a tool ran on the result,
+    # and the model answered.
+    assert isinstance(messages[0], ModelRequest)
+    assert any(isinstance(part, SpeechPart) and part.speaker == 'user' for part in messages[0].parts)
+    tool_calls = [part for message in messages for part in message.parts if isinstance(part, ToolCallPart)]
+    tool_returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    assert len(tool_calls) == 1
+    assert len(tool_returns) == 1 and tool_returns[0].tool_name == 'get_weather'
+    # The answer comes after the tool result, and carries content.
+    final = messages[-1]
+    assert isinstance(final, ModelResponse) and final.parts
+    assert isinstance(messages[-2], ModelRequest)
+    assert isinstance(messages[-2].parts[0], ToolReturnPart)

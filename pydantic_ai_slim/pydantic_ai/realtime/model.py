@@ -358,6 +358,7 @@ class RealtimeModel(AbstractModel):
 KnownRealtimeModelName = TypeAliasType(
     'KnownRealtimeModelName',
     Literal[
+        'openai:gpt-live-1',
         'openai:gpt-realtime',
         'openai:gpt-realtime-2.1',
         'openai:gpt-realtime-2.1-mini',
@@ -420,6 +421,17 @@ def infer_realtime_model(
             )
 
     if model_kind == 'openai':
+        # OpenAI serves two different voice protocols behind one provider: `gpt-live-*` speaks
+        # GPT-Live (`/live/sessions`), everything else the Realtime API (`/realtime`). The prefix
+        # can't tell them apart, so the model name picks — the only place in this function where
+        # routing looks past the provider.
+        from ..profiles.openai import is_openai_live_model
+
+        if is_openai_live_model(model_name):
+            from .openai_live import OpenAILiveModel
+
+            return OpenAILiveModel(model_name, provider=resolved_provider)
+
         from .openai import OpenAIRealtimeModel
 
         return OpenAIRealtimeModel(model_name, provider=resolved_provider)

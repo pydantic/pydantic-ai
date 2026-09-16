@@ -43,7 +43,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini', 'xai']
+ProviderName = Literal['openai', 'gemini', 'xai', 'openai_live']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -56,7 +56,11 @@ _CLIENT_ID_RE = re.compile(r'^[0-9a-f]{24}$')
 _MAX_AUDIO_BYTES = 32
 
 # OpenAI names its output-audio delta event differently on the GA vs beta surfaces.
-_OPENAI_AUDIO_DELTA_TYPES = frozenset({'response.output_audio.delta', 'response.audio.delta'})
+_OPENAI_AUDIO_DELTA_TYPES = frozenset(
+    {'response.output_audio.delta', 'response.audio.delta', 'session.output_audio.delta'}
+)
+# GPT-Live's outbound audio event, the counterpart of OpenAI Realtime's `input_audio_buffer.append`.
+_AUDIO_APPEND_TYPES = frozenset({'input_audio_buffer.append', 'session.input_audio.append'})
 
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
 # keys travel in connection headers / the URL, not in frames, but a provider could echo one back.
@@ -209,9 +213,10 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
     """Shrink audio payloads in place-ish, returning a frame safe to store in a cassette.
 
     Handles the OpenAI inbound shape (`{'type': 'response.output_audio.delta', 'delta': <b64>}`), the
-    OpenAI outbound shape (`{'type': 'input_audio_buffer.append', 'audio': <b64>}`), and the Gemini
-    shape (`inlineData.data`, used in both directions). Transcript deltas (also keyed `delta` on
-    OpenAI, but on non-audio event types) are left untouched.
+    OpenAI outbound shape (`{'type': 'input_audio_buffer.append', 'audio': <b64>}`), their GPT-Live
+    counterparts (`session.output_audio.delta` / `session.input_audio.append`), and the Gemini shape
+    (`inlineData.data`, used in both directions). Transcript deltas (also keyed `delta` on OpenAI, but
+    on non-audio event types) are left untouched.
 
     Outbound audio matters as much as inbound: a test that streams a microphone for several turns
     sends megabytes of PCM, and a cassette is a file in git that a human is meant to be able to read.
@@ -220,7 +225,7 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
     """
     if frame.get('type') in _OPENAI_AUDIO_DELTA_TYPES and isinstance(frame.get('delta'), str):
         return {**frame, 'delta': _truncate_b64_audio(frame['delta'])}
-    if frame.get('type') == 'input_audio_buffer.append' and isinstance(frame.get('audio'), str):
+    if frame.get('type') in _AUDIO_APPEND_TYPES and isinstance(frame.get('audio'), str):
         return {**frame, 'audio': _truncate_b64_audio(frame['audio'])}
 
     def _walk(value: Any) -> Any:
@@ -416,6 +421,12 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import openai as rt_openai
 
         return rt_openai.websockets, 'connect'
+    if provider == 'openai_live':
+        # GPT-Live is a separate protocol from the Realtime API, but it dials with the same
+        # `websockets` library, so the raw-frame engine serves it too.
+        from pydantic_ai.realtime import openai_live as rt_openai_live
+
+        return rt_openai_live.websockets, 'connect'
     if provider == 'xai':
         # xAI clones the OpenAI Realtime protocol and connects with the `websockets` library directly,
         # so the same raw-frame engine serves it (patched at its own module reference).

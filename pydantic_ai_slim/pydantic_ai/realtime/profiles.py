@@ -102,6 +102,19 @@ class RealtimeModelProfile(TypedDict, total=False):
     operation the session can invoke. The OpenAI-protocol providers (OpenAI, Azure OpenAI, xAI) emit
     them; Gemini Live does not — a UI that shows a "listening" indicator should read this flag rather
     than wait for events that will never arrive."""
+    synthesizes_turn_boundary: bool
+    """Whether [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] is inferred
+    by Pydantic AI rather than reported by the provider.
+
+    `synthesizes_` rather than `supports_` for the same reason as
+    [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]:
+    it describes how a stream is produced, not an operation the session can invoke.
+
+    `False` (the default) means the provider sends an explicit end-of-response frame, so the turn
+    boundary is a protocol fact. `True` means the protocol has no such frame and the adapter derives
+    the boundary from output timing, so it is a good guess rather than a guarantee: a long pause
+    mid-sentence can end a turn early, and an application that must not act on a partial reply should
+    confirm against the transcript. OpenAI GPT-Live is the only model that sets it."""
     audio_input_sample_rate: int
     """The sample rate, in Hz, expected for raw PCM audio input.
 
@@ -140,6 +153,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,
+    'synthesizes_turn_boundary': False,
     'audio_input_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'audio_output_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'context_window': None,
