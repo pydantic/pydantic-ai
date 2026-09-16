@@ -32,6 +32,7 @@ __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+_MAX_TITLE_LENGTH = 1_000
 
 
 class WebFetchResult(TypedDict):
@@ -152,7 +153,9 @@ def _convert_html(html: str) -> tuple[str, str]:
     backend `markdownify` uses when handed a string.
     """
     soup = BeautifulSoup(html, 'html.parser')
-    title = soup.title.get_text().strip() if soup.title is not None else ''
+    # An unclosed `<title>` swallows the rest of the document as its text, so bound the title
+    # separately from `max_content_length`, which only applies to the content.
+    title = soup.title.get_text().strip()[:_MAX_TITLE_LENGTH] if soup.title is not None else ''
     content = MarkdownConverter(strip=['img', 'script', 'style']).convert_soup(soup)
     return title, content
 

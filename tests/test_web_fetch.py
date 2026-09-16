@@ -589,7 +589,7 @@ class TestWebFetchLocalTool:
         assert executor.submitted[0].result()[0] == 'Threaded'
 
     async def test_fetch_html_repeated_unclosed_title_tags(self):
-        """A body made of `<title` fragments with no closing `>` converts in linear time.
+        """A body made of `<title` fragments with no closing `>` converts in seconds, not minutes.
 
         Each fragment is a candidate title start with no end in reach, which previously made title
         extraction quadratic in the body size: a body of this size took minutes, during which the
@@ -611,6 +611,21 @@ class TestWebFetchLocalTool:
         assert result['title'] == ''
         assert result['content'] == ''
         assert elapsed < 10
+
+    async def test_fetch_html_unclosed_title_is_bounded(self):
+        """An unclosed `<title>` takes the rest of the document as its text, so the title is capped."""
+        html = '<title>' + 'x' * 5_000
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == 'x' * 1_000
 
     async def test_fetch_html_nested_too_deeply_raises_model_retry(self):
         """A page nested deeper than the recursion limit can't be converted, so the model is told to move on."""
