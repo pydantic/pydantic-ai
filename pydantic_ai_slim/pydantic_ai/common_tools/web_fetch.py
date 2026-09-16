@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 
 import httpx
@@ -20,7 +21,9 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
 
 try:
-    from markdownify import markdownify as md
+    from bs4 import BeautifulSoup, Tag
+    from bs4.element import NavigableString
+    from markdownify import MarkdownConverter
 except ImportError as _import_error:
     raise ImportError(
         'Please install `markdownify` to use the web fetch tool, '
@@ -30,6 +33,10 @@ except ImportError as _import_error:
 __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
+_WHITESPACE_RUN_RE = re.compile(r'[\t \r\n]+')
+_LINE_WITH_CONTENT_RE = re.compile(r'^(.*)', flags=re.MULTILINE)
+# `markdownify`'s stub doesn't declare its per-tag `convert_<tag>` methods, which it looks up by name.
+_upstream_convert_li: Callable[[MarkdownConverter, Tag, str, set[str]], str] = getattr(MarkdownConverter, 'convert_li')
 _TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
 _TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
@@ -111,7 +118,12 @@ class WebFetchLocalTool:
         title = ''
 
         if not media_type or is_text_like_media_type(media_type):
-            text = response.text
+            try:
+                text = response.text
+            except (UnicodeError, LookupError) as e:
+                # The server picks the charset, and not every registered codec can decode a
+                # document (`idna`, say), so don't let a bad label take the run down.
+                raise ModelRetry(f'Failed to decode {url}: {e}') from e
 
             if media_type in ('text/markdown', 'text/x-markdown'):
                 content = text
@@ -128,7 +140,8 @@ class WebFetchLocalTool:
                 try:
                     parsed = json.loads(text)
                     content = f'```json\n{json.dumps(parsed, indent=2)}\n```'
-                except (json.JSONDecodeError, ValueError):
+                except (json.JSONDecodeError, ValueError, RecursionError):
+                    # Malformed, or nested deeper than the parser can follow: pass the text through.
                     content = text
             else:
                 content = text
@@ -145,7 +158,88 @@ class WebFetchLocalTool:
 
 def _convert_html(html: str) -> tuple[str, str]:
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
-    return _extract_title(html), md(html, strip=['img', 'script', 'style'])
+    soup = BeautifulSoup(html, 'html.parser')
+    return _extract_title(html), _MarkdownConverter(strip=['img', 'script', 'style']).convert_soup(soup)
+
+
+class _MarkdownConverter(MarkdownConverter):
+    r"""`markdownify`'s converter with linear-time replacements for its super-linear steps.
+
+    Three of its steps take time quadratic in a run of server-controlled input, and the regex
+    ones hold the GIL while they run, so a worker thread doesn't shield the event loop from them:
+
+    - text outside `<pre>` is normalized with `[\t \r\n]*[\r\n][\t \r\n]*`, which restarts at
+      every character of a long run of spaces that has no newline;
+    - `<pre>` blocks are stripped with `[ \n]*$`, which does the same on a run of spaces that
+      isn't at the very end;
+    - each `<li>` in an `<ol>` is numbered by counting all of its previous siblings.
+
+    Each override produces exactly what the upstream step produces.
+    """
+
+    def convert_soup(self, soup: BeautifulSoup) -> str:
+        # Collapse whitespace runs in text outside `<pre>` ahead of time, the way `process_text`
+        # would, so its regexes only ever see runs of one character.
+        for node in soup.find_all(string=True):
+            if type(node) is NavigableString and node.find_parent('pre') is None:
+                node.replace_with(NavigableString(_WHITESPACE_RUN_RE.sub(_collapse_whitespace_run, node)))
+        self._ol_indexes: dict[int, int] = {}
+        for ol in soup.find_all('ol'):
+            index = 0
+            for child in ol.children:
+                if isinstance(child, Tag) and child.name == 'li':
+                    self._ol_indexes[id(child)] = index
+                    index += 1
+        return super().convert_soup(soup)
+
+    def convert_pre(self, el: Tag, text: str, parent_tags: set[str]) -> str:
+        # Mirrors upstream with its default `strip_pre='strip'` applied linearly. The stub doesn't
+        # declare `options`, which upstream sets from its `DefaultOptions` and the constructor.
+        if not text:
+            return ''
+        options: dict[str, Any] = getattr(self, 'options')
+        code_language = options['code_language']
+        if callback := options['code_language_callback']:
+            code_language = callback(el) or code_language
+        return f'\n\n```{code_language}\n{_strip_pre(text)}\n```\n\n'
+
+    def convert_li(self, el: Tag, text: str, parent_tags: set[str]) -> str:
+        parent = el.parent
+        if parent is None or parent.name != 'ol':
+            return _upstream_convert_li(self, el, text, parent_tags)
+        # The rest mirrors upstream's ordered-list branch, with the sibling count replaced by
+        # the index recorded in `convert_soup`.
+        text = (text or '').strip()
+        if not text:
+            return '\n'
+        start_attr = parent.get('start')
+        start = int(start_attr) if isinstance(start_attr, str) and start_attr.isnumeric() else 1
+        bullet = f'{start + self._ol_indexes.get(id(el), 0)}. '
+        bullet_indent = ' ' * len(bullet)
+
+        def indent_line(match: re.Match[str]) -> str:
+            line = match.group(1)
+            return bullet_indent + line if line else ''
+
+        text = _LINE_WITH_CONTENT_RE.sub(indent_line, text)
+        return f'{bullet}{text[len(bullet) :]}\n'
+
+
+def _collapse_whitespace_run(match: re.Match[str]) -> str:
+    run = match.group()
+    return '\n' if '\n' in run or '\r' in run else ' '
+
+
+def _strip_pre(text: str) -> str:
+    r"""Strip all leading and trailing newlines from a `<pre>` string, like `markdownify.strip_pre`.
+
+    Upstream removes `^[ \n]*\n` and `[ \n]*$`; this walks each end once instead.
+    """
+    leading = len(text) - len(text.lstrip(' \n'))
+    last_newline = text.rfind('\n', 0, leading)
+    if last_newline != -1:
+        text = text[last_newline + 1 :]
+    return text.rstrip(' \n')
 
 
 def _extract_title(html: str) -> str:

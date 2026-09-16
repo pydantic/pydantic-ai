@@ -10,10 +10,12 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from markdownify import markdownify
 
 from pydantic_ai._utils import using_thread_executor
 from pydantic_ai.common_tools.web_fetch import (
     WebFetchLocalTool,
+    _convert_html,  # pyright: ignore[reportPrivateUsage]
     web_fetch_tool,
 )
 from pydantic_ai.exceptions import ModelRetry
@@ -653,6 +655,87 @@ class TestWebFetchLocalTool:
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
             with pytest.raises(ModelRetry, match='nested too deeply'):
                 await tool('https://example.com')
+
+    @pytest.mark.parametrize(
+        'html',
+        [
+            pytest.param('<title>Bad label</title><p>Content</p>', id='idna'),
+        ],
+    )
+    async def test_undecodable_charset_raises_model_retry(self, html: str):
+        """A charset the server picks that can't decode a document is reported as a failed fetch."""
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html, content_type='text/html; charset=idna'),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(ModelRetry, match='Failed to decode'):
+                await tool('https://example.com')
+
+    async def test_fetch_json_nested_too_deeply_passes_text_through(self):
+        """JSON nested deeper than the parser can follow is returned as-is rather than aborting the run."""
+        text = '[' * 100_000 + ']' * 100_000
+        response = httpx2.Response(
+            200, text=text, headers={'content-type': 'application/json'}, request=httpx2.Request('GET', 'https://e.com')
+        )
+
+        with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=response):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['content'] == text
+
+
+_CONVERTER_PARITY_CASES = [
+    pytest.param(
+        '<h1>Title</h1>\n<p>Some   text\twith  \n\n  mixed \r\n whitespace &amp; <b>bold</b> <code> x  y </code></p>',
+        id='whitespace',
+    ),
+    pytest.param(
+        '<ol start="3"><li>three</li><li>four\nsecond line</li><li></li><li><p>five</p><ul><li>a</li><li>b</li></ul></li></ol>'
+        '<ul><li>one</li><li><ol><li>nested</li><li>again</li></ol></li></ul>',
+        id='lists',
+    ),
+    pytest.param(
+        '<pre>\n\n  code\n    more\n\n</pre><pre>   \n x \n   </pre><pre>x  </pre><pre>  x</pre><pre>\n</pre><pre></pre>'
+        '<pre><code class="language-py">print( 1 )\n\n</code></pre>',
+        id='pre',
+    ),
+    pytest.param(
+        '<div><p>a</p>   <p> b </p></div><table><tr><th>h</th></tr><tr><td> c  d </td></tr></table>'
+        '<blockquote>\n q\n</blockquote><a href="/x">  link  </a><!-- comment  with   spaces -->',
+        id='blocks',
+    ),
+]
+
+
+class TestMarkdownConverter:
+    @pytest.mark.parametrize('html', _CONVERTER_PARITY_CASES)
+    def test_matches_upstream(self, html: str):
+        """The linear-time replacements produce exactly what `markdownify`'s own steps produce."""
+        _, content = _convert_html(html)
+        assert content == markdownify(html, strip=['img', 'script', 'style'])
+
+    @pytest.mark.parametrize(
+        'html',
+        [
+            pytest.param('<p>x' + ' ' * 300_000 + 'x</p>', id='spaces-in-paragraph'),
+            pytest.param('<pre>' + ' ' * 300_000 + 'x</pre>', id='spaces-in-pre'),
+            pytest.param('<ol>' + '<li>x</li>' * 100_000 + '</ol>', id='long-ordered-list'),
+        ],
+    )
+    def test_converts_pathological_runs_quickly(self, html: str):
+        """Whitespace runs, `<pre>` padding, and ordered lists convert in linear time.
+
+        `markdownify` on its own takes minutes on each of these: a run of spaces restarts its
+        whitespace regexes at every character, and each `<li>` recounts its previous siblings.
+        The bound is generous; the point is that it isn't minutes.
+        """
+        start = time.perf_counter()
+        _convert_html(html)
+        assert time.perf_counter() - start < 10
 
 
 class TestWebFetchToolFactory:
