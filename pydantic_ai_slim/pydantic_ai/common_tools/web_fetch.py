@@ -143,8 +143,7 @@ class WebFetchLocalTool:
                 try:
                     parsed = json.loads(text)
                     content = f'```json\n{json.dumps(parsed, indent=2)}\n```'
-                except (json.JSONDecodeError, ValueError, RecursionError):
-                    # Malformed, or nested deeper than the parser can follow: pass the text through.
+                except (json.JSONDecodeError, ValueError):
                     content = text
             else:
                 content = text
