@@ -335,6 +335,37 @@ def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> Non
     assert resolve_tool_choice({'tool_choice': ['visible', 'hidden']}, params) == ('required', {'visible'})
 
 
+def test_resolve_tool_choice_list_drops_output_tool_names_instead_of_allowing_them() -> None:
+    """An output tool named in a list must not survive into the resolved set.
+
+    Warning about it is not enough: the set is what the provider is told it may call, so leaving
+    the name in lets the model satisfy a function-only choice with the output tool. Both shapes
+    are covered -- one where the chosen names would otherwise equal every known tool and collapse
+    to a bare `'required'`, and one where they would be sent as an explicit set.
+    """
+    collapsing = ModelRequestParameters(
+        function_tools=[make_tool('approve')],
+        output_tools=[make_tool('final_result')],
+        allow_text_output=True,
+    )
+    with pytest.warns(UserWarning, match='final_result'):
+        assert resolve_tool_choice({'tool_choice': ['approve', 'final_result']}, collapsing) == (
+            'required',
+            {'approve'},
+        )
+
+    explicit = ModelRequestParameters(
+        function_tools=[make_tool('approve'), make_tool('validate')],
+        output_tools=[make_tool('final_result')],
+        allow_text_output=True,
+    )
+    with pytest.warns(UserWarning, match='final_result'):
+        assert resolve_tool_choice({'tool_choice': ['approve', 'final_result']}, explicit) == (
+            'required',
+            {'approve'},
+        )
+
+
 def test_resolve_tool_choice_list_covering_all_function_tools_keeps_names_when_output_tools_exist() -> None:
     """Dropping the name list is only safe when nothing else is on the wire.
 
@@ -437,8 +468,9 @@ WARNS_CASES = [
     ),
     dict(
         id='list_function_tool_plus_output_tool_name',
-        # An output tool name mixed into a list is not a valid function tool: warn and keep the
-        # restriction, rather than counting it as known and silently widening the choice.
+        # An output tool name mixed into a list is not a valid function tool: warn, and drop it
+        # from the resolved set. Leaving it in would send it as an allowed tool, letting the model
+        # satisfy a function-only choice by calling the output tool instead.
         tool_choice=['a', 'final_result'],
         params_kwargs={
             'function_tools': [make_tool('a'), make_tool('b')],
@@ -447,7 +479,7 @@ WARNS_CASES = [
         },
         match=r"Some tools.*'final_result'",
         expected_mode='required',
-        expected_tools={'a', 'final_result'},
+        expected_tools={'a'},
     ),
     dict(
         id='tool_or_output_partial_invalid',

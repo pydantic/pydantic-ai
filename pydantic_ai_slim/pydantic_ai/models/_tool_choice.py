@@ -152,13 +152,21 @@ def resolve_tool_choice(  # noqa: C901
         # not actually make available.
         known_function_tool_names = {t.name for t in model_request_parameters.function_tools}
         _check_invalid_tools(chosen_set, known_function_tool_names, known_label='Known tools')
+        # Warning about an output tool name is not enough: left in `chosen_set` it would still be
+        # sent as an allowed tool, so a function-only choice could be satisfied by calling the
+        # output tool. Drop names known to be output tools; names that are unknown altogether stay,
+        # since those are the dynamic-availability case `_check_invalid_tools` deliberately allows.
+        # A list naming *only* output tools cannot reach here -- an output tool is never a function
+        # tool, so `_check_invalid_tools` has already rejected it as entirely invalid.
+        chosen_set = chosen_set - {t.name for t in model_request_parameters.output_tools}
         # A deferred declaration or a tool-addition definition is already on the wire and remains
         # callable; only tools absent from the wire cannot be forced by name.
         chosen_set = _filter_withheld_tools(chosen_set)
 
         # Dropping the name list is only equivalent to keeping it when nothing else is on the wire.
-        # With output tools present, a bare `'required'` would also let the model satisfy the call
-        # with an output tool -- the opposite of what a function-only choice asked for.
+        # With output tools present a bare `'required'` would also let the model satisfy the call
+        # with an output tool -- the opposite of what a function-only choice asked for -- so the
+        # explicit set is preserved in that case.
         if chosen_set == known_tool_names:
             return 'required'
 
