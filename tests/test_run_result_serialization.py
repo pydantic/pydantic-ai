@@ -284,6 +284,31 @@ def test_streamed_result_hands_back_a_run_result_it_already_holds() -> None:
     assert streamed.result is held
 
 
+def test_serialization_honors_the_callers_filters() -> None:
+    """`include`/`exclude` name the public keys, which the serializer synthesizes rather than owns."""
+    result = Agent(TestModel(custom_output_text='filtered')).run_sync('Filter this')
+    adapter = TypeAdapter(AgentRunResult[str])
+
+    assert 'output' not in adapter.dump_python(result, exclude={'output'})
+    assert 'messages' not in adapter.dump_python(result, exclude={'messages'})
+    assert set(adapter.dump_python(result, include={'output', 'usage'})) == {'output', 'usage'}
+    assert 'messages' not in StringResultEnvelope(result=result).model_dump(exclude={'result': {'messages'}})['result']
+
+    # A spec reaching into a key rather than dropping it whole is Pydantic's to apply.
+    assert 'messages' in adapter.dump_python(result, exclude={'messages': {0}})
+    assert 'messages' not in adapter.dump_python(result, exclude={'messages': True})
+
+
+def test_a_filtered_out_output_is_left_out_rather_than_failing_the_dump() -> None:
+    """The wrap handler drops `output` when the caller filters it, and the serializer follows."""
+    adapter = TypeAdapter(AgentRunResult[Any])
+    result = AgentRunResult[Any](output=None)
+
+    assert 'output' not in adapter.dump_python(result, exclude_none=True)
+    assert b'"output"' not in adapter.dump_json(result, exclude_none=True)
+    assert adapter.dump_python(result)['output'] is None
+
+
 def test_validator_leaves_non_mapping_input_to_the_dataclass_schema() -> None:
     with pytest.raises(ValidationError):
         TypeAdapter(AgentRunResult[str]).validate_python(['not', 'a', 'mapping'])
