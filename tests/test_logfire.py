@@ -12,7 +12,13 @@ from typing_extensions import NotRequired, Self, TypedDict
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelHTTPError,
+    ModelRetry,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -4244,3 +4250,46 @@ def test_run_span_leaves_base_exceptions_unrecorded(capfire: CaptureLogfire) -> 
     assert [
         span['name'] for span in spans for event in span.get('events', []) if event['name'] == 'exception'
     ] == snapshot(['running tool'])
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_model_request_exception_events_honor_include_content(capfire: CaptureLogfire, include_content: bool) -> None:
+    """The model request span follows the same rule as the tool and agent run spans.
+
+    A provider error carries the response body in its message -- providers echo request content
+    into those, moderation and invalid-content responses in particular -- so the exception event
+    and the status description on the `chat` span have to follow the setting like the rest.
+    """
+
+    def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=400, model_name='fn', body='invalid content: prompt-secret')
+
+    agent = Agent(
+        FunctionModel(fail),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content))],
+    )
+
+    with pytest.raises(ModelHTTPError):
+        agent.run_sync('Hello')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    events = [
+        (span['name'], event['attributes'])
+        for span in spans
+        for event in span.get('events', [])
+        if event['name'] == 'exception'
+    ]
+    assert [(name, attributes['exception.type'], attributes['exception.escaped']) for name, attributes in events] == [
+        ('chat function:fail:', 'pydantic_ai.exceptions.ModelHTTPError', 'False'),
+        ('agent run', 'pydantic_ai.exceptions.ModelHTTPError', 'False'),
+    ]
+    descriptions = [span.status.description for span in capfire.exporter.exported_spans if span.status.description]
+    if include_content:
+        assert all({'exception.message', 'exception.stacktrace'} <= set(attributes) for _, attributes in events)
+        assert 'secret' in events[0][1]['exception.message']
+        assert descriptions == [IsStr(regex=r'\w+: [\s\S]+')] * 2
+    else:
+        assert all(set(attributes) == {'exception.type', 'exception.escaped'} for _, attributes in events)
+        assert 'secret' not in str(spans)
+        assert descriptions == []

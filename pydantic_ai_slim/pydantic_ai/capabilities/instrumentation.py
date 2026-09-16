@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
-from opentelemetry.trace import Span, Status, StatusCode
+from opentelemetry.trace import StatusCode
 from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
@@ -17,7 +17,9 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     open_model_request_span,
+    record_exception as _record_exception,
     serialize_any,
+    set_error_status as _set_error_status,
 )
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
@@ -41,29 +43,6 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
     from pydantic_ai.tools import AgentDepsT
-
-
-def _record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
-    """Record `error` on `span` as an `exception` event.
-
-    With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
-    only the exception type is kept: the message and stack trace of an exception raised around
-    a tool or an agent run can quote content the setting is meant to withhold -- a tool retry
-    carries the text the model sees, an exception chained from one repeats that text in its
-    stack trace, and user exceptions may echo the rejected arguments. The type and `escaped`
-    formatting match what `Span.record_exception` would have produced.
-    """
-    if include_content:
-        span.record_exception(error, escaped=escaped)
-        return
-    error_type = type(error)
-    type_name = (
-        f'{error_type.__module__}.{error_type.__qualname__}'
-        if error_type.__module__ != 'builtins'
-        else error_type.__qualname__
-    )
-    # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
-    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -193,12 +172,7 @@ class Instrumentation(AbstractCapability[Any]):
                     # escaped, and describes the status with the exception. That description
                     # repeats the message, so it is withheld along with the event's.
                     _record_exception(span, e, include_content=settings.include_content, escaped=False)
-                    span.set_status(
-                        Status(
-                            StatusCode.ERROR,
-                            description=f'{type(e).__name__}: {e}' if settings.include_content else None,
-                        )
-                    )
+                    _set_error_status(span, e, include_content=settings.include_content)
                     raise
 
                 if settings.include_content and span.is_recording():
