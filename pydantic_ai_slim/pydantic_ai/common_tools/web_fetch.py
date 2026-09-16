@@ -65,10 +65,16 @@ class WebFetchLocalTool:
     """Maximum size in bytes of the response body to download. None for no limit."""
 
     allowed_domains: list[str] | None = field(default=None)
-    """Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
+    """Only fetch from these domains (exact hostname match, ignoring case and a trailing dot).
+
+    Raises `ModelRetry` on violation.
+    """
 
     blocked_domains: list[str] | None = field(default=None)
-    """Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
+    """Never fetch from these domains (exact hostname match, ignoring case and a trailing dot).
+
+    Raises `ModelRetry` on violation.
+    """
 
     headers: dict[str, str] | None = field(default=None)
     """Additional HTTP headers to include in the request.
@@ -204,8 +210,10 @@ def web_fetch_tool(
         max_download_bytes: Maximum size in bytes of the response body to download, applied
             before the body is buffered. Defaults to 50 MiB. Use `None` for no limit, which
             lets a response of any size be read into memory.
-        allowed_domains: Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
-        blocked_domains: Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
+        allowed_domains: Only fetch from these domains (exact hostname match, ignoring case and a
+            trailing dot). Raises `ModelRetry` on violation.
+        blocked_domains: Never fetch from these domains (exact hostname match, ignoring case and a
+            trailing dot). Raises `ModelRetry` on violation.
         headers: Additional HTTP headers to include in requests.
             Overrides the default `Accept: text/markdown` header if `Accept` is provided.
             The URL is controlled by the model, so a credential configured here (e.g.

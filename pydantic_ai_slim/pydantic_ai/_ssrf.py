@@ -336,6 +336,22 @@ def validate_url_protocol(url: str) -> tuple[str, bool]:
     return scheme, scheme == 'https'
 
 
+def _normalized_host(host: str) -> str:
+    """Normalize a hostname, or a domain-list entry, to the form the two are compared in.
+
+    DNS is case-insensitive and treats `host.` (with the FQDN root label) and `host` as the
+    same name, so both spellings have to land on one value before an exact-match comparison.
+    Leaving the root label in would also bypass the allow/blocklists and skip the IP-literal
+    fast path (e.g. `169.254.169.254.`).
+
+    `urlparse` already lowercases a URL's host, but an `allowed_domains` or `blocked_domains`
+    entry comes straight from the caller, so it is normalized here rather than at the call
+    site: an entry only differing from the host in case or a root label is the same domain,
+    and a blocklist that silently failed to match one would be worse than useless.
+    """
+    return host.lower().rstrip('.')
+
+
 def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
     """Extract hostname, path, port, and protocol info from a URL.
 
@@ -351,11 +367,8 @@ def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
     parsed = urlparse(url)
     hostname = parsed.hostname
 
-    # Strip the trailing-dot (FQDN root label): DNS treats `host.` and `host` as the same,
-    # so leaving it in would bypass exact-match domain allow/blocklists and skip the
-    # IP-literal fast path (e.g. `169.254.169.254.`). urlparse already lowercases the host.
     if hostname:
-        hostname = hostname.rstrip('.')
+        hostname = _normalized_host(hostname)
 
     if not hostname:
         raise ValueError(f'Invalid URL: no hostname found in "{url}"')
@@ -498,9 +511,9 @@ def _check_domain(hostname: str, *, allowed_domains: list[str] | None, blocked_d
     Raises:
         ValueError: If the hostname is not allowed or is blocked.
     """
-    if allowed_domains is not None and hostname not in allowed_domains:
+    if allowed_domains is not None and hostname not in {_normalized_host(d) for d in allowed_domains}:
         raise ValueError(f'Domain {hostname!r} is not in the allowed domains list. Allowed: {allowed_domains}')
-    if blocked_domains is not None and hostname in blocked_domains:
+    if blocked_domains is not None and hostname in {_normalized_host(d) for d in blocked_domains}:
         raise ValueError(f'Domain {hostname!r} is blocked.')
 
 
@@ -596,10 +609,10 @@ async def safe_download(
                 `Cookie`, `Proxy-Authorization`) are stripped when a redirect
                 crosses origins (scheme + host + port), except for a same-host
                 http:80→https:443 upgrade.
-        allowed_domains: If set, only these hostnames are permitted (exact match).
-                Checked on every hop including redirects.
-        blocked_domains: If set, these hostnames are rejected (exact match).
-                Checked on every hop including redirects.
+        allowed_domains: If set, only these hostnames are permitted (exact match, ignoring
+                case and a trailing dot). Checked on every hop including redirects.
+        blocked_domains: If set, these hostnames are rejected (exact match, ignoring case
+                and a trailing dot). Checked on every hop including redirects.
 
     Returns:
         The httpx2.Response object.

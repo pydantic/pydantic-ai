@@ -1602,6 +1602,21 @@ class TestSafeDownload:
 
         await safe_download(url, allowed_domains=['example.com'])
 
+    @pytest.mark.parametrize('entry', ['Example.com', 'example.com.', 'EXAMPLE.COM.'])
+    async def test_allowed_domains_normalizes_entry(
+        self, entry: str, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """An entry differing only in case or a trailing dot names the same domain, and must match."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
+
+        await safe_download('https://example.com/page', allowed_domains=[entry])
+
     async def test_blocked_domains_blocks(self, mock_dns: AsyncMock) -> None:
         """Test that blocked domain is rejected."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
@@ -1614,6 +1629,17 @@ class TestSafeDownload:
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download(url, blocked_domains=['evil.com'])
+
+    @pytest.mark.parametrize('entry', ['Evil.com', 'evil.com.', 'EVIL.COM.'])
+    async def test_blocked_domains_normalizes_entry(self, entry: str, mock_dns: AsyncMock) -> None:
+        """An entry differing only in case or a trailing dot names the same domain, and must still block.
+
+        The host side was already normalized, so an entry spelled this way silently never
+        matched and the blocklist quietly did nothing.
+        """
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        with pytest.raises(ValueError, match='is blocked'):
+            await safe_download('https://evil.com/page', blocked_domains=[entry])
 
     async def test_blocked_domains_permits(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         """Test that non-blocked domain passes validation."""
