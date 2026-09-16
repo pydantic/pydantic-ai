@@ -17,7 +17,9 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     open_model_request_span,
+    record_exception as _record_exception,
     serialize_any,
+    set_error_status as _set_error_status,
 )
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
@@ -152,6 +154,8 @@ class Instrumentation(AbstractCapability[Any]):
         with settings.tracer.start_as_current_span(
             names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
+            record_exception=False,
+            set_status_on_exception=False,
         ) as span:
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
@@ -159,7 +163,17 @@ class Instrumentation(AbstractCapability[Any]):
             token = _otel_attach(otel_ctx)
             result: AgentRunResult[Any] | None = None
             try:
-                result = await handler()
+                try:
+                    result = await handler()
+                except Exception as e:
+                    # Stand in for what the two `..._on_exception=False` arguments turned off,
+                    # matching `use_span` exactly: it records only `Exception` (a `BaseException`
+                    # such as a cancellation is not an error), does not mark what it records as
+                    # escaped, and describes the status with the exception. That description
+                    # repeats the message, so it is withheld along with the event's.
+                    _record_exception(span, e, include_content=settings.include_content, escaped=False)
+                    _set_error_status(span, e, include_content=settings.include_content)
+                    raise
 
                 if settings.include_content and span.is_recording():
                     span.set_attribute(
@@ -352,7 +366,7 @@ class Instrumentation(AbstractCapability[Any]):
                 result = await action()
             except (CallDeferred, ApprovalRequired) as exc:
                 if not handle_tool_control_flow:
-                    span.record_exception(exc, escaped=True)
+                    _record_exception(span, exc, include_content=include_content)
                     span.set_status(StatusCode.ERROR)
                     raise
                 # Deferrals are control flow, not errors: capture the deferral name (and
@@ -366,7 +380,7 @@ class Instrumentation(AbstractCapability[Any]):
                         metadata_str = repr(exc.metadata)
                     span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
                 if settings.version < 5:
-                    span.record_exception(exc, escaped=True)
+                    _record_exception(span, exc, include_content=include_content)
                     span.set_status(StatusCode.ERROR)
                 raise
             except ToolRetryError as e:
@@ -374,11 +388,11 @@ class Instrumentation(AbstractCapability[Any]):
                     # Tool retries are surfaced as model-visible errors; record the prompt
                     # the model will see as the tool result before re-raising.
                     span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
-                span.record_exception(e, escaped=True)
+                _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
             except BaseException as e:
-                span.record_exception(e, escaped=True)
+                _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
 
