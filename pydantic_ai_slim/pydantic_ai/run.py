@@ -52,9 +52,12 @@ def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict
     """Apply the caller's `include`/`exclude` to the keys `AgentRunResult._serialize` synthesizes.
 
     Pydantic applies them to a model's own fields, which here are the private ones the public shape
-    replaces, so without this `exclude={'messages'}` would quietly dump the messages anyway. A spec
-    that reaches inside one of these keys rather than dropping it whole (`exclude={'messages': {0}}`)
-    is left to Pydantic, which serializes that value itself.
+    replaces, so without this `exclude={'messages'}` would quietly dump the messages anyway.
+
+    Only whole keys, though: a spec that reaches *inside* one (`exclude={'messages': {0}}`) is
+    dropped by Pydantic before this serializer is handed its mapping, so nothing applies it and the
+    value is dumped in full. Applying it here would mean re-serializing each key against its own
+    sub-spec, which is Pydantic's per-field machinery reimplemented for nine keys.
     """
     if (include := info.include) is not None:
         data = {key: value for key, value in data.items() if key in include}

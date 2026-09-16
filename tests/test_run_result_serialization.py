@@ -276,6 +276,34 @@ async def test_streamed_result_can_be_stored_and_replayed_as_history() -> None:
     assert continued.all_messages()[: len(loaded.all_messages())] == loaded.all_messages()
 
 
+async def test_settling_a_cancelled_stream_is_refused() -> None:
+    """Cancelling completes the stream without producing an output, so there is nothing to settle."""
+    agent = Agent(TestModel(custom_output_text='a much longer streamed response'), instructions='Be helpful.')
+
+    async with agent.run_stream('Stream this') as streamed:
+        async for _ in streamed.stream_text(delta=True):
+            break
+        await streamed.cancel()
+
+        assert streamed.is_complete
+        with pytest.raises(UserError, match='cancelled before it produced an output'):
+            streamed.result
+
+        # The partial history is still there; only the settled result is refused.
+        assert streamed.all_messages()
+
+
+async def test_cancelling_after_the_output_arrived_still_settles() -> None:
+    """A stream consumed to the end has its output cached, so a later cancel changes nothing."""
+    agent = Agent(TestModel(custom_output_text='settled'), instructions='Be helpful.')
+
+    async with agent.run_stream('Stream this') as streamed:
+        await streamed.get_output()
+        await streamed.cancel()
+
+        assert streamed.result.output == 'settled'
+
+
 def test_streamed_result_hands_back_a_run_result_it_already_holds() -> None:
     """`run_stream` yields a pre-built result when a `wrap_run` capability short-circuits the run."""
     held = Agent(TestModel(custom_output_text='short-circuited')).run_sync('Go')
@@ -294,9 +322,12 @@ def test_serialization_honors_the_callers_filters() -> None:
     assert set(adapter.dump_python(result, include={'output', 'usage'})) == {'output', 'usage'}
     assert 'messages' not in StringResultEnvelope(result=result).model_dump(exclude={'result': {'messages'}})['result']
 
-    # A spec reaching into a key rather than dropping it whole is Pydantic's to apply.
-    assert 'messages' in adapter.dump_python(result, exclude={'messages': {0}})
     assert 'messages' not in adapter.dump_python(result, exclude={'messages': True})
+
+    # A spec reaching *into* a synthesized key is dropped by Pydantic before the serializer runs,
+    # so nothing applies it. Pinned because it is a silent no-op rather than an error: a plain
+    # model would have removed message 0 here.
+    assert len(adapter.dump_python(result, exclude={'messages': {0}})['messages']) == len(result.all_messages())
 
 
 def test_a_filtered_out_output_is_left_out_rather_than_failing_the_dump() -> None:
