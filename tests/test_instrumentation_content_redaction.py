@@ -27,17 +27,19 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from ._inline_snapshot import snapshot
+from .conftest import try_import
 
-try:
+with try_import() as otel_sdk_installed:
     # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
     # `pydantic-ai-slim` / `pydantic-evals` install groups.
     from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-except ImportError:  # pragma: lax no cover
-    pytestmark = [pytest.mark.anyio, pytest.mark.skip(reason='opentelemetry-sdk not installed')]
-else:
-    pytestmark = pytest.mark.anyio
+
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
+]
 
 # Every way content reaches an agent, each with a sentinel that identifies the channel when it leaks.
 SECRETS = {
