@@ -537,9 +537,9 @@ class TestWebFetchLocalTool:
         assert isinstance(result, dict)
         assert len(result['content']) == 200_000
 
-    async def test_fetch_html_title_decodes_entities(self):
-        """The title is the parsed text of the `<title>` element, so character references are decoded."""
-        html = '<html><head><title>Fish &amp; Chips</title></head><body><p>Content</p></body></html>'
+    async def test_fetch_html_title_is_raw_and_case_insensitive(self):
+        """The title is the raw text between the tags, matched case-insensitively, with attributes ignored."""
+        html = '<html><head><TITLE lang="en">Fish &amp; Chips</TITLE></head><body><p>Content</p></body></html>'
 
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download',
@@ -550,7 +550,22 @@ class TestWebFetchLocalTool:
             result = await tool('https://example.com')
 
         assert isinstance(result, dict)
-        assert result['title'] == 'Fish & Chips'
+        assert result['title'] == 'Fish &amp; Chips'
+
+    async def test_fetch_html_title_after_case_expanding_character(self):
+        """Characters whose lowercase form is longer (`İ` becomes two code points) don't shift the title's offsets."""
+        html = '<html><head><meta name="x" content="İ"><title>İstanbul</title></head><body>İ</body></html>'
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == 'İstanbul'
 
     async def test_html_conversion_runs_in_worker_thread(self):
         """Parsing and converting HTML runs through the sync-function executor, not on the event loop.
@@ -586,7 +601,7 @@ class TestWebFetchLocalTool:
         assert isinstance(result, dict)
         assert result['title'] == 'Threaded'
         assert len(executor.submitted) == 1
-        assert executor.submitted[0].result()[0] == 'Threaded'
+        assert executor.submitted[0].result() == ('Threaded', 'Threaded\n\nContent')
 
     async def test_fetch_html_repeated_unclosed_title_tags(self):
         """A body made of `<title` fragments with no closing `>` converts in seconds, not minutes.
@@ -612,10 +627,9 @@ class TestWebFetchLocalTool:
         assert result['content'] == ''
         assert elapsed < 10
 
-    async def test_fetch_html_unclosed_title_is_bounded(self):
-        """An unclosed `<title>` takes the rest of the document as its text, so the title is capped."""
-        html = '<title>' + 'x' * 5_000
-
+    @pytest.mark.parametrize('html', ['<title>never closed', '<title never opened'])
+    async def test_fetch_html_unterminated_title_is_empty(self, html: str):
+        """A `<title>` that is never closed, or never even opened, yields no title."""
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download',
             new_callable=AsyncMock,
@@ -625,7 +639,7 @@ class TestWebFetchLocalTool:
             result = await tool('https://example.com')
 
         assert isinstance(result, dict)
-        assert result['title'] == 'x' * 1_000
+        assert result['title'] == ''
 
     async def test_fetch_html_nested_too_deeply_raises_model_retry(self):
         """A page nested deeper than the recursion limit can't be converted, so the model is told to move on."""
