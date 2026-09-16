@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic_ai.usage import UsageLimits
 
-from ._app import chat, create_agent
+from ._app import DEFAULT_PLUGINS, chat, create_agent
 from .commands import config_command, plugins_command
 from .config import resolve_settings
 from .settings_store import SettingsStore
@@ -41,6 +41,7 @@ def run() -> None:
                 usage_limits=UsageLimits(request_limit=settings.request_limit),
                 settings=settings,
                 store=store,
+                builtin_plugins=DEFAULT_PLUGINS,
             )
         )
     except (ValueError, TypeError, ImportError, AttributeError) as exc:

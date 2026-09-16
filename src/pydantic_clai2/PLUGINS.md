@@ -56,6 +56,20 @@ which can retain globals removed from source; initialize plugin state explicitly
 
 Plugins are trusted code running as you. Only install what you trust.
 
+## The built-in plugin
+
+The coding tools are a plugin too. `/plugins list` shows `coder`, backed by
+`pydantic_ai_harness.coder:Coder`, marked `(built-in)` and enabled unless you
+say otherwise. `/plugins disable coder` gives you a chat-only CLAI (a
+writing or research setup with `ExaSearch` instead, say); `/plugins enable
+coder` brings the tools back; `/plugins remove coder` cannot forget a built-in,
+so it resets it to its defaults. To run `Coder` with different options, add your
+own declaration under the same name and it takes the built-in's place:
+
+```text
+/plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": false}'
+```
+
 ## Managing plugins
 
 `/plugins` on its own opens a full-screen menu, the same kind Code Puppy uses
@@ -86,7 +100,7 @@ CLAI does the same thing:
 |---|---|
 | `/plugins list` | show every plugin and whether it is on |
 | `/plugins add NAME module[:attr] [JSON]` | save it and load it now |
-| `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it) |
+| `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in to its defaults |
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts |
 | `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
 

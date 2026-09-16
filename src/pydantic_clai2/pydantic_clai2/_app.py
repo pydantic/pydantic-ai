@@ -11,7 +11,6 @@ from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.coder import Coder
 from rich.console import Console
 
 from . import theme
@@ -22,7 +21,7 @@ from ._session import Session
 from .auth import CodexAuth
 from .command_context import CommandContext, CommandProvider
 from .commands import Command, Commands, config_command, config_completions, set_completions
-from .config import Settings
+from .config import PluginSettings, Settings
 from .customization import customization_guide
 from .input_history import input_history
 from .interrupts import Interrupts
@@ -39,9 +38,15 @@ OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload')
 
 
+DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
+    PluginSettings(id='coder', factory='pydantic_ai_harness.coder:Coder', settings={'unrestricted_filesystem': True}),
+)
+"""Plugins CLAI ships enabled. `/plugins disable coder` turns the coding tools off; `remove` restores this."""
+
+
 def create_agent(model: str | None = None) -> Agent[None, str]:
-    """Build the default coding agent; custom agents need not use `Coder`."""
-    return Agent(model, deps_type=type(None), capabilities=[Coder(unrestricted_filesystem=True), customization_guide()])
+    """Build the base CLAI agent. The coding tools come from the built-in `coder` plugin, not from here."""
+    return Agent(model, deps_type=type(None), capabilities=[customization_guide()])
 
 
 async def chat(
@@ -53,6 +58,7 @@ async def chat(
     console: Console | None = None,
     settings: Settings | None = None,
     store: SettingsStore | None = None,
+    builtin_plugins: Sequence[PluginSettings] = (),
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
@@ -127,6 +133,7 @@ async def chat(
         console=console,
         commands=commands,
         session_start=lambda: SessionStart(agent=agent, settings=context.settings),
+        builtin=builtin_plugins,
     )
     commands.register(
         Command(

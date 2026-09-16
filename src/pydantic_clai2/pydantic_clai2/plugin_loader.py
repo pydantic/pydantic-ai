@@ -5,7 +5,7 @@ import hashlib
 import importlib
 import importlib.util
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -40,6 +40,7 @@ class PluginEntry(Generic[DepsT]):
 
     declaration: PluginSettings
     path: Path | None
+    builtin: bool = False
     host: PluginHost[DepsT] | None = None
     error: str | None = None
 
@@ -51,7 +52,9 @@ class PluginEntry(Generic[DepsT]):
     @property
     def source(self) -> str:
         """The file path for drop-in plugins, otherwise the import string."""
-        return str(self.path) if self.path is not None else self.declaration.factory
+        if self.path is not None:
+            return str(self.path)
+        return f'{self.declaration.factory} (built-in)' if self.builtin else self.declaration.factory
 
     @property
     def state(self) -> str:
@@ -73,12 +76,14 @@ class PluginLoader(Generic[DepsT]):
         console: Console,
         commands: Commands,
         session_start: Callable[[], SessionStart],
+        builtin: Sequence[PluginSettings] = (),
     ) -> None:
-        """Register plugin commands into `commands`; `session_start` builds each plugin's first event."""
+        """`builtin` declarations ship with CLAI and are on unless the store says otherwise."""
         self._store = store
         self._console = console
         self._commands = commands
         self._session_start = session_start
+        self._builtin = {declaration.id: declaration for declaration in builtin}
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, PluginHost[DepsT]] = {}
 
@@ -93,6 +98,8 @@ class PluginLoader(Generic[DepsT]):
         declared = {declaration.id: declaration for declaration in self._store.plugins()}
         for name in folder.keys() - declared.keys():
             declared[name] = PluginSettings(id=name, factory=name, path=str(folder[name]))
+        for name in self._builtin.keys() - declared.keys():
+            declared[name] = self._builtin[name]
         refreshed: dict[str, PluginEntry[DepsT]] = {}
         for name in sorted(declared):
             previous = self._entries.get(name)
@@ -100,6 +107,7 @@ class PluginLoader(Generic[DepsT]):
             refreshed[name] = PluginEntry(
                 declaration=declared[name],
                 path=Path(path) if path is not None else None,
+                builtin=declared[name].model_copy(update={'enabled': True}) == self._builtin.get(name),
                 host=previous.host if previous else None,
                 error=previous.error if previous else None,
             )
@@ -227,6 +235,9 @@ class PluginLoader(Generic[DepsT]):
             self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}))
             return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
         self._store.delete_plugin(name)
+        if name in self._builtin:
+            await self.load(name)
+            return f'{name} is built in; restored its defaults. Use /plugins disable {name} to turn it off.'
         return f'Removed {name}.'
 
     async def reload(self, name: str) -> None:
@@ -244,11 +255,14 @@ class PluginLoader(Generic[DepsT]):
             )
         action, *rest = args
         if action == 'add':
-            if rest and any(entry.name == rest[0] for entry in self.entries()):
+            existing = next((entry for entry in self.entries() if rest and entry.name == rest[0]), None)
+            if existing is not None and not existing.builtin:
                 raise ValueError(f'Plugin {rest[0]} already exists; remove its declaration before replacing it.')
+            if existing is not None:
+                await self.unload(rest[0])
             plugins_command(self._store, args)
             await self.load(rest[0])
-            return f'Added and loaded {rest[0]}.'
+            return f'Replaced built-in {rest[0]}.' if existing is not None else f'Added and loaded {rest[0]}.'
         if len(rest) != 1:
             raise ValueError(
                 'Usage: /plugins [list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID]'

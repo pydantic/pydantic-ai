@@ -1,6 +1,8 @@
 # CLAI 2.0
 
-A separately installable terminal client for Pydantic AI, using `Coder(unrestricted_filesystem=True)` by default.
+A separately installable terminal client for Pydantic AI. The coding tools,
+`Coder(unrestricted_filesystem=True)`, are the built-in `coder` plugin: on by
+default, `/plugins disable coder` for a chat-only shell.
 Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do

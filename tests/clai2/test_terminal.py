@@ -12,12 +12,13 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import Agent, AgentStreamEvent, RunContext
+from pydantic_ai import Agent, AgentStreamEvent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
 
-from pydantic_clai2 import Session, chat
+from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
 from pydantic_clai2.settings_store import SettingsStore
@@ -107,6 +108,36 @@ async def test_drop_in_plugin_commands_and_hooks(tmp_path: Path) -> None:
     assert 'turn completed: HELLO' in text
     assert 'greeter:' in text and 'loaded)' in text
     assert 'stopped: exit' in text
+
+
+async def test_coder_is_a_builtin_plugin(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    offered: list[set[str]] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_model_request
+    async def record(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        offered.append({tool.name for tool in request_context.model_request_parameters.function_tools})
+        return request_context
+
+    output = io.StringIO()
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('/plugins list\nhello\n/plugins disable coder\nhello\n/plugins remove coder\n/exit\n')
+        await chat(
+            Agent(TestModel(call_tools=[], custom_output_text='hi'), deps_type=type(None)),
+            deps=None,
+            plugins=[hooks],
+            console=Console(file=output, width=200),
+            store=store,
+            builtin_plugins=DEFAULT_PLUGINS,
+        )
+    text = output.getvalue()
+    assert 'coder: pydantic_ai_harness.coder:Coder (built-in) (enabled, loaded)' in text
+    assert 'Disabled coder.' in text
+    assert 'coder is built in; restored its defaults.' in text
+    assert store.plugins() == []
+    assert len(offered) == 2
+    assert 'shell' in offered[0] and 'shell' not in offered[1]
 
 
 async def test_plugin_can_cancel_a_turn(tmp_path: Path) -> None:

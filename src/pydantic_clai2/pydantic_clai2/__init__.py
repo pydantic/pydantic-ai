@@ -3,18 +3,18 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._app import chat, create_agent
+    from ._app import DEFAULT_PLUGINS, chat, create_agent
     from ._rendering import StreamRenderer
     from ._session import Session
 
-__all__ = ['Session', 'StreamRenderer', 'chat', 'create_agent']
+__all__ = ['DEFAULT_PLUGINS', 'Session', 'StreamRenderer', 'chat', 'create_agent']
 
 
 def __getattr__(name: str) -> object:
-    if name in ('chat', 'create_agent'):
-        from ._app import chat, create_agent
+    if name in ('chat', 'create_agent', 'DEFAULT_PLUGINS'):
+        from . import _app
 
-        return chat if name == 'chat' else create_agent
+        return getattr(_app, name)
     if name == 'Session':
         from ._session import Session
 

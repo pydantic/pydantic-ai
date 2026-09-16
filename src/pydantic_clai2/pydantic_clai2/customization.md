@@ -85,8 +85,12 @@ optional JSON supplies constructor keyword arguments:
 /plugins remove search
 ```
 
-Do not add a second Coder when the default agent already has one. The example
-shows syntax for a custom agent without coding tools. Outside a session,
+The coding tools are themselves the built-in plugin named coder, shown by
+/plugins list as pydantic_ai_harness.coder:Coder (built-in). Do not add a
+second Coder under another name. To change its options, declare coder again
+with the same name and different JSON; that replaces the built-in. To run
+without coding tools, /plugins disable coder. /plugins remove coder resets the
+built-in to its defaults rather than removing it. Outside a session,
 clai2 plugins add NAME module[:attr] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
@@ -271,7 +275,12 @@ asyncio.run(chat(agent, deps=None))
 ```
 
 Coder() here restricts file tools to the workspace, unlike the stock CLI's
-unrestricted Coder. A fully custom protocol belongs in a Pydantic AI Model and
+unrestricted Coder. A launcher gets no built-in plugins unless it passes them.
+Choose one source of coding tools, never both: either keep Coder() in
+capabilities as above, or drop it from capabilities and call chat(agent,
+deps=None, builtin_plugins=DEFAULT_PLUGINS) with DEFAULT_PLUGINS from
+pydantic_clai2, which supplies the stock coder plugin and lets /plugins manage
+it. Passing both loads two sets of coding tools. A fully custom protocol belongs in a Pydantic AI Model and
 Provider implementation, not a terminal plugin. See
 https://pydantic.dev/docs/ai/models/overview/ and inspect installed core abstract
 classes for required methods. Supply that Model instance to Agent as above.

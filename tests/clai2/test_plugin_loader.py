@@ -50,9 +50,9 @@ def activate(host: PluginHost) -> None:
 
 
 class Harness:
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, *, builtin: tuple[PluginSettings, ...] = ()) -> None:
         self.store = SettingsStore(tmp_path / 'config.db')
-        self.store.plugins_dir.mkdir()
+        self.store.plugins_dir.mkdir(exist_ok=True)
         self.output = io.StringIO()
         self.commands = Commands()
         self.commands.register(Command(name='help', description='Built in', handler=lambda _: ''))
@@ -61,6 +61,7 @@ class Harness:
             console=Console(file=self.output, width=200),
             commands=self.commands,
             session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=self.store.load()),
+            builtin=builtin,
         )
 
     def write(
@@ -250,3 +251,67 @@ async def test_loaded_entry_survives_file_removal_until_unloaded(tmp_path: Path)
     harness.store.save_plugin(PluginSettings(id='ephemeral', factory='ephemeral'))
     assert harness.loader.entries()[0].source == 'ephemeral'
     assert harness.loader.plugins_dir == harness.store.plugins_dir
+
+
+BUILTIN = (
+    PluginSettings(id='hello', factory='pydantic_ai.capabilities:Capability', settings={'instructions': 'Say hello.'}),
+)
+
+
+async def test_builtin_plugins_are_on_by_default_and_overridable(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, builtin=BUILTIN)
+    await harness.loader.load_all()
+    entry = harness.loader.entries()[0]
+    assert entry.name == 'hello' and entry.builtin
+    assert entry.source == 'pydantic_ai.capabilities:Capability (built-in)'
+    assert entry.state == 'enabled, loaded'
+    assert len(harness.loader.capabilities()) == 1
+    assert harness.store.plugins() == []
+
+    assert await harness.loader.command(['disable', 'hello']) == 'Disabled hello.'
+    assert harness.loader.capabilities() == []
+    fresh = Harness(tmp_path, builtin=BUILTIN)
+    await fresh.loader.load_all()
+    assert fresh.loader.entries()[0].state == 'disabled'
+    assert fresh.loader.entries()[0].builtin
+
+    message = await fresh.loader.command(['remove', 'hello'])
+    assert message == 'hello is built in; restored its defaults. Use /plugins disable hello to turn it off.'
+    assert fresh.store.plugins() == []
+    assert fresh.loader.entries()[0].state == 'enabled, loaded'
+
+
+async def test_store_declaration_replaces_a_builtin(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, builtin=BUILTIN)
+    harness.write('hello')
+    harness.store.save_plugin(
+        PluginSettings(id='hello', factory='hello', path=str(harness.store.plugins_dir / 'hello.py'))
+    )
+    await harness.loader.load_all()
+    entry = harness.loader.entries()[0]
+    assert not entry.builtin and entry.path is not None
+    assert 'hello' in {command.name for command in harness.commands}
+    assert (await harness.loader.command(['remove', 'hello'])).startswith('Disabled hello.')
+
+
+async def test_add_replaces_a_builtin_and_remove_restores_it(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, builtin=BUILTIN)
+    await harness.loader.load_all()
+    message = await harness.loader.command(
+        ['add', 'hello', 'pydantic_ai.capabilities:Capability', '{"instructions": "Say goodbye."}']
+    )
+    assert message == 'Replaced built-in hello.'
+    entry = harness.loader.entries()[0]
+    assert not entry.builtin and entry.state == 'enabled, loaded'
+    assert harness.store.plugins()[0].settings == {'instructions': 'Say goodbye.'}
+    assert len(harness.loader.capabilities()) == 1
+
+    message = await harness.loader.command(['remove', 'hello'])
+    assert message == 'hello is built in; restored its defaults. Use /plugins disable hello to turn it off.'
+    entry = harness.loader.entries()[0]
+    assert entry.builtin and entry.state == 'enabled, loaded'
+    assert harness.store.plugins() == []
+    replace = ['add', 'hello', 'pydantic_ai.capabilities:Capability']
+    assert await harness.loader.command(replace) == 'Replaced built-in hello.'
+    with pytest.raises(ValueError, match='already exists'):
+        await harness.loader.command(replace)

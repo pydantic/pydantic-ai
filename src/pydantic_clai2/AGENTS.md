@@ -74,6 +74,12 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **Registration is idempotent per name.** A capability is bound per run
   (`agent.run(capabilities=...)`), so "active for the next prompt" is the
   natural unit; nothing rebuilds the agent.
+- **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
+  `_app.py` lists what CLAI ships enabled (`coder`). The loader treats them
+  like drop-ins with the lowest precedence: a store declaration with the same
+  id replaces one, `disable` persists an override, `remove` resets it. Do not
+  special-case `Coder` anywhere else; the agent from `create_agent()` has no
+  coding tools of its own.
 - **A load failure leaves the session as it was.** Import or `activate` errors
   are reported and the plugin stays unloaded; partial registrations from a
   failed `activate` are discarded with the host.
