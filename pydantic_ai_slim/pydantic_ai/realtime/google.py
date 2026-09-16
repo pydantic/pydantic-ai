@@ -827,20 +827,6 @@ class GoogleRealtimeModel(RealtimeModel):
             return _PROACTIVITY_API_VERSION
         return None
 
-    def _handshake_api_version(self, settings: GoogleRealtimeModelSettings) -> str | None:
-        """The API version this session's config needs, or `None` to keep the client's own.
-
-        `proactivity` is served on `v1alpha` only: on any other version the Gemini Developer API answers
-        `1007 Invalid JSON payload received. Unknown name "proactivity" at 'setup'`, so a session that
-        asked for proactive audio would fail to connect rather than get the feature (verified live
-        2026-09-16 against `gemini-2.5-flash-native-audio-latest`). Vertex AI has its own version line
-        that has no `v1alpha`, so its sessions keep the client's version and proactive audio remains
-        unavailable there.
-        """
-        if settings.get('google_proactive_audio', False) and not self.client.vertexai:
-            return _PROACTIVITY_API_VERSION
-        return None
-
     def _input_transcription(self, settings: GoogleRealtimeModelSettings) -> bool:
         """Whether to transcribe the user's audio.
 

@@ -2479,19 +2479,23 @@ def test_ws_api_version_restores_the_clients_own() -> None:
     ('status', 'more_expected'),
     [
         # A reasoning model's filler turn: the exchange continues even though this response is done.
-        (genai_types.InteractionStatus.IN_PROGRESS, True),
-        (genai_types.InteractionStatus.IDLE, False),
+        ('IN_PROGRESS', True),
+        ('IDLE', False),
         # Every other Live model reports no status at all, which has always meant "that was the last one".
         (None, False),
     ],
 )
-def test_turn_complete_reports_whether_more_is_expected(
-    status: genai_types.InteractionStatus | None, more_expected: bool
-) -> None:
+def test_turn_complete_reports_whether_more_is_expected(status: str | None, more_expected: bool) -> None:
+    # The status is named as a string and resolved here rather than in the `parametrize` decorator: as in
+    # `test_tool_def_async_behavior`, decorators run at collection time, before `pytestmark` can skip the
+    # module, so naming `genai_types` there breaks collection wherever the `google` extra isn't installed.
     conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()))
     events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
         genai_types.LiveServerMessage(
-            server_content=genai_types.LiveServerContent(turn_complete=True, interaction_status=status)
+            server_content=genai_types.LiveServerContent(
+                turn_complete=True,
+                interaction_status=genai_types.InteractionStatus(status) if status else None,
+            )
         )
     )
     assert events == [ResponseDone(interrupted=False, more_expected=more_expected)]
