@@ -184,6 +184,11 @@ def function_schema(  # noqa: C901
 
         field_name = p.name
 
+        if p.kind == Parameter.VAR_POSITIONAL:
+            annotation = list[annotation]
+
+        # FieldInfo methods expect a type, but also accept annotation forms such as Annotated.
+        annotation = cast(type[Any], annotation)
         if p.kind == Parameter.VAR_KEYWORD:
             if (
                 require_parameter_descriptions
@@ -193,12 +198,7 @@ def function_schema(  # noqa: C901
                 missing_param_descriptions.add(field_name)
             var_kwargs_schema = gen_schema.generate_schema(annotation)
         else:
-            if p.kind == Parameter.VAR_POSITIONAL:
-                annotation = list[annotation]
-
             required = p.default is Parameter.empty
-            # FieldInfo.from_annotated_attribute expects a type, `annotation` is Any
-            annotation = cast(type[Any], annotation)
             if required:
                 field_info = FieldInfo.from_annotation(annotation)
             else:
