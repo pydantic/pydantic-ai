@@ -20,6 +20,7 @@ from . import (
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import CustomEventT
+from .capabilities._pending_messages import drain_pending_messages_at_end
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -362,9 +363,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _utils.raise_if_cancelling()
         pre_hook_result = result
         result = await cap.after_node_run(run_context, node=node, result=result)
+        result = drain_pending_messages_at_end(run_context, result)
 
-        # If after_node_run changed the result, sync the graph runner state so
-        # agent_run.result correctly reflects whether the run is finished.
+        # If a capability hook or the pending-message drain changed the result, sync the graph
+        # runner state so agent_run.result correctly reflects whether the run is finished.
         if result is not pre_hook_result:
             self._sync_graph_state(result)
 
@@ -560,12 +562,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
-        Designed to be called from the same event loop driving `agent.iter()`. If
-        you're forwarding events from a different thread (e.g. a webhook handler
-        running on its own loop or thread), marshal the call back onto the agent's
-        loop first (e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`).
-        The drain's `queue[:] = remaining` pattern in `_drain_by_priority` isn't
-        atomic against concurrent appends from a different thread.
+        Safe to call directly from synchronous or asynchronous code, including
+        a callback running in another thread.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -587,6 +585,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             The `enqueue_id` of the queued message, echoed on the
             [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
             delivered, or `None` when there was nothing to enqueue (an empty call).
+
+        Raises:
+            UserError: If the run has ended, since there'd be nowhere to deliver the message.
         """
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:

@@ -6137,6 +6137,24 @@ async def test_session_exit_is_idempotent_and_flushes_unfinalized_user() -> None
     ]
 
 
+async def test_tool_context_enqueue_after_session_close_raises() -> None:
+    agent = Agent[None, str](deps_type=type(None))
+    contexts: list[RunContext[None]] = []
+
+    @agent.tool
+    def keep_context(ctx: RunContext[None]) -> str:
+        contexts.append(ctx)
+        return 'ok'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='keep_context', args='{}'), ResponseDone()])
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        _ = [e async for e in session]
+
+    (ctx,) = contexts
+    with pytest.raises(UserError, match='run has ended'):
+        ctx.enqueue('too late')
+
+
 def test_session_accepts_unprepared_tool_manager_without_pending_context() -> None:
     manager = ToolManager(FunctionToolset())
     session = _RealtimeSession(FakeRealtimeConnection([]), tool_manager=manager)
