@@ -46,6 +46,8 @@ The `--all` flag is required because the skill is bundled in `pydantic-ai-slim`,
 
 Add `--claude` to also install into `.claude/skills/` alongside the default `.agents/skills/` directory, since Claude Code doesn't read from `.agents/`.
 
+This installation also includes [migration skills](framework-migration.md) for moving applications from other agent frameworks to Pydantic AI.
+
 ## See Also
 
 - [`pydantic/skills`](https://github.com/pydantic/skills): source repository
