@@ -65,7 +65,7 @@ def resolve_conversation(
     The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
     passing the conversation's own object would make running from a conversation change it —
     double-counting across two runs started from the same one, and corrupting it as a point to
-    branch from.
+    branch from. `copy` covers the mutable `details` mapping too, per `UsageBase.__copy__`.
     """
     if conversation is None:
         return message_history, usage, conversation_id
@@ -85,6 +85,4 @@ def resolve_conversation(
             f'Pass the conversation on its own, or pass its pieces yourself.'
         )
 
-    copied_usage = copy(conversation.usage)
-    copied_usage.details = dict(conversation.usage.details)
-    return conversation.messages, copied_usage, conversation.conversation_id
+    return conversation.messages, copy(conversation.usage), conversation.conversation_id
