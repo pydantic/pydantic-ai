@@ -1373,6 +1373,70 @@ async def test_processor_injected_load_makes_capability_tool_callable() -> None:
     ] == snapshot([])
 
 
+async def test_processor_removed_load_leaves_advertisement_and_gate_in_agreement() -> None:
+    """Refreshing availability from processed history must not advertise a tool the gate will refuse.
+
+    The mirror of the injection tests, and the direction where making the request and the gate agree
+    could have gone wrong: the refresh takes the capability *out* of the loaded set for a step whose
+    tool set was resolved while it was in. `_with_outgoing_reveal_state` derives the request's reveal
+    state from the same processed messages, so the tool is withheld from the wire rather than shipped
+    and then refused — the model is never offered something `ToolManager` would reject.
+    """
+    secrets_toolset = FunctionToolset[object]()
+
+    @secrets_toolset.tool_plain
+    def secret_op() -> str:  # pragma: no cover
+        return 'EXECUTED'
+
+    advertised: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        advertised.append(sorted(tool.name for tool in info.function_tools))
+        return _call_secret_op_once(messages, info)
+
+    def drop_load_exchange(messages: list[ModelMessage]) -> list[ModelMessage]:
+        kept: list[ModelMessage] = []
+        for message in messages:
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, (LoadCapabilityCallPart, LoadCapabilityReturnPart))
+            ]
+            if parts:
+                kept.append(replace(message, parts=parts))
+        return kept
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            Capability[object](
+                id='secrets', description='Secret tools.', toolsets=[secrets_toolset], defer_loading=True
+            ),
+            ProcessHistory[object](processor=drop_load_exchange),
+        ],
+    )
+    result = await agent.run(
+        'call secret_op',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='load it')]),
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'secrets'}, tool_call_id='l1')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='l1')]),
+        ],
+    )
+
+    # Withheld from the wire, so the model was never offered it...
+    assert advertised[0] == snapshot(['load_capability'])
+    # ...and the call the stub makes anyway is refused, rather than running ungoverned.
+    assert _secret_op_returns(result.all_messages()) == []
+    assert [
+        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+    ] == snapshot(
+        [
+            "Tool 'secret_op' is not available yet: it belongs to capability 'secrets'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions."
+        ]
+    )
+
+
 async def test_processor_injected_load_is_governed_when_resuming_a_suspended_response() -> None:
     """The same governance holds on the request that resumes a provider-suspended turn.
 
