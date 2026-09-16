@@ -157,17 +157,17 @@ async def test_no_content_reaches_telemetry_when_a_tool_fails_or_raises() -> Non
 
     def call_tools(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('failer', {})])
-        return ModelResponse(parts=[ToolCallPart('raiser', {})])
+            return ModelResponse(parts=[ToolCallPart('failing_tool', {})])
+        return ModelResponse(parts=[ToolCallPart('raising_tool', {})])
 
     agent = Agent(FunctionModel(call_tools), capabilities=[Instrumentation(settings=settings)])
 
     @agent.tool_plain
-    def failer() -> str:
+    def failing_tool() -> str:
         raise ToolFailed(SECRETS['tool_failed'])
 
     @agent.tool_plain
-    def raiser() -> str:
+    def raising_tool() -> str:
         raise ValueError(SECRETS['tool_exception'])
 
     with pytest.raises(ValueError):
