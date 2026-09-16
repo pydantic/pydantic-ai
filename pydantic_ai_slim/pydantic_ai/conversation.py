@@ -23,7 +23,7 @@ class Conversation:
 
     [`messages`][pydantic_ai.conversation.Conversation.messages] alone is often enough, and
     `message_history=` stays the way to pass just those. The other two are the ones quietly lost
-    when a conversation is reassembled by hand — most consequentially
+    when a conversation is reassembled by hand — most of all
     [`usage`][pydantic_ai.conversation.Conversation.usage], since a conversation that doesn't carry
     it starts every turn's [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget over from zero.
 
