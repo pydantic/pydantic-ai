@@ -41,6 +41,8 @@ A coding agent in your terminal with file reads, writes and edits, ripgrep-backe
 uv add pydantic-ai "pydantic-ai-harness[coder]"
 ```
 
+The `[coder]` extra includes ripgrep except on Android, where `rg` must be installed separately on `PATH`.
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch

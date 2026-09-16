@@ -54,6 +54,8 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     pip/uv-add pydantic-ai "pydantic-ai-harness[coder]"
     ```
 
+    The `[coder]` extra includes ripgrep except on Android, where `rg` must be installed separately on `PATH`.
+
     ```python {test="skip" lint="skip"}
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import WebSearch
