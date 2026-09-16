@@ -1,13 +1,13 @@
 ---
 title: Enterprise support for Pydantic AI
-description: Get direct support from Pydantic AI engineers for production incidents, architecture reviews, provider changes, and upgrades.
+description: Get direct support from Pydantic AI engineers for production incidents, architecture reviews, provider changes, upgrades, and security response.
 ---
 
 # Enterprise support for Pydantic AI
 
 Pydantic AI is open source under the MIT license. When it becomes part of a critical agent system, a public issue tracker is not the escalation path you want during an incident, provider change, or major rollout.
 
-Commercial support gives your team direct access to Pydantic AI engineers for production incidents, architecture, provider changes, and upgrades. Enterprise plans include 24/7 priority support, setup assistance, and an SLA matched to your operating model.
+Commercial support gives your team direct access to Pydantic AI engineers for production incidents, architecture, provider changes, and upgrades. Enterprise plans include 24/7 priority support, setup assistance, and an SLA matched to your operating model. Your agreement can also define how we coordinate when a vulnerability affects a covered release line.
 
 <EnterpriseSupportCta
   product="ai"
@@ -19,7 +19,7 @@ Commercial support gives your team direct access to Pydantic AI engineers for pr
 
 ## Where Pydantic AI engineers can help
 
-Use the public documentation, issue tracker, and community channels for ordinary questions. Enterprise support covers production incidents, agent architecture reviews, and framework or provider rollouts.
+Use the public documentation, issue tracker, and community channels for ordinary questions. Enterprise support covers production incidents, agent architecture reviews, framework or provider rollouts, and coordinated vulnerability response.
 
 <EnterpriseSupportAreas product="ai" />
 
@@ -29,7 +29,7 @@ Use the public documentation, issue tracker, and community channels for ordinary
 
 1. **Agree the support boundary**
 
-   Define the framework and provider integrations, release lines, environments, contacts, and initial response targets covered by your agreement.
+   Define the framework and provider integrations, release lines, environments, operational and security contacts, and initial response targets covered by your agreement.
 
 2. **Prepare useful context**
 
@@ -37,7 +37,7 @@ Use the public documentation, issue tracker, and community channels for ordinary
 
 3. **Escalate directly**
 
-   Bring production-impacting issues to Pydantic AI engineers, who work with your team to isolate the failing boundary and determine the next action.
+   Bring production-impacting issues or suspected vulnerabilities to Pydantic AI engineers through the agreed private channel. We work with your team to isolate the failing boundary and determine the next action.
 
 </Steps>
 
@@ -62,6 +62,12 @@ We work with your engineers to reproduce the issue, isolate Pydantic AI behavior
 <Collapsible title="Can we agree specific versions and initial response targets?">
 
 Yes. Supported versions, severity levels, initial response targets, and other commitments are defined in your commercial agreement. [Contact us](https://pydantic.dev/contact) to discuss your requirements.
+
+</Collapsible>
+
+<Collapsible title="How are security vulnerabilities handled?">
+
+Anyone can report a suspected vulnerability privately through Pydantic AI's [security reporting process](https://github.com/pydantic/pydantic-ai/security/policy). For confirmed issues affecting covered release lines, enterprise support adds named security contacts and coordinated work on impact assessment, mitigations, patched releases, and disclosure. Advisories and CVEs are published where appropriate; notification and response commitments are defined in your agreement.
 
 </Collapsible>
 
