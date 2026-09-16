@@ -53,6 +53,7 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from .._adapter import (
+    DEFAULT_ALLOWED_CONTENT_TYPES,
     compaction_part_from_payload,
     compaction_payload,
     resolve_allow_uploaded_files,
@@ -187,6 +188,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
         preserve_file_data: bool | None = None,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters.
@@ -203,6 +205,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
+            allowed_content_types=allowed_content_types,
             **kwargs,
         )
 
@@ -236,6 +239,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
         preserve_file_data: bool | None = None,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> Response:
         """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters.
@@ -269,6 +273,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
+            allowed_content_types=allowed_content_types,
             **kwargs,
         )
 

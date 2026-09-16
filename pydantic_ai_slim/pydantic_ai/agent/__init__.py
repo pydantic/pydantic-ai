@@ -42,6 +42,7 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 from .. import (
     _agent_graph,
     _display,
+    _enqueue,
     _instructions,
     _output,
     _system_prompt,
@@ -970,10 +971,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             all_capabilities.extend(capabilities)
 
         effective_model = model or validated_spec.model
-        if effective_model is None:
-            raise exceptions.UserError(
-                '`model` must be provided either in the spec or as a keyword argument to `from_spec()`.'
-            )
 
         agent = Agent(
             model=effective_model,
@@ -4197,6 +4194,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:
         graph_deps = self.graph_deps
         state = self.state
+        pending_message_queue = state.pending_messages
+        assert isinstance(pending_message_queue, _enqueue.PendingMessageQueue)
 
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
@@ -4244,6 +4243,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             # the run is over so it can never cancel unrelated later work on this task.
             graph_deps.cancellation.bind()
             stack.callback(graph_deps.cancellation.finish)
+            # Nothing drains the queue once the graph stops, so reject later enqueues instead of
+            # stranding them. A normal finish already closed it inside `drain_at_end`.
+            stack.callback(pending_message_queue.close)
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 
