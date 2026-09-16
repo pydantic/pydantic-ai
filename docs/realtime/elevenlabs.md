@@ -104,7 +104,9 @@ server closing the socket (code 1008, naming the field) after the handshake, not
 Of the shared settings:
 
 - `output_modality='text'` maps to the text-only override, toggle-gated like the rest.
-- `tool_choice='none'` and allow-lists restrict the tool set the preflight checks or syncs.
+- `tool_choice='none'` and allow-lists restrict the tool set the preflight checks or syncs. A call
+  to any other tool is rejected on receipt with an error result, whatever the sync mode, so the
+  agent's dashboard tools can never widen the run's tool set.
 - `turn_detection` cannot be configured: ElevenLabs' server-side turn model is always on, so any
   value other than `True` raises. There is no [push-to-talk](turns.md#push-to-talk).
 - `input_transcription_model=None` raises: ASR drives the agent pipeline and cannot be disabled.
@@ -128,7 +130,8 @@ at connect time:
   first call should pay for: the writes run sequentially at roughly half a second each, and two
   processes syncing the same agent concurrently race on the final `tool_ids` re-point, last
   writer wins.
-- `'off'`: trust the agent's configuration, for example with a read-scoped API key.
+- `'off'`: trust the agent's configuration, for example with a read-scoped API key. Calls to tools
+  the session does not advertise are still rejected on receipt.
 
 Server-side webhook, MCP, and system tools on the agent are ElevenLabs-owned and never touched, and
 tool executions the server runs itself are not surfaced as session tool calls. The agent's attached

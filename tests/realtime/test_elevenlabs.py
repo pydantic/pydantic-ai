@@ -617,6 +617,32 @@ async def test_tool_sync_off_trusts_the_agent() -> None:
             pass
 
 
+async def test_tool_sync_off_still_enforces_tool_choice_on_incoming_calls() -> None:
+    # `'off'` skips the preflight, so the agent keeps `get_weather` attached even though the run
+    # excluded it with `tool_choice='none'`; the connection rejects the call instead of executing it.
+    call_frame: dict[str, Any] = {
+        'type': 'client_tool_call',
+        'client_tool_call': {
+            'tool_name': 'get_weather',
+            'tool_call_id': 'call_1',
+            'parameters': {'city': 'Berlin'},
+            'expects_response': True,
+        },
+    }
+    ws = FakeWebSocket([HANDSHAKE_FRAME, call_frame])
+    model = _model(RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE])))
+    settings = ElevenLabsRealtimeModelSettings(elevenlabs_tool_sync='off', tool_choice='none')
+    with patched_connect(ws):
+        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings) as connection:
+            events = await collect_codec_events(connection)
+    [error] = events
+    assert isinstance(error, RealtimeSessionErrorEvent)
+    assert error.recoverable
+    assert "call to tool 'get_weather'" in error.message
+    [result] = [frame for frame in ws.sent_frames() if frame.get('type') == 'client_tool_result']
+    assert result['is_error'] is True
+
+
 async def test_tool_sync_creates_updates_and_repoints() -> None:
     # `'sync'` mode: create the missing tool, update the differing one (its id resolved through the
     # workspace tool listing, since resolved agent tools don't carry ids), and re-point the agent's
@@ -1727,6 +1753,54 @@ async def test_client_tool_call_string_parameters_pass_through() -> None:
     }
     events = await connection._map_event(frame)  # pyright: ignore[reportPrivateUsage]
     assert events == [ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city": "Berlin"}')]
+
+
+def _tool_call_frame(tool_name: str, *, expects_response: bool = True) -> dict[str, Any]:
+    return {
+        'type': 'client_tool_call',
+        'client_tool_call': {
+            'tool_name': tool_name,
+            'tool_call_id': 'call_1',
+            'parameters': {},
+            'expects_response': expects_response,
+        },
+    }
+
+
+async def test_client_tool_call_outside_the_advertised_set_is_rejected() -> None:
+    # The agent's dashboard tools can be wider than the run's (`tool_choice`-filtered) tool set,
+    # so a call naming anything else is answered with an error result and never reaches the session.
+    ws = FakeWebSocket([])
+    connection = ElevenLabsRealtimeConnection(ws, allowed_tool_names={'get_weather'})  # type: ignore[arg-type]
+    events = await connection._map_event(_tool_call_frame('delete_order'))  # pyright: ignore[reportPrivateUsage]
+    assert events == [
+        RealtimeSessionErrorEvent(
+            message=(
+                "Rejected ElevenLabs Agents call to tool 'delete_order': this run does not advertise it "
+                '(not defined, or excluded by `tool_choice`).'
+            ),
+            recoverable=True,
+        )
+    ]
+    assert ws.sent_frames() == [
+        {
+            'type': 'client_tool_result',
+            'tool_call_id': 'call_1',
+            'result': "Tool 'delete_order' is not available in this conversation.",
+            'is_error': True,
+        }
+    ]
+    # An advertised tool still maps to a `ToolCall`.
+    [call] = await connection._map_event(_tool_call_frame('get_weather'))  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(call, ToolCall)
+
+
+async def test_rejected_fire_and_forget_tool_call_sends_nothing() -> None:
+    ws = FakeWebSocket([])
+    connection = ElevenLabsRealtimeConnection(ws, allowed_tool_names=set())  # type: ignore[arg-type]
+    [error] = await connection._map_event(_tool_call_frame('log_event', expects_response=False))  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(error, RealtimeSessionErrorEvent)
+    assert ws.sent == []
 
 
 async def test_context_usage_maps_to_session_usage_and_leaves_model_name_unset() -> None:
