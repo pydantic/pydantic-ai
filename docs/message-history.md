@@ -259,6 +259,27 @@ The repair is deterministic and idempotent: repairing the same history always pr
 
 Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] or a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a [cancelled stream](output.md#cancelling-streams) or a crash during tool execution) whose tool calls will never be executed.
 
+The one case the repair leaves to you is a new user prompt on top of a history whose final response still has unanswered tool calls: those calls can still be answered — by resuming the run, or with `deferred_tool_results` — so Pydantic AI raises rather than abandon them. When you do mean to abandon them, [`repair_messages`][pydantic_ai.messages.repair_messages] runs the same pipeline on demand and closes them out:
+
+```python {title="repairing_a_stored_history.py"}
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    repair_messages,
+)
+
+stored: list[ModelMessage] = [
+    ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='c1')])
+]
+
+runnable = repair_messages(stored)
+print(runnable[-1].parts[-1].content)
+#> The tool call was interrupted before a result was produced.
+```
+
+`runnable` can now be passed as `message_history=` alongside a new prompt. It is also what to reach for outside a run — in a store, a UI, or a capability that wants to record a history it knows a later run can pick up. Pass `repair_last_response=False` to leave the live frontier alone and repair only the rest.
+
 This pipeline handles regular, locally-executed tool calls only. Provider-native tool parts — produced and resolved by the provider inline — are left untouched and repaired by each model's own serializer instead. Some other provider-invalid histories are also out of scope and may be rejected: duplicate tool results for one call, and provider-specific ordering rules beyond call/result pairing — where one of those rules is known and verified, the model's own serializer normalizes the request for it instead.
 
 ### Correlating runs with `run_id` and `conversation_id`
@@ -392,6 +413,11 @@ _(This example is complete, it can be run "as is")_
     preserves them — and because the mapping is carried through as-is, a multi-modal item nested
     underneath one comes back as a plain dict there, while the JSON round-trip stringifies the key
     and restores the item. Use string keys in a tool return if you need both.
+
+    Raw `bytes` returned by a tool are the one value that does not survive: `ToolReturnPart.content`
+    is typed `Any`, so they are written as a base64 string and reload as a `str` rather than as
+    `bytes`. Return a [`BinaryContent`][pydantic_ai.messages.BinaryContent] for binary data and it
+    round-trips exactly, in this adapter and in any model of your own.
 
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
@@ -814,8 +840,8 @@ long_conversation_history: list[ModelMessage] = []  # Your long conversation his
 # result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
 ```
 
-!!! warning "Be careful when slicing the message history"
-    When slicing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269).
+!!! note "What slicing costs"
+    A slice that separates a tool call from its result no longer reaches the provider that way: the repair described in [Making histories provider-valid](#making-histories-provider-valid) runs on whatever the processor returns. It is silent, though, and it resolves the break in the only ways it can — a result whose call was sliced away is dropped, and a call whose result was sliced away is answered with a synthesized "interrupted" return. Both change what the model sees. Slice on message boundaries that keep each call with its result when the exchange matters.
 
 #### `RunContext` parameter
 
