@@ -505,9 +505,11 @@ def resolve_redirect_url(current_url: str, location: str) -> str:
         return urlunparse((parsed_current.scheme, parsed_current.netloc, f'{base_path}/{location}', '', '', ''))
 
 
-# IDNA (RFC 3490 section 3.1) treats these as label separators alongside `.`: ideographic full
-# stop, fullwidth full stop, halfwidth ideographic full stop.
-_IDNA_LABEL_SEPARATORS = ('\u3002', '\uff0e', '\uff61')
+# Characters the IDNA codec turns into a label separator: the three RFC 3490 section 3.1 forms
+# (ideographic, fullwidth and halfwidth ideographic full stop) plus the two more the codec's NFKC
+# pass maps to `.` (one dot leader, small full stop). This list only has to cover the spellings the
+# codec rejects outright, since `_domain_key` strips the root label again after encoding.
+_IDNA_LABEL_SEPARATORS = ('\u3002', '\uff0e', '\uff61', '\u2024', '\ufe52')
 
 
 def _domain_key(host: str) -> str:
@@ -520,19 +522,20 @@ def _domain_key(host: str) -> str:
     raw string would let those past a blocklist while the request still reached the blocked
     host, so both sides are compared in the ASCII form the resolver will actually use.
 
-    The three non-ASCII label separators are folded to `.` before the root label is stripped,
-    rather than relying on the codec: it maps them to `.` too, but only after the strip has
-    already run, so `evil.com\u3002` would otherwise key as `evil.com.` and miss an `evil.com`
-    entry.
+    The root label is stripped again *after* encoding, because a non-ASCII separator is only
+    turned into a `.` by the codec, i.e. after the first strip has already run: `evil.com\u2024`
+    would otherwise key as `evil.com.` and miss an `evil.com` entry. Stripping afterwards covers
+    every character the codec maps to a separator without this having to enumerate them.
 
     A label the codec rejects (empty, or longer than 63 characters) is left as-is: it names a
-    host DNS cannot resolve, so the raw string is the only key it can have.
+    host DNS cannot resolve, so the raw string is the only key it can have. The separators are
+    folded before encoding as well, so that a repeated one does not push the host onto that path.
     """
     for separator in _IDNA_LABEL_SEPARATORS:
         host = host.replace(separator, '.')
     host = _normalized_host(host)
     try:
-        return host.encode('idna').decode('ascii')
+        return host.encode('idna').decode('ascii').rstrip('.')
     except UnicodeError:
         return host
 
