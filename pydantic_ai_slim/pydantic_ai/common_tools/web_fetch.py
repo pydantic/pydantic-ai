@@ -188,9 +188,7 @@ class _MarkdownConverter(MarkdownConverter):
         # ever see runs of one character. Upstream reads the node's text and its neighbours, so
         # hand it a detached stand-in carrying the same links rather than editing the tree:
         # `replace_with` has to find the node among its siblings, which is linear per node.
-        if parent_tags is None:
-            parent_tags = set()
-        if 'pre' not in parent_tags:
+        if 'pre' not in (parent_tags or ()):
             normalized = _WHITESPACE_RUN_RE.sub(_collapse_whitespace_run, el)
             if normalized != el:
                 stand_in = type(el)(normalized)
