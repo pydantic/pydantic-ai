@@ -261,6 +261,18 @@ RAISES_CASES = [
         match=r'Invalid tool names in `tool_choice`:.*Known tools:',
     ),
     dict(
+        id='list_names_only_an_output_tool',
+        # A list choice excludes output tools, so an output tool name in one is a typo, not a
+        # selection -- and must be rejected the same way `ToolOrOutput(function_tools=...)` does.
+        tool_choice=['final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('a')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        match=r"Invalid tool names in `tool_choice`: \{'final_result'\}",
+    ),
+    dict(
         id='list_invalid_no_function_tools',
         tool_choice=['x'],
         params_kwargs={'function_tools': [], 'allow_text_output': True},
@@ -321,6 +333,31 @@ def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> Non
         allow_text_output=True,
     )
     assert resolve_tool_choice({'tool_choice': ['visible', 'hidden']}, params) == ('required', {'visible'})
+
+
+def test_resolve_tool_choice_list_covering_all_function_tools_keeps_names_when_output_tools_exist() -> None:
+    """Dropping the name list is only safe when nothing else is on the wire.
+
+    A list naming every function tool must still be returned as an explicit set while output
+    tools exist: a bare `'required'` would also let the model satisfy the call with an output
+    tool, which is the opposite of what a function-only choice asked for.
+    """
+    params = ModelRequestParameters(
+        function_tools=[make_tool('approve'), make_tool('validate')],
+        output_tools=[make_tool('final_result')],
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['approve', 'validate']}, params) == (
+        'required',
+        {'approve', 'validate'},
+    )
+
+    # With no output tools the name list carries no extra information, so it is dropped.
+    params_no_output = ModelRequestParameters(
+        function_tools=[make_tool('approve'), make_tool('validate')],
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['approve', 'validate']}, params_no_output) == 'required'
 
 
 def test_resolve_tool_choice_keeps_via_history_names() -> None:
@@ -397,6 +434,20 @@ WARNS_CASES = [
         match=r"Some tools.*'typo'.*Known tools: \['a', 'b'\]",
         expected_mode='required',
         expected_tools={'a', 'typo'},
+    ),
+    dict(
+        id='list_function_tool_plus_output_tool_name',
+        # An output tool name mixed into a list is not a valid function tool: warn and keep the
+        # restriction, rather than counting it as known and silently widening the choice.
+        tool_choice=['a', 'final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        match=r"Some tools.*'final_result'",
+        expected_mode='required',
+        expected_tools={'a', 'final_result'},
     ),
     dict(
         id='tool_or_output_partial_invalid',
