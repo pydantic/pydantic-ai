@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
-from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
+from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
@@ -478,6 +478,41 @@ class _FinishModelRequestSpan(Protocol):
     def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
 
 
+def record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
+    """Record `error` on `span` as an `exception` event.
+
+    With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
+    only the exception type is kept: the message and stack trace of an exception raised around
+    a tool, a model request or an agent run can quote content the setting is meant to withhold --
+    a tool retry or failure carries the text the model sees, an exception chained from one repeats
+    that text in its stack trace, a provider's error response can echo the request, and validation
+    errors and user exceptions may echo the rejected arguments. The type and `escaped` formatting
+    match what `Span.record_exception` would have produced.
+    """
+    if include_content:
+        span.record_exception(error, escaped=escaped)
+        return
+    error_type = type(error)
+    type_name = (
+        f'{error_type.__module__}.{error_type.__qualname__}'
+        if error_type.__module__ != 'builtins'
+        else error_type.__qualname__
+    )
+    # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
+    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
+
+
+def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
+    """Set `span`'s status to ERROR, describing it the way `use_span` would have.
+
+    The SDK's description is `f'{type(exc).__name__}: {exc}'`, which repeats the message the
+    exception event carries, so it is withheld alongside it when content capture is off.
+    """
+    span.set_status(
+        Status(StatusCode.ERROR, description=f'{type(error).__name__}: {error}' if include_content else None)
+    )
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
@@ -529,7 +564,13 @@ def open_model_request_span(
 
     record_metrics: Callable[[], None] | None = None
     try:
-        with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
+        with settings.tracer.start_as_current_span(
+            span_name,
+            attributes=attributes,
+            kind=SpanKind.CLIENT,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
@@ -575,7 +616,16 @@ def open_model_request_span(
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
 
-            yield finish, prepared_request_context
+            try:
+                yield finish, prepared_request_context
+            except Exception as e:
+                # Stand in for what the two `..._on_exception=False` arguments turned off, matching
+                # `use_span` exactly: it records only `Exception`, does not mark what it records as
+                # escaped, and describes the status with the exception. A provider's error response
+                # body travels in that message, so it follows `include_content`.
+                record_exception(span, e, include_content=settings.include_content, escaped=False)
+                set_error_status(span, e, include_content=settings.include_content)
+                raise
     finally:
         if record_metrics:
             record_metrics()
