@@ -870,7 +870,10 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=True,
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
+        thinking_always_enabled=False,
         supports_async_tool_calls=True,  # the realtime models keep talking through a tool call
+        requires_async_tool_calls=False,
+        supports_async_tool_call_scheduling=False,  # Gemini-only; OpenAI has no scheduling vocabulary
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,

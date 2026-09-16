@@ -1913,6 +1913,7 @@ class RealtimeSession:
         more_expected = bool(
             self._pending_tool_calls
             or already_finalized
+            or event.more_expected
             or any(isinstance(part, ToolCallPart) for part in self._response_parts)
         )
         self._response_finalized_before_terminal = False

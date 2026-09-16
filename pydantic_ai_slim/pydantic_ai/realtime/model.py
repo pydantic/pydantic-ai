@@ -366,6 +366,8 @@ KnownRealtimeModelName = TypeAliasType(
         'xai:grok-voice-think-fast-2.0',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
+        'google:gemini-3.8-live',
+        'google:gemini-3.8-live-extended-thinking',
     ],
 )
 """Known realtime model identifiers, surfaced for autocomplete and pinned to provider aliases by a sync test."""

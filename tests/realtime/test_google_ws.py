@@ -54,6 +54,11 @@ pytestmark = [
 # produces audio output — so every scenario below runs audio-out (transcripts drive the assertions).
 _MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025'
 
+# The reasoning Live model, which differs from every other one in three ways the adapter has to
+# handle: it requires a thinking level, rejects blocking function declarations, and rejects the
+# function-response scheduling the async path otherwise sends.
+_EXTENDED_THINKING_MODEL = 'gemini-3.8-live-extended-thinking'
+
 
 async def test_audio_in_server_vad_turn(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
@@ -480,8 +485,13 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=False,
         supports_thinking=True,  # native-audio and 3.x Live models take a thinking config
+        thinking_always_enabled=False,
         # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
         supports_async_tool_calls=True,
+        # `gemini-2.5-flash-native-audio-latest` has a blocking mode too, and takes the scheduling
+        # field that paces an async result against its speech.
+        requires_async_tool_calls=False,
+        supports_async_tool_call_scheduling=True,
         # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
         supports_tool_return_schema=True,
         # Search grounding only: Live models reject or silently ignore code execution and URL context.
@@ -532,3 +542,114 @@ async def test_handle_barge_in_over_live_speech(
     assert any(isinstance(event, RealtimeResponseInterruptedEvent) for event in events)
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
     assert 'interrupted' in [response.state for response in responses]
+
+
+async def test_extended_thinking_async_tool_round(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`gemini-3.8-live-extended-thinking` speaks a filler, runs the tool in the background, then answers.
+
+    The model has no blocking mode, so the session is async whether or not it asked, and the tool result
+    goes back *without* a `scheduling` field — the two things this model rejects outright. It also
+    requires a thinking level, which the session supplies on its behalf.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(_EXTENDED_THINKING_MODEL, provider=provider)
+    agent = Agent(instructions='You are a flight booking assistant. Always use search_flights before answering.')
+
+    @agent.tool_plain
+    async def search_flights(origin: str, destination: str) -> str:
+        """Search flights between two cities. Takes several seconds."""
+        await anyio.sleep(5)
+        return 'KLM at 120 dollars'
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Find me a flight from Amsterdam to Lisbon, then tell me the cheapest one.')
+        with anyio.fail_after(90):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    # Exactly one, at the end: the filler's `turn_complete` arrives with `interaction_status: IN_PROGRESS`,
+    # and the exchange isn't over until the model says `IDLE`. Breaking on the first one above is what
+    # pins this — a premature boundary would have ended the loop before the tool ever ran.
+    assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
+    assert [type(event.part).__name__ for event in events if isinstance(event, FunctionToolCallEvent)] == [
+        'ToolCallPart'
+    ]
+
+    assert sent_frames_containing(cassette, 'Search flights between two cities.') == snapshot(
+        [
+            {
+                'setup': {
+                    'model': 'models/gemini-3.8-live-extended-thinking',
+                    'generationConfig': {'responseModalities': ['AUDIO'], 'thinkingConfig': {'thinking_level': 'LOW'}},
+                    'systemInstruction': {
+                        'parts': [
+                            {'text': 'You are a flight booking assistant. Always use search_flights before answering.'}
+                        ],
+                        'role': 'user',
+                    },
+                    'tools': [
+                        {
+                            'functionDeclarations': [
+                                {
+                                    'description': 'Search flights between two cities. Takes several seconds.',
+                                    'name': 'search_flights',
+                                    'parameters': {
+                                        'properties': {'origin': {'type': 'STRING'}, 'destination': {'type': 'STRING'}},
+                                        'required': ['origin', 'destination'],
+                                        'type': 'OBJECT',
+                                    },
+                                    'behavior': 'NON_BLOCKING',
+                                }
+                            ]
+                        }
+                    ],
+                    'inputAudioTranscription': {},
+                    'outputAudioTranscription': {},
+                }
+            }
+        ]
+    )
+    assert sent_frames_containing(cassette, 'KLM at 120 dollars') == snapshot(
+        [
+            {
+                'tool_response': {
+                    'functionResponses': [
+                        {
+                            'id': 'call_3850_fc_0_0',
+                            'name': 'search_flights',
+                            'response': {'output': 'KLM at 120 dollars'},
+                        }
+                    ]
+                }
+            }
+        ]
+    )
+    messages = session.all_messages()
+    assert [type(m).__name__ for m in messages] == snapshot(
+        # Two assistant responses before the tool return: the spoken filler is a completed generation of
+        # its own, and the tool call arrives in the next one.
+        ['ModelRequest', 'ModelResponse', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    filler = messages[1]
+    assert isinstance(filler, ModelResponse)
+    filler_part = filler.parts[0]
+    assert isinstance(filler_part, SpeechPart)
+    assert filler_part.transcript == snapshot('Let me check the available flights for you.')
+    # The filler was reasoned about, and those thinking tokens are billed against it rather than folded
+    # into the answer's response.
+    assert filler.usage.details['thoughts_tokens'] == snapshot(71)
+
+    tool_response = messages[2]
+    assert isinstance(tool_response, ModelResponse)
+    assert tool_response.parts == [ToolCallPart(tool_name='search_flights', args=IsStr(), tool_call_id=IsStr())]
+
+    final = messages[4]
+    assert isinstance(final, ModelResponse)
+    final_part = final.parts[0]
+    assert isinstance(final_part, SpeechPart)
+    assert final_part.transcript is not None and 'KLM' in final_part.transcript

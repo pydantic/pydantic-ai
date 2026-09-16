@@ -23,11 +23,31 @@ credentials, project, region, or client.
 
 ## Model names
 
-Use a Gemini Live model ID, for example `gemini-2.5-flash-native-audio-latest` or
-`gemini-3.1-flash-live-preview`. Native-audio and other Live models differ in thinking,
-asynchronous tools, and output behavior. Use the
+Use a Gemini Live model ID, for example `gemini-3.8-live`, `gemini-3.8-live-extended-thinking`, or
+`gemini-2.5-flash-native-audio-latest`. Live models differ in thinking, asynchronous tools, and
+output behavior; the profile resolved from the model ID describes what each one supports. Use the
 [official Gemini Live documentation](https://ai.google.dev/gemini-api/docs/live) as the canonical
 model and availability source.
+
+### Extended thinking
+
+`gemini-3.8-live-extended-thinking` reasons in the background while it keeps talking, so it can speak
+a filler ("Let me check those flights for you"), run a tool, and answer — all within one exchange. It
+differs from every other Live model in three ways the model handles for you:
+
+- **It requires a thinking level.** One is sent even when the session asks for nothing, at the cheapest
+  level the model accepts, because reasoning costs latency. Ask for more with
+  [`thinking`](../capabilities/thinking.md)`='medium'` or `'high'`. `thinking=False` means "as little as
+  possible" here rather than "off", since the model has no off.
+- **Its tool calls are always asynchronous.** `google_async_tool_calls` is on regardless, and setting it
+  to `False` raises [`UserError`][pydantic_ai.exceptions.UserError] rather than promising a blocking mode
+  the model doesn't have.
+- **Its spoken filler doesn't end the turn.** The filler is a completed `ModelResponse` of its own, so
+  one exchange can produce several, but `RealtimeTurnCompleteEvent` waits for the model to actually
+  finish. A UI that shows "thinking…" should key off that event, not off each response.
+
+`gemini-3.8-live` is the same family without background reasoning: it takes no thinking configuration
+at all, and a [`thinking`](../capabilities/thinking.md) setting is ignored rather than sent.
 
 ## Settings
 
@@ -62,7 +82,7 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | `google_input_transcription`, `google_output_transcription` | Native [transcription](audio.md#input-transcription) switches, enabled by default |
 | `google_context_compression` | Sliding-window compression for long sessions |
 | `google_enable_session_resumption` | Native state restoration; enabled automatically by a `reconnect` policy |
-| `google_async_tool_calls` | Lets supported native-audio models continue speaking during tools |
+| `google_async_tool_calls` | Lets supported models continue speaking during tools; always on for extended thinking |
 | `google_config_overrides` | Raw `LiveConnectConfig` keys merged last as a forward-compatibility escape hatch |
 
 `google_voice` is the provider voice setting. `google_thinking_config` takes precedence over the
@@ -76,9 +96,11 @@ Gemini-specific control is needed.
 ### Asynchronous tool calls
 
 Gemini normally pauses generation while a function tool is outstanding. Set
-`google_async_tool_calls=True` on supported native-audio models to let it continue speaking. This is
-best for slow tools; a fast result can interrupt speech that barely started and leave an empty
-interrupted turn in history. Other Live models ignore the setting.
+`google_async_tool_calls=True` on supported models to let it continue speaking. This is best for slow
+tools; a fast result can interrupt speech that barely started and leave an empty interrupted turn in
+history. Models that don't support it ignore the setting, and
+`gemini-3.8-live-extended-thinking`, which has no blocking mode, runs every tool call this way
+regardless — see [Extended thinking](#extended-thinking).
 
 ### Native tools
 

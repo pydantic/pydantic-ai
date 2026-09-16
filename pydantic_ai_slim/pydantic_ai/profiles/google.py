@@ -1,15 +1,17 @@
 from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, cast
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
 from ..native_tools import WebSearchTool
+
+# Imported at runtime, not under `TYPE_CHECKING`, because `GoogleRealtimeModelProfile` below inherits
+# from it: a `TypedDict` base has to exist when the class body runs. `pydantic_ai.realtime` is
+# first-party and dependency-free (the provider adapters that need `google-genai` are submodules it
+# doesn't import), so this pulls in no optional dependency.
+from ..realtime.profiles import RealtimeModelProfile
 from . import ModelProfile
-
-if TYPE_CHECKING:
-    from ..realtime.profiles import RealtimeModelProfile
-
 
 GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
 """Native Gemini `thinking_level` values."""
@@ -187,6 +189,14 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
 )
 """Model name prefixes mapped to their documented thinking levels."""
 
+_REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
+    # Verified live 2026-09-16 against the Gemini Developer API: `gemini-3.8-live-extended-thinking`
+    # answers `1007 Thinking level MINIMAL is not supported for this model` and accepts the other
+    # three. Live models not listed here take the full scale.
+    ('gemini-3.8-live-extended-thinking', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+)
+"""Live model name prefixes mapped to the thinking levels they accept."""
+
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
@@ -225,9 +235,31 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     return profile
 
 
+class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
+    """Profile for Gemini Live models, adding the Gemini-specific fields to the shared realtime profile.
+
+    Mirrors the [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile] /
+    [`ModelProfile`][pydantic_ai.profiles.ModelProfile] split on the request-response side.
+    """
+
+    google_thinking_levels: frozenset[GoogleThinkingLevel]
+    """Thinking levels the Live model accepts. Default: unset.
+
+    Same meaning as [`google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
+    on a standard model: unset means the full [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS]
+    scale, and a unified [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] effort snaps to the
+    nearest level in the set.
+    """
+
+
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for a Gemini Live model."""
-    return {
+    is_extended_thinking = model_name.startswith('gemini-3.8-live-extended-thinking')
+    thinking_levels = next(
+        (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
+        None,
+    )
+    profile: GoogleRealtimeModelProfile = {
         'supports_image_input': True,
         # Every general-purpose Live model is audio-only: a session asking for `TEXT` is closed with
         # `1007 The requested combination of response modalities (TEXT) is not supported by the
@@ -265,17 +297,39 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # half-cascade `gemini-live-2.5-flash` is the exception: it closes the session with `1007
         # thinking_level is not supported by this model` (and rejects a `thinking_budget` too), so
         # it reports `False` and the shared `thinking` setting is skipped instead of sent.
-        'supports_thinking': 'native-audio' in model_name or not model_name.startswith('gemini-live-2.5'),
+        # `gemini-3.8-live` is the exception on the other side: it answers `1007 Thinking level is not
+        # supported for this model` to any level (verified live 2026-09-16), so the shared `thinking`
+        # setting is skipped for it too.
+        'supports_thinking': is_extended_thinking
+        or (
+            ('native-audio' in model_name or not model_name.startswith('gemini-live-2.5'))
+            and model_name != 'gemini-3.8-live'
+        ),
+        # Extended thinking reasons and speaks at once, and its API *requires* a thinking level:
+        # connecting without one is `1007 Thinking level must be specified for this model`, and a
+        # `thinking_budget` (including `0`, the shape `thinking=False` maps to) is rejected the same way.
+        'thinking_always_enabled': is_extended_thinking,
         # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with
         # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
         # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result
         # lands. This gates the opt-in `google_async_tool_calls` setting; it is not enabled by
-        # merely being supported.
-        'supports_async_tool_calls': 'native-audio' in model_name,
+        # merely being supported. Extended thinking has no other mode — see below.
+        'supports_async_tool_calls': 'native-audio' in model_name or is_extended_thinking,
+        # Verified live 2026-09-16: `gemini-3.8-live-extended-thinking` answers `1007 BLOCKING function
+        # calls are not supported for this model` to a `BLOCKING` (or unset) declaration behavior, so
+        # every tool session on it is async whether or not `google_async_tool_calls` asked.
+        'requires_async_tool_calls': is_extended_thinking,
+        # ...and conversely rejects the scheduling field the async path otherwise sends: `1007 Function
+        # response scheduling is not supported for this model`. It paces results against its own
+        # reasoning instead.
+        'supports_async_tool_call_scheduling': 'native-audio' in model_name,
         # Gemini Live takes a tool's return schema natively, as the function declaration's
         # `response` schema (matching the classic `GoogleModel`'s `response_json_schema`).
         'supports_tool_return_schema': True,
     }
+    if thinking_levels is not None:
+        profile['google_thinking_levels'] = thinking_levels
+    return profile
 
 
 class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
