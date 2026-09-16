@@ -62,6 +62,7 @@ outlines-sglang = ["pydantic-ai-slim[outlines-sglang]=={{ version }}"]
 outlines-vllm-offline = ["pydantic-ai-slim[outlines-vllm-offline]=={{ version }}"]
 sentence-transformers = ["pydantic-ai-slim[sentence-transformers]=={{ version }}"]
 voyageai = ["pydantic-ai-slim[voyageai]=={{ version }}"]
+duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
