@@ -2,7 +2,12 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "pydantic-ai-slim[anthropic,mcp]>=1.95.1",
+#   # The shim is v1 code, so keep its library on the v1 line rather than the latest
+#   # PyPI release (v2 moved the Anthropic client to `httpx2`), and keep FastMCP
+#   # below 4 like the `mcp` extra does. The adjacent lock pins the full graph.
+#   "pydantic-ai-slim[anthropic,mcp]>=1.95.1,<2",
+#   "fastmcp-slim<4",
+#   "anthropic<1",
 #   "logfire",
 #   "opentelemetry-instrumentation-httpx",
 # ]

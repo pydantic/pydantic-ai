@@ -72,7 +72,8 @@ openai = ["openai>=2.29.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.70.0"]
-anthropic = ["anthropic>=0.108.0"]
+# The 1.x SDK moved to `httpx2`, which this line's Anthropic client does not pass (#7657).
+anthropic = ["anthropic>=0.108.0,<1"]
 # 1.12.2 is the first release whose `reasoning_effort` proto includes `EFFORT_NONE` (and `medium`), which Grok 4.3 support relies on.
 xai = ["xai-sdk>=1.12.2"]
 groq = ["groq>=0.25.0"]
@@ -118,11 +119,12 @@ cli = [
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Sufficient for `MCPToolset` and the deprecated `MCPServer*` hierarchy;
 # pulls the `mcp` SDK transitively.
-mcp = ["fastmcp-slim[client]>=3.3.0"]
+# FastMCP 4 uses MCP SDK v2, which this line does not support (#6661).
+mcp = ["fastmcp-slim[client]>=3.3.0,<4"]
 # FastMCP — full server-side stack. Pull this in when you need `FastMCP(...)` to serve an
 # in-process or HTTP MCP server. The `fastmcp` extra will be dropped in v2 — install `fastmcp`
 # directly instead.
-fastmcp = ["fastmcp>=3.3.0"]
+fastmcp = ["fastmcp>=3.3.0,<4"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI
