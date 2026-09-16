@@ -323,10 +323,22 @@ def test_serialization_honors_the_callers_filters() -> None:
 
     assert 'messages' not in adapter.dump_python(result, exclude={'messages': True})
 
-    # A spec reaching *into* a synthesized key is dropped by Pydantic before the serializer runs,
-    # so nothing applies it. Pinned because it is a silent no-op rather than an error: a plain
-    # model would have removed message 0 here.
-    assert len(adapter.dump_python(result, exclude={'messages': {0}})['messages']) == len(result.all_messages())
+    # A spec reaching *into* a key is dropped by Pydantic before the serializer is handed its
+    # mapping, so it has to be applied here too.
+    assert len(adapter.dump_python(result, exclude={'messages': {0}})['messages']) == len(result.all_messages()) - 1
+    assert len(adapter.dump_python(result, include={'messages': {0}})['messages']) == 1
+
+
+def test_serialization_honors_a_redaction_inside_metadata() -> None:
+    """A nested `exclude` must not dump in full the value it was asked to redact."""
+    result = Agent(TestModel(custom_output_text='filtered')).run_sync(
+        'Filter this', metadata={'api_key': 'secret', 'tenant': 'acme'}
+    )
+    adapter = TypeAdapter(AgentRunResult[str])
+
+    assert adapter.dump_python(result, exclude={'metadata': {'api_key'}})['metadata'] == {'tenant': 'acme'}
+    assert b'secret' not in adapter.dump_json(result, exclude={'metadata': {'api_key'}})
+    assert adapter.dump_python(result)['metadata'] == {'api_key': 'secret', 'tenant': 'acme'}
 
 
 def test_a_filtered_out_output_is_left_out_rather_than_failing_the_dump() -> None:

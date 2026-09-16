@@ -48,20 +48,41 @@ _STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
+def _filtered_value(value: Any, spec: Any, *, keep: bool) -> Any:
+    """Apply one key's nested `include`/`exclude` spec to the value itself.
+
+    Filters the container rather than re-serializing it, so the value stays whatever the outer
+    schema expects. Only a plain set of keys or indices is applied — the forms a caller reaches for
+    to drop a message or redact a metadata entry. A deeper spec is left alone; see
+    `_filter_serialized`.
+    """
+    if not isinstance(spec, set):
+        return value
+    if isinstance(value, Mapping):
+        items = cast('Mapping[Any, Any]', value)
+        return {key: item for key, item in items.items() if (key in spec) is keep}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        items = cast('Sequence[Any]', value)
+        return [item for index, item in enumerate(items) if (index in spec) is keep]
+    return value
+
+
 def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict[str, Any]:
     """Apply the caller's `include`/`exclude` to the keys `AgentRunResult._serialize` synthesizes.
 
     Pydantic applies them to a model's own fields, which here are the private ones the public shape
-    replaces, so without this `exclude={'messages'}` would quietly dump the messages anyway.
+    replaces, so without this `exclude={'messages'}` would quietly dump the messages anyway, and a
+    spec reaching *inside* a key (`exclude={'metadata': {'api_key'}}`) would emit in full the value
+    it was asked to redact.
 
-    Only whole keys, though: a spec that reaches *inside* one (`exclude={'messages': {0}}`) is
-    dropped by Pydantic before this serializer is handed its mapping, so nothing applies it and the
-    value is dumped in full. Applying it here would mean re-serializing each key against its own
-    sub-spec, which is Pydantic's per-field machinery reimplemented for nine keys.
+    A spec deeper than one level (`exclude={'messages': {'__all__': {'parts'}}}`) is not applied:
+    reaching that far in means re-serializing the value against a sub-schema, which is Pydantic's
+    per-field machinery rebuilt for nine synthesized keys.
     """
-    if (include := info.include) is not None:
+    include, exclude = info.include, info.exclude
+    if include is not None:
         data = {key: value for key, value in data.items() if key in include}
-    if (exclude := info.exclude) is not None:
+    if exclude is not None:
         # A nested spec is a set or a mapping; anything else (`True`, `...`) drops the whole key.
         dropped = (
             exclude
@@ -69,7 +90,15 @@ def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict
             else {key for key, spec in exclude.items() if not isinstance(spec, (set, dict))}
         )
         data = {key: value for key, value in data.items() if key not in dropped}
-    return dict(data)
+
+    filtered = dict(data)
+    for spec, keep in ((include, True), (exclude, False)):
+        if not isinstance(spec, Mapping):
+            continue
+        for key, sub_spec in cast('Mapping[Any, Any]', spec).items():
+            if key in filtered:
+                filtered[key] = _filtered_value(filtered[key], sub_spec, keep=keep)
+    return filtered
 
 
 @dataclasses.dataclass(repr=False)
