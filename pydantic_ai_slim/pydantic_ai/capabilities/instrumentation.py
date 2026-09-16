@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
-from opentelemetry.trace import Span, StatusCode
+from opentelemetry.trace import Span, Status, StatusCode
 from pydantic_core import ValidationError, to_json
 
 from pydantic_ai._instrumentation import (
@@ -236,6 +236,7 @@ class Instrumentation(AbstractCapability[Any]):
             names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
             record_exception=False,
+            set_status_on_exception=False,
         ) as span:
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
@@ -246,10 +247,18 @@ class Instrumentation(AbstractCapability[Any]):
                 try:
                     result = await handler()
                 except Exception as e:
-                    # Stand in for the recording `record_exception=False` turned off, matching it
-                    # exactly: `use_span` only records `Exception` (a `BaseException` such as a
-                    # cancellation is not an error), and does not mark it as escaped.
+                    # Stand in for what the two `..._on_exception=False` arguments turned off,
+                    # matching `use_span` exactly: it records only `Exception` (a `BaseException`
+                    # such as a cancellation is not an error), does not mark what it records as
+                    # escaped, and describes the status with the exception. That description
+                    # repeats the message, so it is withheld along with the event's.
                     _record_exception(span, e, include_content=settings.include_content, escaped=False)
+                    span.set_status(
+                        Status(
+                            StatusCode.ERROR,
+                            description=f'{type(e).__name__}: {e}' if settings.include_content else None,
+                        )
+                    )
                     raise
 
                 if settings.include_content and span.is_recording():

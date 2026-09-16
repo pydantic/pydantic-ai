@@ -4147,6 +4147,18 @@ def test_exception_events_honor_include_content(
         assert all(set(attributes) == {'exception.type', 'exception.escaped'} for _, attributes in events)
         assert 'secret' not in str(spans)
 
+    # The run span's status description repeats the exception message, and is not part of the
+    # exported span dicts above, so it is checked separately.
+    descriptions = [span.status.description for span in capfire.exporter.exported_spans if span.status.description]
+    if include_content:
+        assert descriptions == ([] if failure == 'failed' else [IsStr(regex=r'\w+: [\s\S]+')])
+    else:
+        assert descriptions == []
+
+
+class _Interrupted(BaseException):
+    """Stands in for a cancellation: raised by tool code, not an `Exception`."""
+
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_run_span_leaves_base_exceptions_unrecorded(capfire: CaptureLogfire) -> None:
@@ -4164,9 +4176,9 @@ def test_run_span_leaves_base_exceptions_unrecorded(capfire: CaptureLogfire) -> 
 
     @agent.tool_plain
     def my_tool() -> str:
-        raise KeyboardInterrupt
+        raise _Interrupted
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(_Interrupted):
         agent.run_sync('Use the tool')
 
     spans = capfire.exporter.exported_spans_as_dict()
