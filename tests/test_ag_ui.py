@@ -6869,6 +6869,7 @@ def test_dump_messages_multimodal_url() -> None:
     )
 
 
+@requires_ag_ui('0.1.15')
 def test_dump_messages_extensionless_url_media_type() -> None:
     """Test that a URL whose media type can't be inferred dumps an empty `mime_type` instead of raising."""
     messages: list[ModelMessage] = [
