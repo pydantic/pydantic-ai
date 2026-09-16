@@ -191,15 +191,34 @@ def _embedded_ipv4s(ip: ipaddress.IPv6Address, *, exhaustive: bool) -> set[ipadd
     return candidates
 
 
-def is_cloud_metadata_ip(ip_str: str) -> bool:
-    """Check if an IP address is a cloud metadata/credential endpoint.
+def _parse_ip(ip_str: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse an IP address for blocklist comparison, or return `None` if it is not one.
 
-    These are always blocked for security reasons, even with allow_local=True. IPv6
-    transition forms are decoded so a metadata IP cannot be smuggled in as IPv6.
+    An IPv6 literal may carry a zone identifier (`fd00:ec2::254%251`, RFC 4007 §11), which
+    Python folds into address equality and hashing. A zone is only meaningful for a
+    link-local destination — the kernel ignores it for anything else and delivers the
+    request to the address regardless — so it must never change how a guard classifies
+    the address. Dropping it once, here, keeps every guard comparing the address itself,
+    whether it compares by set membership or by network containment.
     """
     try:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.scope_id is not None:
+        ip = ipaddress.IPv6Address(ip.packed)
+    return ip
+
+
+def is_cloud_metadata_ip(ip_str: str) -> bool:
+    """Check if an IP address is a cloud metadata/credential endpoint.
+
+    These are always blocked for security reasons, even with allow_local=True. IPv6
+    transition forms are decoded, and zone identifiers dropped, so a metadata IP cannot be
+    smuggled in as IPv6.
+    """
+    ip = _parse_ip(ip_str)
+    if ip is None:
         return False
     if isinstance(ip, ipaddress.IPv4Address):
         return ip in _CLOUD_METADATA_IPV4
@@ -212,11 +231,11 @@ def is_private_ip(ip_str: str) -> bool:
     """Check if an IP address is in a private/internal range.
 
     Handles both IPv4 and IPv6 addresses, including IPv6 transition forms that embed an
-    IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, NAT64, ISATAP).
+    IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, NAT64, ISATAP) and zone-scoped
+    literals.
     """
-    try:
-        ip = ipaddress.ip_address(ip_str)
-    except ValueError:
+    ip = _parse_ip(ip_str)
+    if ip is None:
         # Invalid IP address, treat as potentially dangerous
         return True
     targets: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [ip]
@@ -492,6 +511,40 @@ def _check_domain(hostname: str, *, allowed_domains: list[str] | None, blocked_d
         raise ValueError(f'Domain {hostname!r} is blocked.')
 
 
+def _origin(url: str) -> tuple[str, str, int]:
+    """Return the normalized origin (scheme, host, port) of a URL for redirect credential decisions.
+
+    Normalization is delegated to `extract_host_and_port`, so the trailing-dot and
+    lowercasing rules are the ones the request itself uses for DNS, `Host` and SNI, and
+    the port defaults to 443 for https and 80 for http as in httpx's origin computation.
+
+    Raises:
+        ValueError: If the URL is malformed or uses an unsupported protocol, matching
+            what `validate_and_resolve_url` would raise for the same URL.
+    """
+    hostname, _, port, is_https = extract_host_and_port(url)
+    return 'https' if is_https else 'http', hostname, port
+
+
+def _keeps_credentials(from_url: str, to_url: str) -> bool:
+    """Whether sensitive headers may be forwarded from `from_url` to `to_url`.
+
+    Credentials are kept on a same-origin redirect (scheme + host + port all
+    match) and on an http→https upgrade on the same host (from http:80 to
+    https:443); they are stripped on every other redirect, including port
+    changes, https→http downgrades, and cross-host hops. This applies the
+    origin rule httpx uses for `Authorization`, including its http→https
+    upgrade exemption, to every header in `_SENSITIVE_HEADERS`.
+    """
+    from_scheme, from_host, from_port = _origin(from_url)
+    to_scheme, to_host, to_port = _origin(to_url)
+    if (from_scheme, from_host, from_port) == (to_scheme, to_host, to_port):
+        return True
+    return (
+        from_scheme == 'http' and from_port == 80 and to_scheme == 'https' and to_port == 443 and from_host == to_host
+    )
+
+
 async def safe_download(
     url: str,
     allow_local: bool = False,
@@ -524,7 +577,10 @@ async def safe_download(
             encoded stream it arrives in exceeds this limit.
         headers: Additional HTTP headers to include in the request.
                 The `Host` header is always set to the original hostname
-                and cannot be overridden.
+                and cannot be overridden. Sensitive headers (`Authorization`,
+                `Cookie`, `Proxy-Authorization`) are stripped when a redirect
+                crosses origins (scheme + host + port), except for a same-host
+                http:80→https:443 upgrade.
         allowed_domains: If set, only these hostnames are permitted (exact match, ignoring case,
                 a trailing dot, and IDNA spelling). Checked on every hop including redirects.
         blocked_domains: If set, these hostnames are rejected (exact match, ignoring case,
@@ -543,7 +599,6 @@ async def safe_download(
 
     current_url = url
     redirects_followed = 0
-    original_hostname = urlparse(url).hostname
     effective_headers: dict[str, str] = dict(headers) if headers else {}
 
     async with create_async_http_client(timeout=timeout) as client:
@@ -593,11 +648,12 @@ async def safe_download(
                 if not location:
                     raise ValueError('Redirect response missing Location header')
 
+                previous_url = current_url
                 current_url = resolve_redirect_url(current_url, location)
 
-                # Strip sensitive headers on cross-origin redirects (RFC 7235)
-                redirect_hostname = urlparse(current_url).hostname
-                if redirect_hostname != original_hostname:
+                # Drop caller-supplied credentials when the redirect crosses origins, as
+                # RFC 9110 section 15.4 advises for headers added by the calling context.
+                if not _keeps_credentials(previous_url, current_url):
                     effective_headers = {
                         k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
                     }
