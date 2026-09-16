@@ -3,11 +3,13 @@
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Generic, TypeVar
 
-from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
+from anyio import get_cancelled_exc_class
+from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 DepsT = TypeVar('DepsT')
@@ -15,10 +17,10 @@ OutputT = TypeVar('OutputT')
 
 
 class Session(Generic[DepsT, OutputT]):
-    """Run prompts to completion, retaining successful turns in memory.
+    """Run prompts to completion, retaining successful and interrupted turns in memory.
 
-    Plugins are native capabilities: use `@on_event` to subscribe to typed
-    core or capability events. They are added per run, not to the agent itself.
+    Plugins are capabilities (or capability functions) bound per run, not to
+    the agent itself, so the set can change between prompts.
     """
 
     def __init__(
@@ -26,16 +28,17 @@ class Session(Generic[DepsT, OutputT]):
         agent: AbstractAgent[DepsT, OutputT],
         *,
         deps: DepsT,
-        plugins: Sequence[AbstractCapability[DepsT]] = (),
+        plugins: Sequence[AgentCapability[DepsT]] = (),
         message_history: Sequence[ModelMessage] = (),
         usage_limits: UsageLimits | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
     ) -> None:
         self.model: str | None = None
+        self.model_settings: ModelSettings | None = None
         self.resolve_model: Callable[[str], Model | str] = lambda name: name
         self.agent = agent
         self.deps = deps
-        self.plugins = tuple(plugins)
+        self.plugins: Sequence[AgentCapability[DepsT]] = tuple(plugins)
         self.usage_limits = usage_limits
         self.on_stream_event = on_stream_event
         self._messages = list(message_history)
@@ -59,17 +62,25 @@ class Session(Generic[DepsT, OutputT]):
             raise RuntimeError('A conversation can only run one prompt at a time')
         self._running = True
         try:
-            result = await self.agent.run(
-                text,
-                deps=self.deps,
-                model=self.resolve_model(self.model) if self.model is not None else None,
-                message_history=self._messages,
-                capabilities=self.plugins,
-                usage_limits=self.usage_limits,
-                event_stream_handler=self._stream,
-            )
-            self._messages = result.all_messages()
-            return result
+            with capture_run_messages() as messages:
+                try:
+                    result = await self.agent.run(
+                        text,
+                        deps=self.deps,
+                        model=self.resolve_model(self.model) if self.model is not None else None,
+                        model_settings=self.model_settings,
+                        message_history=self._messages,
+                        capabilities=self.plugins,
+                        usage_limits=self.usage_limits,
+                        event_stream_handler=self._stream,
+                    )
+                    self._messages = result.all_messages()
+                    return result
+                except get_cancelled_exc_class():
+                    # Core captures partial responses and tool results during cleanup.
+                    # If cancellation precedes graph startup, retain at least the prompt.
+                    self._messages = messages or [*self._messages, ModelRequest(parts=[UserPromptPart(text)])]
+                    raise
         finally:
             self._running = False
 

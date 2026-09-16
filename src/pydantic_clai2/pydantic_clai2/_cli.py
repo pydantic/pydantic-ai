@@ -10,7 +10,6 @@ from pydantic_ai.usage import UsageLimits
 from ._app import chat, create_agent
 from .commands import config_command, plugins_command
 from .config import resolve_settings
-from .plugins import load_plugins
 from .settings_store import SettingsStore
 
 
@@ -39,7 +38,6 @@ def run() -> None:
             chat(
                 create_agent(),
                 deps=None,
-                plugins=load_plugins(store.plugins()),
                 usage_limits=UsageLimits(request_limit=settings.request_limit),
                 settings=settings,
                 store=store,

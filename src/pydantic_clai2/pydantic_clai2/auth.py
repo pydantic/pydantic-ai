@@ -15,6 +15,8 @@ from pydantic_ai.providers.openai_codex import (
 )
 from rich.console import Console
 
+from . import theme
+
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _SERVICE = 'pydantic-clai2'
 _ACCOUNT = 'openai-codex'
@@ -55,7 +57,7 @@ class CodexAuth:
         if args not in ([], ['openai-codex']):
             raise ValueError('Usage: /login openai-codex')
         flow = OpenAICodexOAuthFlow()
-        self.console.print('Sign in to ChatGPT/Codex in your browser. Waiting up to five minutes.', style='cyan')
+        self.console.print('Sign in to ChatGPT/Codex in your browser. Waiting up to five minutes.', style=theme.INFO)
         self.console.print(flow.authorization_url(), markup=False, highlight=False)
 
         # Launching in a thread keeps the loop available for core's callback listener.

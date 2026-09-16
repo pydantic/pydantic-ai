@@ -49,6 +49,15 @@ class Commands(Completer):
             pending[command.name] = command
         self._commands.update(pending)
 
+    def unregister(self, names: Iterable[str]) -> None:
+        """Remove commands a plugin registered; unknown names are ignored."""
+        for name in names:
+            self._commands.pop(name, None)
+
+    def __iter__(self) -> Iterator[Command]:
+        """Iterate a snapshot, so callers may register or unregister while looping."""
+        return iter(list(self._commands.values()))
+
     def execute(self, text: str) -> str | Awaitable[str]:
         """Parse shell-style arguments and dispatch without invoking a shell."""
         words = shlex.split(text.removeprefix('/'))
@@ -171,6 +180,8 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
         if plugin is None:
             raise ValueError(f'Unknown plugin: {args[1]}')
         store.save_plugin(plugin.model_copy(update={'enabled': args[0] == 'enable'}))
+    elif len(args) == 2 and args[0] == 'remove':
+        store.delete_plugin(args[1])
     else:
-        raise ValueError('Usage: plugins list|add ID MODULE:CLASS [JSON]|enable ID|disable ID')
-    return 'Saved. Plugin code is trusted and will load on next startup.'
+        raise ValueError('Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID')
+    return 'Saved. Plugin code is trusted and loads on next startup.'

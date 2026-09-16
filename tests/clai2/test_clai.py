@@ -1,10 +1,10 @@
 """Public behavior of sessions, settings, plugins, completion, and rendering."""
 
-import asyncio
 import io
 from dataclasses import dataclass
 from pathlib import Path
 
+import anyio
 import pytest
 from pydantic import ValidationError
 from pydantic_ai import (
@@ -21,15 +21,13 @@ from pydantic_ai import (
     models,
 )
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
 
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.commands import Command, Commands, config_command, config_completions, plugins_command
-from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugins import load_plugins
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
 
@@ -97,8 +95,8 @@ async def test_history_tools_and_plugins() -> None:
 
 
 async def test_cancel_preserves_history_and_rejects_concurrency() -> None:
-    started = asyncio.Event()
-    release = asyncio.Event()
+    started = anyio.Event()
+    release = anyio.Event()
     agent = Agent(TestModel(custom_output_text='done'))
 
     @agent.tool_plain
@@ -107,17 +105,36 @@ async def test_cancel_preserves_history_and_rejects_concurrency() -> None:
         await release.wait()
         return 'ok'
 
-    history: list[ModelMessage] = []
-    session = Session(agent, deps=None, message_history=history)
-    task = asyncio.create_task(session.prompt('wait'))
-    await started.wait()
-    with pytest.raises(RuntimeError):
-        await session.prompt('overlap')
-    with pytest.raises(RuntimeError):
-        session.clear()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    session = Session(agent, deps=None, message_history=[ModelRequest(parts=[UserPromptPart('first')])])
+    prior = session.messages
+    scope = anyio.CancelScope()
+
+    async def interrupted_turn() -> None:
+        with scope:
+            await session.prompt('make a personality plugin')
+
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(interrupted_turn)
+        await started.wait()
+        with pytest.raises(RuntimeError):
+            await session.prompt('overlap')
+        with pytest.raises(RuntimeError):
+            session.clear()
+        scope.cancel()
+    assert scope.cancelled_caught
+    assert session.messages[: len(prior)] == prior
+    assert len(session.messages) > len(prior)
+    release.set()
+    result = await session.prompt('actually, combine playful and pedantic')
+    prompts = [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    assert prompts == ['first', 'make a personality plugin', 'actually, combine playful and pedantic']
+    session.clear()
     assert session.messages == []
 
 
@@ -153,7 +170,9 @@ def test_settings_round_trip_and_validation(tmp_path: Path) -> None:
     assert store.load().model == 'test'
     plugins_command(store, ['add', 'audit', 'missing.module:Plugin'])
     plugins_command(store, ['disable', 'audit'])
-    assert load_plugins(store.plugins()) == []
+    assert [plugin.enabled for plugin in store.plugins()] == [False]
+    plugins_command(store, ['remove', 'audit'])
+    assert store.plugins() == []
 
 
 def test_completion_uses_registry(tmp_path: Path) -> None:
@@ -186,7 +205,3 @@ def test_splash_noop_and_frames() -> None:
     assert splash.frame(0) != splash.frame(10)
     splash.stop()
     splash.stop()
-
-
-def test_disabled_plugin_is_not_imported() -> None:
-    assert load_plugins([PluginSettings(id='x', factory='nonexistent:Plugin', enabled=False)]) == []

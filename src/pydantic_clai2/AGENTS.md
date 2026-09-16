@@ -1,0 +1,188 @@
+# CLAI 2 guide for AI code assistants
+
+Read this before touching `pydantic-clai2/`. The repository-level `AGENTS.md`
+still applies (no em-dashes, no `Any`, pyright strict, keyword-only arguments,
+100% branch coverage). This file adds what is specific to the terminal shell.
+
+## What CLAI is
+
+A thin terminal around any Pydantic AI agent. It reads a prompt, runs the agent,
+streams the answer, and repeats. Everything beyond that is a plugin, including
+the default coding tools.
+
+The three layers, and who owns what:
+
+| Layer | Owns | Never does |
+|---|---|---|
+| Pydantic AI core | the agent loop, hooks, events, toolsets | know CLAI exists |
+| `pydantic_ai_harness` | reusable capabilities (`Coder`, `Shell`, ...) | print to a terminal |
+| `pydantic_clai2` | the prompt loop, rendering, `/commands`, plugin loading | reimplement a core hook |
+
+If a change needs the agent loop to behave differently, propose it in core. If it
+is a reusable behavior with no terminal in it, it belongs in harness. Only the
+shell itself lives here.
+
+## The plugin model
+
+A plugin is a module with `activate(host: PluginHost)`, or a bare capability
+class. `@host.on(name)` registers a handler for a lifecycle moment;
+`@host.on(EventClass)` for a typed event; `host.commands.register` for a
+`/command`; `host.add` for tools and instructions; `host.render` for custom
+output; `host.settings(Model)` for validated config. `PLUGINS.md` is the user
+contract. If code and `PLUGINS.md` disagree, fix one so they agree in the same PR.
+
+## Rules for the plugin API
+
+- **No global state.** Registration goes on a `PluginHost` instance someone
+  constructed. No module-level dicts, no import-time side effects. Tests build a
+  host and call `activate` directly.
+- **Strings are keys, never payloads.** Hook names are a `Literal`; each name has
+  an `@overload` binding one typed event dataclass. A handler never receives
+  `*args`, `**kwargs`, `dict`, or `context: object = None`.
+- **No string sub-dispatch.** A handler does not receive `event_type: str` and
+  switch on it. Use the event class as the key.
+- **One async spelling.** No `_sync` or `_async` pairs.
+- **Observers return `None`.** Deciders mutate the event (`event.text = ...`,
+  `event.cancel()`). Nothing collects a list of return values.
+- **Fail closed, one way.** A raising handler on a decidable moment cancels the
+  action and reports the error. No per-registration "fail open" flag.
+- **Host hooks are `<subject>_<moment>`** (`turn_start`). Core hooks keep core's
+  names verbatim (`before_tool_execute`). Do not rename a core hook for taste.
+- **Payloads are kw-only dataclasses.** Not `BaseModel`. Pydantic is for the
+  settings JSON boundary only.
+- **No `getattr`/`hasattr` on a plugin** to discover what it supports. It
+  registered the thing or it did not.
+- **Only four host hooks.** `session_start`, `session_end`, `turn_start`,
+  `turn_end`. Adding a fifth needs a use case that core cannot serve; say which
+  core hook you checked and why it does not fit.
+
+## Loading and unloading
+
+Plugins load and unload while CLAI runs. The rules that make that safe:
+
+- **One `PluginHost` per plugin.** The host is the ownership scope. Everything a
+  plugin registers is recorded on its own host, so unloading is "discard this
+  host". No `callback -> owner` map, no scanning registries for a plugin's name.
+- **Load and unload only between turns.** `/commands` already run between turns,
+  so this falls out for free; do not add a mid-run path.
+- **Load fires `session_start` for that plugin; unload fires `session_end`.** A
+  plugin cannot tell whether it was loaded at startup or later, and must not
+  need to.
+- **`reload` is unload, re-import, load.** Drop-in entry modules use fresh source.
+  Installed modules use `importlib.reload`, which retains globals absent from the
+  new source. Plugins must explicitly initialize their state on activation.
+- **Registration is idempotent per name.** A capability is bound per run
+  (`agent.run(capabilities=...)`), so "active for the next prompt" is the
+  natural unit; nothing rebuilds the agent.
+- **A load failure leaves the session as it was.** Import or `activate` errors
+  are reported and the plugin stays unloaded; partial registrations from a
+  failed `activate` are discarded with the host.
+
+## Adding or changing a hook
+
+1. Add the name to the `Literal`, the event dataclass, and the `@overload`.
+2. Add the parity test entry: the `Literal` must equal `Hooks.on`'s attribute
+   names plus the host names. Drift fails CI, not code review.
+3. Fire it from exactly one place in the shell.
+4. Document it in `PLUGINS.md` in the table it belongs to.
+
+## The `/plugins`, `/set`, and `/model` menus
+
+Built on termflow's `MenuBuilder` (and `TextInputBuilder` for typed values),
+exactly like Code Puppy's `/agent`, `/mcp`, `/set`, and `/model` menus:
+alternate screen, a `.preview` panel on the right, `.on_key` for single-key
+actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
+
+- Split it in two: a pure `build_plugins_menu(...)` that returns the menu (so
+  tests drive it headless, no terminal), and a thin async runner that owns the
+  screen and calls `menu.run` in a thread.
+- Every key mutates immediately and `replace_items` redraws. No pending-changes
+  state, no save/cancel pair.
+- Nothing prints to the console while the menu is open; the alternate screen
+  would hide it. Show empty states and errors inside the menu as disabled rows.
+- Esc and Ctrl-C close cleanly. They are not errors.
+- Adding a plugin is not in the menu. It needs free text, so it stays
+  `/plugins add`.
+- Anything that is "edit named, validated fields" uses `field_menu.py`: a
+  `FieldSource` supplies rows, current values, validation, apply, and reset;
+  `FieldMenu` builds the widgets; `run_flow` is the loop. `/set` and per-model
+  settings are two sources, not two editors. Do not write a third editor.
+- `/set` edits go through `CommandContext.set_setting` / `reset_setting`, the
+  same path as the typed command, so validation lives in one place.
+- Widget runners are a `Runners` value passed into the loops; tests pass
+  scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
+  one-liners are `no cover`.
+- Model sources live in `model_catalog.py`. To add one (models.dev, a provider
+  API), write a function returning `CatalogModel`s and merge it in `catalog()`.
+  The menu never talks to a source directly.
+- Per-model settings are the editable subset of core's `ModelSettings`,
+  declared once as `ModelSettingsForm` with descriptions and bounds. Extend the
+  form, not the menu, to expose another setting.
+
+## Rendering
+
+`StreamRenderer` owns text and thinking. It knows nothing about any specific
+tool. Tool-specific output (shell previews, diffs, grep) is registered through
+`host.render` by the plugin that owns the event. Match on event classes, never
+on `tool_name` strings. Always flush the stream before printing anything else;
+the host does this for renderers, so do not call `console.print` from inside an
+`on` handler when a renderer would do.
+
+## Colours
+
+Every colour comes from `theme.py`, which holds the Pydantic brand palette and
+the roles CLAI paints with (`ACCENT`, `INFO`, `WARNING`, `ERROR`, `MUTED`,
+`THINKING`). Use a role, not a hex, and never a bare Rich colour name like
+`'cyan'` or `'dim'`. Raw ANSI surfaces (status line, splash) go through
+`theme.sgr(...)`, which handles the 16-colour fallback. `theme.py` is stdlib
+only because the splash imports it before anything heavy. Source of truth is
+the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
+
+## File map
+
+| File | Holds |
+|---|---|
+| `_cli.py` | argument parsing, startup, `--agent` |
+| `_app.py` | the prompt loop and built-in `/commands` |
+| `_session.py` | conversation state; `agent.run` with per-run plugins |
+| `_rendering.py` | streaming Markdown and thinking |
+| `plugins.py` | `PluginHost`, hook names, event dataclasses |
+| `plugin_loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
+| `plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
+| `field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
+| `set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
+| `model_menu.py` | `/model`: the picker, `ModelSettingsSource`, `run_model_flow` |
+| `model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
+| `model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
+| `commands.py` | `Command`, the registry, completion |
+| `config.py` | `Settings`, `PluginSettings` |
+| `settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
+| `theme.py` | brand palette, colour roles, `sgr()` |
+
+Keep files concise - we don't need any 10,000 line files. Single responsibility.
+
+## Testing
+
+- `pytest-anyio`; real model calls are blocked globally.
+- Drive the shell with `TestModel` and a `Console(file=StringIO())`.
+- Test a hook by building a `PluginHost`, registering a handler, and firing the
+  event from the shell path that owns it. Assert the handler's effect (the
+  cancelled turn, the rewritten text), not a mock call count.
+- Renderers get synthetic events. They must not need `Coder` installed.
+- Cancellation: use a real `anyio` cancel scope, order with `Event`s, no sleeps.
+
+## Local verification
+
+```bash
+cd pydantic-clai2
+uv run --no-sync ruff format --check .
+uv run --no-sync ruff check .
+PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright src tests
+uv run --no-sync pytest -p no:cacheprovider tests
+```
+
+## Docs parity
+
+`README.md` is the tour, `PLUGINS.md` is the plugin contract, this file is for
+agents. A user-facing change updates the first two in the same PR. Plain
+language, short sentences, no jargon a first-time plugin author would not know.

@@ -12,6 +12,8 @@ from rich.console import Console
 from rich.text import Text
 from termflow.diff import DiffRenderer, DiffTheme  # pyright: ignore[reportMissingTypeStubs]
 
+from . import theme
+
 
 def terminal_text(text: str) -> str:
     """Make untrusted control characters inert before terminal rendering."""
@@ -70,8 +72,8 @@ class ToolOutput:
         summary = lines[0] if lines else ''
         if len(lines) > 1:
             summary += f' (+{len(lines) - 1} command lines)'
-        text = Text(f'● {name} ', style='dim')
-        text.append(terminal_text(summary), style='cyan')
+        text = Text(f'● {name} ', style=theme.MUTED)
+        text.append(terminal_text(summary), style=theme.ACCENT)
         self.console.print(text, overflow='ellipsis', no_wrap=True)
         self.console.print()
 
@@ -131,7 +133,7 @@ class ToolOutput:
     def _shell_line(self, preview: ShellPreview) -> None:
         self.console.print(
             shell_text(preview.pending, preview.decoder),
-            style='dim',
+            style=theme.MUTED,
             markup=False,
             highlight=False,
             overflow='ellipsis',
@@ -147,8 +149,8 @@ class ToolOutput:
                 self.console.file.write(
                     DiffRenderer(
                         theme=DiffTheme(
-                            addition='#203c3b',
-                            deletion='#432d3b',
+                            addition=theme.DIFF_ADDITION,
+                            deletion=theme.DIFF_DELETION,
                             marker_brighten=2.0,
                         )
                     ).render(safe_diff)
@@ -157,7 +159,7 @@ class ToolOutput:
             else:
                 self.console.print(safe_diff, markup=False, highlight=False)
         if truncated:
-            self.console.print('Diff truncated.', style='dim')
+            self.console.print('Diff truncated.', style=theme.MUTED)
         self.console.print()
 
     def abort(self) -> None:
@@ -186,17 +188,17 @@ class ToolOutput:
                 self._shell_line(preview)
             omitted = max(0, event.total_lines - preview.shown) if event.total_lines is not None else 0
             if omitted:
-                self.console.print(f'Truncated {omitted} lines', style='dim')
+                self.console.print(f'Truncated {omitted} lines', style=theme.MUTED)
             state = f'exit {event.exit_code}' if event.exit_code is not None else 'running in background'
-            self.console.print(f'{state} | PID {event.pid}', style='dim', markup=False, highlight=False)
+            self.console.print(f'{state} | PID {event.pid}', style=theme.MUTED, markup=False, highlight=False)
             self.console.print(
-                f'Output: {terminal_text(event.output_path)}', style='dim', markup=False, highlight=False
+                f'Output: {terminal_text(event.output_path)}', style=theme.MUTED, markup=False, highlight=False
             )
             self.console.print(
-                f'Status: {terminal_text(event.status_path)}', style='dim', markup=False, highlight=False
+                f'Status: {terminal_text(event.status_path)}', style=theme.MUTED, markup=False, highlight=False
             )
             if event.truncated and not omitted:
-                self.console.print('Output preview truncated; full output is in the command log.', style='dim')
+                self.console.print('Output preview truncated; full output is in the command log.', style=theme.MUTED)
             self.console.print()
         elif isinstance(event, FileChangeRequestEvent):
             if event.operation == 'write':

@@ -8,6 +8,7 @@ import threading
 from typing import TextIO
 
 from ._splash_art import LABEL, PYRAMID
+from .theme import LIGHT_PURPLE, LITHIUM, PURPLE, SUGAR, sgr
 
 
 class Splash:
@@ -44,11 +45,8 @@ class Splash:
         rows = [''.join(' ░▒█'[int(tier)] for tier in row).ljust(44) for row in PYRAMID]
         if self._size.lines >= 30:
             rows.extend(['', *[line.center(44) for line in LABEL]])
-        base = ('\x1b[38;2;122;17;145m', '\x1b[38;2;195;31;212m', '\x1b[1;38;2;255;92;244m')
-        hot = ('\x1b[38;2;195;31;212m', '\x1b[38;2;255;92;244m', '\x1b[1;38;2;255;209;251m')
-        if os.getenv('COLORTERM', '').lower() not in ('truecolor', '24bit'):
-            base = ('\x1b[35m', '\x1b[95m', '\x1b[1;95m')
-            hot = ('\x1b[95m', '\x1b[1;95m', '\x1b[1;97m')
+        base = (sgr(PURPLE), sgr(LITHIUM), sgr(LIGHT_PURPLE, bold=True))
+        hot = (sgr(LITHIUM), sgr(LIGHT_PURPLE), sgr(SUGAR, bold=True))
         lines: list[str] = []
         for y, row in enumerate(rows):
             line = ' ' * max(0, (self._size.columns - 44) // 2)

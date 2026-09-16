@@ -17,6 +17,8 @@ from pydantic_ai.messages import (
 )
 from rich.console import Console
 
+from . import theme
+
 
 @dataclass(kw_only=True)
 class Status:
@@ -100,7 +102,8 @@ class StatusLine:
         if height != self._height:
             prefix = f'\x1b[1;{height - 1}r'
             self._height = height
-        self.console.file.write(f'\x1b7{prefix}\x1b[{height};1H\x1b[2K\x1b[36m{text[: max(0, width - 1)]}\x1b[0m\x1b8')
+        colour = theme.sgr(theme.INFO)
+        self.console.file.write(f'\x1b7{prefix}\x1b[{height};1H\x1b[2K{colour}{text[: max(0, width - 1)]}\x1b[0m\x1b8')
         self.console.file.flush()
 
     async def _animate(self) -> None:

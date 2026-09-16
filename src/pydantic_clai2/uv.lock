@@ -1006,6 +1006,7 @@ name = "pydantic-clai2"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "genai-prices" },
     { name = "keyring" },
     { name = "prompt-toolkit" },
     { name = "pydantic-ai-harness", extra = ["coder"] },
@@ -1026,6 +1027,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "genai-prices", specifier = ">=0.1.7" },
     { name = "keyring", specifier = ">=25.6" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "pydantic-ai-harness", extras = ["coder"], editable = "../" },

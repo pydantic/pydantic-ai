@@ -14,6 +14,7 @@ license-files = ['THIRD_PARTY_NOTICES.md']
 dependencies = [
     'pydantic-ai-harness[coder]',
     'pydantic-ai-slim[anthropic,openai]>=2.43.0',
+    'genai-prices>=0.1.7',
     'termflow-md>=0.9.2,<0.10',
     'pyfiglet>=1.0.4',
     'prompt-toolkit>=3.0.52',
@@ -49,6 +50,7 @@ extend-select = ['BLE001']
 '**/tests/**/*.py' = ['D']
 'src/pydantic_clai2/__init__.py' = ['PLC0415']
 'src/pydantic_clai2/__main__.py' = ['PLC0415']
+'src/pydantic_clai2/plugin_loader.py' = ['S102']  # Executes explicitly trusted plugin source.
 
 [tool.coverage.run]
 branch = true

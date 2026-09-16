@@ -10,8 +10,6 @@ import pytest
 import pydantic_clai2
 import pydantic_clai2.__main__
 from pydantic_clai2.commands import config_completions
-from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugins import load_plugins
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
 
@@ -21,9 +19,6 @@ def test_public_errors(tmp_path: Path) -> None:
         assert pydantic_clai2.missing
     assert callable(pydantic_clai2.__main__.main)
     assert list(config_completions(['set', '']))
-    with pytest.raises(TypeError):
-        load_plugins([PluginSettings(id='bad', factory='builtins:str')])
-    assert load_plugins([PluginSettings(id='ok', factory='pydantic_ai.capabilities:AbstractCapability')])
     path = tmp_path / 'future.db'
     with sqlite3.connect(path) as connection:
         connection.execute('PRAGMA user_version = 99')

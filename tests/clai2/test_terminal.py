@@ -13,16 +13,13 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic_ai import Agent, AgentStreamEvent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
 
 from pydantic_clai2 import Session, chat
-from pydantic_clai2.command_context import CommandContext, CommandProvider
+from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
-from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugins import load_plugins
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
 
@@ -72,30 +69,67 @@ async def test_set_without_initial_model(tmp_path: Path) -> None:
     assert 'success' in output.getvalue()
 
 
-async def test_plugin_commands(tmp_path: Path) -> None:
-    class GreetingPlugin(AbstractCapability[None], CommandProvider):
-        def get_commands(self, context: CommandContext) -> list[Command]:
-            return [
-                Command(
-                    name='greet',
-                    description='Plugin greeting',
-                    handler=lambda args: f'Hello {args[0]}',
-                    complete=lambda _: ('Mike',),
-                )
-            ]
-
+async def test_drop_in_plugin_commands_and_hooks(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.plugins_dir.mkdir()
+    (store.plugins_dir / 'greeter.py').write_text(
+        'from pydantic_clai2.commands import Command\n'
+        'from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart\n'
+        'def activate(host: PluginHost) -> None:\n'
+        "    host.commands.register(Command(name='greet', description='Plugin greeting', "
+        "handler=lambda args: f'Hello {args[0]}'))\n"
+        "    @host.on('session_start')\n"
+        '    async def started(event: SessionStart) -> None:\n'
+        "        host.console.print(f'started with model {event.settings.model}')\n"
+        "    @host.on('turn_start')\n"
+        '    async def rewrite(event: TurnStart) -> None:\n'
+        '        event.text = event.text.upper()\n'
+        "    @host.on('turn_end')\n"
+        '    async def ended(event: TurnEnd) -> None:\n'
+        "        host.console.print(f'turn {event.outcome}: {event.text}')\n"
+        "    @host.on('session_end')\n"
+        '    async def stopped(event: SessionEnd) -> None:\n'
+        "        host.console.print(f'stopped: {event.reason}')\n"
+    )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/help\n/greet Mike\n/exit\n')
+        pipe.send_text('/help\n/greet Mike\nhello\n/plugins list\n/exit\n')
         await chat(
-            Agent(TestModel()),
+            Agent(TestModel(custom_output_text='hi')),
             deps=None,
-            plugins=[GreetingPlugin()],
             console=Console(file=output),
-            store=SettingsStore(tmp_path / 'config.db'),
+            store=store,
         )
-    assert '/greet: Plugin greeting' in output.getvalue()
-    assert 'Hello Mike' in output.getvalue()
+    text = output.getvalue()
+    assert 'started with model None' in text
+    assert '/greet: Plugin greeting' in text
+    assert 'Hello Mike' in text
+    assert 'turn completed: HELLO' in text
+    assert 'greeter:' in text and 'loaded)' in text
+    assert 'stopped: exit' in text
+
+
+async def test_plugin_can_cancel_a_turn(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.plugins_dir.mkdir()
+    (store.plugins_dir / 'gate.py').write_text(
+        'from pydantic_clai2.plugins import PluginHost, TurnStart\n'
+        'def activate(host: PluginHost) -> None:\n'
+        "    @host.on('turn_start')\n"
+        '    async def gate(event: TurnStart) -> None:\n'
+        "        if event.text == 'stop':\n"
+        "            event.cancel('not today')\n"
+        "        elif event.text == 'boom':\n"
+        "            raise RuntimeError('gate exploded')\n"
+    )
+    output = io.StringIO()
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('stop\nboom\n/exit\n')
+        await chat(Agent(TestModel(custom_output_text='never')), deps=None, console=Console(file=output), store=store)
+    text = output.getvalue()
+    assert 'Turn cancelled by a plugin: not today' in text
+    assert "Plugin 'gate': RuntimeError: gate exploded" in text
+    assert 'never' not in text
 
 
 def test_set_validation_preserves_active_and_saved_settings(tmp_path: Path) -> None:
@@ -182,11 +216,6 @@ def test_file_completion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.chdir(tmp_path)
     completions = list(Commands().get_completions(Document('read @exam'), CompleteEvent()))
     assert any('ple.py' in completion.text for completion in completions)
-
-
-def test_invalid_plugin() -> None:
-    with pytest.raises(TypeError):
-        load_plugins([PluginSettings(id='wrong', factory='pathlib:Path')])
 
 
 def test_splash_restores_streams(monkeypatch: pytest.MonkeyPatch) -> None:

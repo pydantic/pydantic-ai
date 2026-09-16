@@ -13,6 +13,8 @@ from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
 from pydantic_clai2 import chat
+from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config import Settings
 from pydantic_clai2.settings_store import SettingsStore
 
@@ -82,10 +84,15 @@ async def test_chat_boundaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, 
 
 async def test_model_string_and_non_command_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     inputs(monkeypatch, ['/set', '/set display.thinking', '/config show', '/plugins list', '/new', '/exit'])
+
+    class Provider(AbstractCapability[None]):
+        def get_commands(self, context: CommandContext) -> list[Command]:
+            return [Command(name='legacy', description='Legacy command', handler=lambda args: 'ok')]
+
     await chat(
         Agent('test'),
         deps=None,
-        plugins=[AbstractCapability()],
+        plugins=[AbstractCapability(), Provider()],
         settings=Settings(model='test'),
         console=Console(file=io.StringIO()),
         store=SettingsStore(tmp_path / 'config.db'),

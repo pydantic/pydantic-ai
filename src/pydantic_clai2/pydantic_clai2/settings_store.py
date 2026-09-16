@@ -11,6 +11,7 @@ from pydantic import JsonValue, TypeAdapter
 from .config import SETTING_FIELDS, PluginSettings, Settings, resolve_settings
 
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+_JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
 
 class SettingsStore:
@@ -28,6 +29,9 @@ class SettingsStore:
                 raise ValueError(f'Unsupported settings schema version: {version}')
             connection.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
             connection.execute('CREATE TABLE IF NOT EXISTS plugins (id TEXT PRIMARY KEY, declaration TEXT NOT NULL)')
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS model_settings (model TEXT PRIMARY KEY, settings_json TEXT NOT NULL)'
+            )
             connection.execute('PRAGMA user_version = 1')
 
     @contextmanager
@@ -82,3 +86,31 @@ class SettingsStore:
                 'INSERT INTO plugins VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET declaration = excluded.declaration',
                 (plugin.id, plugin.model_dump_json()),
             )
+
+    def delete_plugin(self, plugin_id: str) -> None:
+        """Forget a declaration; a plugin file in the plugins folder is not deleted."""
+        with self._connect() as connection:
+            connection.execute('DELETE FROM plugins WHERE id = ?', (plugin_id,))
+
+    def model_settings(self, model: str) -> dict[str, JsonValue]:
+        """Saved overrides for one model; empty when none."""
+        with self._connect() as connection:
+            row = connection.execute('SELECT settings_json FROM model_settings WHERE model = ?', (model,)).fetchone()
+        return _JSON_OBJECT.validate_json(row[0]) if row else {}
+
+    def save_model_settings(self, model: str, settings: dict[str, JsonValue]) -> None:
+        """Replace one model's overrides; an empty dict removes the row."""
+        with self._connect() as connection:
+            if not settings:
+                connection.execute('DELETE FROM model_settings WHERE model = ?', (model,))
+                return
+            connection.execute(
+                'INSERT INTO model_settings VALUES (?, ?) '
+                'ON CONFLICT(model) DO UPDATE SET settings_json = excluded.settings_json',
+                (model, _JSON_OBJECT.dump_json(settings).decode()),
+            )
+
+    @property
+    def plugins_dir(self) -> Path:
+        """Folder scanned for drop-in plugins, next to the settings database."""
+        return self.path.parent / 'plugins'
