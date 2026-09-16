@@ -185,7 +185,11 @@ def function_schema(  # noqa: C901
         field_name = p.name
 
         if p.kind == Parameter.VAR_KEYWORD:
-            if require_parameter_descriptions and field_name not in field_descriptions:
+            if (
+                require_parameter_descriptions
+                and field_name not in field_descriptions
+                and FieldInfo.from_annotation(annotation).description is None
+            ):
                 missing_param_descriptions.add(field_name)
             var_kwargs_schema = gen_schema.generate_schema(annotation)
         else:
