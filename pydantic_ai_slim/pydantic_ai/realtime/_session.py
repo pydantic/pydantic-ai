@@ -2981,7 +2981,7 @@ class RealtimeSession:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs.
                 text = delta.transcript_delta or ''
-                transcript = delta.transcript or self._transcript_so_far.get(event.index, '') + text
+                transcript = delta.transcript if delta.transcript is not None else self._transcript_so_far.get(event.index, '') + text
                 self._transcript_so_far[event.index] = transcript
                 if self._transcript_delta_taps:
                     update = TranscriptUpdate(
