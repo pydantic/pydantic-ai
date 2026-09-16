@@ -768,6 +768,10 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                             # intermediate join J1 that shares the same parent fork run, we must finalize J1 first
                             # because it might produce items that feed into J2.
                             for (join_id, fork_run_id), join_state in list(self.active_reducers.items()):
+                                # An earlier join in this pass may have dispatched tasks that feed this join.
+                                if not self._is_fork_run_completed(self.active_tasks.values(), join_id, fork_run_id):
+                                    continue
+
                                 # Check if this join has any intermediate joins that are also active reducers
                                 should_skip = False
                                 intermediate_joins = self.graph.intermediate_join_nodes.get(join_id, set())
