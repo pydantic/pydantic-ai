@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import anyio
 import pytest
 
 from ..conftest import try_import
@@ -1406,10 +1407,15 @@ async def test_wait_for_evaluations_joins_background_thread():
     assert result == 42
     assert started.wait(timeout=10)  # evaluator is live on the background thread, blocked on the gate
 
-    # Release the gate from another thread so the background thread outlives the start of the wait
-    threading.Thread(target=release.set).start()
-
-    await wait_for_evaluations()
+    # Release only once the wait is under way. `wait_for_evaluations` snapshots
+    # `_background_threads` synchronously before its first await, and a finishing thread
+    # discards itself from that set, so releasing the gate beforehand would race: lose the
+    # race and the snapshot is empty, the join never runs, and this test passes while
+    # covering nothing. Starting the wait first puts the snapshot ahead of the release.
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(wait_for_evaluations)
+        await anyio.sleep(0)  # hand control to the wait, which snapshots before it yields
+        release.set()
 
     assert completed == [True]  # the wait cannot return before the joined thread finished
     assert len(collector.calls) == 1
@@ -1462,7 +1468,7 @@ async def test_wait_for_evaluations_warns_on_background_thread_timeout():
 
     assert completed == [True]
     assert len(collector.calls) == 1
-    results, _, ctx = collector.calls[0]
+    results, _, _ = collector.calls[0]
     assert len(results) == 1
     assert results[0].value is True
 
