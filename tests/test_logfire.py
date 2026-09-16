@@ -7,9 +7,6 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsList
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
-from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ValidationError
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -52,6 +49,12 @@ from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics
 try:
     import logfire
     from logfire.testing import CaptureLogfire
+
+    # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
+    # `pydantic-ai-slim` / `pydantic-evals` install groups either.
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
+    from opentelemetry.trace import StatusCode
 except ImportError:  # pragma: lax no cover
     logfire_installed = False
 else:
@@ -4286,6 +4289,7 @@ async def test_run_span_records_failures_from_its_own_finalization(capfire: Capt
     assert [event.name for event in run_span.events] == ['exception']
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_exception_recording_skipped_when_span_is_not_recording() -> None:
     """`use_span` left a non-recording span's exception alone, and so does the stand-in.
 
