@@ -111,9 +111,25 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 
 
 def model_request_parameters_attributes(
-    model_request_parameters: ModelRequestParameters,
+    model_request_parameters: ModelRequestParameters, *, include_content: bool = True
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': to_json(serialize_any(model_request_parameters)).decode()}
+    serialized = serialize_any(model_request_parameters)
+    if not include_content:
+        # `instruction_parts` carry the agent's instructions verbatim, which is the "proprietary
+        # prompts" half of what the setting withholds -- and dynamic parts can be built from deps.
+        for part in instruction_parts_of(serialized):
+            part.pop('content', None)
+    return {'model_request_parameters': to_json(serialized).decode()}
+
+
+def instruction_parts_of(serialized_parameters: Any) -> list[dict[str, Any]]:
+    """The serialized `instruction_parts`, or nothing when the shape isn't what we expect."""
+    if not isinstance(serialized_parameters, dict):
+        return []  # pragma: no cover
+    parts = cast('Any', serialized_parameters).get('instruction_parts')
+    if not isinstance(parts, list):
+        return []
+    return [part for part in cast('list[Any]', parts) if isinstance(part, dict)]
 
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:
@@ -209,6 +225,22 @@ def set_error_status(span: Span, error: BaseException, *, include_content: bool)
 
 
 @contextmanager
+def record_uncaught_errors(span: Span, *, include_content: bool) -> Generator[None]:
+    """Record exceptions leaving `span`'s scope the way `use_span` would have.
+
+    For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
+    both jobs to the caller. Enter this around the span's whole scope -- the scope `use_span`
+    covered -- so that failures while finalizing the span still mark it.
+    """
+    try:
+        yield
+    except Exception as error:
+        record_exception(span, error, include_content=include_content, escaped=False)
+        set_error_status(span, error, include_content=include_content)
+        raise
+
+
+@contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
@@ -238,7 +270,7 @@ def open_model_request_span(
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': operation,
         **model_attributes(model),
-        **model_request_parameters_attributes(prepared_parameters),
+        **model_request_parameters_attributes(prepared_parameters, include_content=settings.include_content),
         **get_agent_run_baggage_attributes(),
         'logfire.json_schema': to_json(
             {

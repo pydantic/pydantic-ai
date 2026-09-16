@@ -1170,9 +1170,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'prompted_output_template': None,
                         'allow_text_output': False,
                         'allow_image_output': False,
-                        'instruction_parts': [
-                            {'content': 'Here are some instructions', 'dynamic': False, 'part_kind': 'instruction'}
-                        ],
+                        'instruction_parts': [{'dynamic': False, 'part_kind': 'instruction'}],
                         'thinking': None,
                     }
                 )
