@@ -2,13 +2,13 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import model_serializer, model_validator
-from pydantic_core.core_schema import SerializerFunctionWrapHandler
+from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
-    output: OutputDataT
+    output: NotRequired[OutputDataT]
     messages: list[_messages.ModelMessage]
     new_message_index: NotRequired[int]
     output_tool_name: NotRequired[str | None]
@@ -46,6 +46,27 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
 
 _STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
+
+
+def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict[str, Any]:
+    """Apply the caller's `include`/`exclude` to the keys `AgentRunResult._serialize` synthesizes.
+
+    Pydantic applies them to a model's own fields, which here are the private ones the public shape
+    replaces, so without this `exclude={'messages'}` would quietly dump the messages anyway. A spec
+    that reaches inside one of these keys rather than dropping it whole (`exclude={'messages': {0}}`)
+    is left to Pydantic, which serializes that value itself.
+    """
+    if (include := info.include) is not None:
+        data = {key: value for key, value in data.items() if key in include}
+    if (exclude := info.exclude) is not None:
+        # A nested spec is a set or a mapping; anything else (`True`, `...`) drops the whole key.
+        dropped = (
+            exclude
+            if isinstance(exclude, set)
+            else {key for key, spec in exclude.items() if not isinstance(spec, (set, dict))}
+        )
+        data = {key: value for key, value in data.items() if key not in dropped}
+    return dict(data)
 
 
 @dataclasses.dataclass(repr=False)
@@ -713,15 +734,14 @@ class AgentRunResult(Generic[OutputDataT]):
         return validated
 
     @model_serializer(mode='wrap')
-    def _serialize(self, handler: SerializerFunctionWrapHandler) -> _AgentRunResultData[Any]:
+    def _serialize(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> _AgentRunResultData[Any]:
         # `output` is typed by the generic parameter, and only the dataclass serializer `handler`
         # wraps knows what that resolved to — a serializer's own return annotation is not
         # parameterized, so it would fall back to `OutputDataT`'s default. Hand it a stand-in
         # carrying just the output; handing it `self` would serialize all of `_state`'s run-local
         # scratch only to discard it.
-        output = cast('dict[str, Any]', handler(AgentRunResult(output=self.output)))['output']
-        return {
-            'output': output,
+        serialized = cast('dict[str, Any]', handler(AgentRunResult(output=self.output)))
+        data: _AgentRunResultData[Any] = {
             'messages': self._state.message_history,
             'new_message_index': self._new_message_index,
             'output_tool_name': self._output_tool_name,
@@ -731,6 +751,12 @@ class AgentRunResult(Generic[OutputDataT]):
             'metadata': self._state.metadata,
             'traceparent': self._traceparent_value,
         }
+        if 'output' in serialized:
+            # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
+            # `exclude_none=True` on a `None` output. The handler applies those filters to the
+            # stand-in, so honor them here instead of failing the dump that was asked for.
+            data['output'] = serialized['output']
+        return cast('_AgentRunResultData[Any]', _filter_serialized(data, info))
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
