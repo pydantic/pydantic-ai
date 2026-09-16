@@ -71,10 +71,11 @@ from .conftest import IsDatetime, message, message_part
 
 pytest.importorskip('starlette')
 
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
-from pydantic_ai.ui import NativeEvent, OnCompleteFunc, UIAdapter, UIEventStream
+from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent, OnCompleteFunc, UIAdapter, UIEventStream
 from pydantic_ai.ui._adapter import resolve_allow_uploaded_files
 
 pytestmark = [
@@ -2337,3 +2338,208 @@ async def test_reinject_system_prompt_capability_with_pending_tool_calls():
             UserPromptPart(content='Call the tool', timestamp=IsDatetime()),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    [
+        # The three CORS-safelisted content types, which a browser can send cross-origin with no
+        # preflight, plus the request that declares none at all.
+        pytest.param(b'text/plain;charset=UTF-8', id='text-plain'),
+        pytest.param(b'multipart/form-data', id='multipart'),
+        pytest.param(b'application/x-www-form-urlencoded', id='form-urlencoded'),
+        pytest.param(None, id='no-content-type'),
+    ],
+)
+async def test_from_request_rejects_cross_origin_forgeable_content_type(content_type: bytes | None):
+    """A body that could have been posted cross-origin without a preflight is turned away with 415.
+
+    The rejection has to land before the body is read, so the run — which is the damage, since the
+    attacker never needs to read the response — never starts. `receive` failing the test is what
+    pins that: asserting on the status code alone would pass even if the check ran after dispatch.
+    """
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', content_type)] if content_type is not None else [],
+        },
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await DummyUIAdapter.from_request(starlette_request, agent=agent)
+
+    assert exc_info.value.status_code == 415
+    assert exc_info.value.detail == snapshot(
+        f'Expected `Content-Type: application/json`, got {content_type.decode().split(";")[0] if content_type else "no content type"}'
+    )
+
+
+async def test_dispatch_request_rejects_cross_origin_forgeable_content_type():
+    """`dispatch_request` inherits the check and never constructs the adapter."""
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await DummyUIAdapter.dispatch_request(starlette_request, agent=agent)
+
+    assert exc_info.value.status_code == 415
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    [
+        pytest.param(b'application/json', id='bare'),
+        # Parameters are stripped and the type is matched case-insensitively, as media types are.
+        pytest.param(b'application/json; charset=utf-8', id='with-charset'),
+        pytest.param(b'APPLICATION/JSON', id='uppercase'),
+    ],
+)
+async def test_from_request_accepts_json_content_type(content_type: bytes):
+    """What every real frontend sends is admitted untouched."""
+    agent = Agent(model=TestModel())
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', content_type)]},
+        receive=receive,
+    )
+
+    adapter = await DummyUIAdapter.from_request(starlette_request, agent=agent)
+
+    assert adapter.run_input == run_input
+
+
+@pytest.mark.parametrize(
+    'allowed_content_types,expected_run_input',
+    [
+        # `None` skips the check entirely, for a route that carries CSRF protection of its own.
+        pytest.param(None, True, id='disabled'),
+        # A wider set admits another media type without giving up the control.
+        pytest.param(frozenset({'application/json', 'text/plain'}), True, id='widened'),
+        # The default set does not contain it.
+        pytest.param(DEFAULT_ALLOWED_CONTENT_TYPES, False, id='default'),
+    ],
+)
+async def test_allowed_content_types_opt_out(allowed_content_types: frozenset[str] | None, expected_run_input: bool):
+    agent = Agent(model=TestModel())
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain')]},
+        receive=receive,
+    )
+
+    if expected_run_input:
+        adapter = await DummyUIAdapter.from_request(
+            starlette_request, agent=agent, allowed_content_types=allowed_content_types
+        )
+        assert adapter.run_input == run_input
+    else:
+        with pytest.raises(HTTPException):
+            await DummyUIAdapter.from_request(
+                starlette_request, agent=agent, allowed_content_types=allowed_content_types
+            )
+
+
+async def test_empty_allowed_content_types_rejects_everything():
+    """An empty set is the most restrictive value, matching `allowed_file_url_force_download`.
+
+    Pinned so it can't drift into meaning "allow anything", which is how an allowlist turns into a
+    silent no-op.
+    """
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await DummyUIAdapter.from_request(starlette_request, agent=agent, allowed_content_types=frozenset())
+
+    assert exc_info.value.status_code == 415
+
+
+def test_allowed_content_types_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert 'allowed_content_types' in from_request_parameters
+    assert from_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
+    assert 'allowed_content_types' in dispatch_request_parameters
+    assert dispatch_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
+
+    assert DEFAULT_ALLOWED_CONTENT_TYPES == snapshot(frozenset({'application/json'}))
+
+
+@pytest.mark.parametrize(
+    'configured',
+    [
+        pytest.param(frozenset({'APPLICATION/JSON'}), id='uppercase'),
+        pytest.param(frozenset({'Application/Json'}), id='mixed-case'),
+        pytest.param(frozenset({' application/json '}), id='surrounding-whitespace'),
+    ],
+)
+async def test_allowed_content_types_are_normalized(configured: frozenset[str]):
+    """A configured entry is matched case-insensitively, like the request's own media type.
+
+    Without this the check rejects a perfectly valid `application/json` request and the 415 names
+    the same media type the request just sent, which reads as a contradiction.
+    """
+    agent = Agent(model=TestModel())
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    adapter = await DummyUIAdapter.from_request(starlette_request, agent=agent, allowed_content_types=configured)
+
+    assert adapter.run_input == run_input
+
+
+async def test_rejection_message_names_the_normalized_media_type():
+    """The 415 is built from the same normalized set the comparison uses."""
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await DummyUIAdapter.from_request(
+            starlette_request, agent=agent, allowed_content_types=frozenset({'APPLICATION/JSON'})
+        )
+
+    assert exc_info.value.detail == snapshot('Expected `Content-Type: application/json`, got text/plain')

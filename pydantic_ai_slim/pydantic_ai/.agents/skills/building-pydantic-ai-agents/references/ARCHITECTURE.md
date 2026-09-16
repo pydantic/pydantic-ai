@@ -179,7 +179,8 @@ Need deterministic, fast tests?
 | Together | `together:` | `together:meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` |
 | Ollama (local) | `ollama:` | `ollama:llama3.2` |
 | vLLM (local or remote) | `vllm:` | `vllm:Qwen/Qwen3.8-27B` |
-| GitHub Models | `github:` | `github:openai/gpt-5.2` |
+| GitHub Models (retired) | `github:` | `github:openai/gpt-5.2` |
+| GitHub Copilot | `github-copilot:` | `github-copilot:claude-haiku-4.5` |
 | Hugging Face | `huggingface:` | `huggingface:meta-llama/Llama-3.3-70B-Instruct` |
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |

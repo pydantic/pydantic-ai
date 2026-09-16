@@ -90,6 +90,7 @@ import httpx2
 from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.github import GitHubProvider
+from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
 
@@ -98,6 +99,9 @@ async def construct_providers():
         provider = OpenAIProvider(api_key='test', http_client=client)
         assert provider.client._client is client
         OpenAIChatModel('gpt-4o', provider=provider)
+
+        copilot = GitHubCopilotProvider(api_key='test', http_client=client)
+        assert copilot.client._client is client
 
         gateway = gateway_provider(
             'openai', api_key='test', base_url='https://gateway.example.com', http_client=client
