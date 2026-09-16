@@ -281,8 +281,7 @@ async def test_settling_a_cancelled_stream_is_refused() -> None:
     agent = Agent(TestModel(custom_output_text='a much longer streamed response'), instructions='Be helpful.')
 
     async with agent.run_stream('Stream this') as streamed:
-        async for _ in streamed.stream_text(delta=True):
-            break
+        await anext(streamed.stream_text(delta=True))
         await streamed.cancel()
 
         assert streamed.is_complete
