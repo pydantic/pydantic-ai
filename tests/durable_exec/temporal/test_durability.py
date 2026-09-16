@@ -30,6 +30,7 @@ from pydantic_ai import (
     MultiModalContent,
     PartDeltaEvent,
     PartStartEvent,
+    PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
     RunContext,
@@ -1518,6 +1519,71 @@ async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs
     with pytest.raises(UserError, match='MCP tools require the use of IO'):
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
             ToolsetCallToolId('mcp', toolset_id='mcp_opt_out'), mcp_tool, 'mcp_tool'
+        )
+
+
+async def test_durability_tool_opt_out_without_mcp_extra(monkeypatch: pytest.MonkeyPatch):
+    """A plain tool opting out of activities must not import `pydantic_ai.mcp`.
+
+    Regression test for #8249: the opt-out branch used an unguarded `from pydantic_ai.mcp import
+    MCPToolset`, which raised `ImportError` for every tool with `metadata={'temporal': False}` -- even
+    non-MCP function tools -- when the optional `mcp` extra was not installed. Simulate that install by
+    making `pydantic_ai.mcp` unimportable.
+    """
+
+    async def async_tool() -> str: ...  # pragma: no branch
+
+    toolset = FunctionToolset[None](id='opt_out_without_mcp')
+    toolset.add_function(async_tool, metadata={'temporal': False})
+    agent = Agent(
+        TestModel(),
+        name='opt_out_without_mcp',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await toolset.get_tools(ctx)
+
+    monkeypatch.setitem(sys.modules, 'pydantic_ai.mcp', None)
+    assert (
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('function', toolset_id='opt_out_without_mcp'), tools['async_tool'], 'async_tool'
+        )
+        is False
+    )
+
+
+async def test_durability_mcp_opt_out_identified_by_operation_kind():
+    """An MCP tool's opt-out is rejected via the operation kind, not `tool.toolset` identity.
+
+    `PrefixedToolset` rewrites `ToolsetTool.toolset` to the wrapper, so an `isinstance(tool.toolset,
+    MCPToolset)` check cannot identify an MCP tool once wrapped; the durable operation's `toolset_kind`
+    can, and it also avoids importing the optional `mcp` package in this path (#8249).
+    """
+
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_wrapped')
+    prefixed = PrefixedToolset[Any](mcp_toolset, prefix='wrapped')
+    prefixed_tool = ToolsetTool(
+        toolset=prefixed,
+        tool_def=ToolDefinition(name='wrapped_mcp_tool', metadata={'temporal': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    agent = Agent(
+        TestModel(),
+        name='mcp_wrapped',
+        deps_type=type(None),
+        toolsets=[prefixed],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    with pytest.raises(UserError, match='MCP tools require the use of IO'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('mcp', toolset_id='mcp_wrapped'), prefixed_tool, 'wrapped_mcp_tool'
         )
 
 
