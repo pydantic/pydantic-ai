@@ -1180,10 +1180,16 @@ class TestSafeDownload:
             'https://\uff45\uff56\uff49\uff4c.\uff43\uff4f\uff4d/page',  # fullwidth characters
             'https://evil\u3002com/page',  # ideographic full stop for the label separator
             'https://EVIL\u3002COM./page',  # and combined with the spellings already folded
-            'https://evil.com\u3002/page',  # non-ASCII separator as the root label
-            'https://evil.com\uff0e/page',  # fullwidth full stop as the root label
-            'https://evil.com\uff61/page',  # halfwidth ideographic full stop as the root label
-            'https://\uff45\uff56\uff49\uff4c.\uff43\uff4f\uff4d\uff0e/page',  # both at once
+            # Every character the IDNA codec turns into a label separator, as the root label.
+            # The set is the three RFC 3490 section 3.1 forms plus the two more the codec's NFKC
+            # pass maps to `.`; `_IDNA_LABEL_SEPARATORS` lists all five.
+            'https://evil.com\u3002/page',  # ideographic full stop
+            'https://evil.com\uff0e/page',  # fullwidth full stop
+            'https://evil.com\uff61/page',  # halfwidth ideographic full stop
+            'https://evil.com\u2024/page',  # one dot leader
+            'https://evil.com\ufe52/page',  # small full stop
+            'https://evil.com\u2024\u2024/page',  # repeated, which the codec rejects outright
+            'https://\uff45\uff56\uff49\uff4c.\uff43\uff4f\uff4d\uff0e/page',  # separator and fullwidth name at once
         ],
     )
     async def test_blocked_domains_folds_idna(self, url: str, mock_dns: AsyncMock) -> None:
