@@ -414,8 +414,9 @@ class OpenAILiveConnection(RealtimeConnection):
     async def aclose(self) -> None:
         """Cancel the read in flight so closing the socket doesn't strand its exception."""
         self._closed = True
-        if (task := self._recv_task) is not None:
-            self._cancel_read()
+        task = self._recv_task
+        self._cancel_read()
+        if task is not None:
             with suppress(asyncio.CancelledError, websockets.WebSocketException):
                 await task
 
