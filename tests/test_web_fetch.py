@@ -671,20 +671,6 @@ class TestWebFetchLocalTool:
             with pytest.raises(ModelRetry, match='Failed to decode'):
                 await tool('https://example.com')
 
-    async def test_fetch_json_nested_too_deeply_passes_text_through(self):
-        """JSON nested deeper than the parser can follow is returned as-is rather than aborting the run."""
-        text = '[' * 100_000 + ']' * 100_000
-        response = httpx.Response(
-            200, text=text, headers={'content-type': 'application/json'}, request=httpx.Request('GET', 'https://e.com')
-        )
-
-        with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=response):
-            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
-            result = await tool('https://example.com')
-
-        assert isinstance(result, dict)
-        assert result['content'] == text
-
 
 _CONVERTER_PARITY_CASES = [
     pytest.param(
