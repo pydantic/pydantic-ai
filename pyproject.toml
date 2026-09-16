@@ -196,6 +196,7 @@ openai = "2026-09-03T19:51:09Z"
 [dependency-groups]
 dev = [
     "anyio>=4.7.0",
+    "trio>=0.34.0",
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
     "devtools>=0.12.2",
@@ -489,7 +490,7 @@ omit = [
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
-    "tests/kw_only_walker.py",  # only ever runs in a coverage-free subprocess, so it is unmeasurable by construction
+    "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
 ]
 branch = true

@@ -4064,3 +4064,124 @@ def test_output_function_call_deferred_recorded_as_error(
     # not the deferral-attribute path that `wrap_tool_execute` uses.
     assert span_attrs.get('logfire.level_num', 0) >= 17  # error level
     assert 'pydantic_ai.tool.deferral.name' not in span_attrs
+
+
+# Name, `exception.type` and `exception.escaped` of each event, in order. Tool spans record their own
+# exceptions as escaped; the run span stands in for the OTel SDK's `use_span`, which does not.
+_EXPECTED_EXCEPTION_EVENTS: dict[str, list[tuple[str, str, str]]] = {
+    'retry': [
+        ('execute_tool my_tool', 'pydantic_ai.exceptions.ToolRetryError', 'True'),
+        ('execute_tool my_tool', 'pydantic_ai.exceptions.UnexpectedModelBehavior', 'True'),
+        ('invoke_agent agent', 'pydantic_ai.exceptions.UnexpectedModelBehavior', 'False'),
+    ],
+    'failed': [
+        ('execute_tool my_tool', 'pydantic_ai.exceptions.ToolFailedError', 'True'),
+        ('execute_tool my_tool', 'pydantic_ai.exceptions.ToolFailedError', 'True'),
+    ],
+    'exception': [
+        ('execute_tool my_tool', 'ValueError', 'True'),
+        ('invoke_agent agent', 'ValueError', 'False'),
+    ],
+}
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('failure', ['retry', 'failed', 'exception'])
+def test_exception_events_honor_include_content(
+    capfire: CaptureLogfire, include_content: bool, failure: Literal['retry', 'failed', 'exception']
+) -> None:
+    """Exception events on tool and agent run spans carry a message and stack trace only when content is included.
+
+    A `ToolRetryError` or `ToolFailedError` message is the retry prompt or failed result the model sees.
+    When a tool runs out of retries, the `UnexpectedModelBehavior` that ends the run is chained from the
+    last retry, and the OTel SDK's stack trace formatting repeats the cause's text on the second tool span
+    and on the run span (the test exporter trims stack traces, so only the message is checked here). A
+    plain exception from tool code is user-authored but may quote arguments, so it is treated the same
+    way. With `include_content=False`, every event keeps only the exception type.
+    """
+    model_calls = 0
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls <= 2:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 1})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        retries=1,
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content))],
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        if failure == 'retry':
+            raise ModelRetry('retry-secret')
+        elif failure == 'failed':
+            raise ToolFailed('failed-secret')
+        else:
+            raise ValueError('exception-secret')
+
+    if failure == 'failed':
+        agent.run_sync('Use the tool')
+    else:
+        with pytest.raises(UnexpectedModelBehavior if failure == 'retry' else ValueError):
+            agent.run_sync('Use the tool')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    events = [
+        (span['name'], event['attributes'])
+        for span in spans
+        for event in span.get('events', [])
+        if event['name'] == 'exception'
+    ]
+    assert [
+        (name, attributes['exception.type'], attributes['exception.escaped']) for name, attributes in events
+    ] == _EXPECTED_EXCEPTION_EVENTS[failure]
+    if include_content:
+        assert all({'exception.message', 'exception.stacktrace'} <= set(attributes) for _, attributes in events)
+        assert 'secret' in events[0][1]['exception.message']
+    else:
+        assert all(set(attributes) == {'exception.type', 'exception.escaped'} for _, attributes in events)
+        assert 'secret' not in str(spans)
+
+    # The run span's status description repeats the exception message, and is not part of the
+    # exported span dicts above, so it is checked separately.
+    descriptions = [span.status.description for span in capfire.exporter.exported_spans if span.status.description]
+    if include_content:
+        assert descriptions == ([] if failure == 'failed' else [IsStr(regex=r'\w+: [\s\S]+')])
+    else:
+        assert descriptions == []
+
+
+class _Interrupted(BaseException):
+    """Stands in for a cancellation: raised by tool code, not an `Exception`."""
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_span_leaves_base_exceptions_unrecorded(capfire: CaptureLogfire) -> None:
+    """A `BaseException` escaping the run stays off the run span.
+
+    Recording the run span's exceptions in the run body rather than leaving it to `use_span` has to
+    keep that function's rule that only `Exception` is recorded: a cancellation is control flow, not
+    an error, and should not start showing up as a recorded exception on every interrupted run.
+    """
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('my_tool', {})])
+
+    agent = Agent(FunctionModel(call_tool), capabilities=[Instrumentation()])
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        raise _Interrupted
+
+    with pytest.raises(_Interrupted):
+        agent.run_sync('Use the tool')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [
+        span['name'] for span in spans for event in span.get('events', []) if event['name'] == 'exception'
+    ] == snapshot(['execute_tool my_tool'])
