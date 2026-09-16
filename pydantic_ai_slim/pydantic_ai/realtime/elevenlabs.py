@@ -969,10 +969,10 @@ class ElevenLabsRealtimeModel(RealtimeModel):
         if not _tool_mismatches(tools, agent.client_tools):
             return
 
-        # Every config is built and validated before the first REST call: a validation failure must
-        # cost zero workspace mutations. Validating inside the create loop orphaned the tools already
-        # created (created but never attached, since the re-point at the end never ran) and surfaced
-        # offending tools one connect at a time; a production deployment syncing seven tools hit both.
+        # Convert every local tool into the ElevenLabs tool config dialect before the first REST
+        # call: a validation failure must cost zero workspace mutations. Validating inside the create
+        # loop would orphan the tools already created (created but never attached, since the
+        # re-point at the end never runs) and surface offending tools one connect at a time.
         problems: list[str] = []
         configs: dict[str, dict[str, Any]] = {}
         for tool in tools:
@@ -987,8 +987,14 @@ class ElevenLabsRealtimeModel(RealtimeModel):
 
         attached_ids = agent.tool_ids
         client_id_by_name: dict[str, str] = {}
-        # Server-side (webhook/MCP/system) tools stay attached untouched; so does any attached id the
-        # listing doesn't report (never drop what can't be classified).
+        # Sort the agent's attached ids into two buckets. Client tools are the run's responsibility:
+        # their name-to-id mapping is kept so a differing one can be updated in place (the agent's
+        # inline tool configs carry no ids). Everything else is preserved as-is: server-side
+        # (webhook/MCP/system) tools are owned by ElevenLabs and have no Pydantic AI counterpart, and
+        # an attached id the listing doesn't report can't be classified at all, so it is kept rather
+        # than risk dropping a server-side tool. `preserved_ids` seeds `target_tool_ids`, so these
+        # survive the re-point; a client tool the run doesn't define lands in neither bucket and is
+        # detached by it.
         preserved_ids: list[str] = []
         for tool_id in attached_ids:
             workspace_tool = workspace_tools.get(tool_id)
@@ -1011,7 +1017,9 @@ class ElevenLabsRealtimeModel(RealtimeModel):
             if workspace_tool.id not in attached_id_set and workspace_tool.tool_config.type == 'client' and name:
                 adoptable_by_name.setdefault(name, workspace_tool)
 
-        tool_ids = preserved_ids
+        # The ids the agent is re-pointed at: preserved server-side ids first, then one id per local
+        # tool (adopted, created, or existing) in the run's order.
+        target_tool_ids = list(preserved_ids)
         for tool in tools:
             config = configs[tool.name]
             remote = remote_by_name.get(tool.name)
@@ -1023,7 +1031,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                     and not _tool_mismatches([tool], [orphan.tool_config])
                     and not await self._tool_has_dependents(orphan.id)
                 ):
-                    tool_ids.append(orphan.id)
+                    target_tool_ids.append(orphan.id)
                     continue
                 with _map_rest_errors(self.agent_id):
                     response = await self._http_client.post(
@@ -1032,7 +1040,7 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                         content=to_json({'tool_config': config}).decode(),
                     )
                 _raise_for_status(response, self.agent_id)
-                tool_ids.append(_CreatedToolResponse.model_validate_json(response.content).id)
+                target_tool_ids.append(_CreatedToolResponse.model_validate_json(response.content).id)
                 continue
             if _tool_mismatches([tool], [remote]):
                 with _map_rest_errors(self.agent_id):
@@ -1042,14 +1050,16 @@ class ElevenLabsRealtimeModel(RealtimeModel):
                         content=to_json({'tool_config': config}).decode(),
                     )
                 _raise_for_status(response, self.agent_id)
-            tool_ids.append(existing_id)
+            target_tool_ids.append(existing_id)
 
-        if tool_ids != attached_ids:
+        if target_tool_ids != attached_ids:
             with _map_rest_errors(self.agent_id):
                 response = await self._http_client.patch(
                     f'{self._provider.base_url}/v1/convai/agents/{self.agent_id}',
                     headers={**self._rest_headers, 'Content-Type': 'application/json'},
-                    content=to_json({'conversation_config': {'agent': {'prompt': {'tool_ids': tool_ids}}}}).decode(),
+                    content=to_json(
+                        {'conversation_config': {'agent': {'prompt': {'tool_ids': target_tool_ids}}}}
+                    ).decode(),
                 )
             _raise_for_status(response, self.agent_id)
 
