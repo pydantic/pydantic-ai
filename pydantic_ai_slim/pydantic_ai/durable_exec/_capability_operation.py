@@ -266,28 +266,22 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
             )
 
-            # Resolve the per-run operation first, then the agent-bound fallback.
-            handler = target.__get__(self, type(self))
+            # Resolve the per-run dispatcher first, then the agent-bound fallback for a context
+            # this run never prepared (a realtime session, or a call outside the run's own graph).
             operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
-            operation = (
+            dispatcher = (
                 operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
             )
-            if operation is not None:
-                result = await operation(*args, **kwargs)
+            if dispatcher is None and ctx.agent is not None:
+                dispatcher = self._durable_operation_bindings.get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
+            if dispatcher is None:
+                result = await target.__get__(self, type(self))(*args, **kwargs)
             else:
-                dispatcher = (
-                    self._durable_operation_bindings.get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
-                    if ctx.agent is not None
-                    else None
+                result = await dispatcher(
+                    ctx,
+                    cast(tuple[object, ...], args),
+                    cast(dict[str, object], kwargs),
                 )
-                if dispatcher is None:
-                    result = await handler(*args, **kwargs)
-                else:
-                    result = await dispatcher(
-                        ctx,
-                        cast(tuple[object, ...], args),
-                        cast(dict[str, object], kwargs),
-                    )
 
             # Apply worker-side model-request mutations back to the live context.
             if request_context is not None and isinstance(result, _ResolvedModelRequestContext):

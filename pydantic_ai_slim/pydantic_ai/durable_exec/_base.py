@@ -425,10 +425,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         """Register dispatchers on `RunContext` for worker-side and per-run capability recovery."""
-        ctx._durable_operations = {}  # pyright: ignore[reportPrivateUsage]
+        # Mutated in place, never reassigned: the graph shares one mapping by reference into every
+        # `RunContext` it builds, so an operation called from a per-request hook resolves the same
+        # per-run dispatchers `before_run` does.
+        operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
+        if operations is None:
+            operations = ctx._durable_operations = {}  # pyright: ignore[reportPrivateUsage]
+        operations.clear()
         if ctx.agent is None:
             return
-        operations: dict[tuple[str, str], Callable[..., Awaitable[object]]] = {}
         run_capabilities = ctx._run_capabilities_by_id or {}  # pyright: ignore[reportPrivateUsage]
         for capability_id, capability in run_capabilities.items():
             for bound_capability_id, operation_name in self._bound_capability_operations:
@@ -436,17 +441,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     continue
 
                 async def dispatch(
-                    *args: object,
+                    call_ctx: RunContext[object],
+                    args: tuple[object, ...],
+                    kwargs: dict[str, object],
                     _capability: AbstractCapability[Any] = capability,
                     _operation_name: str = operation_name,
-                    **kwargs: object,
                 ) -> object:
+                    # The caller's context, not the one this ran at run setup: a per-request hook
+                    # dispatches with the step's own model, usage and messages.
                     return await self._invoke_capability_operation(
-                        _capability, _operation_name, ctx=ctx, args=args, kwargs=kwargs
+                        _capability, _operation_name, ctx=call_ctx, args=args, kwargs=kwargs
                     )
 
                 operations[(capability_id, operation_name)] = dispatch
-        ctx._durable_operations = operations  # pyright: ignore[reportPrivateUsage]
 
     async def _invoke_capability_operation(
         self,

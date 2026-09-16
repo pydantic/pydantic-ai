@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
 from pydantic_ai.capabilities import (
@@ -595,6 +596,35 @@ class PerRunOperation(AbstractCapability[Any]):
         self.calls += 1
 
 
+class PerRequestOperation(AbstractCapability[Any]):
+    """A per-run replacement whose operation takes an explicit `RunContext` and runs per request."""
+
+    id = 'per_request_operation'
+
+    def __init__(self, steps: list[int]) -> None:
+        self.steps = steps
+        self.replacements = 0
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        # A brand-new instance, the way `dataclasses.replace` builds one: none of the dispatchers a
+        # durability engine attached to the agent-bound instance ride along on it.
+        self.replacements += 1
+        replacement = PerRequestOperation(self.steps)
+        replacement.replacements = self.replacements
+        return replacement
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        await self.record_step(ctx)
+        return request_context
+
+    @durable_operation('record_step')
+    async def record_step(self, ctx: RunContext[Any]) -> int:
+        self.steps.append(ctx.run_step)
+        return ctx.run_step
+
+
 class TenantScopedOperation(AbstractCapability[str]):
     id = 'tenant_scoped_operation'
 
@@ -672,6 +702,50 @@ async def test_for_run_replacement_dispatches_on_run_instance() -> None:
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(name == 'for_run_operation__capability__per_run_operation.operation' for name, _ in durability.calls)
+
+
+async def test_per_request_hook_dispatches_on_run_instance() -> None:
+    """A per-request hook dispatches durably, even when `for_run` returned a fresh instance.
+
+    The operation takes an explicit `RunContext`, which wins over the ambient one, and a hook is
+    handed a context the graph built for that step rather than the one run setup prepared — so the
+    per-run dispatchers have to travel with it or the operation silently runs inline.
+    """
+    steps: list[int] = []
+    agent = Agent(
+        TestModel(),
+        name='per_request_operation',
+        capabilities=[PerRequestOperation(steps), RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['per_request_operation__capability__per_request_operation.record_step']
+    )
+    # The step's own context, not the one run setup prepared, which is still on step 0.
+    assert steps == snapshot([1])
+
+
+async def test_per_request_hook_dispatches_on_the_run_instance_it_already_built() -> None:
+    """The operation runs as the run's own instance, rather than deriving a second one per call.
+
+    Worker-side recovery falls back to re-deriving the per-run instance when the context that
+    crossed a durable boundary doesn't carry one; in-process it has to reach the instance the run
+    is already using, or per-run state accumulated by earlier hooks is silently discarded.
+    """
+    capability = PerRequestOperation([])
+    agent = Agent(
+        TestModel(),
+        name='per_request_instance',
+        capabilities=[capability, RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    assert capability.replacements == snapshot(1)
 
 
 async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:

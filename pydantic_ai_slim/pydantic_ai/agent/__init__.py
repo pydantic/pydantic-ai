@@ -239,9 +239,17 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
-        run_ctx._run_capabilities_by_id = {  # pyright: ignore[reportPrivateUsage]
+        run_capabilities_by_id = {
             capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
         }
+        # Mutated in place where the graph already shares one mapping by reference into every
+        # `RunContext` this run (see `GraphAgentDeps.run_capabilities_by_id`); a realtime session
+        # has no graph to share one, so it gets this mapping directly.
+        if (existing := run_ctx._run_capabilities_by_id) is None:  # pyright: ignore[reportPrivateUsage]
+            run_ctx._run_capabilities_by_id = run_capabilities_by_id  # pyright: ignore[reportPrivateUsage]
+        else:
+            existing.clear()
+            existing.update(run_capabilities_by_id)
         run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
         with set_current_run_context(run_ctx):
             await run_capability.before_run(run_ctx)
