@@ -8,6 +8,7 @@ import io
 import wave
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from copy import copy
 from dataclasses import dataclass, replace
 from threading import Lock as ThreadLock
 from time import time_ns
@@ -27,6 +28,7 @@ from .._tool_execution import (
     cancelled_sub_agent_return,
 )
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
+from .._uuid import uuid7
 from ..conversation import Conversation
 from ..exceptions import ApprovalRequired, CallDeferred, RunCancelled, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
@@ -1170,11 +1172,17 @@ class RealtimeSession:
         produces, so a spoken conversation can be continued by
         [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] and handed back again, carrying its usage
         rather than restarting the budget each time it changes modality.
+
+        A session opened without a `conversation_id` mints one here and keeps it, so every bundle
+        taken from the session — and every message it records from then on — shares one identity to
+        store the conversation under.
         """
+        if self._conversation_id is None:
+            self._conversation_id = str(uuid7())
         return Conversation(
             messages=self.all_messages(),
-            usage=self.usage,
-            **({'conversation_id': self._conversation_id} if self._conversation_id is not None else {}),
+            usage=copy(self.usage),
+            conversation_id=self._conversation_id,
         )
 
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:

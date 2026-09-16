@@ -7582,7 +7582,19 @@ def test_session_conversation_bundles_what_a_text_run_needs() -> None:
 
 
 def test_session_conversation_mints_an_id_when_the_session_has_none() -> None:
-    conversation = RealtimeSession(FakeRealtimeConnection([])).conversation
+    session = RealtimeSession(FakeRealtimeConnection([]))
+
+    conversation = session.conversation
 
     assert UUID(conversation.conversation_id).version == 7
     assert conversation.messages == []
+    # One identity to store the conversation under, not a new one per read.
+    assert session.conversation.conversation_id == conversation.conversation_id
+
+
+def test_session_conversation_usage_is_a_copy() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]), usage=RunUsage(requests=2))
+
+    session.conversation.usage.requests += 10
+
+    assert session.usage.requests == 2

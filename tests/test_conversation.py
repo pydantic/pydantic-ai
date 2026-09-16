@@ -41,6 +41,18 @@ def test_run_result_conversation_messages_are_a_copy() -> None:
     assert result.all_messages() != []
 
 
+def test_run_result_conversation_usage_is_a_copy() -> None:
+    """The bundle is a branch point, so spending it must not rewrite what the run already spent."""
+    result = Agent(TestModel(), instructions='Be helpful.').run_sync('Say hello')
+    conversation = result.conversation
+
+    conversation.usage.requests += 10
+    conversation.usage.details['branch'] = 1
+
+    assert result.usage.requests == 1
+    assert 'branch' not in result.usage.details
+
+
 def test_round_trips_through_pydantic() -> None:
     result = Agent(TestModel(custom_output_text='stored'), instructions='Be helpful.').run_sync('Say hello')
     result.usage.tool_calls = 3
