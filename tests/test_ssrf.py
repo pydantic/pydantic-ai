@@ -204,6 +204,22 @@ class TestIsPrivateIp:
         assert is_private_ip(ip) is False
 
     @pytest.mark.parametrize(
+        'ip',
+        [
+            '::1%1',  # loopback
+            'fe80::1%eth0',  # link-local, where a zone is actually meaningful
+            'fd00:ec2::254%251',  # unique local
+            '::ffff:192.168.1.1%1',  # IPv4-mapped private address
+        ],
+    )
+    def test_zone_scoped_private_ips(self, ip: str) -> None:
+        """A zone identifier must not change how an address is classified."""
+        assert is_private_ip(ip) is True
+
+    def test_zone_scoped_public_ip(self) -> None:
+        assert is_private_ip('2606:4700:4700::1111%1') is False
+
+    @pytest.mark.parametrize(
         ('host', 'entry'),
         [
             ('b\u00fccher.example', 'xn--bcher-kva.example'),
@@ -350,6 +366,29 @@ class TestIsCloudMetadataIp:
         Closes the class of bypasses behind CVE-2026-25580 / CVE-2026-46678: an IPv4
         metadata endpoint encoded as IPv4-mapped, IPv4-compatible, 6to4, NAT64 (any
         prefix), or ISATAP must not slip past the always-on cloud-metadata guard.
+        """
+        assert is_cloud_metadata_ip(ip) is True
+
+    @pytest.mark.parametrize(
+        'ip',
+        [
+            # Every entry in `_CLOUD_METADATA_IPV6`, with a zone identifier appended
+            'fd00:ec2::254%251',  # AWS EC2 IMDS IPv6
+            'fd00:ec2::23%251',  # AWS EKS Pod Identity Agent IPv6
+            'fd20:ce::254%251',  # GCP IPv6 (IPv6-only instances)
+            'fd00:42::42%251',  # Scaleway IPv6
+            'fd00:ec2::254%1',  # any zone index works, no reconnaissance needed
+            'fd00:ec2::254%eth0',  # named zones parse too, even where they do not route
+            '::ffff:169.254.169.254%1',  # zone on a transition form
+        ],
+    )
+    def test_zone_scoped_metadata_detected(self, ip: str) -> None:
+        """Metadata IPs carrying an IPv6 zone identifier must be blocked.
+
+        Python folds the zone id into `IPv6Address` equality and hashing, so a zoned
+        spelling of a blocked address is not `in` the blocklist frozenset, while the
+        kernel ignores the zone on a destination that is not link-local and delivers
+        the request to the address anyway.
         """
         assert is_cloud_metadata_ip(ip) is True
 
@@ -602,6 +641,37 @@ class TestValidateAndResolveUrl:
         """
         with pytest.raises(ValueError, match='Access to cloud metadata service'):
             await validate_and_resolve_url(url, allow_local=True)
+
+    @pytest.mark.parametrize(
+        'url',
+        [
+            'http://[fd00:ec2::254%251]/latest/meta-data/iam/security-credentials/',
+            'http://[fd00:ec2::23%251]/latest/meta-data/',
+            'http://[fd20:ce::254%251]/computeMetadata/v1/',
+            'http://[fd00:42::42%251]/conf',
+            'http://[fd00:ec2::254%1]/latest/meta-data/',
+        ],
+    )
+    async def test_zone_scoped_metadata_url_blocked_with_allow_local(self, url: str) -> None:
+        """A zone identifier on a metadata URL must not bypass the always-on guard."""
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url(url, allow_local=True)
+
+    async def test_zone_scoped_metadata_dns_blocked_with_allow_local(self, mock_dns: AsyncMock) -> None:
+        """A hostname resolving to a zone-scoped metadata address is still blocked."""
+        mock_dns.return_value = [(10, 1, 6, '', ('fd00:ec2::254%251', 0, 0, 251))]
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url('http://attacker.example.com/path', allow_local=True)
+
+    async def test_zone_scoped_link_local_still_reachable_with_allow_local(self) -> None:
+        """A zone is dropped for classification only; the connection still carries it."""
+        resolved = await validate_and_resolve_url('http://[fe80::1%251]/status', allow_local=True)
+        assert resolved.resolved_ip == 'fe80::1%251'
+        assert build_url_with_ip(resolved) == 'http://[fe80::1%251]/status'
+
+    async def test_zone_scoped_private_ip_blocked_by_default(self) -> None:
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://[fe80::1%251]/status', allow_local=False)
 
     async def test_ipv4_mapped_ipv6_metadata_dns_blocked_with_allow_local(self, mock_dns: AsyncMock) -> None:
         """A hostname that resolves to the IPv4-mapped IPv6 form of a metadata IP is still blocked."""
