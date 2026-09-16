@@ -48,7 +48,7 @@ Store the Pydantic AI side and convert at the edge, rather than storing the prot
 
 Messages carry more than they look like they do: [`run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) are stamped onto each one, so a conversation reloaded from storage stays correlated in [Logfire](logfire.md) with no bookkeeping of your own, and each run's span reports that run's own token usage either way.
 
-What lives outside the messages is [`RunUsage`][pydantic_ai.usage.RunUsage]: the conversation's running total, including [`tool_calls`][pydantic_ai.usage.RunUsage.tool_calls], which no message records. Store it alongside the history and hand it back with `usage=` when [`UsageLimits`][pydantic_ai.usage.UsageLimits] should budget the whole conversation rather than each run. Carrying it makes each run's span report the conversation's running total rather than that run's share, so sum the per-request `chat` spans, not the agent-run spans, once you do.
+What lives outside the messages is [`RunUsage`][pydantic_ai.usage.RunUsage]: the conversation's running total, including [`tool_calls`][pydantic_ai.usage.RunUsage.tool_calls], which no message records. Store it alongside the history and hand it back with `usage=` when [`UsageLimits`][pydantic_ai.usage.UsageLimits] should budget the whole conversation rather than each run. Carrying it changes nothing about what your traces show: each run's span reports that run's own tokens either way, so a conversation's spend is the sum of its runs.
 
 ## Not writing that code yourself
 
