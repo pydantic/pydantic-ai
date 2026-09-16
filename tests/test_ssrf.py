@@ -1641,6 +1641,45 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://evil.com/page', blocked_domains=[entry])
 
+    @pytest.mark.parametrize(
+        'url',
+        [
+            'https://\uff45\uff56\uff49\uff4c.\uff43\uff4f\uff4d/page',  # fullwidth characters
+            'https://evil\u3002com/page',  # ideographic full stop for the label separator
+            'https://EVIL\u3002COM./page',  # and combined with the spellings already folded
+        ],
+    )
+    async def test_blocked_domains_folds_idna(self, url: str, mock_dns: AsyncMock) -> None:
+        """A spelling the resolver IDNA-folds to a blocked domain must not reach it.
+
+        `getaddrinfo` encodes these to `evil.com` and resolves them there, so comparing the
+        raw string would let the model past a correctly configured blocklist while the
+        request still arrived at the blocked host.
+        """
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        with pytest.raises(ValueError, match='is blocked'):
+            await safe_download(url, blocked_domains=['evil.com'])
+
+    @pytest.mark.parametrize('url', ['https://b\u00fccher.example/page', 'https://xn--bcher-kva.example/page'])
+    async def test_allowed_domains_folds_idna(self, url: str, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """An internationalized entry matches the URL in either spelling, unicode or punycode."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
+
+        await safe_download(url, allowed_domains=['b\u00fccher.example'])
+
+    async def test_domain_key_falls_back_on_unencodable_host(self, mock_dns: AsyncMock) -> None:
+        """A label the IDNA codec rejects is compared as-is rather than raising."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        host = 'a' * 64 + '.example'
+        with pytest.raises(ValueError, match='is blocked'):
+            await safe_download(f'https://{host}/page', blocked_domains=[host])
+
     async def test_blocked_domains_permits(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         """Test that non-blocked domain passes validation."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]

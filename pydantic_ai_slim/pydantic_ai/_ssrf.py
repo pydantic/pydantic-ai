@@ -505,15 +505,36 @@ def resolve_redirect_url(current_url: str, location: str) -> str:
         return urlunparse((parsed_current.scheme, parsed_current.netloc, f'{base_path}/{location}', '', '', ''))
 
 
+def _domain_key(host: str) -> str:
+    """The form a hostname and a domain-list entry are compared in.
+
+    `getaddrinfo` IDNA-encodes a non-ASCII hostname before resolving it, and that encoding
+    folds spellings that a comparison on the raw string reads as different domains:
+    `\uff45\uff56\uff49\uff4c.\uff43\uff4f\uff4d` written in fullwidth characters, or
+    `evil\u3002com` with an ideographic full stop, both resolve to `evil.com`. Comparing the
+    raw string would let those past a blocklist while the request still reached the blocked
+    host, so both sides are compared in the ASCII form the resolver will actually use.
+
+    A label the codec rejects (empty, or longer than 63 characters) is left as-is: it names a
+    host DNS cannot resolve, so the raw string is the only key it can have.
+    """
+    host = _normalized_host(host)
+    try:
+        return host.encode('idna').decode('ascii')
+    except UnicodeError:
+        return host
+
+
 def _check_domain(hostname: str, *, allowed_domains: list[str] | None, blocked_domains: list[str] | None) -> None:
     """Validate a hostname against allowed/blocked domain lists.
 
     Raises:
         ValueError: If the hostname is not allowed or is blocked.
     """
-    if allowed_domains is not None and hostname not in {_normalized_host(d) for d in allowed_domains}:
+    key = _domain_key(hostname)
+    if allowed_domains is not None and key not in {_domain_key(d) for d in allowed_domains}:
         raise ValueError(f'Domain {hostname!r} is not in the allowed domains list. Allowed: {allowed_domains}')
-    if blocked_domains is not None and hostname in {_normalized_host(d) for d in blocked_domains}:
+    if blocked_domains is not None and key in {_domain_key(d) for d in blocked_domains}:
         raise ValueError(f'Domain {hostname!r} is blocked.')
 
 
@@ -609,10 +630,10 @@ async def safe_download(
                 `Cookie`, `Proxy-Authorization`) are stripped when a redirect
                 crosses origins (scheme + host + port), except for a same-host
                 http:80→https:443 upgrade.
-        allowed_domains: If set, only these hostnames are permitted (exact match, ignoring
-                case and a trailing dot). Checked on every hop including redirects.
-        blocked_domains: If set, these hostnames are rejected (exact match, ignoring case
-                and a trailing dot). Checked on every hop including redirects.
+        allowed_domains: If set, only these hostnames are permitted (exact match, ignoring case,
+                a trailing dot, and IDNA spelling). Checked on every hop including redirects.
+        blocked_domains: If set, these hostnames are rejected (exact match, ignoring case,
+                a trailing dot, and IDNA spelling). Checked on every hop including redirects.
 
     Returns:
         The httpx2.Response object.

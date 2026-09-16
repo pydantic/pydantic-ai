@@ -65,13 +65,13 @@ class WebFetchLocalTool:
     """Maximum size in bytes of the response body to download. None for no limit."""
 
     allowed_domains: list[str] | None = field(default=None)
-    """Only fetch from these domains (exact hostname match, ignoring case and a trailing dot).
+    """Only fetch from these domains (exact hostname match, ignoring case, a trailing dot, and IDNA spelling).
 
     Raises `ModelRetry` on violation.
     """
 
     blocked_domains: list[str] | None = field(default=None)
-    """Never fetch from these domains (exact hostname match, ignoring case and a trailing dot).
+    """Never fetch from these domains (exact hostname match, ignoring case, a trailing dot, and IDNA spelling).
 
     Raises `ModelRetry` on violation.
     """
