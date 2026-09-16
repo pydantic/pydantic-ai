@@ -683,7 +683,7 @@ def test_deepseek_provider_deepseek_reasoner():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_responses_supports_interleaved_function_calls': False,
             'openai_supports_tool_choice_required': False,
-            'openai_supports_forced_tool_choice_with_thinking': True,
+            'openai_supports_forced_tool_choice_with_thinking': False,
             'openai_reasoning_enabled_by_default': True,
             'openai_responses_supports_json_schema_output': True,
         }

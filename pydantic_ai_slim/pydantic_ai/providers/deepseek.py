@@ -23,7 +23,9 @@ else:
     )
 
 
-DeepSeekModelName = Literal['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro']
+DeepSeekModelName = Literal[
+    'deepseek-chat', 'deepseek-reasoner', 'deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-pro'
+]
 
 
 class DeepSeekProvider(_OpenAICompatibleProvider):
@@ -44,8 +46,10 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = deepseek_model_profile(model_name)
-        is_v4 = model_name.startswith('deepseek-v4-')
-        thinks_by_default = is_v4 or model_name == 'deepseek-reasoner'
+        # Only `deepseek-chat` is pinned to non-thinking. Official API names that think by default
+        # include `deepseek-reasoner`, `deepseek-flash` (DeepSeek-V4.1-Flash), and `deepseek-v4-*`.
+        is_chat = model_name == 'deepseek-chat'
+        thinks_by_default = not is_chat
 
         # As DeepSeekProvider is most often used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
@@ -66,13 +70,13 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_interleaved_function_calls=False,
                 # DeepSeek rejects a forced tool choice only while thinking is on, answering
                 # `Thinking mode does not support this tool_choice`. `deepseek-reasoner` cannot turn
-                # thinking off, so for it the restriction is unconditional; the v4 models can, so
-                # theirs is evaluated per request. `startswith` covers future deepseek-v4-* SKUs
-                # without listing each one.
+                # thinking off, so for it the restriction is unconditional; other thinking-by-default
+                # models (flash / v4) can toggle thinking off, so theirs is evaluated per request.
+                # Only non-thinking `deepseek-chat` accepts forced tool choice while thinking is on
+                # (the thinking-gate is irrelevant for it).
                 openai_supports_tool_choice_required=model_name != 'deepseek-reasoner',
-                openai_supports_forced_tool_choice_with_thinking=not is_v4,
-                # Thinking is on by default on DeepSeek V4 models and `deepseek-reasoner`; every other
-                # model name (including `deepseek-chat`) is treated as thinking-off by default.
+                openai_supports_forced_tool_choice_with_thinking=is_chat,
+                # Thinking is on by default for every DeepSeek API model except `deepseek-chat`.
                 openai_reasoning_enabled_by_default=thinks_by_default,
                 # DeepSeek's Responses endpoint honors `text.format` of type `json_schema`, while its
                 # Chat Completions endpoint rejects it with `This response_format type is unavailable now`.
