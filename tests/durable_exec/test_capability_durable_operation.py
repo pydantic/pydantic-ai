@@ -755,16 +755,13 @@ async def test_run_replacement_that_drops_the_bound_id_is_refused() -> None:
     non-durably instead — the one outcome a durable operation exists to rule out.
     """
 
-    class IdChangingOperation(AbstractCapability[Any]):
+    class IdChangingOperation(Operations):
         id = 'id_changing_operation'
 
         async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
             replacement = IdChangingOperation()
             replacement.id = 'renamed_for_this_run'
             return replacement
-
-        @durable_operation('operation')
-        async def operation(self, ctx: RunContext[Any]) -> None: ...
 
     agent = Agent(
         TestModel(),
@@ -780,6 +777,25 @@ async def test_run_replacement_that_drops_the_bound_id_is_refused() -> None:
         "capability's `id`: it identifies the capability across the run, and persisted operation "
         'identity and worker-side recovery are built on it.'
     )
+
+
+async def test_operation_called_with_a_boundary_context_dispatches_through_the_agent() -> None:
+    """A context rebuilt across a durable boundary carries no per-run dispatchers, but still dispatches.
+
+    Temporal leaves `_durable_operations` off the context it rebuilds inside an activity and
+    re-attaches the worker's agent, so an operation called with that context resolves the
+    dispatchers the engine bound to the agent instead.
+    """
+    model = TestModel()
+    capability = Operations()
+    agent = Agent(model, name='boundary_context', capabilities=[capability, RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext(deps=None, agent=agent, model=model, usage=RunUsage())
+    assert ctx._durable_operations is None  # pyright: ignore[reportPrivateUsage]
+
+    assert await capability._calculate(ctx) == snapshot(2)  # pyright: ignore[reportPrivateUsage]
+    assert [name for name, _ in durability.calls] == snapshot(['boundary_context__capability__operations.calculate'])
 
 
 async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:
