@@ -57,18 +57,19 @@ if TYPE_CHECKING:
     from pydantic_ai.tools import AgentDepsT
 
 
-def _record_exception(span: Span, error: BaseException, *, include_content: bool) -> None:
-    """Record `error` on `span` as an `exception` event that escaped the span.
+def _record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
+    """Record `error` on `span` as an `exception` event.
 
     With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
     only the exception type is kept: the message and stack trace of an exception raised around
     a tool or an agent run can quote content the setting is meant to withhold -- a tool retry
     or failure carries the text the model sees, an exception chained from one repeats that text
     in its stack trace, and validation errors and user exceptions may echo the rejected
-    arguments. The type formatting matches what `Span.record_exception` would have produced.
+    arguments. The type and `escaped` formatting match what `Span.record_exception` would have
+    produced.
     """
     if include_content:
-        span.record_exception(error, escaped=True)
+        span.record_exception(error, escaped=escaped)
         return
     error_type = type(error)
     type_name = (
@@ -77,7 +78,7 @@ def _record_exception(span: Span, error: BaseException, *, include_content: bool
         else error_type.__qualname__
     )
     # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
-    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': 'True'})
+    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -244,8 +245,11 @@ class Instrumentation(AbstractCapability[Any]):
             try:
                 try:
                     result = await handler()
-                except BaseException as e:
-                    _record_exception(span, e, include_content=settings.include_content)
+                except Exception as e:
+                    # Stand in for the recording `record_exception=False` turned off, matching it
+                    # exactly: `use_span` only records `Exception` (a `BaseException` such as a
+                    # cancellation is not an error), and does not mark it as escaped.
+                    _record_exception(span, e, include_content=settings.include_content, escaped=False)
                     raise
 
                 if settings.include_content and span.is_recording():
