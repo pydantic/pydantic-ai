@@ -165,7 +165,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     if embeddings:  # pragma: no branch
                         attributes_to_set['gen_ai.embeddings.dimension.count'] = len(embeddings[0])
                         if self.instrumentation_settings.include_content:
-                            attributes['embeddings'] = json.dumps(embeddings)
+                            attributes_to_set['embeddings'] = json.dumps(embeddings)
 
                     if result.provider_response_id is not None:
                         attributes_to_set['gen_ai.response.id'] = result.provider_response_id
