@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
 
+from pydantic_ai._utils import using_thread_executor
 from pydantic_ai.common_tools.web_fetch import (
     WebFetchLocalTool,
     web_fetch_tool,
 )
+from pydantic_ai.exceptions import ModelRetry
 
 pytestmark = [pytest.mark.anyio]
 
@@ -510,8 +515,6 @@ class TestWebFetchLocalTool:
         self, serve_response: Callable[[httpx2.Response], None], content_type: str
     ):
         """A response body larger than `max_download_bytes` is rejected before it is buffered."""
-        from pydantic_ai.exceptions import ModelRetry
-
         request = httpx2.Request('GET', 'https://93.184.215.14/doc')
         serve_response(
             httpx2.Response(200, content=b'x' * 2000, headers={'content-type': content_type}, request=request)
@@ -533,6 +536,123 @@ class TestWebFetchLocalTool:
 
         assert isinstance(result, dict)
         assert len(result['content']) == 200_000
+
+    async def test_fetch_html_title_is_raw_and_case_insensitive(self):
+        """The title is the raw text between the tags, matched case-insensitively, with attributes ignored."""
+        html = '<html><head><TITLE lang="en">Fish &amp; Chips</TITLE></head><body><p>Content</p></body></html>'
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == 'Fish &amp; Chips'
+
+    async def test_fetch_html_title_after_case_expanding_character(self):
+        """Characters whose lowercase form is longer (`İ` becomes two code points) don't shift the title's offsets."""
+        html = '<html><head><meta name="x" content="İ"><title>İstanbul</title></head><body>İ</body></html>'
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == 'İstanbul'
+
+    async def test_html_conversion_runs_in_worker_thread(self):
+        """Parsing and converting HTML runs through the sync-function executor, not on the event loop.
+
+        Conversion cost scales with the server-controlled body, so it must not stall every other
+        coroutine in the process. `using_thread_executor` makes the offload observable: the
+        conversion is the only sync work the tool submits.
+        """
+
+        class RecordingExecutor(ThreadPoolExecutor):
+            def __init__(self):
+                super().__init__()
+                self.submitted: list[Future[Any]] = []
+
+            def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+                future = super().submit(fn, *args, **kwargs)
+                self.submitted.append(future)
+                return future
+
+        html = '<html><head><title>Threaded</title></head><body><p>Content</p></body></html>'
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response(html),
+            ),
+            RecordingExecutor() as executor,
+            using_thread_executor(executor),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == 'Threaded'
+        assert len(executor.submitted) == 1
+        assert executor.submitted[0].result() == ('Threaded', 'Threaded\n\nContent')
+
+    async def test_fetch_html_repeated_unclosed_title_tags(self):
+        """A body made of `<title` fragments with no closing `>` converts in seconds, not minutes.
+
+        Each fragment is a candidate title start with no end in reach, which previously made title
+        extraction quadratic in the body size: a body of this size took minutes, during which the
+        event loop was blocked. The bound is generous; the point is that it isn't minutes.
+        """
+        html = '<title' * 300_000
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            start = time.perf_counter()
+            result = await tool('https://example.com')
+            elapsed = time.perf_counter() - start
+
+        assert isinstance(result, dict)
+        assert result['title'] == ''
+        assert result['content'] == ''
+        assert elapsed < 10
+
+    @pytest.mark.parametrize('html', ['<title>never closed', '<title never opened'])
+    async def test_fetch_html_unterminated_title_is_empty(self, html: str):
+        """A `<title>` that is never closed, or never even opened, yields no title."""
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == ''
+
+    async def test_fetch_html_nested_too_deeply_raises_model_retry(self):
+        """A page nested deeper than the recursion limit can't be converted, so the model is told to move on."""
+        html = '<div>' * 2000 + 'Content' + '</div>' * 2000
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(ModelRetry, match='nested too deeply'):
+                await tool('https://example.com')
 
 
 class TestWebFetchToolFactory:

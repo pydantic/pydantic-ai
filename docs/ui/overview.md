@@ -79,6 +79,10 @@ app = FastAPI()
 
 @app.post('/chat')
 async def chat(request: Request) -> Response:
+    media_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
+    if media_type != 'application/json':  # (1)!
+        return Response(status_code=HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
         run_input = VercelAIAdapter.build_run_input(await request.body())
@@ -95,6 +99,11 @@ async def chat(request: Request) -> Response:
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
+
+1. `build_run_input()` takes bytes, so it can't apply the media-type check that
+   [`from_request()`][pydantic_ai.ui.UIAdapter.from_request] does — see
+   [the trust model](#trust-model-for-client-submitted-messages) for what it's for. Do it in your own
+   framework's idiom, as here, whenever you read the body yourself.
 
 ### Encoding events without a request
 
@@ -128,6 +137,8 @@ Each defaults to a new UUID, minted every time the stream is constructed: a conv
 ## Trust model for client-submitted messages
 
 UI adapter endpoints aren't authentication boundaries. Both the AG-UI and Vercel AI protocols are designed around the client transmitting the full conversation history on each request, so anything in `message_history` from the protocol — assistant messages, tool calls, file URLs, tool results — is under the caller's control. Treat the adapter endpoint as an internal backend service, running it inside your own authenticated route handler. See the [AG-UI security considerations](https://learn.microsoft.com/en-us/agent-framework/integrations/ag-ui/security-considerations) page for more on the deployment model both protocols assume.
+
+Authenticating the endpoint settles *who* may call it, not *what caused the call*. Where that authentication is a cookie or any other credential the browser attaches on its own, a page your user has open elsewhere can post to your route on their behalf: the run starts and its tools execute, and the attacker never needs to read the response. To keep a request a browser can forge without a preflight from reaching the agent, the adapters accept only `application/json` request bodies, answering anything else with a `415` before the body is read. Both protocols' SDK transports send that content type, so a frontend on another origin is preflighted and admitted by your own CORS policy exactly as before. Widen the set, or skip the check on a route that carries CSRF protection of its own, with the `allowed_content_types` argument to [`UIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] and [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request]. It's one control rather than a CSRF strategy: on a route that carries ambient credentials, pair it with whatever your framework offers.
 
 The adapters apply a few defaults so that the authoritative state stays on your side:
 

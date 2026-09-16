@@ -140,7 +140,7 @@ def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
     library = sniffio.current_async_library()
 
     if library == 'trio':  # pragma: no cover
-        import trio.lowlevel  # pyright: ignore[reportMissingImports]
+        import trio.lowlevel
 
         done_event = anyio.Event()
         with _background_lock:
@@ -154,7 +154,7 @@ def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
                 with _background_lock:
                     _background_events.discard(done_event)
 
-        trio.lowlevel.spawn_system_task(_trio_task)  # pyright: ignore[reportUnknownMemberType]
+        trio.lowlevel.spawn_system_task(_trio_task)
     else:
         loop = asyncio.get_running_loop()
         task = loop.create_task(coro)
