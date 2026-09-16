@@ -100,13 +100,48 @@ def test_model_settings_source(tmp_path: Path) -> None:
     assert 'current  high' in menu.details(MenuItem('thinking', value='thinking'))
 
 
+def test_provider_catalog_and_back_navigation(tmp_path: Path) -> None:
+    context, _ = make_context(tmp_path)
+    menu = ModelMenu(context)
+    assert menu.providers() == sorted({model.name.partition(':')[0] for model in menu.models})
+    codex = menu.for_provider('openai-codex')
+    assert all(model.provider == 'openai-codex' for model in codex.models)
+    assert {f'openai-codex:gpt-5.6-{suffix}' for suffix in ('luna', 'terra', 'sol')} <= {
+        model.name for model in codex.models
+    }
+    assert menu.build_providers().highlighted == MenuItem('openai-codex', value='openai-codex')
+    script = Script(
+        lists=[pick('anthropic'), MenuResult(cancelled=True), pick('openai-codex'), pick('openai-codex:gpt-5.6-luna')],
+        choices=[],
+        texts=[],
+    )
+    assert run_model_flow(menu, script.runners) == ['Saved model. Applied.']
+    assert context.settings.model == 'openai-codex:gpt-5.6-luna'
+    assert run_model_flow(menu, Script(lists=[pick('openai-codex'), pick(0)], choices=[], texts=[]).runners) == []
+
+
+def test_settings_shortcut_does_not_consume_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    context, _ = make_context(tmp_path)
+    menu = ModelMenu(context)
+    keys = iter(['s', 'ctrl-s'])
+    monkeypatch.setattr('pydantic_clai2.model_menu.menu_key', lambda: next(keys))
+    widget = menu.build()
+    result = widget.run()
+    assert widget.highlighted is not None
+    assert 's' in str(widget.highlighted.value).lower()
+    assert result == menu.settings_marker(widget, widget.highlighted)
+    with pytest.raises(StopIteration):
+        next(keys)
+
+
 def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
     context, applied = make_context(tmp_path)
     menu = ModelMenu(context)
     assert menu.current == 'openai-codex:gpt-6-astra'
     items = menu.items()
     current = next(item for item in items if item.value == menu.current)
-    assert current.label.endswith('(current)')
+    assert current.label == f'{menu.current} (current)'
+    assert all(item.label == item.value for item in items if item.value != menu.current)
     assert menu.index_of(menu.current) == items.index(current)
     assert menu.index_of('nope') == 0
     details = menu.details(current)
@@ -117,7 +152,7 @@ def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
     assert menu.build() is not None
     marker = menu.settings_marker(object(), priced)
     script = Script(
-        lists=[marker, pick('max_tokens'), MenuResult(cancelled=True), pick(priced.value)],
+        lists=[pick('anthropic'), marker, pick('max_tokens'), MenuResult(cancelled=True), pick(priced.value)],
         choices=[],
         texts=[typed('42')],
     )

@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import re
 
 import pytest
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
@@ -39,6 +40,34 @@ def test_tool_status_transitions() -> None:
     assert status.activity == 'running: shell'
     status.observe(FunctionToolResultEvent(part=ToolReturnPart('shell', 'done')))
     assert status.activity == 'working'
+
+
+@pytest.mark.parametrize('truecolor', [False, True])
+async def test_shimmer_without_spinner(monkeypatch: pytest.MonkeyPatch, truecolor: bool) -> None:
+    monkeypatch.setenv('COLORTERM', 'truecolor' if truecolor else '')
+    output = io.StringIO()
+    frames: list[str] = []
+    original_sleep = asyncio.sleep
+
+    async def tick(delay: float) -> None:
+        frames.append(output.getvalue().split('\x1b[2K')[-1])
+        if len(frames) == 11:
+            raise asyncio.CancelledError
+        await original_sleep(0)
+
+    monkeypatch.setattr('pydantic_clai2.status.asyncio.sleep', tick)
+    async with StatusLine(Console(file=output, force_terminal=True, width=40, height=24), Status(model='test\x1b\n')):
+        while len(frames) < 11:
+            await original_sleep(0)
+    plain = [re.sub(r'\x1b\[[0-9;]*m|\x1b8', '', frame) for frame in frames]
+    assert plain[0].startswith('test?? | context:')
+    assert all(frame == plain[0] for frame in plain)
+    assert all(len(frame) == 39 for frame in plain)
+    assert frames[0] != frames[10]
+    assert ('38;2;' in frames[0]) == truecolor
+    assert ('\x1b[38;2;155;119;255m' if truecolor else '\x1b[35m') in frames[0]
+    assert ('\x1b[38;2;0;255;235m' if truecolor else '\x1b[96m') not in output.getvalue()
+    assert '\n' not in output.getvalue()
 
 
 async def test_tiny_terminal() -> None:

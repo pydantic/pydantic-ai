@@ -9,12 +9,12 @@ from termflow.tui.completion import CompleteEvent as TermflowEvent  # pyright: i
 from termflow.tui.completion import Document as TermflowDocument  # pyright: ignore[reportMissingTypeStubs]
 
 from .commands import Commands
-from .theme import AI_CYAN, ELEMENT_PURPLE, GREY, LITHIUM
+from .theme import ELEMENT_PURPLE, GREY, LITHIUM, PURPLE
 
 COMPLETION_STYLE = Style.from_dict(
     {
-        'bottom-toolbar': f'noreverse bg:default {AI_CYAN}',
-        'bottom-toolbar.text': f'noreverse bg:default {AI_CYAN}',
+        'bottom-toolbar': f'noreverse bg:default {PURPLE}',
+        'bottom-toolbar.text': f'noreverse bg:default {PURPLE}',
         'completion-menu': 'bg:default',
         'completion-menu.completion': f'bg:default {GREY}',
         'completion-menu.completion.current': f'bg:default {LITHIUM} bold',

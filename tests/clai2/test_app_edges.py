@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
+from prompt_toolkit.styles import BaseStyle
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
@@ -29,7 +30,10 @@ def anyio_backend() -> str:
 def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -> None:
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
-            pass
+            style = kwargs['style']
+            assert isinstance(style, BaseStyle)
+            for selector in ('class:bottom-toolbar', 'class:bottom-toolbar.text'):
+                assert style.get_attrs_for_style_str(selector).color == '9B77FF'
 
         async def prompt_async(self, label: str) -> str:
             value = values.pop(0)

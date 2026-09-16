@@ -55,7 +55,11 @@ def genai_prices_models() -> list[CatalogModel]:
 def catalog(*, include: Iterable[str] = ()) -> list[CatalogModel]:
     """Every source merged and sorted by name; `include` adds names not in any source."""
     models = {model.name: model for model in genai_prices_models()}
-    for name in (*known_model_names(), *include):
+    for name in (
+        *known_model_names(),
+        *(f'openai-codex:{model}' for model in ('gpt-6-astra', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol')),
+        *include,
+    ):
         if name and name not in models:
             provider, _, label = name.partition(':')
             models[name] = CatalogModel(name=name, provider=provider, label=label)
