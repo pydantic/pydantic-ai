@@ -693,7 +693,7 @@ _CONVERTER_PARITY_CASES = [
     ),
     pytest.param(
         '<ol start="3"><li>three</li><li>four\nsecond line</li><li></li><li><p>five</p><ul><li>a</li><li>b</li></ul></li></ol>'
-        '<ul><li>one</li><li><ol><li>nested</li><li>again</li></ol></li></ul>',
+        '<ul><li>one</li><li><ol><li>nested</li><li>again</li></ol></li></ul><ol>\n  <li>a</li>\n  <li>b</li>\n</ol>',
         id='lists',
     ),
     pytest.param(

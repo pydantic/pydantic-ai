@@ -208,15 +208,11 @@ class _MarkdownConverter(MarkdownConverter):
         return super().convert_soup(soup)
 
     def convert_pre(self, el: Tag, text: str, parent_tags: set[str]) -> str:
-        # Mirrors upstream with its default `strip_pre='strip'` applied linearly. The stub doesn't
-        # declare `options`, which upstream sets from its `DefaultOptions` and the constructor.
+        # Mirrors upstream with its default `strip_pre='strip'` applied linearly; the code language
+        # options upstream consults here are never set on this converter.
         if not text:
             return ''
-        options: dict[str, Any] = getattr(self, 'options')
-        code_language = options['code_language']
-        if callback := options['code_language_callback']:
-            code_language = callback(el) or code_language
-        return f'\n\n```{code_language}\n{_strip_pre(text)}\n```\n\n'
+        return f'\n\n```\n{_strip_pre(text)}\n```\n\n'
 
     def convert_li(self, el: Tag, text: str, parent_tags: set[str]) -> str:
         parent = el.parent
