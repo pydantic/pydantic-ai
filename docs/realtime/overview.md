@@ -145,7 +145,7 @@ and quirks:
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | [OpenAI](openai.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
 | [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
-| [Google Gemini](gemini.md) | ✓ | ✓ | ✗ | ✗ | Opt-in, native-audio models | Native-audio and 3.x models | ✓, with a `reconnect` policy |
+| [Google Gemini](gemini.md) | ✓ | ✓ | ✗ | ✗ | Opt-in; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✗ | `grok-voice-latest` and `-think-` models | ✓, with a `reconnect` policy |
 
 For portable branching, inspect [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile]

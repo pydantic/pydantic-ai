@@ -75,11 +75,36 @@ class RealtimeModelProfile(TypedDict, total=False):
     reasoning models, Gemini's native-audio models, and xAI's `grok-voice-latest` and
     `grok-voice-think-*` models. When `False` (the default), a `thinking` setting is silently ignored
     rather than sent to a model that would reject it."""
+    thinking_always_enabled: bool
+    """Whether the model always reasons, so thinking cannot be turned off. Default: `False`.
+
+    Mirrors [`ModelProfile.thinking_always_enabled`][pydantic_ai.profiles.ModelProfile.thinking_always_enabled].
+    When `True`, a [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting of `False` is
+    ignored rather than sent, and a model whose API *requires* a thinking configuration gets one even when the
+    session didn't ask for one — `gemini-3.8-live-extended-thinking` closes the handshake with `1007 Thinking
+    level must be specified for this model` otherwise."""
     supports_async_tool_calls: bool
     """Whether the model runs tool calls asynchronously without blocking generation.
 
     Gemini Live maps this to `Behavior.NON_BLOCKING` on function declarations and
     `FunctionResponseScheduling.INTERRUPT` on function responses."""
+    requires_async_tool_calls: bool
+    """Whether the model *only* runs tool calls asynchronously, having no blocking mode. Default: `False`.
+
+    Stronger than [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls],
+    which describes a mode a session opts into: when this is `True` async tool calls are the only mode the model
+    has, so the provider sends them whether or not the session asked. `gemini-3.8-live-extended-thinking` reasons
+    and speaks at the same time, and closes the session with `1007 BLOCKING function calls are not supported for
+    this model` on anything else."""
+    supports_async_tool_call_scheduling: bool
+    """Whether the model lets the session say *when* an async tool's result is delivered. Default: `False`.
+
+    Only meaningful alongside [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls].
+    Gemini Live maps it to `FunctionResponseScheduling.INTERRUPT` on function responses, so the result cuts
+    into the speech the model is producing while the tool runs. `gemini-3.8-live-extended-thinking` schedules
+    its own results around its reasoning and closes the session with `1007 Function response scheduling is not
+    supported for this model` if the field is sent at all, so it reports `False` and the result goes back
+    unscheduled."""
     supports_tool_return_schema: bool
     """Whether the model natively renders a tool's [`return_schema`][pydantic_ai.tools.ToolDefinition.return_schema]
     (Gemini Live's function-declaration `response` schema). Where it can't, a tool that opted in via
@@ -136,7 +161,10 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
+    'thinking_always_enabled': False,
     'supports_async_tool_calls': False,
+    'requires_async_tool_calls': False,
+    'supports_async_tool_call_scheduling': False,
     'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,

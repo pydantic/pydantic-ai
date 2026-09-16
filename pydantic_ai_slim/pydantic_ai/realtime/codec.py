@@ -269,6 +269,17 @@ class ResponseDone:
     provider_details: dict[str, Any] | None = None
     """Raw provider terminal status details retained on the finalized response, when available."""
 
+    more_expected: bool = False
+    """Whether the provider said this response is *not* the last of the exchange.
+
+    The session works out for itself that a response calling a tool will be followed by another, but a
+    model that reasons in the background can finish a response, keep working, and speak again with no
+    tool call in between: `gemini-3.8-live-extended-thinking` speaks a filler ("Let me check those
+    flights"), ends the turn, and only then issues the tool call. Left unsaid, that filler would
+    synthesize a [`RealtimeTurnCompleteEvent`][pydantic_ai.messages.RealtimeTurnCompleteEvent] claiming
+    the exchange was over while the model was still working on it.
+    """
+
     event_kind: Literal['response_done'] = 'response_done'
     """Event type identifier, used as a discriminator."""
 

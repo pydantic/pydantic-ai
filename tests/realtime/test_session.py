@@ -7578,3 +7578,72 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
         assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
         assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
         assert len(conn.sent) == 1
+
+
+@pytest.mark.parametrize('more_expected', [False, True])
+async def test_turn_complete_waits_for_a_provider_that_says_more_is_coming(more_expected: bool) -> None:
+    """A response that ends with `more_expected` isn't the end of the exchange, so no turn boundary yet.
+
+    This is how a background-reasoning model's spoken filler is kept from claiming the model is done:
+    it completes a real response, with no tool call in it for the session to infer a continuation from,
+    while the provider is still working. See `ResponseDone.more_expected`.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Let me check that for you.', is_final=True),
+            ResponseDone(more_expected=more_expected),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events = await drain_events(session)
+
+    assert (RealtimeTurnCompleteEvent() in events) is not more_expected
+    # The response is settled either way: deferred while the exchange continues, then closed out when the
+    # session does, so history never ends on an open response.
+    assert [type(m).__name__ for m in session.all_messages()] == ['ModelResponse']
+
+
+async def test_interrupted_response_is_not_absorbed_by_what_comes_next() -> None:
+    """A barged-in utterance is over, so it closes even when the provider says more is expected.
+
+    Otherwise the interrupted speech would be merged into the model's next response and history would
+    lose the fact that the user cut it off.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Let me check tha', is_final=True),
+            ResponseDone(more_expected=True, interrupted=True),
+            OutputTranscript(text='Sorry, go ahead.', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        await drain_events(session)
+
+    responses = [m for m in session.all_messages() if isinstance(m, ModelResponse)]
+    assert [r.state for r in responses] == ['interrupted', 'complete']
+    assert [len(r.parts) for r in responses] == [1, 1]
+
+
+async def test_interrupted_response_still_closes_the_turn() -> None:
+    """A barge-in ends the exchange even when the provider says work is still in flight.
+
+    Without this, a caller waiting on `RealtimeTurnCompleteEvent` — which is every documented consumer
+    shape — would wait forever on a provider that reports the interaction as still in progress.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Let me check tha', is_final=True),
+            ResponseDone(more_expected=True, interrupted=True),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events = await drain_events(session)
+
+    assert RealtimeTurnCompleteEvent() in events
