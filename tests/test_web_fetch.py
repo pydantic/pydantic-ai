@@ -659,7 +659,7 @@ class TestWebFetchLocalTool:
     async def test_undecodable_charset_raises_model_retry(self):
         """A charset the server picks that can't decode a document is reported as a failed fetch.
 
-        `idna` is a registered codec that rejects the replacement error handler `httpx2` decodes
+        `idna` is a registered codec that rejects the replacement error handler `httpx` decodes
         with; an unknown label, by contrast, falls back to UTF-8 and never gets here.
         """
         with patch(
@@ -674,8 +674,8 @@ class TestWebFetchLocalTool:
     async def test_fetch_json_nested_too_deeply_passes_text_through(self):
         """JSON nested deeper than the parser can follow is returned as-is rather than aborting the run."""
         text = '[' * 100_000 + ']' * 100_000
-        response = httpx2.Response(
-            200, text=text, headers={'content-type': 'application/json'}, request=httpx2.Request('GET', 'https://e.com')
+        response = httpx.Response(
+            200, text=text, headers={'content-type': 'application/json'}, request=httpx.Request('GET', 'https://e.com')
         )
 
         with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=response):
