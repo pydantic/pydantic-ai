@@ -220,7 +220,7 @@ backend but never the spoken call itself. Tool-call and request limits still app
 | Thinking | Unsupported | Set backend reasoning with `openai_live_delegation={'reasoning_effort': ...}` instead |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
 | Browser WebRTC | Unsupported | Bridge media through your backend; see [Connecting a frontend](deployment.md) |
-| Reconnection | Unsupported | Automatic [reconnection](lifecycle.md#reconnection) is not implemented for Live, so the [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy is ignored and a dropped connection ends the session. Open a new one, seeding it with the previous session's history |
+| Reconnection | Unsupported | Automatic [reconnection](lifecycle.md#reconnecting) is not implemented for Live, so the [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy is ignored and a dropped connection ends the session. Open a new one, seeding it with the previous session's history |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
 [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
