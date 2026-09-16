@@ -2499,3 +2499,96 @@ def test_turn_complete_reports_whether_more_is_expected(status: str | None, more
         )
     )
     assert events == [ResponseDone(interrupted=False, more_expected=more_expected)]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expects_thinking', 'always_enabled'),
+    [
+        ('gemini-3.8-live', False, False),
+        ('models/gemini-3.8-live', False, False),
+        ('gemini-3.8-live-extended-thinking', True, True),
+        ('models/gemini-3.8-live-extended-thinking', True, True),
+    ],
+)
+def test_profile_recognizes_resource_name_spelling(
+    model_name: str, expects_thinking: bool, always_enabled: bool
+) -> None:
+    """`models/`-prefixed ids reach the profile too: `google-genai` passes a resource name through.
+
+    Reported as the bare id, the prefixed spelling would take `gemini-3.8-live` for a thinking model and
+    `gemini-3.8-live-extended-thinking` for one that doesn't need a level — both handshake rejections.
+    """
+    profile = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession()))).profile
+    assert profile.get('supports_thinking', False) is expects_thinking
+    assert profile.get('thinking_always_enabled', False) is always_enabled
+
+
+@pytest.mark.parametrize(
+    ('google_thinking_config', 'expected_level', 'expected_budget'),
+    [
+        # A raw config with no level of its own gets the implied one, or the model rejects the handshake.
+        ({'include_thoughts': True}, 'LOW', None),
+        ({}, 'LOW', None),
+        # An explicit level or budget is the escape hatch doing its job, and is passed through untouched —
+        # including a budget the model will reject, which is the user's call to make.
+        ({'thinking_level': 'HIGH'}, 'HIGH', None),
+        ({'thinking_budget': 512}, None, 512),
+    ],
+)
+def test_raw_thinking_config_gains_a_level_only_where_it_lacks_one(
+    google_thinking_config: dict[str, Any], expected_level: str | None, expected_budget: int | None
+) -> None:
+    model = GoogleRealtimeModel(
+        'gemini-3.8-live-extended-thinking', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
+    )
+    config = model._config(  # pyright: ignore[reportPrivateUsage]
+        '', None, model_settings={'google_thinking_config': cast('Any', google_thinking_config)}
+    )
+    assert config.thinking_config is not None
+    level = config.thinking_config.thinking_level
+    assert (level.value if level else None) == expected_level
+    assert config.thinking_config.thinking_budget == expected_budget
+
+
+def test_raw_thinking_config_is_untouched_where_no_level_is_required() -> None:
+    """Only a model that demands a level gets one filled in; everywhere else the raw config is verbatim."""
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
+    )
+    config = model._config(  # pyright: ignore[reportPrivateUsage]
+        '', None, model_settings={'google_thinking_config': {'include_thoughts': True}}
+    )
+    assert config.thinking_config == genai_types.ThinkingConfig(include_thoughts=True)
+
+
+@pytest.mark.parametrize(
+    ('status', 'interrupted', 'more_expected', 'turn_stays_open'),
+    [
+        # A stalled exchange: the response isn't over, so neither is the turn — a drop before the tool
+        # call still needs a synthetic terminal to close the partial response.
+        ('IN_PROGRESS', False, True, True),
+        # A barge-in ends the exchange whatever the status says, so the turn closes with it.
+        ('IN_PROGRESS', True, False, False),
+        ('IDLE', False, False, False),
+        (None, False, False, False),
+    ],
+)
+def test_turn_stays_open_while_the_exchange_is_stalled(
+    status: str | None, interrupted: bool, more_expected: bool, turn_stays_open: bool
+) -> None:
+    # The status is resolved here, not in the decorator — see `test_turn_complete_reports_whether_more_is_expected`.
+    conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()))
+    if interrupted:
+        conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(interrupted=True))
+        )
+    events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(
+                turn_complete=True,
+                interaction_status=genai_types.InteractionStatus(status) if status else None,
+            )
+        )
+    )
+    assert events[-1] == ResponseDone(interrupted=interrupted, more_expected=more_expected)
+    assert conn._turn_open is turn_stays_open  # pyright: ignore[reportPrivateUsage]

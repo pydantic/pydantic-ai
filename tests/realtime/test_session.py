@@ -7627,3 +7627,23 @@ async def test_interrupted_response_is_not_absorbed_by_what_comes_next() -> None
     responses = [m for m in session.all_messages() if isinstance(m, ModelResponse)]
     assert [r.state for r in responses] == ['interrupted', 'complete']
     assert [len(r.parts) for r in responses] == [1, 1]
+
+
+async def test_interrupted_response_still_closes_the_turn() -> None:
+    """A barge-in ends the exchange even when the provider says work is still in flight.
+
+    Without this, a caller waiting on `RealtimeTurnCompleteEvent` — which is every documented consumer
+    shape — would wait forever on a provider that reports the interaction as still in progress.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Let me check tha', is_final=True),
+            ResponseDone(more_expected=True, interrupted=True),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events = await drain_events(session)
+
+    assert RealtimeTurnCompleteEvent() in events

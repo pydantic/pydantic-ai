@@ -254,6 +254,10 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
 
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for a Gemini Live model."""
+    # `models/gemini-3.8-live` is as valid an id as the bare spelling — `google-genai` passes a
+    # resource name straight through where it would otherwise add the prefix — so the name is
+    # normalized once here rather than every check below having to allow for both.
+    model_name = model_name.rsplit('/', 1)[-1]
     is_extended_thinking = model_name.startswith('gemini-3.8-live-extended-thinking')
     thinking_levels = next(
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),

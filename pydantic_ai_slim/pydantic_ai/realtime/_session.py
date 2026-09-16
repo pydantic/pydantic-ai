@@ -1913,7 +1913,10 @@ class RealtimeSession:
         more_expected = bool(
             self._pending_tool_calls
             or already_finalized
-            or event.more_expected
+            # An interrupted response ends the exchange whatever the provider says is still in flight:
+            # the user took the turn, and a boundary that never arrives would leave a caller waiting
+            # on one forever. The same exemption defers-or-finalizes below.
+            or (event.more_expected and not event.interrupted)
             or any(isinstance(part, ToolCallPart) for part in self._response_parts)
         )
         self._response_finalized_before_terminal = False

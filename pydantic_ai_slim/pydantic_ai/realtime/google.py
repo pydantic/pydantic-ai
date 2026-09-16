@@ -919,7 +919,17 @@ class GoogleRealtimeModel(RealtimeModel):
         profile = cast('GoogleRealtimeModelProfile', self.profile)
         if (google_thinking := model_settings.get('google_thinking_config')) is not None:
             # The Gemini-native config takes precedence over the cross-provider `thinking` setting.
-            config.thinking_config = genai_types.ThinkingConfig(**google_thinking)
+            thinking_config = genai_types.ThinkingConfig(**google_thinking)
+            if (
+                thinking_config.thinking_level is None
+                and thinking_config.thinking_budget is None
+                and profile.get('thinking_always_enabled', False)
+            ):
+                # A raw config that only turns on, say, `include_thoughts` still has to carry a level on a
+                # model that demands one, or the handshake is rejected outright. An explicit level or
+                # budget is left exactly as given: the escape hatch's whole point is going around us.
+                thinking_config.thinking_level = _thinking_to_config(_IMPLIED_THINKING_EFFORT, profile).thinking_level
+            config.thinking_config = thinking_config
         elif (thinking := model_settings.get('thinking')) is not None:
             if profile.get('supports_thinking', False):
                 config.thinking_config = _thinking_to_config(thinking, profile)
@@ -1420,16 +1430,18 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # tells the two boundaries apart — `IN_PROGRESS` alongside `turn_complete` means the model
             # is still working, and only `IDLE` ends the exchange. Models without background reasoning
             # send no status at all, which reads as "this was the last response", as it always was.
-            events.append(
-                ResponseDone(
-                    interrupted=interrupted,
-                    more_expected=message.server_content.interaction_status
-                    == genai_types.InteractionStatus.IN_PROGRESS,
-                )
+            more_expected = (
+                message.server_content.interaction_status == genai_types.InteractionStatus.IN_PROGRESS
+                and not interrupted
             )
+            events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
             self._turn_interrupted = False
-            self._turn_open = False
-            self._native_part_index = 0
+            # A stalled exchange's response is still open — the model will add a tool call and an answer
+            # to it — so the turn stays open too. Closing it here would leave a drop between the filler
+            # and the tool call with no synthetic terminal, and the partial response in flight forever.
+            self._turn_open = more_expected
+            if not more_expected:
+                self._native_part_index = 0
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
         if update is not None and update.new_handle:
