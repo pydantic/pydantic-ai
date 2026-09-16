@@ -1689,7 +1689,7 @@ def test_extensionless_url_media_type_serializes_null_and_round_trips() -> None:
         item = url_part(url='https://example.com/file')
         with pytest.raises(ValueError):
             _ = item.media_type  # direct access still raises
-        messages = [ModelRequest(parts=[UserPromptPart(content=[item])])]
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item])])]
         dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
         content = dumped[0]['parts'][0]['content'][0]
         assert content['media_type'] is None

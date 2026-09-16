@@ -6012,7 +6012,7 @@ async def test_tool_return_with_files():
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'call_2',
-                'content': '{"url":"https://example.com/image.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"39cfc4"}',
+                'content': '{"url":"https://example.com/image.jpg","force_download":false,"vendor_metadata":null,"media_type":"image/jpeg","kind":"image-url","identifier":"39cfc4"}',
                 'role': 'tool',
             },
         ]
