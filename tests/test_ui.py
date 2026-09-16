@@ -2493,3 +2493,53 @@ def test_allowed_content_types_visible_in_base_adapter_signatures():
     assert dispatch_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
 
     assert DEFAULT_ALLOWED_CONTENT_TYPES == snapshot(frozenset({'application/json'}))
+
+
+@pytest.mark.parametrize(
+    'configured',
+    [
+        pytest.param(frozenset({'APPLICATION/JSON'}), id='uppercase'),
+        pytest.param(frozenset({'Application/Json'}), id='mixed-case'),
+        pytest.param(frozenset({' application/json '}), id='surrounding-whitespace'),
+    ],
+)
+async def test_allowed_content_types_are_normalized(configured: frozenset[str]):
+    """A configured entry is matched case-insensitively, like the request's own media type.
+
+    Without this the check rejects a perfectly valid `application/json` request and the 415 names
+    the same media type the request just sent, which reads as a contradiction.
+    """
+    agent = Agent(model=TestModel())
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    adapter = await DummyUIAdapter.from_request(starlette_request, agent=agent, allowed_content_types=configured)
+
+    assert adapter.run_input == run_input
+
+
+async def test_rejection_message_names_the_normalized_media_type():
+    """The 415 is built from the same normalized set the comparison uses."""
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await DummyUIAdapter.from_request(
+            starlette_request, agent=agent, allowed_content_types=frozenset({'APPLICATION/JSON'})
+        )
+
+    assert exc_info.value.detail == snapshot('Expected `Content-Type: application/json`, got text/plain')

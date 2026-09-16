@@ -111,13 +111,20 @@ def _check_content_type(request: Request, allowed_content_types: frozenset[str] 
     if allowed_content_types is None:
         return
 
+    # Media types are case-insensitive, so normalize the configured entries too, not just the
+    # request's. Comparing a lowercased request value against a raw allowlist rejects a valid
+    # request whenever the caller wrote `APPLICATION/JSON`, and the 415 then names the very media
+    # type the request already sent. Normalizing here also keeps that message honest, since it is
+    # built from the same set the comparison uses.
+    allowed = {allowed_type.strip().lower() for allowed_type in allowed_content_types}
+
     media_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
-    if media_type in allowed_content_types:
+    if media_type in allowed:
         return
 
     from starlette.exceptions import HTTPException
 
-    expected = ', '.join(sorted(allowed_content_types))
+    expected = ', '.join(sorted(allowed))
     raise HTTPException(
         status_code=HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
         detail=f'Expected `Content-Type: {expected}`, got {media_type or "no content type"}',
