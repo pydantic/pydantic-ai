@@ -199,10 +199,11 @@ The Live model itself reports no token counts, but the Responses backend it dele
 per token like any other model, and that usage is accumulated with its cache and reasoning
 breakdowns intact. In a call that delegates, most of the token cost is there.
 
-Those tokens land on the session's [`RunUsage`][pydantic_ai.usage.RunUsage] too, not on the
-[`ModelResponse`][pydantic_ai.messages.ModelResponse] for the turn: the backend is a different model
-on a separate meter, while the response records what Live spoke. Read delegated token usage from
-`session.usage`, and expect `ModelResponse.usage` on a Live turn to carry no tokens.
+Those tokens are priced against the *backend's* model, not against `gpt-live-1`, because that is
+what spent them — so a delegated turn's cost is right even though the
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] it lands on carries Live's name. The backend's
+request is also what a `per_request_input_tokens_limit` is measured against, since it is the only
+thing in a Live session that spends input tokens.
 
 Session duration has a sharp consequence for [usage limits](observability.md#usage-and-limits): no
 [`UsageLimits`][pydantic_ai.usage.UsageLimits] field caps it, so a token limit bounds the delegated

@@ -866,9 +866,54 @@ def test_delegated_backend_token_usage_is_accumulated() -> None:
     # The cache and reasoning breakdowns survive, so cost accounting matches a direct Responses call.
     assert reported.usage.cache_write_tokens == 805
     assert reported.usage.details['reasoning_tokens'] == 3
-    # A different model spent these tokens on a nested request, so like the session's audio seconds
-    # they belong to the run and not to the Live model's spoken `ModelResponse`.
-    assert reported.response_scoped is False
+    # The backend's request is what a per-request input-token limit is measured against.
+    assert reported.response_scoped is True
+    # Priced here, against the backend's own model. The response these tokens land on carries Live's
+    # name, so anything pricing it from `model_name` downstream would use the wrong rate — and a cost
+    # that is already set is never recalculated.
+    assert reported.usage.cost is not None and reported.usage.cost > 0
+
+
+def test_unpriceable_backend_usage_is_still_accumulated() -> None:
+    """A model genai-prices doesn't know leaves the cost unset; the tokens still count.
+
+    Pricing must never cost us the usage itself, so `cost=None` has to stay distinguishable from a
+    genuine zero rather than dropping the event.
+    """
+    connection = _connection()
+    completed: dict[str, Any] = {
+        'type': 'response.event',
+        'event_id': 'e1',
+        'delegation_id': 'd1',
+        'event': {
+            'type': 'response.completed',
+            'response': {
+                'id': 'resp_1',
+                'object': 'response',
+                'created_at': 0,
+                'status': 'completed',
+                'model': 'a-model-that-is-not-priced',
+                'output': [],
+                'parallel_tool_calls': True,
+                'tool_choice': 'auto',
+                'tools': [],
+                'usage': {
+                    'input_tokens': 11,
+                    'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+                    'output_tokens': 2,
+                    'output_tokens_details': {'reasoning_tokens': 0},
+                    'total_tokens': 13,
+                },
+            },
+        },
+    }
+
+    events = connection._map_event(_event(completed))  # pyright: ignore[reportPrivateUsage]
+    assert len(events) == 1
+    reported = events[0]
+    assert isinstance(reported, SessionUsage)
+    assert reported.usage.input_tokens == 11
+    assert reported.usage.cost is None
 
 
 async def test_a_clean_close_finalizes_the_reply() -> None:

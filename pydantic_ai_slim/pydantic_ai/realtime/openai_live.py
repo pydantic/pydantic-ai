@@ -40,6 +40,9 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import TypedDict
 
+# The delegated backend is an ordinary Responses call, so its usage is mapped by the same code that
+# maps a direct one — including the cache and reasoning breakdowns genai-prices reads.
+from .._genai_prices import best_effort_price
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import (
@@ -56,9 +59,6 @@ from ..messages import (
     UserPromptPart,
 )
 from ..models import ModelRequestParameters
-
-# The delegated backend is an ordinary Responses call, so its usage is mapped by the same code that
-# maps a direct one — including the cache and reasoning breakdowns genai-prices reads.
 from ..models.openai import _map_usage as map_openai_usage  # pyright: ignore[reportPrivateUsage]
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
@@ -656,7 +656,7 @@ class OpenAILiveConnection(RealtimeConnection):
             self._heard_voice()
 
     def _map_backend_usage(self, response: Any) -> list[RealtimeCodecEvent]:
-        """Accumulate the delegated backend's token usage at the run level.
+        """Accumulate the delegated backend's token usage, priced as the backend.
 
         Live meters its own audio by the second and reports no tokens for it, but the Responses
         backend it delegates to is billed per token like any other model — and that is where most of
@@ -664,11 +664,11 @@ class OpenAILiveConnection(RealtimeConnection):
         Responses call would, so it is mapped by the same code, keeping cache and reasoning
         breakdowns (and genai-prices' view of them) identical either way.
 
-        Those tokens are run-level rather than response-scoped, like input audio transcription usage:
-        a *different* model spent them on a nested request, while the `ModelResponse` being assembled
-        is the Live model's spoken turn and carries Live's own name. Attributing them to it would
-        price one model's tokens at another's rate for anything that reads `ModelResponse.usage`. The
-        run total is unaffected, so token `UsageLimits` still bound the backend.
+        The price is resolved here, against the backend's own model, because this is the only place
+        that model name is known. The `ModelResponse` these tokens land on is the Live model's spoken
+        turn and carries Live's name, so anything that prices it from `model_name` downstream would
+        charge one model's tokens at another's rate. A cost that is already set is never recalculated
+        there, so resolving it now is also what stops that from happening.
         """
         if not isinstance(response, dict):
             return []
@@ -679,7 +679,18 @@ class OpenAILiveConnection(RealtimeConnection):
         mapped = map_openai_usage(parsed, self._provider_name, self._provider_url, parsed.model)
         if not mapped.has_values():
             return []  # pragma: no cover
-        return [SessionUsage(mapped, response_scoped=False)]
+        if (
+            price := best_effort_price(
+                mapped,
+                model_name=parsed.model,
+                provider_api_url=self._provider_url,
+                provider_name=self._provider_name,
+            )
+        ) is not None:
+            mapped.cost = price.total_price
+        # Response-scoped, so the backend's request is what a per-request input-token limit is
+        # measured against: it is the only thing in a Live session that spends input tokens.
+        return [SessionUsage(mapped)]
 
     def _map_usage(self, cumulative_seconds: float) -> list[RealtimeCodecEvent]:
         """Emit the *increment* since the last report.
