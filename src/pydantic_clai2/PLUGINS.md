@@ -8,6 +8,24 @@ Everything a plugin can do goes through one object, the `PluginHost`. There is n
 global registry to import and no magic file to name. You get a `host`, you tell it
 what you want, you're done.
 
+## On-demand authoring help
+
+The default CLAI agent exposes `read_clai_customization_guide`. When you ask for
+customization, its instructions tell it to read this guide first. Only the short
+hint and tool description are present initially; the bundled text is read on tool
+invocation. Reading it needs neither a checkout nor a network connection.
+
+The [bundled guide](src/pydantic_clai2/customization.md) includes examples for
+commands, hooks, settings, renderers, custom Termflow menus, and custom model
+launchers. It also names current limits: PluginHost does not register providers,
+replace the prompt editor, or alter the built-in model catalog. Those need a
+custom agent launcher or a source change, as explained in the guide.
+
+Custom agents can opt in with `customization_guide()` from
+`pydantic_clai2.customization`. The tool only returns documentation; it does not
+write files, activate plugins, or grant permission to execute generated code.
+Keep the bundled guide aligned with this contract when changing plugin APIs.
+
 ## Where plugins live
 
 Plugins are trusted Python code. Drop-in files execute automatically at startup;
@@ -82,7 +100,53 @@ What "load" and "unload" mean for your plugin:
 - Python cannot truly forget a module. Reload re-imports it; if a plugin keeps
   state at module level, that state comes back fresh.
 
-## The smallest plugin
+## The first plugin: give the agent web search
+
+Pydantic AI Harness ships capabilities that are plugins as they are. `ExaSearch`
+adds `web_search` and `get_page` tools backed by [Exa](https://exa.ai). Install
+the extra and set the key, then add the class by name:
+
+```sh
+pip install 'pydantic-ai-harness[exa]'
+export EXA_API_KEY=...
+```
+
+```text
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+```
+
+The JSON is passed to the constructor, so any keyword `ExaSearch` accepts that
+JSON can express works here; an option that takes a Python object, like
+`client`, needs the file form below. Ask the agent something that needs the web on the next prompt and it has
+the tools. `/plugins disable exa` takes them away again.
+
+The same thing as a plugin file, `~/.config/pydantic-clai2/plugins/search.py`,
+which is the shape to start from when you want more than one capability, or a
+`/command`, or a hook alongside it:
+
+```python
+from pydantic_ai_harness.exa import ExaSearch
+
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost) -> None:
+    host.add(ExaSearch(num_results=8, text_summary=True))
+```
+
+A plugin module exposes one function, `activate(host)`. CLAI calls it once when
+the plugin loads. Everything you register inside it stays until the plugin is
+unloaded or CLAI quits. Any Pydantic AI capability goes through `host.add`, so
+`YouSearch` from `pydantic_ai_harness.youdotcom`, core's `WebSearch`, or one you
+wrote yourself all work the same way.
+
+`module:attr` may also name a function that takes a host, if you prefer a name
+other than `activate`.
+
+## Reacting to a moment
+
+Plugins are not only for tools. This one rings the terminal bell when a turn
+finishes, so you can tab away during a long run:
 
 ```python
 from pydantic_clai2.plugins import PluginHost, TurnEnd
@@ -93,16 +157,6 @@ def activate(host: PluginHost) -> None:
     async def ping(event: TurnEnd) -> None:
         host.console.bell()
 ```
-
-A plugin module exposes one function, `activate(host)`. CLAI calls it once when
-the plugin loads. Everything you register inside it stays until the plugin is
-unloaded or CLAI quits.
-
-If your plugin is nothing but a Pydantic AI capability (a class with tools,
-instructions, or hooks), skip `activate` and point CLAI straight at the class,
-like the `coder` example above. Constructor arguments come from the JSON you pass
-to `plugins add`. `module:attr` may also name a function that takes a host, if
-you prefer a name other than `activate`.
 
 ## What you can register
 

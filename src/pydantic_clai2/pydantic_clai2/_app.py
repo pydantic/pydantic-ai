@@ -23,6 +23,7 @@ from .auth import CodexAuth
 from .command_context import CommandContext, CommandProvider
 from .commands import Command, Commands, config_command, config_completions, set_completions
 from .config import Settings
+from .customization import customization_guide
 from .input_history import input_history
 from .interrupts import Interrupts
 from .model_menu import open_model_menu
@@ -40,7 +41,7 @@ _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload')
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the default coding agent; custom agents need not use `Coder`."""
-    return Agent(model, capabilities=[Coder(unrestricted_filesystem=True)])
+    return Agent(model, deps_type=type(None), capabilities=[Coder(unrestricted_filesystem=True), customization_guide()])
 
 
 async def chat(

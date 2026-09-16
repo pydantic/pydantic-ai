@@ -1,0 +1,307 @@
+# Customizing CLAI 2
+
+This guide describes the installed pydantic_clai2 shell. Read relevant installed
+source before editing: versions of Pydantic AI and Termflow can differ. Do not
+invent registration APIs. PLUGINS.md in the CLAI repository is the full plugin
+contract; this guide is shipped with the package for use without a checkout.
+
+## Choose the extension point
+
+- Add tools, instructions, or agent hooks: a Pydantic AI capability, registered
+  with host.add, or installed directly as a capability class.
+- Add slash commands or a custom menu: host.commands.register(Command(...)).
+- Change tool output: host.render(EventClass), returning a Rich renderable.
+- React to prompts or session lifecycle: host.on with a typed handler.
+- Configure a plugin: host.settings with a Pydantic settings model.
+- Use a custom model/provider: supply a Pydantic AI Agent to chat from a Python
+  launcher. There is no host.register_provider or host.register_model API.
+- Replace the prompt editor, splash, status line, streaming Markdown, built-in
+  model catalog, or global colour scheme: currently a CLAI source change, not
+  a supported PluginHost extension. A command can own its own UI instead.
+
+Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.
+Harness owns reusable, non-terminal capabilities. CLAI owns the prompt loop,
+commands, plugin loading and rendering. Do not implement a second agent loop in
+CLAI or print terminal output from a reusable Harness capability.
+
+## Create and install a plugin
+
+The quickest plugin is an existing Pydantic AI capability. Pydantic AI Harness
+ships several; ExaSearch adds web_search and get_page tools backed by Exa. It
+needs the exa extra installed in CLAI's Python environment and EXA_API_KEY set,
+then one command, no file:
+
+```text
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+```
+
+The JSON supplies constructor keyword arguments, so only values JSON can
+express work there; read the capability's signature in the installed source to
+know which exist. Options that take Python objects, such as ExaSearch's client,
+need a drop-in file that constructs the capability in code. Other capabilities
+register the same way: YouSearch from pydantic_ai_harness.youdotcom, core's
+WebSearch, or a user-written AbstractCapability subclass.
+
+When a plugin needs anything beyond one capability, write a drop-in file. One
+plugin may do as many things as it likes: several capabilities, commands, hooks,
+renderers, in any combination. The example below deliberately does two
+unrelated things, adding ExaSearch and registering a /greet command, to show
+both shapes side by side; a real plugin would usually pick one purpose. Create
+~/.config/pydantic-clai2/plugins/search.py, or use
+$XDG_CONFIG_HOME/pydantic-clai2/plugins/search.py when XDG_CONFIG_HOME is set:
+
+```python
+from pydantic_ai_harness.exa import ExaSearch
+
+from pydantic_clai2.commands import Command
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost[None]) -> None:
+    host.add(ExaSearch(num_results=8, text_summary=True))
+    host.commands.register(
+        Command(
+            name='greet',
+            description='Say hello',
+            handler=lambda args: 'Hello ' + (' '.join(args) or 'there'),
+        )
+    )
+```
+
+Restart CLAI to discover the drop-in, or use /plugins enable search while running.
+The agent has the search tools on the next prompt and /greet Ada prints Hello Ada.
+Use /plugins reload search after editing. Alternatively install an importable
+Python package in CLAI's Python environment and run /plugins add search
+my_package.search. A module exports activate(host); module:attr may identify a
+host activation function or a bare capability class. For a bare class, the
+optional JSON supplies constructor keyword arguments:
+
+```text
+/plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": true}'
+/plugins list
+/plugins disable search
+/plugins enable search
+/plugins reload search
+/plugins remove search
+```
+
+Do not add a second Coder when the default agent already has one. The example
+shows syntax for a custom agent without coding tools. Outside a session,
+clai2 plugins add NAME module[:attr] [JSON] saves for the next startup.
+/plugins opens the management menu. Removing a drop-in disables it persistently;
+delete its source file yourself to remove it from disk.
+
+Plugins are trusted Python executed as the user. Drop-ins execute at startup,
+not in a sandbox. Do not install code or change executable startup configuration
+without the user's intent. Keep secrets out of plugin JSON: it is plaintext in
+SQLite. Use environment variables or plugin-owned credential storage instead.
+
+Each plugin gets its own PluginHost. Keep mutable state inside activate, not in
+module globals. Loading calls activate then session_start; unloading calls
+session_end and discards that host's registrations. Changes happen between turns.
+Import/activation failures discard partial registrations. Drop-in entry modules
+reload from fresh source; installed modules use importlib.reload, which can retain
+globals absent from the new source. Initialize state explicitly on activation.
+Do not mutate another plugin's host or the agent to register a plugin's tools.
+
+## Hooks, tools and settings
+
+The four host hooks use async observers returning None:
+
+| Hook | Event | Use |
+| --- | --- | --- |
+| session_start | SessionStart(agent, settings) | Initialize session resources |
+| session_end | SessionEnd(reason) | Clean up; reason is exit, eof, or error |
+| turn_start | TurnStart(text) | Rewrite event.text or event.cancel() |
+| turn_end | TurnEnd(text, outcome, result, error) | Observe completion or failure |
+
+Import these event classes from pydantic_clai2.plugins. Event payloads are typed,
+keyword-only dataclasses. A raising turn_start handler cancels the turn. Do not
+return a replacement string or a boolean to decide a host action.
+
+```python
+from pydantic import BaseModel
+from pydantic_ai.capabilities import Capability
+from pydantic_clai2.plugins import PluginHost, TurnStart
+
+
+class Options(BaseModel):
+    prefix: str = 'Please answer concisely. '
+
+
+def activate(host: PluginHost[None]) -> None:
+    options = host.settings(Options)
+
+    @host.on('turn_start')
+    async def prefix(event: TurnStart) -> None:
+        event.text = options.prefix + event.text
+
+    tools: Capability[None] = Capability(instructions='Use word_count for exact counts.')
+
+    @tools.tool_plain
+    def word_count(*, text: str) -> int:
+        return len(text.split())
+
+    host.add(tools)
+```
+
+Pass options as JSON with /plugins add NAME module '{"prefix": "..."}'. Settings
+are validated on activation. host.add also accepts a RunContext-to-capability
+factory returning a capability or None.
+
+All other named hooks match Pydantic AI Hooks().on names and signatures. Check
+https://pydantic.dev/docs/ai/core-concepts/hooks/ and installed source. For example,
+before_model_request returns its ModelRequestContext; it is not a None-returning
+host observer. Core wrappers and error hooks use Hooks().on's spelling, such as
+run, tool_execute, and run_error. Do not rename them or add host hooks for core
+behaviour. Raising before_tool_execute fails the run; consult core's documented
+SkipToolExecution when only one tool execution should be skipped.
+
+For typed capability events use @host.on(EventClass) with an async handler taking
+RunContext and the event. Match on event classes rather than tool-name strings.
+If an event supports cancel(), use its documented cancellation semantics.
+
+## CLI UX and rendering
+
+Command handlers receive list[str] arguments and return a string or an awaitable
+string. Register complete= on Command for Tab suggestions. Command names must be
+unique, including built-ins. Unknown slash commands do not reach the model.
+Commands run between turns, which makes them suitable for configuration menus.
+
+Use a renderer for output during a stream:
+
+```python
+from pydantic_ai_harness.filesystem import FileWrittenEvent
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost[None]) -> None:
+    @host.render(FileWrittenEvent)
+    def show_write(event: FileWrittenEvent) -> str:
+        return f'wrote {event.path}'
+```
+
+Return a Rich renderable, or None to let the next renderer/default handle it.
+CLAI flushes streaming text before printing it. First matching non-None renderer
+wins. Do not print from an event observer when a renderer can do the job.
+Use host.console for plugin-owned console output outside streaming handlers.
+Use pydantic_clai2.theme roles ACCENT, INFO, WARNING, ERROR, MUTED, THINKING,
+not hard-coded colours. Raw ANSI uses theme.sgr. StreamRenderer owns text and
+thinking, not tool-specific rendering.
+
+## Custom TUI menus
+
+Register an async slash command that builds and runs a Termflow MenuBuilder.
+Keep the builder pure so tests can drive it without a terminal. The existing
+plugin_menu.py, model_menu.py and field_menu.py are working source examples.
+The following uses CLAI's internal UI helpers; check them when upgrading:
+
+```python
+from termflow.tui import MenuBuilder, MenuItem
+from termflow.tui.menu import Menu
+from pydantic_clai2._rendering import markdown_style
+from pydantic_clai2.commands import Command
+from pydantic_clai2.menu_worker import menu_key, run_worker
+from pydantic_clai2.plugins import PluginHost
+
+
+def build_menu() -> Menu:
+    return (
+        MenuBuilder('My plugin')
+        .style(markdown_style())
+        .items([MenuItem('About', value='about')])
+        .preview(lambda item: 'My plugin details')
+        .footer_hint('Enter selects - Esc closes')
+        .key_source(menu_key)
+        .build()
+    )
+
+
+def activate(host: PluginHost[None]) -> None:
+    async def show_menu(args: list[str]) -> str:
+        await run_worker(lambda: build_menu().run())
+        return ''
+
+    host.commands.register(Command(name='my_menu', description='Open my menu', handler=show_menu))
+```
+
+Termflow owns the alternate screen. Do not print while it is open. Put errors and
+empty states in disabled rows or the preview. Use .on_key for single-key actions,
+apply changes immediately, then replace_items to redraw. Esc and Ctrl-C should
+close normally. menu_key and run_worker cooperate on cancellation, keeping the
+terminal owned until the worker restores its screen. Do not fire-and-forget a
+thread that is still reading input. If a menu key needs an async action, follow
+plugin_menu.py's bridge back to the main event loop.
+
+For named validated fields, reuse FieldSource, FieldMenu and run_flow in
+field_menu.py rather than write another editor. SettingsSource in set_menu.py
+shows the adapter; model_menu.py uses the same editor for model settings. Tests
+inject Runners with scripted widget results (tests/menu_script.py). These are
+internal shell helpers, not a promise of a stable third-party UI API. Plugins do
+not currently receive CommandContext from PluginHost; do not invent host.context.
+
+## Custom models and providers
+
+A model identifier accepted by an existing core provider can be selected with
+/model PROVIDER:NAME or /set model PROVIDER:NAME even if it is absent from the
+catalog. Install optional provider dependencies in the same environment as CLAI
+and supply credentials via the provider's supported environment variables.
+
+For an OpenAI-compatible endpoint, write a Python launcher:
+
+```python
+import asyncio
+import os
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai_harness.coder import Coder
+from pydantic_clai2 import chat
+from pydantic_clai2.customization import customization_guide
+
+model = OpenAIChatModel(
+    'my-model',
+    provider=OpenAIProvider(
+        base_url='https://your-service.example/v1',
+        api_key=os.environ['MY_MODEL_API_KEY'],
+    ),
+)
+agent = Agent(model, capabilities=[Coder(), customization_guide()])
+asyncio.run(chat(agent, deps=None))
+```
+
+Coder() here restricts file tools to the workspace, unlike the stock CLI's
+unrestricted Coder. A fully custom protocol belongs in a Pydantic AI Model and
+Provider implementation, not a terminal plugin. See
+https://pydantic.dev/docs/ai/models/overview/ and inspect installed core abstract
+classes for required methods. Supply that Model instance to Agent as above.
+There is no --agent option in the current CLI; run the Python launcher instead.
+
+chat preserves a supplied agent's model when no settings override selects another
+one. /model or /set model changes subsequent turns to the selected core model
+identifier, not an alias for your custom instance. Noninteractive Session exposes
+resolve_model for translating overrides; chat currently configures its own
+resolver for Codex authentication, not a plugin provider registry.
+
+To extend the built-in picker in a CLAI source change, add a source returning
+CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
+catalog row does not implement provider support. Editable per-model settings
+are declared in ModelSettingsForm in model_settings.py; extend that form, not a
+second editor. Credentials belong in provider-supported storage, not model
+settings. /login currently covers Codex, not arbitrary provider authentication.
+
+## Test and verify
+
+Construct PluginHost(name='example', console=Console(file=StringIO()), settings={})
+and call activate directly. Check commands and typed event effects, not just
+registration counts. Use synthetic events for renderers and Pydantic AI TestModel
+for agent/tool integration; no real model or credentials are required. Use real
+cancel scopes and Events, not sleeps, to order cancellation tests. Drive menu
+builders headlessly, with injected runners instead of a real terminal.
+
+In a CLAI checkout run Ruff format/check, strict Pyright on changed source/tests,
+and focused pytest tests. Check /plugins list for loading errors, reload after
+edits, and verify disable removes your commands and tools. Keep README.md and
+PLUGINS.md aligned with user-facing API changes. For UI capabilities not exposed
+by PluginHost, state that limitation and propose a focused source change rather
+than monkeypatching a private global registry.

@@ -140,6 +140,24 @@ Unknown slash commands are not sent to the model. Up/down recall saved prompt
 history. Ctrl-D exits. Ctrl-C at input clears the line; during a run it cancels
 the turn and returns to input. No cancelled run is automatically retried.
 
+## Ask CLAI to customize itself
+
+Ask, for example, "Create a plugin with a custom menu" or "Use my model provider".
+The default agent has a `read_clai_customization_guide` tool and a short instruction
+to read it before advising on CLAI customization. The guide is bundled with the
+installed package and loaded only when the tool is called, not included in every
+prompt. No network access or source checkout is needed to read it.
+
+It covers plugin installation and reload, hooks, tools, settings, commands,
+rendering, custom TUI menus, and model/provider launchers. It distinguishes plugin
+APIs from UI changes that currently need a CLAI source change. This is guidance,
+not an automatic installer or a permission boundary: plugins execute trusted Python
+as your user. Review generated plugins before enabling them.
+
+Custom agents are unchanged. To offer the same guide, add
+`customization_guide()` from `pydantic_clai2.customization` to their capabilities.
+See [PLUGINS.md](PLUGINS.md) for the plugin contract.
+
 ## Bring an agent
 
 ```python
@@ -273,15 +291,33 @@ or cancellation. No model requests or telemetry are added for status reporting.
 ## Plugins
 
 Everything beyond the prompt loop is a plugin, including the default coding
-tools. A plugin is a Python file with an `activate(host)` function. Through
-`host` it can react to lifecycle moments and typed events, add `/commands`, give
-the agent tools, draw its own output, and read validated settings.
+tools. Any Pydantic AI capability is a plugin as it is; give the agent web
+search from Pydantic AI Harness without writing code. Install the `exa` extra
+and set `EXA_API_KEY` first:
+
+```sh
+pip install 'pydantic-ai-harness[exa]'
+export EXA_API_KEY=...
+```
+
+```text
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+```
+
+For anything beyond one capability, a plugin is a Python file with an
+`activate(host)` function. A single plugin can do as much as it likes; this one
+both adds a capability and reacts to a lifecycle hook, to show two shapes at
+once:
 
 ```python
+from pydantic_ai_harness.exa import ExaSearch
+
 from pydantic_clai2.plugins import PluginHost, TurnEnd
 
 
 def activate(host: PluginHost) -> None:
+    host.add(ExaSearch(num_results=8))
+
     @host.on('turn_end')
     async def ping(event: TurnEnd) -> None:
         host.console.bell()
