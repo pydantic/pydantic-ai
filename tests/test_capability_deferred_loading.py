@@ -1265,7 +1265,7 @@ def _inject_load(capability_id: str) -> Callable[[list[ModelMessage]], list[Mode
     return processor
 
 
-def _secret_op_returns(messages: list[ModelMessage]) -> list[Any]:
+def _secret_op_returns(messages: list[ModelMessage]) -> list[object]:
     return [
         part.content
         for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
@@ -1298,12 +1298,14 @@ async def test_processor_injected_load_lets_capability_prepare_tools_govern_its_
     the filter removed it — never executed either way.
     """
     prepare_tools_calls: list[list[str]] = []
+    loaded_ids_seen: list[list[str]] = []
 
     class FilteringSecrets(Capability[object]):
         """Uses `prepare_tools` as a permission filter over its own tool."""
 
         async def prepare_tools(self, ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             prepare_tools_calls.append(sorted(tool_def.name for tool_def in tool_defs))
+            loaded_ids_seen.append(sorted(ctx.loaded_capability_ids))
             return [tool_def for tool_def in tool_defs if tool_def.name != 'secret_op']
 
     secrets_toolset = FunctionToolset[object]()
@@ -1326,6 +1328,10 @@ async def test_processor_injected_load_lets_capability_prepare_tools_govern_its_
     if inject_load:
         # The capability is active, so its own filter decides — and it removed the tool.
         assert prepare_tools_calls[0] == snapshot(['secret_op'])
+        # The run's own prospective state agrees with the history it is sending, so the documented
+        # "has the runbook been loaded?" check (`id in ctx.loaded_capability_ids`) answers yes on
+        # this step, rather than the capability being active only through dispatch-time evidence.
+        assert loaded_ids_seen[0] == snapshot(['secrets'])
         assert refusals == snapshot(["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"])
     else:
         # The capability never loaded, so the availability gate refuses before any filter is reached.
@@ -1376,12 +1382,14 @@ async def test_processor_injected_load_is_governed_when_resuming_a_suspended_res
     post-processing availability refresh.
     """
     prepare_tools_calls: list[list[str]] = []
+    loaded_ids_seen: list[list[str]] = []
 
     class FilteringSecrets(Capability[object]):
         """Uses `prepare_tools` as a permission filter over its own tool."""
 
         async def prepare_tools(self, ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             prepare_tools_calls.append(sorted(tool_def.name for tool_def in tool_defs))
+            loaded_ids_seen.append(sorted(ctx.loaded_capability_ids))
             return [tool_def for tool_def in tool_defs if tool_def.name != 'secret_op']
 
     secrets_toolset = FunctionToolset[object]()
@@ -1406,6 +1414,7 @@ async def test_processor_injected_load_is_governed_when_resuming_a_suspended_res
 
     assert _secret_op_returns(result.all_messages()) == []
     assert prepare_tools_calls[0] == snapshot(['secret_op'])
+    assert loaded_ids_seen[0] == snapshot(['secrets'])
     assert [
         str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
     ] == snapshot(["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"])

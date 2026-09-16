@@ -168,7 +168,7 @@ class ToolManager(Generic[AgentDepsT]):
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
     resolved_capability_ids: frozenset[str] | None = None
-    """Snapshot of [`RunContext.active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids] the cached `tools` were resolved against.
+    """Snapshot of the capability-activity set the cached `tools` were resolved against.
 
     Availability is an input to tool *resolution*, not just to the execution gate: a deferred
     capability only has its `prepare_tools` dispatched once it's active, so a tool set resolved
@@ -176,6 +176,13 @@ class ToolManager(Generic[AgentDepsT]):
     alone would hand that ungoverned set to a dispatch that has since become available — a
     permission filter that silently doesn't run. Comparing this against the incoming context makes
     `for_run_step` re-resolve when availability moved mid-step instead.
+
+    Availability moves two ways within a step, and both have to be in the key: history processing
+    rewrites the loaded set feeding
+    [`active_capability_ids`][pydantic_ai.tools.RunContext.active_capability_ids], and dispatch
+    anchors its evidence to the provider that served the response, which can see a load the
+    conservative window dropped. So this snapshots the union the execution gate itself authorizes
+    from, not `active_capability_ids` alone.
 
     `None` before the manager has been prepared for a run step.
     """
@@ -204,7 +211,7 @@ class ToolManager(Generic[AgentDepsT]):
         were resolved (see `resolved_capability_ids`), so a capability that became active mid-step
         still gets its `prepare_tools` say over its own tools.
         """
-        resolved_capability_ids = frozenset(ctx.active_capability_ids)
+        resolved_capability_ids = frozenset(ctx._dispatch_active_capability_ids)  # pyright: ignore[reportPrivateUsage]
         same_step = False
         if self.ctx is not None:
             if ctx.run_step == self.ctx.run_step:
