@@ -421,7 +421,6 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
-addopts = "-v"
 xfail_strict = true
 filterwarnings = [
     "error",
