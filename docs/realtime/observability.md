@@ -14,7 +14,9 @@ Read cumulative usage from
 tokens, provider audio and cache breakdowns where available, and tool-call counts. Usage updates are
 not emitted as session events. When [genai-prices](https://github.com/pydantic/genai-prices) has
 pricing for the model, `session.usage.cost` contains the accumulated USD cost and `cost_limit`
-applies. As with a standard run's
+applies. Where it doesn't — an unpriced model, or a provider that bills by call duration rather than
+tokens — the cost stays `None` and a `cost_limit` never trips, warning once per response that it
+cannot be enforced. As with a standard run's
 [usage limits](../agent.md#usage-limits), pass `usage=` to accumulate into a shared object — for
 example one carried across a voice call and its follow-up text runs — and `usage_limits=` to cap a
 session:
