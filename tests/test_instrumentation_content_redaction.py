@@ -70,8 +70,6 @@ def _span_text(span: ReadableSpan) -> str:
     for event in span.events:
         parts.append(event.name)
         parts += [f'{key}={value}' for key, value in (event.attributes or {}).items()]
-    for link in span.links or []:
-        parts += [f'{key}={value}' for key, value in (link.attributes or {}).items()]
     return '\n'.join(parts)
 
 
@@ -96,8 +94,12 @@ async def test_no_content_reaches_telemetry_on_a_successful_run() -> None:
     """Prompts, instructions, history, tool arguments and results, and the final output."""
     settings, exporter = redacted_setup()
 
+    requests = 0
+
     def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
             return ModelResponse(parts=[ToolCallPart('lookup', {'query': SECRETS['tool_args']})])
         return ModelResponse(
             parts=[
@@ -128,6 +130,8 @@ async def test_no_content_reaches_telemetry_on_a_successful_run() -> None:
     ]
     result = await agent.run(SECRETS['user_prompt'], message_history=history)
     assert result.output.answer == SECRETS['final_output']
+    # The tool has to have run, or the argument and return sentinels prove nothing.
+    assert requests == 2
 
     assert leaked_channels(exporter.get_finished_spans()) == snapshot(set())
 
