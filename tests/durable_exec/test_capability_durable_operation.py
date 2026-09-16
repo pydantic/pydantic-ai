@@ -624,6 +624,24 @@ class PerRequestOperation(AbstractCapability[Any]):
         return ctx.run_step
 
 
+class ResolvesInForRun(AbstractCapability[Any]):
+    """Calls its own durable operation from `for_run`, before the run has any dispatchers."""
+
+    id = 'resolves_in_for_run'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        await self.resolve(ctx)
+        return self
+
+    @durable_operation('resolve')
+    async def resolve(self, ctx: RunContext[Any]) -> int:
+        self.calls += 1
+        return self.calls
+
+
 class TenantScopedOperation(AbstractCapability[str]):
     id = 'tenant_scoped_operation'
 
@@ -745,6 +763,24 @@ async def test_per_request_hook_dispatches_on_the_run_instance_it_already_built(
     await agent.run('test')
 
     assert capability.replacements == snapshot(1)
+
+
+async def test_operation_called_from_for_run_runs_directly() -> None:
+    """`for_run` is what produces the instances dispatch resolves, so it runs before dispatch exists.
+
+    An operation called from there runs directly, as it does outside a durable run — pinned because
+    the capability docs promise it, and because resolving it through the engine instead once meant
+    `for_run` deriving the instance by calling `for_run`, until the recursion limit.
+    """
+    capability = ResolvesInForRun()
+    agent = Agent(TestModel(), name='for_run_operation_call', capabilities=[capability, RecordingDurability()])
+
+    await agent.run('test')
+
+    assert capability.calls == snapshot(1)
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot([])
 
 
 async def test_run_replacement_that_drops_the_bound_id_is_refused() -> None:
