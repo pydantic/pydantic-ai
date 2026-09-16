@@ -2357,3 +2357,34 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     assert isinstance(events[-1], RealtimeSessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.
     assert closed == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ('settings', 'vertexai', 'expected'),
+    [
+        (None, False, None),
+        ({'google_proactive_audio': True}, False, 'v1alpha'),
+        # Vertex has no `v1alpha`, so its sessions keep whatever the client is configured for.
+        ({'google_proactive_audio': True}, True, None),
+    ],
+)
+def test_proactive_audio_retargets_api_version(
+    settings: GoogleRealtimeModelSettings | None, vertexai: bool, expected: str | None
+) -> None:
+    client = _fake_client(_RecordingSession())
+    client.vertexai = vertexai  # pyright: ignore[reportAttributeAccessIssue]
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    assert model._handshake_api_version(settings or {}) == expected  # pyright: ignore[reportPrivateUsage]
+
+
+def test_ws_api_version_restores_the_clients_own() -> None:
+    """The swap is scoped to the handshake: the client is left exactly as it was found."""
+    client = _fake_client(_RecordingSession())
+    http_options = client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    http_options.api_version = 'v1beta'
+    with rt_google._ws_api_version(client, 'v1alpha'):  # pyright: ignore[reportPrivateUsage]
+        assert http_options.api_version == 'v1alpha'
+    assert http_options.api_version == 'v1beta'
+    # `None` means "leave it alone", which is what a session that needs nothing special passes.
+    with rt_google._ws_api_version(client, None):  # pyright: ignore[reportPrivateUsage]
+        assert http_options.api_version == 'v1beta'

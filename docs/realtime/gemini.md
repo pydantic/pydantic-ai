@@ -55,7 +55,8 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | Setting | Purpose |
 | --- | --- |
 | `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
-| `google_affective_dialog`, `google_proactive_audio` | Emotion-aware delivery and model-decided speech on native-audio models |
+| `google_affective_dialog` | Emotion-aware delivery, on native-audio models |
+| `google_proactive_audio` | Model-decided speech, including staying silent on input not addressed to it |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
 | `google_activity_handling`, `google_turn_coverage` | [Interruption](turns.md#barge-in) behavior and which input belongs to a turn |
 | `google_input_transcription`, `google_output_transcription` | Native [transcription](audio.md#input-transcription) switches, enabled by default |

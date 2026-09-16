@@ -210,7 +210,10 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Whether to enable emotion-aware delivery (native-audio models only)."""
     google_proactive_audio: bool
     """Whether the model may decide *when* to respond, including staying silent on input not
-    addressed to it (native-audio models only). Useful for "react to the camera" experiences."""
+    addressed to it (native-audio models only). Useful for "react to the camera" experiences.
+
+    Served on the Gemini Developer API's `v1alpha` only, so enabling it retargets the handshake there;
+    Vertex AI has no such version and rejects the setting."""
     google_input_transcription: bool
     """Whether to transcribe input audio. Defaults to `True`.
 
@@ -602,6 +605,33 @@ def _single_ws_user_agent(client: Client) -> Generator[None]:
         headers.update(removed)
 
 
+_PROACTIVITY_API_VERSION = 'v1alpha'
+"""The Gemini Developer API version that serves `proactivity` on the Live setup message."""
+
+
+@contextmanager
+def _ws_api_version(client: Client, api_version: str | None) -> Generator[None]:
+    """Swap the client's API version for the duration of a Gemini Live handshake.
+
+    `google-genai` builds the Live WebSocket path from the *client's* `api_version` and rejects a
+    per-connect `http_options`, so a config field served on only one version has to be reached by
+    temporarily retargeting the client — the same shape as the user-agent and trace-context mutations
+    above, and serialized behind the same lock.
+
+    `None` leaves the client's own version in place.
+    """
+    if api_version is None:
+        yield
+        return
+    http_options = client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    original = http_options.api_version
+    http_options.api_version = api_version
+    try:
+        yield
+    finally:
+        http_options.api_version = original
+
+
 @contextmanager
 def _ws_trace_context(client: Client) -> Generator[None]:
     """Add the current trace context to the Gemini Live handshake headers for the connect only.
@@ -743,6 +773,20 @@ class GoogleRealtimeModel(RealtimeModel):
         if not self.profile.get('supports_async_tool_calls', False):
             return False
         return True
+
+    def _handshake_api_version(self, settings: GoogleRealtimeModelSettings) -> str | None:
+        """The API version this session's config needs, or `None` to keep the client's own.
+
+        `proactivity` is served on `v1alpha` only: on any other version the Gemini Developer API answers
+        `1007 Invalid JSON payload received. Unknown name "proactivity" at 'setup'`, so a session that
+        asked for proactive audio would fail to connect rather than get the feature (verified live
+        2026-09-16 against `gemini-2.5-flash-native-audio-latest`). Vertex AI has its own version line
+        that has no `v1alpha`, so its sessions keep the client's version and proactive audio remains
+        unavailable there.
+        """
+        if settings.get('google_proactive_audio', False) and not self.client.vertexai:
+            return _PROACTIVITY_API_VERSION
+        return None
 
     def _input_transcription(self, settings: GoogleRealtimeModelSettings) -> bool:
         """Whether to transcribe the user's audio.
@@ -951,6 +995,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 with ExitStack() as stack:
                     stack.enter_context(_single_ws_user_agent(client))
                     stack.enter_context(_ws_trace_context(client))
+                    stack.enter_context(_ws_api_version(client, self._handshake_api_version(settings)))
                     # A gateway route needs nothing extra here: the relay routes the SDK's native
                     # Vertex Bidi path, and the gateway bearer auth reaches the handshake via a
                     # static header set on the client at build time (see `_set_google_ws_gateway_auth`).
