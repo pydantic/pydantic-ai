@@ -171,6 +171,7 @@ class SessionInstrumentation:
         audio_chunks_dropped: int,
         transcript_items_dropped: int,
         queue_dropped_deltas: int,
+        queue_dropped_structural: int,
     ) -> str | None:
         """Finalize and end the session span, returning its traceparent (for `AgentRunResult`).
 
@@ -193,6 +194,7 @@ class SessionInstrumentation:
             'pydantic_ai.audio_chunks_dropped': audio_chunks_dropped,
             'pydantic_ai.transcript_items_dropped': transcript_items_dropped,
             'pydantic_ai.queue_dropped_deltas': queue_dropped_deltas,
+            'pydantic_ai.queue_dropped_structural': queue_dropped_structural,
         }
         schema_properties: dict[str, Any] = {}
         if 'gen_ai.system_instructions' in attributes:

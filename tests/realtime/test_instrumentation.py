@@ -1089,6 +1089,30 @@ async def test_session_span_counts_dropped_session_queue_deltas() -> None:
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['pydantic_ai.queue_dropped_deltas'] == 8
+    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 0
+
+
+async def test_session_span_counts_dropped_session_queue_structural_events() -> None:
+    settings, exporter = _settings()
+    events: list[RealtimeCodecEvent] = []
+    for index in range(200):
+        events.append(RealtimeInputSpeechStartEvent())
+        events.append(AudioDelta(index.to_bytes(4, 'big')))
+        events.append(RealtimeInputSpeechEndEvent())
+        events.append(ResponseDone())
+    session = RealtimeSession(
+        _Connection(events),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 200 * 5 - 512
 
 
 async def test_session_span_includes_resolved_run_attributes() -> None:

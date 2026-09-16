@@ -227,6 +227,11 @@ _FULL_PROFILE = RealtimeModelProfile(
 _AUDIO_TAP_SIZE = 32
 _TRANSCRIPT_TAP_SIZE = 512
 _SESSION_DELTA_QUEUE_SIZE = 512
+# Structural events are some five per turn against one delta per audio frame, so they are not what
+# makes an unread queue large — but they are never superseded the way deltas are, so without their own
+# bound a session nothing iterates keeps every one of them for as long as it runs. The same 512 buys a
+# late iterator around a hundred turns of structure, comfortably more history than the deltas it keeps.
+_SESSION_STRUCTURAL_QUEUE_SIZE = 512
 _TapItem = TypeVar('_TapItem')
 _Tap = TypeVar('_Tap')
 
@@ -765,6 +770,8 @@ class RealtimeSession:
         self._queue_event = asyncio.Event()
         self._queue_delta_count = 0
         self._queue_dropped_deltas = 0
+        self._queue_structural_count = 0
+        self._queue_dropped_structural = 0
         self._queue_changed = object()
         self._tap_finished = object()
         self._audio_taps: set[_AudioTap] = set()
@@ -940,6 +947,7 @@ class RealtimeSession:
             audio_chunks_dropped=self._audio_tap_drops,
             transcript_items_dropped=self._transcript_tap_drops,
             queue_dropped_deltas=self._queue_dropped_deltas,
+            queue_dropped_structural=self._queue_dropped_structural,
         )
         self._loop = None
 
@@ -971,30 +979,50 @@ class RealtimeSession:
                     raise item
 
     def _queue_put(self, item: RealtimeEvent | object) -> None:
-        """Append an item, bounding queued deltas while no session iterator is active."""
+        """Append an item, bounding the queue while no session iterator is active."""
         if isinstance(item, PartDeltaEvent):
             self._queue_delta_count += 1
+        elif self._is_structural(item):
+            self._queue_structural_count += 1
         self._queue.append(item)
         if not self._iterator_active:
-            self._trim_queue_deltas()
+            self._trim_queue()
         self._queue_event.set()
 
-    def _trim_queue_deltas(self) -> None:
+    def _is_structural(self, item: RealtimeEvent | object) -> bool:
+        """Whether an item is a droppable non-delta event.
+
+        Excludes the parked exceptions `close()` sweeps for, and the wake-up sentinels whose arrival
+        is what makes the iterator re-check for a pump error or for termination — neither is history
+        a later reader can do without, and both are rare enough not to be what grows the queue.
+        """
+        return not isinstance(item, BaseException) and item is not self._queue_changed
+
+    def _trim_queue(self) -> None:
         while self._queue_delta_count > _SESSION_DELTA_QUEUE_SIZE:
             # Deltas make up the bulk of a backed-up queue, so the oldest one is close to the head: the
-            # scan and the deque deletion are linear only in the structural events kept ahead of it,
-            # some five per turn, which do accumulate over a session nothing iterates. That stays under
-            # a tenth of a millisecond per delta until one session has run thousands of turns, which is
-            # negligible against the audio frame that triggered it.
+            # scan and the deque deletion are linear only in what is kept ahead of it, which the
+            # structural bound below caps in turn.
             oldest = next(index for index, queued in enumerate(self._queue) if isinstance(queued, PartDeltaEvent))
             del self._queue[oldest]
             self._queue_delta_count -= 1
             self._queue_dropped_deltas += 1
+        while self._queue_structural_count > _SESSION_STRUCTURAL_QUEUE_SIZE:
+            oldest = next(
+                index
+                for index, queued in enumerate(self._queue)
+                if not isinstance(queued, PartDeltaEvent) and self._is_structural(queued)
+            )
+            del self._queue[oldest]
+            self._queue_structural_count -= 1
+            self._queue_dropped_structural += 1
 
     def _queue_get_nowait(self) -> RealtimeEvent | object:
         item = self._queue.popleft()
         if isinstance(item, PartDeltaEvent):
             self._queue_delta_count -= 1
+        elif self._is_structural(item):
+            self._queue_structural_count -= 1
         return item
 
     async def _queue_get(self) -> RealtimeEvent | object:
@@ -3098,5 +3126,5 @@ class RealtimeSession:
             # Nobody reads the queue past this point, so the bound applies again before the wrapper's
             # cleanup runs, however long that takes.
             self._iterator_active = False
-            self._trim_queue_deltas()
+            self._trim_queue()
             await aclose_all((stream_iterator, stream, source))
