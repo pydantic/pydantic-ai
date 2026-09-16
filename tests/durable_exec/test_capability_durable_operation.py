@@ -4,7 +4,6 @@ import copy
 import gc
 import re
 import uuid
-import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -779,25 +778,6 @@ async def test_run_replacement_that_drops_the_bound_id_is_refused() -> None:
     )
 
 
-async def test_operation_called_with_a_boundary_context_dispatches_through_the_agent() -> None:
-    """A context rebuilt across a durable boundary carries no per-run dispatchers, but still dispatches.
-
-    Temporal leaves `_durable_operations` off the context it rebuilds inside an activity and
-    re-attaches the worker's agent, so an operation called with that context resolves the
-    dispatchers the engine bound to the agent instead.
-    """
-    model = TestModel()
-    capability = Operations()
-    agent = Agent(model, name='boundary_context', capabilities=[capability, RecordingDurability()])
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    ctx = RunContext(deps=None, agent=agent, model=model, usage=RunUsage())
-    assert ctx._durable_operations is None  # pyright: ignore[reportPrivateUsage]
-
-    assert await capability._calculate(ctx) == snapshot(2)  # pyright: ignore[reportPrivateUsage]
-    assert [name for name, _ in durability.calls] == snapshot(['boundary_context__capability__operations.calculate'])
-
-
 async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:
     capability = Operations()
     first_agent = Agent(TestModel(), name='first_agent', capabilities=[capability, RecordingDurability()])
@@ -1108,23 +1088,6 @@ async def test_custom_model_request_operation_round_trips_projection() -> None:
     assert any(
         name == 'custom_model_request__capability__custom_model_request.rewrite_request' for name, _ in durability.calls
     )
-
-
-def test_durable_operation_bindings_do_not_retain_agents() -> None:
-    capability = Operations()
-    agents = [
-        Agent(TestModel(), name=f'weak_binding_{index}', capabilities=[capability, RecordingDurability()])
-        for index in range(3)
-    ]
-    bindings = capability._durable_operation_bindings  # pyright: ignore[reportPrivateUsage]
-    references = [weakref.ref(agent) for agent in agents]
-    assert len(bindings) == 3
-
-    agents.clear()
-    gc.collect()
-
-    assert not any(reference() is not None for reference in references)
-    assert len(bindings) == 0
 
 
 async def test_decorated_model_request_hook_round_trips_registered_model_replacement() -> None:

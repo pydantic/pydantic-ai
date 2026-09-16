@@ -266,14 +266,13 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
             )
 
-            # Resolve the per-run dispatcher first, then the agent-bound fallback for a context
-            # this run never prepared (a realtime session, or a call outside the run's own graph).
+            # The run installs one dispatcher per bound operation on every context it builds. A
+            # context without them was never prepared by a run (or was rebuilt worker-side, past
+            # the boundary already), so the call belongs inline.
             operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
             dispatcher = (
                 operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
             )
-            if dispatcher is None and ctx.agent is not None:
-                dispatcher = self._durable_operation_bindings.get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
             if dispatcher is None:
                 result = await target.__get__(self, type(self))(*args, **kwargs)
             else:

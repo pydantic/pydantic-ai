@@ -326,7 +326,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_capability_operations = {}
         self._capability_declarations = {}
         backend = self.get_durable_operation_backend()
-        durability_ref = ref(self)
         for capability in leaf_capabilities(agent.root_capability):
             declarations = collect_capability_operations(capability)
             if not declarations:
@@ -401,27 +400,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 )
                 self._bound_capability_operations[key] = backend.bind(operation)
                 self._capability_declarations[key] = declaration
-
-                async def dispatch_for_run_context(
-                    ctx: RunContext[object],
-                    args: tuple[object, ...],
-                    kwargs: dict[str, object],
-                    _capability: AbstractCapability[Any] = capability,
-                    _operation_name: str = operation_name,
-                ) -> Any:
-                    durability = durability_ref()
-                    if durability is None:  # pragma: no cover
-                        raise RuntimeError('The durability capability bound to this agent is no longer available.')
-                    return await durability._invoke_capability_operation(
-                        _capability,
-                        _operation_name,
-                        ctx=ctx,
-                        args=args,
-                        kwargs=kwargs,
-                    )
-
-                bindings = capability._durable_operation_bindings
-                bindings.setdefault(agent)[operation_name] = dispatch_for_run_context
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         """Register dispatchers on `RunContext` for worker-side and per-run capability recovery."""
