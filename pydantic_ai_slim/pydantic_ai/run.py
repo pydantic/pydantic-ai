@@ -52,9 +52,11 @@ def _filtered_value(value: Any, spec: Any, *, keep: bool) -> Any:
     """Apply one key's nested `include`/`exclude` spec to the value itself.
 
     Filters the container rather than re-serializing it, so the value stays whatever the outer
-    schema expects. Only a plain set of keys or indices is applied — the forms a caller reaches for
-    to drop a message or redact a metadata entry. A deeper spec is left alone; see
-    `_filter_serialized`.
+    schema expects. That bounds what can be applied: a plain set of keys or indices, against a
+    mapping or a sequence — `exclude={'metadata': {'api_key'}}` and `exclude={'messages': {0}}`,
+    the forms a caller reaches for to redact an entry or drop a message. A deeper spec, or one
+    aimed at a key whose value is neither (`usage`), would need that value re-serialized against a
+    sub-schema, so it is left alone; see `_filter_serialized`.
     """
     if not isinstance(spec, set):
         return value
@@ -75,9 +77,10 @@ def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict
     spec reaching *inside* a key (`exclude={'metadata': {'api_key'}}`) would emit in full the value
     it was asked to redact.
 
-    A spec deeper than one level (`exclude={'messages': {'__all__': {'parts'}}}`) is not applied:
-    reaching that far in means re-serializing the value against a sub-schema, which is Pydantic's
-    per-field machinery rebuilt for nine synthesized keys.
+    What `_filtered_value` can apply bounds this: one level, against a mapping or sequence value.
+    A deeper spec (`exclude={'messages': {'__all__': {'parts'}}}`), or one aimed at `usage`, means
+    re-serializing that value against a sub-schema — Pydantic's per-field machinery rebuilt for
+    nine synthesized keys — and is not applied.
     """
     include, exclude = info.include, info.exclude
     if include is not None:

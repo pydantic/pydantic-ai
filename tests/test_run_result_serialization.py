@@ -329,6 +329,20 @@ def test_serialization_honors_the_callers_filters() -> None:
     assert len(adapter.dump_python(result, include={'messages': {0}})['messages']) == 1
 
 
+def test_a_nested_spec_it_cannot_apply_leaves_the_value_whole() -> None:
+    """Filtering the container bounds what a nested spec can reach: one level, mapping or sequence."""
+    result = Agent(TestModel(custom_output_text='filtered')).run_sync('Filter this')
+    adapter = TypeAdapter(AgentRunResult[str])
+    whole = adapter.dump_python(result)
+
+    # Deeper than one level.
+    deep = adapter.dump_python(result, exclude={'messages': {'__all__': {'parts'}}})
+    assert len(deep['messages']) == len(whole['messages'])
+
+    # Aimed at a key whose value is neither a mapping nor a sequence.
+    assert adapter.dump_python(result, exclude={'usage': {'requests'}})['usage'] == whole['usage']
+
+
 def test_serialization_honors_a_redaction_inside_metadata() -> None:
     """A nested `exclude` must not dump in full the value it was asked to redact."""
     result = Agent(TestModel(custom_output_text='filtered')).run_sync(
