@@ -172,7 +172,7 @@ _(This example is complete, it can be run "as is")_
 |-----------|--------|-----------|-----|------|------------|
 | `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
 | `user_location` | ✅ | ✅ | ✅ | ❌ | ✅ |
-| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ✅ |
+| `blocked_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |

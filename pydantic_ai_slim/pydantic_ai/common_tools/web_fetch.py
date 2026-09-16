@@ -14,7 +14,7 @@ import httpx2
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai._ssrf import safe_download
-from pydantic_ai._utils import is_text_like_media_type
+from pydantic_ai._utils import is_text_like_media_type, run_in_executor
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
@@ -30,6 +30,8 @@ except ImportError as _import_error:
 __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
+_TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
+_TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 
 
@@ -63,10 +65,16 @@ class WebFetchLocalTool:
     """Maximum size in bytes of the response body to download. None for no limit."""
 
     allowed_domains: list[str] | None = field(default=None)
-    """Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
+    """Only fetch from these domains (exact hostname match, ignoring case, a trailing dot, and IDNA spelling).
+
+    Raises `ModelRetry` on violation.
+    """
 
     blocked_domains: list[str] | None = field(default=None)
-    """Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation."""
+    """Never fetch from these domains (exact hostname match, ignoring case, a trailing dot, and IDNA spelling).
+
+    Raises `ModelRetry` on violation.
+    """
 
     headers: dict[str, str] | None = field(default=None)
     """Additional HTTP headers to include in the request.
@@ -117,8 +125,14 @@ class WebFetchLocalTool:
             if media_type in ('text/markdown', 'text/x-markdown'):
                 content = text
             elif not media_type or media_type in ('text/html', 'application/xhtml+xml'):
-                title = _extract_title(text)
-                content = md(text, strip=['img', 'script', 'style'])
+                # Parsing and converting is CPU-bound and scales with the (server-controlled) body
+                # size, so run it in a worker thread rather than on the event loop.
+                try:
+                    title, content = await run_in_executor(_convert_html, text)
+                except RecursionError as e:
+                    # `markdownify` walks the document recursively, so a page nested deeper than the
+                    # interpreter's recursion limit can't be converted; let the model try elsewhere.
+                    raise ModelRetry(f'Failed to convert {url}: the HTML is nested too deeply') from e
             elif media_type == 'application/json':
                 try:
                     parsed = json.loads(text)
@@ -138,13 +152,29 @@ class WebFetchLocalTool:
         return WebFetchResult(url=url, title=title, content=content)
 
 
-_TITLE_RE = re.compile(r'<title[^>]*>(.*?)</title>', re.IGNORECASE | re.DOTALL)
+def _convert_html(html: str) -> tuple[str, str]:
+    """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
+    return _extract_title(html), md(html, strip=['img', 'script', 'style'])
 
 
 def _extract_title(html: str) -> str:
-    """Extract the <title> from HTML."""
-    match = _TITLE_RE.search(html)
-    return match.group(1).strip() if match else ''
+    """Extract the raw text of the first `<title>` element.
+
+    A single forward scan: the first `<title` start and the `</title>` end are matched
+    case-insensitively, the `>` closing the start tag literally. Each step either finds its
+    marker or settles the result, and the patterns are plain literals with nothing to backtrack
+    over, so the cost is linear in the size of the document regardless of how malformed it is.
+    """
+    opening = _TITLE_OPEN_RE.search(html)
+    if opening is None:
+        return ''
+    open_end = html.find('>', opening.end())
+    if open_end == -1:
+        return ''
+    closing = _TITLE_CLOSE_RE.search(html, open_end + 1)
+    if closing is None:
+        return ''
+    return html[open_end + 1 : closing.start()].strip()
 
 
 def _clean_whitespace(text: str) -> str:
@@ -180,8 +210,10 @@ def web_fetch_tool(
         max_download_bytes: Maximum size in bytes of the response body to download, applied
             before the body is buffered. Defaults to 50 MiB. Use `None` for no limit, which
             lets a response of any size be read into memory.
-        allowed_domains: Only fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
-        blocked_domains: Never fetch from these domains (exact hostname match). Raises `ModelRetry` on violation.
+        allowed_domains: Only fetch from these domains (exact hostname match, ignoring case and a
+            trailing dot). Raises `ModelRetry` on violation.
+        blocked_domains: Never fetch from these domains (exact hostname match, ignoring case and a
+            trailing dot). Raises `ModelRetry` on violation.
         headers: Additional HTTP headers to include in requests.
             Overrides the default `Accept: text/markdown` header if `Accept` is provided.
             The URL is controlled by the model, so a credential configured here (e.g.
