@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import KW_ONLY, dataclass, field
+from html import unescape
 
 import httpx2
 from typing_extensions import Any, TypedDict
@@ -139,12 +140,21 @@ class WebFetchLocalTool:
 
 
 _TITLE_RE = re.compile(r'<title[^>]*>(.*?)</title>', re.IGNORECASE | re.DOTALL)
+_WHITESPACE_RE = re.compile(r'\s+')
 
 
 def _extract_title(html: str) -> str:
-    """Extract the <title> from HTML."""
+    """Extract the <title> from HTML.
+
+    The entities are resolved and the internal whitespace collapsed, so the
+    title reads as the browser shows it rather than as the markup spells it:
+    `Tom &amp; Jerry` is `Tom & Jerry`, and a title broken over several
+    indented lines is one line.
+    """
     match = _TITLE_RE.search(html)
-    return match.group(1).strip() if match else ''
+    if match is None:
+        return ''
+    return _WHITESPACE_RE.sub(' ', unescape(match.group(1))).strip()
 
 
 def _clean_whitespace(text: str) -> str:

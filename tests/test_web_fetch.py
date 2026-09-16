@@ -399,6 +399,38 @@ class TestWebFetchLocalTool:
         assert result['url'] == 'https://example.com/page'
         assert mock_dl.call_args[1]['blocked_domains'] == ['evil.com']
 
+    @pytest.mark.parametrize(
+        ('title_markup', 'expected'),
+        [
+            # The entities a browser resolves before it shows the title.
+            ('Tom &amp; Jerry &mdash; Episode 5', 'Tom & Jerry — Episode 5'),
+            ('Don&#39;t Panic', "Don't Panic"),
+            ('&quot;Quoted&quot;', '"Quoted"'),
+            # A title broken over several indented lines is one line.
+            ('\n      A long\n      title\n    ', 'A long title'),
+            # The control: nothing to resolve or collapse.
+            ('Plain Title', 'Plain Title'),
+        ],
+    )
+    async def test_fetch_html_title_reads_as_a_browser_shows_it(self, title_markup: str, expected: str):
+        """The title went to the model spelled as markup: `Tom &amp; Jerry`."""
+        html = f'<html><head><title>{title_markup}</title></head><body><p>hi</p></body></html>'
+        mock_response = httpx2.Response(
+            200,
+            text=html,
+            headers={'content-type': 'text/html'},
+            request=httpx2.Request('GET', 'https://example.com/page'),
+        )
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com/page')
+
+        assert isinstance(result, dict)
+        assert result['title'] == expected
+
     async def test_fetch_markdown_response(self):
         """Server returning text/markdown is used as-is without markdownify conversion."""
         markdown_content = '# Hello\n\nThis is **markdown** from the server.'
