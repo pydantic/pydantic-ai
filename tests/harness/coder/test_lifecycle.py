@@ -2,6 +2,7 @@ import json
 import os
 import shlex
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
@@ -72,6 +73,34 @@ class TestCoder:
         result = await call(tmp_path, 'shell', {'command': f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'})
         assert '"exit_code": 0' in result
         assert status.with_name('output.log').read_text() == 'completed\n'
+
+    async def test_cancelled_finalization_terminates_process(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entered = anyio.Event()
+        pids: list[int] = []
+
+        async def blocked_count(function: Callable[[Path], int | None], path: Path) -> int | None:
+            status = path.with_name('status.json')
+            with anyio.fail_after(10):
+                while not status.exists():
+                    await anyio.sleep(0.01)
+            pids.append(json.loads(status.read_text())['pid'])
+            entered.set()
+            await anyio.sleep_forever()
+
+        monkeypatch.setattr('pydantic_ai_harness.coder._shell_events.run_sync', blocked_count)
+
+        async def run() -> None:
+            await call(tmp_path, 'shell', {'command': 'sleep 60', 'mode': 'background'})
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+            with anyio.fail_after(10):
+                await entered.wait()
+            group.cancel_scope.cancel()
+        with pytest.raises(ProcessLookupError):
+            os.kill(pids[0], 0)
 
     async def test_cancelled_foreground_terminates_process(self, tmp_path: Path) -> None:
         connected = anyio.Event()

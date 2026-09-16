@@ -36,10 +36,15 @@ class Replacement:
 class CoderToolset(FunctionToolset[AgentDepsT]):
     """Focused local coding tools. Shell access requires a trusted workspace."""
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, *, unrestricted_filesystem: bool = False) -> None:
         super().__init__(id='coder')
         self.workspace = workspace.resolve()
-        filesystem = FileSystem[AgentDepsT](self.workspace).get_toolset()
+        self.unrestricted_filesystem = unrestricted_filesystem
+        root = Path(self.workspace.anchor) if unrestricted_filesystem else self.workspace
+        capability = FileSystem[AgentDepsT](root)
+        if unrestricted_filesystem:
+            capability.protected_patterns = []
+        filesystem = capability.get_toolset()
         assert isinstance(filesystem, FileSystemToolset)
         self.filesystem = filesystem
         self.add_function(self.read_file)
@@ -49,6 +54,9 @@ class CoderToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self.grep)
         self.add_function(self.shell)
 
+    def _file_path(self, path: str) -> str:
+        return str(self.workspace / path) if self.unrestricted_filesystem else path
+
     async def read_file(
         self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
     ) -> str:
@@ -57,7 +65,7 @@ class CoderToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry('offset must be non-negative and limit positive.')
         limit = min(limit or 2000, 2000)
         try:
-            resolved = self.filesystem._safe_resolve(path)  # pyright: ignore[reportPrivateUsage]
+            resolved = self.filesystem._safe_resolve(self._file_path(path))  # pyright: ignore[reportPrivateUsage]
             flags = os.O_RDONLY | (os.O_BINARY if os.name == 'nt' else os.O_NONBLOCK | os.O_NOFOLLOW)
             descriptor = os.open(resolved, flags)
             with os.fdopen(descriptor, 'rb') as source:
@@ -88,7 +96,7 @@ class CoderToolset(FunctionToolset[AgentDepsT]):
 
     async def write_file(self, ctx: RunContext[AgentDepsT], path: str, content: str) -> str:
         """Write a complete file. Create missing parent directories with shell mkdir first."""
-        result = await self.filesystem._write_file(ctx, path, content)  # pyright: ignore[reportPrivateUsage]
+        result = await self.filesystem._write_file(ctx, self._file_path(path), content)  # pyright: ignore[reportPrivateUsage]
         return re.sub(r' \[hash:[0-9a-f]+\]', '', result)
 
     async def edit_file(
@@ -111,7 +119,7 @@ class CoderToolset(FunctionToolset[AgentDepsT]):
         elif old_text is not None or new_text is not None or not replacements:
             raise ModelRetry('Use either old_text/new_text or a non-empty replacements list, not both.')
         try:
-            resolved = self.filesystem._safe_resolve(path, write=True)  # pyright: ignore[reportPrivateUsage]
+            resolved = self.filesystem._safe_resolve(self._file_path(path), write=True)  # pyright: ignore[reportPrivateUsage]
             flags = os.O_RDONLY | (os.O_BINARY if os.name == 'nt' else os.O_NONBLOCK | os.O_NOFOLLOW)
             descriptor = os.open(resolved, flags)
             with os.fdopen(descriptor, 'rb') as source:
@@ -134,7 +142,7 @@ class CoderToolset(FunctionToolset[AgentDepsT]):
             new=content,
         )
         refusal = await self.filesystem._request(  # pyright: ignore[reportPrivateUsage]
-            ctx, change, path=path, resolved=resolved
+            ctx, change, path=self._file_path(path), resolved=resolved
         )
         if refusal is not None:
             return refusal
@@ -145,22 +153,26 @@ class CoderToolset(FunctionToolset[AgentDepsT]):
         await ctx.emit(change.edited(content_hash=_content_hash(content)))
         return f'Edited {path}.'
 
-    def _directory(self, path: str) -> Path:
+    def _directory(self, path: str, *, allow_file: bool = False) -> Path:
         try:
             directory = (self.workspace / path).resolve(strict=True)
         except (OSError, RuntimeError, ValueError) as exc:
             raise ModelRetry(f'Cannot resolve directory: {exc}') from exc
-        if not directory.is_relative_to(self.workspace) or not directory.is_dir():
-            raise ModelRetry('path must be an existing directory inside the workspace.')
+        if not self.unrestricted_filesystem and not directory.is_relative_to(self.workspace):
+            raise ModelRetry('path must be inside the workspace.')
+        if not directory.is_dir() and not (allow_file and directory.is_file()):
+            raise ModelRetry('path must be an existing directory or, for grep, a regular file.')
         return directory
 
-    async def _rg(self, arguments: list[str], *, path: str, limit: int) -> str:
+    async def _rg(self, arguments: list[str], *, path: str, limit: int, allow_file: bool = False) -> str:
         if not 1 <= limit <= 1000:
             raise ModelRetry('limit must be between 1 and 1000.')
+        target = self._directory(path, allow_file=allow_file)
+        cwd = target if target.is_dir() else target.parent
+        if allow_file:
+            arguments.extend(['--', '.' if target.is_dir() else './' + target.name])
         try:
-            async with await anyio.open_process(
-                ['rg', *arguments], cwd=self._directory(path), stderr=subprocess.DEVNULL
-            ) as process:
+            async with await anyio.open_process(['rg', *arguments], cwd=cwd, stderr=subprocess.DEVNULL) as process:
                 assert process.stdout is not None
                 output = bytearray()
                 truncated = False
@@ -211,11 +223,12 @@ class CoderToolset(FunctionToolset[AgentDepsT]):
             arguments.append('--ignore-case')
         if literal:
             arguments.append('--fixed-strings')
-        arguments.extend(['--regexp', pattern, '--', '.'])
-        return await self._rg(arguments, path=path, limit=limit)
+        arguments.extend(['--regexp', pattern])
+        return await self._rg(arguments, path=path, limit=limit, allow_file=True)
 
     async def shell(
         self,
+        ctx: RunContext[AgentDepsT],
         command: str,
         *,
         mode: Literal['foreground', 'background'] = 'foreground',
@@ -226,4 +239,4 @@ class CoderToolset(FunctionToolset[AgentDepsT]):
         Returns PID, output log and status file paths. Background processes survive
         agent runs; use shell to inspect logs/status and kill processes when done.
         """
-        return await shell(self.workspace, command, mode=mode, timeout=timeout)
+        return await shell(self.workspace, command, mode=mode, timeout=timeout, ctx=ctx)

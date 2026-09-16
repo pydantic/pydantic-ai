@@ -10,6 +10,39 @@ It is a regular combined capability: Coder-specific tools and argument repair co
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+## Filesystem scope
+
+File tools are workspace-scoped by default. For trusted local use,
+`Coder(unrestricted_filesystem=True)` roots file access at the workspace drive's
+filesystem root and disables protected-file patterns. Relative paths still resolve
+from the workspace; shell working directory and repository context are unchanged.
+On POSIX this permits paths such as `/tmp/example.py`; on Windows this covers the
+workspace drive, not other drives. OS permissions and file-change event listeners
+still apply. This permits modifying secrets and repository metadata: use it only
+when you trust the agent and its inputs. Shell commands were already unrestricted.
+
+`grep` accepts a regular file or directory. Both `grep` and `list_files` honor
+`unrestricted_filesystem`; scoped agents still reject paths outside the workspace.
+Shell finished events include a logical line count for log snapshots up to 1 MiB.
+Larger logs report `total_lines=None` instead of scanning the entire file, bounding
+both memory and scan work. UIs can show a generic truncation notice in that case.
+
+## Shell progress events
+
+Coder emits `ShellStartedEvent`, `ShellOutputEvent`, and `ShellFinishedEvent`
+through `ctx.emit`. Subscribe with core `@on_event` or consume the native agent
+stream. Events carry the tool-call ID. Foreground output combines stdout and
+stderr, is decoded incrementally, and is capped at 16,000 bytes per call in
+chunks of at most 4,096 bytes. Polling follows the existing 50 ms wait loop.
+Background calls do not tail output after returning; completion means the tool
+stopped waiting, not necessarily that the process exited. `exit_code=None`
+indicates no completed status was available. Finished events include the PID,
+output/status paths, and whether output was omitted. Tool results are unchanged.
+Cancellation retains existing process-group cleanup and may emit no finished
+event. Events contain command/output data and must be treated as untrusted by
+terminal consumers. These UI events add no telemetry spans; core already traces
+tool execution.
+
 ## Benchmarking
 
 See the [Terminal-Bench 2.1 playbook](https://github.com/pydantic/pydantic-ai-harness/blob/main/pydantic_ai_harness/coder/TERMINAL_BENCH.md)

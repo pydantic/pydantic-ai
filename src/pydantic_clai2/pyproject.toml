@@ -1,0 +1,65 @@
+[build-system]
+requires = ['hatchling']
+build-backend = 'hatchling.build'
+
+[project]
+name = 'pydantic-clai2'
+version = '0.1.0'
+description = 'A capability-aware streaming terminal client for Pydantic AI'
+readme = 'README.md'
+requires-python = '>=3.11'
+license = 'MIT'
+license-files = ['THIRD_PARTY_NOTICES.md']
+# Terminal dependencies are isolated from Harness. Tracking issue: #875.
+dependencies = [
+    'pydantic-ai-harness[coder]',
+    'pydantic-ai-slim[anthropic,openai]>=2.43.0',
+    'termflow-md>=0.9.2,<0.10',
+    'pyfiglet>=1.0.4',
+    'prompt-toolkit>=3.0.52',
+    'rich>=14',
+    "keyring>=25.6",
+]
+
+[project.scripts]
+clai2 = 'pydantic_clai2.__main__:main'
+
+[tool.hatch.build.targets.wheel]
+packages = ['src/pydantic_clai2']
+
+[tool.uv.sources]
+pydantic-ai-harness = { path = '..', editable = true }
+
+[dependency-groups]
+dev = ['pytest>=9', 'pytest-anyio', 'pyright>=1.1.408', 'ruff>=0.14', 'coverage>=7.10.7']
+
+[tool.pyright]
+pythonVersion = '3.11'
+typeCheckingMode = 'strict'
+venvPath = '.'
+venv = '.venv'
+
+[tool.ruff]
+extend = '../pyproject.toml'
+
+[tool.ruff.lint]
+extend-select = ['BLE001']
+
+[tool.ruff.lint.per-file-ignores]
+'**/tests/**/*.py' = ['D']
+'src/pydantic_clai2/__init__.py' = ['PLC0415']
+'src/pydantic_clai2/__main__.py' = ['PLC0415']
+
+[tool.coverage.run]
+branch = true
+patch = ['subprocess']
+relative_files = true
+source = ['src/pydantic_clai2']
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+
+[tool.pytest.ini_options]
+anyio_mode = 'auto'
+testpaths = ['tests']

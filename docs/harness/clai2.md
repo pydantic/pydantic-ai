@@ -1,0 +1,320 @@
+# CLAI 2.0
+
+A separately installable terminal client for Pydantic AI, using `Coder(unrestricted_filesystem=True)` by default.
+Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
+
+CLAI file tools can access paths outside the workspace, including `/tmp`, and do
+not protect secret files or repository metadata. OS permissions still apply.
+Relative paths use the launch workspace. Use a custom agent with `Coder()` to
+retain workspace-scoped file tools. Shell output is displayed dimly.
+
+## Interrupting a turn
+
+Press Ctrl-C once to cancel the active agent turn and return to input. Tool cleanup
+and terminal restoration finish before the next prompt. Press Ctrl-C again within
+two seconds to exit, including across the transition back to input. At the prompt,
+the first press clears input and the second exits. Ctrl-D and `/exit` also quit.
+External application cancellation still propagates; cancelled turns are not added
+to conversation history, but completed tool side effects cannot be undone.
+
+## Input history
+
+Submitted prompts and slash commands persist across restarts for Up/Down recall,
+including multiline input. They are stored as plaintext in `input-history` next
+to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
+`~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
+to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
+not encrypted. Delete this file while CLAI is closed to clear saved input.
+`/new` clears model conversation history, not input recall. Model responses and
+tool results are not saved to this file.
+
+## CI coverage
+
+The `CLAI coverage` check combines branch coverage from Python 3.11 and 3.14
+and requires 100% for `src/pydantic_clai2`. It is separate from Harness coverage;
+passing CLAI test jobs alone does not mean either coverage gate has passed.
+Tracked under [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
+
+## Start chatting
+
+Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
+Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
+Type `/set model ` and press Tab to pick another provider-qualified model name.
+The choice is saved in SQLite and used for the next prompt without restarting.
+
+From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
+
+For API-key providers, set the provider's API key environment variable before starting.
+Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
+can read and modify files and execute commands with your user permissions. Run it
+in a workspace you trust. CLAI does not add a sandbox or approval layer.
+
+The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
+pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
+The splash is disabled for redirected output, CLI arguments, small terminals,
+Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
+
+## Codex authentication
+
+`/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
+authorization code with PKCE, state validation, and a callback at
+`http://localhost:1455/auth/callback`. It times out after five minutes. The browser
+must be able to reach that callback on the machine running CLAI.
+
+Tokens live in the configured Python `keyring` backend under service `pydantic-clai2`,
+not in SQLite or `~/.codex/auth.json`. Choose an OS-backed credential store: CLAI
+uses the configured backend and does not enforce its encryption or storage policy.
+Installing or selecting a plaintext backend can store tokens in plaintext. Core owns
+token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
+the browser, and OAuth exchange and do not access real credentials.
+
+The default Coder shell runs under your OS identity, without a sandbox. Commands
+can read files and access credential backends available to that identity, including
+CLAI's tokens. Keyring is storage, not isolation from model-controlled commands.
+Use a separate OS account or isolated environment for untrusted repositories.
+
+The requested default does not guarantee model availability for a subscription.
+Custom agents supplied to `chat` retain their model unless settings explicitly
+select an override. `/login` is async, and plugin command handlers may also return
+an awaitable string.
+
+## Settings and commands
+
+Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to
+`~/.config/pydantic-clai2/config.db`. Use `--database PATH` to select another database.
+There is no automatic repository config loading. Conversation messages and CLAI's
+Codex tokens are not written to the settings database. Plugin settings are arbitrary
+JSON stored in plaintext in this database, including secrets if you put them there.
+Pass secret references or use plugin-owned credential storage instead of embedding keys.
+
+```text
+/set
+/set model <Tab>
+/set display.thinking false
+/set run.request_limit 10000
+```
+
+Tab completes setting names, boolean values, and model names from Pydantic AI's
+built-in catalog without network access. Provider prefixes include `openai-codex:`,
+which core supports but does not currently include in that model catalog. Complete
+the provider prefix, then enter the model identifier; suggestions do not establish
+subscription availability. Custom model identifiers are accepted too.
+
+The command registry uses Termflow's `Completer`, `Document`, and `Completion`
+types. The current input widget and popup still use prompt-toolkit through a small
+adapter; replacing that editor with a Termflow-based editor is separate work.
+`/set SETTING` shows its current value. `/set` changes apply to subsequent prompts
+and preserve conversation history; splash changes apply at next startup.
+
+Precedence is defaults, SQLite overrides, `CLAI_MODEL`, then explicit CLI flags.
+Settings are validated before writes. `/set` updates the active settings snapshot;
+legacy `/config` writes and plugin changes apply on restart. `--request-limit` controls the full prompt's model-request budget.
+
+Interactive commands: `/login`, `/set`, `/help`, `/new`, `/exit`, `/config`, and `/plugins`.
+Tab completion suggests commands, settings, boolean values, plugin identifiers,
+and paths after `@`. Path completion inserts a path; it does not attach file contents.
+Unknown slash commands are not sent to the model. Up/down recall prompt history
+within this process. Ctrl-D exits. Ctrl-C at input clears the line; during a run it
+exits and unwinds the agent. No cancelled run is automatically retried.
+
+## Bring an agent
+
+```python
+import asyncio
+from pydantic_ai import Agent
+from pydantic_clai2 import chat
+
+agent = Agent('test')  # No capabilities required.
+asyncio.run(chat(agent, deps=None))
+```
+
+`Session(agent, deps=..., plugins=..., on_stream_event=...)` is the noninteractive
+API. Call `await session.prompt(text)` for each turn. Native `agent.run` drives the
+loop through tools to completion. Successful turns retain `result.all_messages()`;
+failed or cancelled turns leave the previous history intact, though external tool
+side effects may already have occurred. History is in memory only. Structured
+outputs are supported and displayed after completion.
+
+CLAI uses Termflow's Dracula palette for Markdown (purple headings, pink markers,
+cyan links). This is local to the renderer; it does not change terminal colors or
+Termflow defaults in other applications. Code syntax highlighting retains Termflow's
+Monokai default.
+
+Streaming matches Code Puppy's separate output and thinking paths:
+
+- Markdown uses Termflow `SmoothWriter`: 12 ms ticks, 0.5-second catch-up,
+  minimum one visible character per tick. Markdown is parsed line-by-line.
+- Thinking deltas feed `StreamSmoother` immediately: 20 ms ticks, 0.4-second
+  catch-up, minimum two characters per tick. They display as dim literal text,
+  without waiting for newlines or interpreting Markdown.
+- Smoothing applies only to interactive terminal output. Redirected output is
+  written directly. Parts drain before the next heading, tool status, or prompt.
+
+`/set display.smooth_seconds 0.5` restores the Code Puppy response catch-up
+window if you previously saved a slower preference. This response-only setting
+accepts 0.1 to 5 seconds; thinking retains its separate 0.4-second window.
+Empty thinking parts show no heading. The CLI disables core's first-run
+observability banner.
+Cancellation discards queued output. Incomplete Markdown lines are still buffered
+until a newline or part end; smoothing does not remove that parsing delay.
+Thinking signatures without text cannot be shown. A supplied agent's existing
+stream handler is preserved. Custom renderer integrations must await `finish()`
+and use `await abort()` on cancellation.
+
+Response and thinking parts end with a blank separator line; responses have no
+repeated CLAI heading. Intermediate text is flushed when a tool-call part begins,
+before the tool's arguments finish streaming. Incomplete lines within a text part
+still wait for a newline or part boundary, as in Code Puppy's Markdown path.
+
+Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Long names
+are truncated to one terminal row. Completion activity remains in the footer
+rather than adding a separate `Finished:` line to the transcript.
+
+## Grep previews
+
+Grep calls display the expression and path. Results show the first 20 logical
+lines by default; `/set display.grep_lines 10` changes the next turn's preview
+(0 to 1000). `Truncated N result lines` counts returned lines hidden by the UI,
+including context lines. If the tool itself capped the search, a separate notice
+states that the additional result count is unknown. No matches is shown explicitly.
+The model still receives the original tool result.
+
+Shell output is rendered one completed line at a time. Carriage-return progress
+updates replace the buffered line rather than printing control-code text; the last
+update appears at newline or tool completion. CRLF works across chunk boundaries.
+Long display lines are ellipsized to terminal width. Multiline commands show their
+first line and the number of additional command lines rather than dumping scripts.
+Full output remains in the log; display formatting does not alter model results.
+
+## Shell preview limit
+
+Shell output defaults to the first 20 logical lines per command. Change it with
+`/set display.shell_lines 50` (0 to 1000; zero hides output). The setting applies
+to the next prompt. After the command returns, `Truncated N lines` reports omitted
+lines from the log snapshot at that time, including an unterminated final line.
+The capability's 16 KB event preview cap can shorten the preview further. Full
+output remains in the displayed log path. Background commands can keep writing
+after the snapshot; those future lines are not included in its count.
+
+Read headers show the path, zero-based offset, and effective line limit (Coder
+default and maximum: 2000). Listing headers show the directory, recursive mode,
+result limit (default 200), and optional glob. Coder listings recurse using
+ripgrep and honor ignore rules. These displayed defaults describe Coder tools.
+
+File-write/edit headers include the path on the same line as the tool name.
+Shell headers include the command on that line. Arguments use cyan, with no
+repeated completion heading before the diff or output.
+
+## Tool details
+
+Native capability events drive specialized output: `FileEditedEvent` renders its
+bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
+uses. Addition backgrounds are muted teal (`#203c3b`), deletion backgrounds are
+muted burgundy (`#432d3b`), and brighter markers distinguish the changes. Code
+syntax colors are unchanged. Successful file writes also show the proposed diff from their matching
+`FileChangeRequestEvent`: new files show additions, overwrites show before/after
+changes. Without a matching request event, only the written path is shown. Failed
+or cancelled writes do not display a success diff. Large diffs retain the
+filesystem's truncation notice. Coder shell events show the command, attached
+combined output, exit status (or background state), and durable log paths. Output
+is capped by the capability and truncation is marked. The standalone `Shell`
+capability does not yet emit these Coder-specific shell events.
+
+Terminal control characters in model text and diffs are escaped before rendering.
+Shell output permits ANSI SGR color/style sequences, decoded into Rich text rather
+than passed directly to the terminal. Styles persist across chunks and lines per
+command; cursor movement, clipboard commands, and other controls remain escaped.
+Plain shell output stays dim. ANSI generated by Termflow itself is retained.
+
+## Status line
+
+The terminal footer shows the selected model, activity spinner, latest reported
+context tokens, and streamed output estimate, including text, thinking, and
+string tool-argument deltas. The estimate is characters divided by four, not a
+provider tokenizer count. On completion it is replaced by reported run output
+usage. Context is the most recent response's reported input plus output tokens,
+not cumulative conversation billing or a context-window percentage; `?` means
+unavailable. During a request it may reflect the previous response.
+
+While running, the footer reserves the terminal's bottom row using ANSI scrolling
+regions. Prompt-toolkit owns the footer while accepting input. The run footer is
+disabled for redirected output and restores normal scrolling on cancellation or
+failure. The cursor is hidden during runs and restored on completion, failure,
+or cancellation. No model requests or telemetry are added for status reporting.
+
+## Capability plugins
+
+Plugins are native `AbstractCapability` instances, supplied per run. Use core's
+`@on_event` for typed `AgentStreamEvent` or `CapabilityEvent` subscriptions. There
+is no second event dispatcher or global callback registry.
+
+```python
+from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, on_event
+
+
+class AuditPlugin(AbstractCapability[None]):
+    @on_event(CapabilityEvent)
+    async def record(self, ctx: RunContext[None], event: CapabilityEvent) -> None:
+        print(type(event).__name__)
+```
+
+Pass instances through `chat(..., plugins=[AuditPlugin()])` or `Session`.
+For the default CLI, explicitly register an importable class:
+
+```sh
+clai2 plugins add audit my_plugins:AuditPlugin
+clai2 plugins list
+clai2 plugins disable audit
+```
+
+An optional fourth argument to `plugins add` is a JSON settings object. Its entries
+are passed as constructor keyword arguments; the plugin owns validation, preferably
+with its own Pydantic model. Disabled plugins are not imported. Plugins execute
+trusted Python code with your permissions. Only register code you trust.
+
+### Plugin commands
+
+Capabilities can explicitly implement the typed `CommandProvider` protocol.
+CLAI calls `get_commands(context)` once at startup and registers the returned
+immutable `Command` declarations. Handlers receive parsed arguments and return
+text; completion providers receive argument prefixes and return suggestions.
+
+```python
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_clai2.command_context import CommandContext, CommandProvider
+from pydantic_clai2.commands import Command
+
+
+class GreetingPlugin(AbstractCapability[None], CommandProvider):
+    def get_commands(self, context: CommandContext) -> list[Command]:
+        return [
+            Command(
+                name='greet',
+                description='Show a greeting',
+                handler=lambda args: 'Hello ' + (' '.join(args) or 'there'),
+                complete=lambda args: ('Mike',),
+            )
+        ]
+```
+
+Pass `GreetingPlugin()` through `plugins=` or register its class with `/plugins`.
+Its `/greet` command appears in help and autocomplete automatically. `CommandContext`
+provides active settings, the settings store, history clearing, and the validated
+`set_setting` operation. Duplicate names, including collisions with built-ins, are
+rejected before a provider's commands are installed. Registries are conversation-local.
+There are no string event names or global callback hooks. Native `@on_event`
+methods remain responsible for runtime agent/capability event subscriptions.
+
+## Telemetry and references
+
+CLAI emits no additional telemetry. Pydantic AI's own instrumentation covers model
+requests, tools, and capability hooks when configured on the supplied agent.
+
+- [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)
+- [Capability events](https://pydantic.dev/docs/ai/capabilities/overview/)
+- [Code Puppy splash](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/splash.py)
+- [Code Puppy streaming](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/agents/event_stream_handler.py)
+- [Code Puppy command registry](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/command_line/command_registry.py)
+
+See `THIRD_PARTY_NOTICES.md` for attribution.

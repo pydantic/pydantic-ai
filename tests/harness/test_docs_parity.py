@@ -98,7 +98,7 @@ _DOCS_DIR = _ROOT / 'docs'
 # `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
 # and `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, so the
 # capability-page checks do not apply to either.
-_NON_CAPABILITY_PAGES = {'examples.md', 'gh-aw.md', 'index.md', 'media.md', 'mutation-testing.md'}
+_NON_CAPABILITY_PAGES = {'clai2.md', 'examples.md', 'gh-aw.md', 'index.md', 'media.md', 'mutation-testing.md'}
 _ACP_PAGE = 'acp.md'
 
 _SOURCE_LINK = 'github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/'

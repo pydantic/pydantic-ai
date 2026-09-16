@@ -1,0 +1,92 @@
+"""Interactive application error, cancellation, and input boundaries."""
+
+import asyncio
+import io
+import signal
+from pathlib import Path
+from typing import Generic, TypeVar
+
+import pytest
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.test import TestModel
+from rich.console import Console
+
+from pydantic_clai2 import chat
+from pydantic_clai2.config import Settings
+from pydantic_clai2.settings_store import SettingsStore
+
+PromptT = TypeVar('PromptT')
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return 'asyncio'
+
+
+def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -> None:
+    class Prompt(Generic[PromptT]):
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def prompt_async(self, label: str) -> str:
+            value = values.pop(0)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+
+    monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+
+
+@pytest.mark.parametrize('mode', ['eof', 'interrupt', 'error', 'cancel', 'double', 'structured'])
+async def test_chat_boundaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    output = io.StringIO()
+    values: list[str | BaseException] = [' ', '/bad', 'run', '/exit']
+    if mode == 'eof':
+        values = [EOFError()]
+    elif mode == 'interrupt':
+        values = [KeyboardInterrupt(), KeyboardInterrupt()]
+
+    class Behaviour(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if mode == 'error':
+                raise ValueError('broken provider')
+            if mode in ('cancel', 'double'):
+                signal.raise_signal(signal.SIGINT)
+                if mode == 'double':
+                    signal.raise_signal(signal.SIGINT)
+                await asyncio.sleep(0)
+            return request_context
+
+    inputs(monkeypatch, values)
+    console = Console(file=output, width=20 if mode == 'eof' else 120)
+    store = SettingsStore(tmp_path / 'config.db')
+    if mode == 'structured':
+        await chat(Agent(TestModel(), output_type=list[int]), deps=None, console=console, store=store)
+    else:
+        await chat(
+            Agent(TestModel(), deps_type=type(None), capabilities=[Behaviour()]),
+            deps=None,
+            console=console,
+            store=store,
+        )
+    if mode == 'error':
+        assert 'broken provider' in output.getvalue()
+    elif mode == 'cancel':
+        assert 'Turn cancelled' in output.getvalue()
+    elif mode == 'interrupt':
+        assert 'Input cleared' in output.getvalue()
+
+
+async def test_model_string_and_non_command_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inputs(monkeypatch, ['/set', '/set display.thinking', '/config show', '/plugins list', '/new', '/exit'])
+    await chat(
+        Agent('test'),
+        deps=None,
+        plugins=[AbstractCapability()],
+        settings=Settings(model='test'),
+        console=Console(file=io.StringIO()),
+        store=SettingsStore(tmp_path / 'config.db'),
+    )

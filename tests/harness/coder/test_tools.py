@@ -1,15 +1,18 @@
 import os
+import shlex
+import sys
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 import pytest
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability
+from anyio.to_thread import run_sync
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.coder import Coder, ShellFinishedEvent, ShellOutputEvent, ShellStartedEvent
 
 pytestmark = pytest.mark.anyio
 
@@ -20,6 +23,7 @@ async def call(
     arguments: dict[str, object],
     *,
     capabilities: Sequence[AbstractCapability[None]] = (),
+    unrestricted_filesystem: bool = False,
 ) -> str:
     calls = 0
 
@@ -41,7 +45,7 @@ async def call(
     result = await Agent(
         FunctionModel(respond, stream_function=stream),
         deps_type=type(None),
-        capabilities=[Coder(tmp_path), *capabilities],
+        capabilities=[Coder(tmp_path, unrestricted_filesystem=unrestricted_filesystem), *capabilities],
     ).run('Use the tool')
     return '\n'.join(
         str(part.content)
@@ -121,6 +125,115 @@ class TestCoder:
     )
     async def test_search_errors(self, tmp_path: Path, name: str, arguments: dict[str, object]) -> None:
         assert await call(tmp_path, name, arguments)
+
+    @pytest.mark.parametrize('relative', [False, True])
+    async def test_unrestricted_files_keep_workspace_relative_paths(self, tmp_path: Path, relative: bool) -> None:
+        workspace = tmp_path / 'workspace'
+        workspace.mkdir()
+        outside = tmp_path / '.env'
+        outside.write_text('before')
+        await call(
+            workspace,
+            'edit_file',
+            {'path': '../.env' if relative else str(outside), 'old_text': 'before', 'new_text': 'after'},
+            unrestricted_filesystem=True,
+        )
+        assert outside.read_text() == 'after'
+        await call(workspace, 'write_file', {'path': 'local.txt', 'content': 'local'}, unrestricted_filesystem=True)
+        assert (workspace / 'local.txt').read_text() == 'local'
+        assert 'after' in await call(workspace, 'read_file', {'path': '../.env'}, unrestricted_filesystem=True)
+
+    async def test_grep_file_and_unrestricted_directory(self, tmp_path: Path) -> None:
+        workspace = tmp_path / 'workspace'
+        workspace.mkdir()
+        target = tmp_path / '-outside.txt'
+        target.write_text('needle\n')
+        assert 'inside the workspace' in await call(workspace, 'grep', {'path': str(target), 'pattern': 'needle'})
+        for path in (str(target), str(tmp_path)):
+            output = await call(workspace, 'grep', {'path': path, 'pattern': 'needle'}, unrestricted_filesystem=True)
+            assert 'needle' in output and 'outside.txt' in output
+        local = workspace / 'local.txt'
+        local.write_text('local match\n')
+        assert 'local match' in await call(workspace, 'grep', {'path': 'local.txt', 'pattern': 'match'})
+
+    async def test_listing_rejects_file(self, tmp_path: Path) -> None:
+        path = tmp_path / 'file'
+        path.write_text('content')
+        assert 'existing directory' in await call(tmp_path, 'list_files', {'path': 'file'})
+
+    async def test_shell_partial_utf8_preview(self, tmp_path: Path) -> None:
+        events: list[str] = []
+
+        class Observer(AbstractCapability[None]):
+            @on_event(ShellOutputEvent)
+            async def output(self, ctx: RunContext[None], event: ShellOutputEvent) -> None:
+                events.append(event.text)
+
+        await call(tmp_path, 'shell', {'command': "printf '\\342\\202'"}, capabilities=[Observer()])
+        assert ''.join(events) == '\ufffd'
+
+    async def test_large_sparse_log_does_not_scan(self, tmp_path: Path) -> None:
+        finished: list[ShellFinishedEvent] = []
+
+        class Observer(AbstractCapability[None]):
+            @on_event(ShellFinishedEvent)
+            async def finish(self, ctx: RunContext[None], event: ShellFinishedEvent) -> None:
+                finished.append(event)
+
+        script = 'import os; os.ftruncate(1, 1 << 32)'
+        await call(
+            tmp_path,
+            'shell',
+            {'command': f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'},
+            capabilities=[Observer()],
+        )
+        assert finished[0].total_lines is None
+        assert finished[0].truncated
+
+    async def test_shell_events(self, tmp_path: Path) -> None:
+        events: list[ShellStartedEvent | ShellOutputEvent | ShellFinishedEvent] = []
+
+        class Observer(AbstractCapability[None]):
+            @on_event(ShellStartedEvent, ShellOutputEvent, ShellFinishedEvent)
+            async def observe(
+                self, ctx: RunContext[None], event: ShellStartedEvent | ShellOutputEvent | ShellFinishedEvent
+            ) -> None:
+                events.append(event)
+
+        result = await call(tmp_path, 'shell', {'command': 'printf hello'}, capabilities=[Observer()])
+        assert 'hello' in result
+        assert isinstance(events[0], ShellStartedEvent)
+        assert isinstance(events[-1], ShellFinishedEvent)
+        assert events[-1].total_lines == 1
+        assert ''.join(event.text for event in events if isinstance(event, ShellOutputEvent)) == 'hello'
+
+    @pytest.mark.skipif(os.name == 'nt', reason='POSIX FIFO handshake')
+    async def test_shell_output_arrives_before_command_exit(self, tmp_path: Path) -> None:
+        release = tmp_path / 'release.pipe'
+        os.mkfifo(release)
+        finished: list[ShellFinishedEvent] = []
+
+        class Observer(AbstractCapability[None]):
+            @on_event(ShellOutputEvent)
+            async def output(self, ctx: RunContext[None], event: ShellOutputEvent) -> None:
+                if 'ready' in event.text:
+                    await run_sync(release.write_text, 'continue\n')
+
+            @on_event(ShellFinishedEvent)
+            async def finish(self, ctx: RunContext[None], event: ShellFinishedEvent) -> None:
+                finished.append(event)
+
+        result = await call(
+            tmp_path,
+            'shell',
+            {
+                'command': 'printf ready; read reply < release.pipe; printf done',
+                'timeout': 5,
+            },
+            capabilities=[Observer()],
+        )
+        assert 'readydone' in result
+        assert finished[0].exit_code == 0
 
     async def test_shell(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv('OPENAI_API_KEY', 'do-not-expose')

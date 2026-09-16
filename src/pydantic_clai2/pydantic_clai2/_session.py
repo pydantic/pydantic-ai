@@ -1,0 +1,94 @@
+"""Conversation state and run-scoped capability plugins."""
+
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from typing import Generic, TypeVar
+
+from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext
+from pydantic_ai.agent import AbstractAgent
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import Model
+from pydantic_ai.usage import UsageLimits
+
+DepsT = TypeVar('DepsT')
+OutputT = TypeVar('OutputT')
+
+
+class Session(Generic[DepsT, OutputT]):
+    """Run prompts to completion, retaining successful turns in memory.
+
+    Plugins are native capabilities: use `@on_event` to subscribe to typed
+    core or capability events. They are added per run, not to the agent itself.
+    """
+
+    def __init__(
+        self,
+        agent: AbstractAgent[DepsT, OutputT],
+        *,
+        deps: DepsT,
+        plugins: Sequence[AbstractCapability[DepsT]] = (),
+        message_history: Sequence[ModelMessage] = (),
+        usage_limits: UsageLimits | None = None,
+        on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
+    ) -> None:
+        self.model: str | None = None
+        self.resolve_model: Callable[[str], Model | str] = lambda name: name
+        self.agent = agent
+        self.deps = deps
+        self.plugins = tuple(plugins)
+        self.usage_limits = usage_limits
+        self.on_stream_event = on_stream_event
+        self._messages = list(message_history)
+        self._running = False
+        self.on_context_usage: Callable[[int], None] | None = None
+
+    @property
+    def messages(self) -> list[ModelMessage]:
+        """Return a snapshot of the conversation's message list."""
+        return list(self._messages)
+
+    def clear(self) -> None:
+        """Start a new conversation without replacing the agent or plugins."""
+        if self._running:
+            raise RuntimeError('Cannot clear a running conversation')
+        self._messages.clear()
+
+    async def prompt(self, text: str) -> AgentRunResult[OutputT]:
+        """Execute the complete native agent loop, including tool calls."""
+        if self._running:
+            raise RuntimeError('A conversation can only run one prompt at a time')
+        self._running = True
+        try:
+            result = await self.agent.run(
+                text,
+                deps=self.deps,
+                model=self.resolve_model(self.model) if self.model is not None else None,
+                message_history=self._messages,
+                capabilities=self.plugins,
+                usage_limits=self.usage_limits,
+                event_stream_handler=self._stream,
+            )
+            self._messages = result.all_messages()
+            return result
+        finally:
+            self._running = False
+
+    async def _stream(self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async def observed() -> AsyncIterable[AgentStreamEvent]:
+            async for event in events:
+                if self.on_context_usage is not None:
+                    for message in reversed(ctx.messages):
+                        if isinstance(message, ModelResponse) and message.usage.input_tokens:
+                            self.on_context_usage(message.usage.total_tokens)
+                            break
+                if self.on_stream_event is not None:
+                    await self.on_stream_event(event)
+                yield event
+
+        # Preserve a supplied agent's handler instead of replacing its observers.
+        handler = self.agent.event_stream_handler
+        if handler is not None:
+            await handler(ctx, observed())
+        else:
+            async for _ in observed():
+                pass

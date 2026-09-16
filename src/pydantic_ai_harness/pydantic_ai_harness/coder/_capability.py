@@ -61,13 +61,16 @@ class Coder(CombinedCapability[AgentDepsT]):
         workspace: str | Path = '.',
         *,
         instructions: str | None = None,
+        unrestricted_filesystem: bool = False,
     ) -> None:
         super().__init__(
             [
                 _RepairToolArguments[AgentDepsT](),
                 Capability[AgentDepsT](
                     instructions=INSTRUCTIONS + ('\n' + instructions if instructions else ''),
-                    toolsets=[CoderToolset[AgentDepsT](Path(workspace))],
+                    toolsets=[
+                        CoderToolset[AgentDepsT](Path(workspace), unrestricted_filesystem=unrestricted_filesystem)
+                    ],
                 ),
                 RepoContext[AgentDepsT](workspace_dir=Path(workspace), expose_inventory_tool=False),
                 ClearToolResults[AgentDepsT](max_fraction=0.7),
