@@ -26,6 +26,14 @@ Custom agents can opt in with `customization_guide()` from
 write files, activate plugins, or grant permission to execute generated code.
 Keep the bundled guide aligned with this contract when changing plugin APIs.
 
+## Credentials
+
+CLAI's `/login openai-codex` stores tokens in the configured keyring backend,
+not plugin settings. Large token bundles use multiple entries to fit Windows
+Credential Manager's size limit. This does not change plugin APIs or add a
+plaintext fallback. See [Codex authentication](README.md#codex-authentication)
+for storage and security details.
+
 ## Where plugins live
 
 Plugins are trusted Python code. Drop-in files execute automatically at startup;

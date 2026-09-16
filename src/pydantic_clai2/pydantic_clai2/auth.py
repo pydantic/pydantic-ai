@@ -3,7 +3,6 @@
 import asyncio
 import webbrowser
 
-import keyring
 from pydantic import TypeAdapter, ValidationError
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai_codex import OpenAICodexModel
@@ -16,10 +15,9 @@ from pydantic_ai.providers.openai_codex import (
 from rich.console import Console
 
 from . import theme
+from .credential_store import load_codex_credentials, save_codex_credentials
 
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
-_SERVICE = 'pydantic-clai2'
-_ACCOUNT = 'openai-codex'
 
 
 class CodexCredentials(OpenAICodexCredentialSource):
@@ -27,7 +25,7 @@ class CodexCredentials(OpenAICodexCredentialSource):
 
     async def load(self) -> OpenAICodexCredentials:
         """Load credentials without falling back to another application's tokens."""
-        value = await asyncio.to_thread(keyring.get_password, _SERVICE, _ACCOUNT)
+        value = await asyncio.to_thread(load_codex_credentials)
         if value is None:
             raise UserError('Codex is not connected. Run /login openai-codex.')
         try:
@@ -38,9 +36,7 @@ class CodexCredentials(OpenAICodexCredentialSource):
     async def save(self, credentials: OpenAICodexCredentials) -> None:
         """Persist login or refresh results using the configured OS credential backend."""
         value = _CREDENTIALS.dump_json(credentials).decode()
-        await asyncio.to_thread(keyring.set_password, _SERVICE, _ACCOUNT, value)
-        if await asyncio.to_thread(keyring.get_password, _SERVICE, _ACCOUNT) != value:
-            raise UserError('The credential backend did not retain the Codex login. Configure an OS keyring backend.')
+        await asyncio.to_thread(save_codex_credentials, value=value)
 
 
 class CodexAuth:

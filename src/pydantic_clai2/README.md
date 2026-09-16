@@ -66,7 +66,9 @@ authorization code with PKCE, state validation, and a callback at
 must be able to reach that callback on the machine running CLAI.
 
 Tokens live in the configured Python `keyring` backend under service `pydantic-clai2`,
-not in SQLite or `~/.codex/auth.json`. Choose an OS-backed credential store: CLAI
+not in SQLite or `~/.codex/auth.json`. Large token bundles are split across keyring
+entries to fit Windows Credential Manager's per-entry size limit. Existing
+single-entry logins remain readable. Choose an OS-backed credential store: CLAI
 uses the configured backend and does not enforce its encryption or storage policy.
 Installing or selecting a plaintext backend can store tokens in plaintext. Core owns
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
