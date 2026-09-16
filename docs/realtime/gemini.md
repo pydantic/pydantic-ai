@@ -42,9 +42,11 @@ differs from every other Live model in three ways the model handles for you:
 - **Its tool calls are always asynchronous.** `google_async_tool_calls` is on regardless, and setting it
   to `False` raises [`UserError`][pydantic_ai.exceptions.UserError] rather than promising a blocking mode
   the model doesn't have.
-- **Its spoken filler doesn't end the turn.** The filler is a completed `ModelResponse` of its own, so
-  one exchange can produce several, but `RealtimeTurnCompleteEvent` waits for the model to actually
-  finish. A UI that shows "thinking…" should key off that event, not off each response.
+- **Its spoken filler doesn't end the turn.** Gemini closes the filler's response and says the
+  interaction is still in progress, so the filler and the tool call it was stalling for are recorded
+  as one `ModelResponse`, and `RealtimeTurnCompleteEvent` waits for the model to actually finish. A UI
+  that shows "thinking…" should key off that event. An utterance the user barges in on is the
+  exception: it really is over, and is recorded as its own interrupted response.
 
 `gemini-3.8-live` is the same family without background reasoning: it takes no thinking configuration
 at all, and a [`thinking`](../capabilities/thinking.md) setting is ignored rather than sent.

@@ -631,24 +631,22 @@ async def test_extended_thinking_async_tool_round(
     )
     messages = session.all_messages()
     assert [type(m).__name__ for m in messages] == snapshot(
-        # Two assistant responses before the tool return: the spoken filler is a completed generation of
-        # its own, and the tool call arrives in the next one.
-        ['ModelRequest', 'ModelResponse', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+        # One `ModelResponse` for the whole stalled exchange: the model's `turn_complete` after the filler
+        # came with `interaction_status: IN_PROGRESS`, so the utterance and the tool call it was stalling
+        # for stay together rather than splitting into two responses.
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
     )
-    filler = messages[1]
-    assert isinstance(filler, ModelResponse)
-    filler_part = filler.parts[0]
+    stalled = messages[1]
+    assert isinstance(stalled, ModelResponse)
+    filler_part = stalled.parts[0]
     assert isinstance(filler_part, SpeechPart)
     assert filler_part.transcript == snapshot('Let me check the available flights for you.')
-    # The filler was reasoned about, and those thinking tokens are billed against it rather than folded
-    # into the answer's response.
-    assert filler.usage.details['thoughts_tokens'] == snapshot(71)
+    assert stalled.parts[1] == ToolCallPart(tool_name='search_flights', args=IsStr(), tool_call_id=IsStr())
+    # The filler's reasoning is billed against the response that carries it; Gemini's tool-call frame has
+    # no usage of its own to merge in.
+    assert stalled.usage.details['thoughts_tokens'] == snapshot(71)
 
-    tool_response = messages[2]
-    assert isinstance(tool_response, ModelResponse)
-    assert tool_response.parts == [ToolCallPart(tool_name='search_flights', args=IsStr(), tool_call_id=IsStr())]
-
-    final = messages[4]
+    final = messages[3]
     assert isinstance(final, ModelResponse)
     final_part = final.parts[0]
     assert isinstance(final_part, SpeechPart)

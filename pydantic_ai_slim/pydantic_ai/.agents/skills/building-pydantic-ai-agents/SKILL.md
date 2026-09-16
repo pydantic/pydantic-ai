@@ -316,8 +316,8 @@ Key facts for building realtime agents:
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
   `google_async_tool_calls=True` on a native-audio model, and does it unconditionally on
   `gemini-3.8-live-extended-thinking`, which has no blocking mode and reasons in the background —
-  it can speak a filler, end that response, run the tool, and speak again, all inside one exchange,
-  so read `RealtimeTurnCompleteEvent` rather than each response to know it's done). An unhandled tool exception is raised
+  it speaks a filler, runs the tool, and speaks again inside one exchange, so read
+  `RealtimeTurnCompleteEvent` rather than each response to know it's done). An unhandled tool exception is raised
   from session iteration; when only `stream_audio()` or `stream_transcripts()` is consumed, it ends
   those views and is raised when the session context closes. An `on_tool_execute_error` capability
   can return a replacement result or raise `ModelRetry` to keep the session running. To end the call

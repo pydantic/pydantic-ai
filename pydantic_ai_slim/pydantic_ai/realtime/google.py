@@ -209,7 +209,13 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     google_voice: str
     """Prebuilt voice used for audio output, e.g. `Puck`."""
     google_multi_speaker: MultiSpeaker
-    """Per-speaker voice assignments; takes precedence over `google_voice`."""
+    """Per-speaker voice assignments; takes precedence over `google_voice`.
+
+    No Gemini Live model supports this: `google-genai` refuses a multi-speaker voice config on the Live
+    path outright (`ValueError: multi_speaker_voice_config is not supported in the live API`), so setting
+    it raises rather than assigning voices. Multi-speaker output is a
+    [text-to-speech](../models/google.md) feature; a Live session has one voice, set with `google_voice`.
+    """
     google_affective_dialog: bool
     """Whether to enable emotion-aware delivery (native-audio models only)."""
     google_proactive_audio: bool

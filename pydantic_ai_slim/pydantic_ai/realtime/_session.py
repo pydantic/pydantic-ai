@@ -1917,6 +1917,20 @@ class RealtimeSession:
             or any(isinstance(part, ToolCallPart) for part in self._response_parts)
         )
         self._response_finalized_before_terminal = False
+        if event.more_expected and not event.interrupted:
+            # The provider ended this response but said the exchange isn't over: a background-reasoning
+            # model speaks a filler, closes the response, and only then calls the tool it was stalling
+            # for. Treat the boundary as mid-response and keep accumulating, so the utterance and the
+            # tool call it belongs to land in one `ModelResponse` — the same shape a response whose
+            # usage arrives mid-part gets. Its terminal metadata carries forward in the pending slots,
+            # and the terminal that *does* end the exchange finalizes the lot.
+            #
+            # An interrupted response is exempt: the user barged in, so that utterance really is over
+            # and belongs in history as its own interrupted response rather than absorbing what the
+            # model says next.
+            self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
+            self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
+            return events
         self._finalize_response(
             provider_response_id=event.provider_response_id,
             # An interrupted turn (barge-in) isn't an error and has no dedicated `FinishReason`; leave
