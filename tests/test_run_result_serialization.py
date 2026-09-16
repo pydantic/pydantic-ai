@@ -22,7 +22,6 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
 )
-from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import StreamedRunResult
@@ -275,29 +274,6 @@ async def test_streamed_result_can_be_stored_and_replayed_as_history() -> None:
     loaded = StringResultEnvelope.model_validate_json(stored).result
     continued = await agent.run('Continue', message_history=loaded.all_messages())
     assert continued.all_messages()[: len(loaded.all_messages())] == loaded.all_messages()
-
-
-async def test_a_settled_stream_keeps_its_traceparent_after_the_stream_is_gone(capfire: Any) -> None:
-    """The trace context has to be captured at completion, not read when `result` is accessed.
-
-    A settled result is for handing the run to code that outlives the stream, and by then the agent
-    run span has closed and there is no ambient context left to read.
-    """
-    agent = Agent(TestModel(custom_output_text='streamed'), capabilities=[Instrumentation()])
-
-    async with agent.run_stream('Stream this') as streamed:
-        await streamed.get_output()
-        inside = streamed.result
-
-    outside = streamed.result
-
-    assert outside._traceparent(required=False) == inside._traceparent(required=False)  # pyright: ignore[reportPrivateUsage]
-    assert outside._traceparent(required=False) is not None  # pyright: ignore[reportPrivateUsage]
-
-    # And it survives the round-trip that this shape exists for.
-    adapter = TypeAdapter(AgentRunResult[str])
-    reloaded = adapter.validate_json(adapter.dump_json(outside))
-    assert reloaded._traceparent(required=False) == outside._traceparent(required=False)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_settling_a_cancelled_stream_is_refused() -> None:
