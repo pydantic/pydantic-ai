@@ -75,9 +75,9 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     - Coding instructions and six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`.
     - JSON argument repair before normal tool validation.
-    - [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/) with its inventory tool disabled.
-    - [`ClearToolResults(max_fraction=0.7)` and `WarnNearLimits(max_context_fraction=0.9)`](https://pydantic.dev/docs/ai/harness/compaction/).
-    - A [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization that truncates results over 64,000 characters without adding a retrieval tool.
+    - [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/) for repository instructions and structure.
+    - [`ClearToolResults` and `WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/).
+    - A [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization for bounded tool output.
 
     Use `Coder` for this exact composition, including its private tools and repair implementation. The public repository-context and context-management capabilities can also be used independently. Standalone [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/), [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`Planning`](https://pydantic.dev/docs/ai/harness/planning/), and [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) remain available for other compositions; `Coder` no longer bundles them. See the [Coder composition documentation](https://pydantic.dev/docs/ai/harness/coder/#instructions-and-composition) for configuration and migration details.
 
