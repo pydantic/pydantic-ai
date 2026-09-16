@@ -53,6 +53,7 @@ constraints = [
     { name = "urllib3", specifier = ">=2.7.0" },
     { name = "xgrammar", specifier = ">=0.1.32" },
 ]
+build-constraints = [{ name = "hatchling", specifier = "<1.32" }]
 
 [[package]]
 name = "accelerate"

@@ -191,15 +191,34 @@ def _embedded_ipv4s(ip: ipaddress.IPv6Address, *, exhaustive: bool) -> set[ipadd
     return candidates
 
 
-def is_cloud_metadata_ip(ip_str: str) -> bool:
-    """Check if an IP address is a cloud metadata/credential endpoint.
+def _parse_ip(ip_str: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse an IP address for blocklist comparison, or return `None` if it is not one.
 
-    These are always blocked for security reasons, even with allow_local=True. IPv6
-    transition forms are decoded so a metadata IP cannot be smuggled in as IPv6.
+    An IPv6 literal may carry a zone identifier (`fd00:ec2::254%251`, RFC 4007 §11), which
+    Python folds into address equality and hashing. A zone is only meaningful for a
+    link-local destination — the kernel ignores it for anything else and delivers the
+    request to the address regardless — so it must never change how a guard classifies
+    the address. Dropping it once, here, keeps every guard comparing the address itself,
+    whether it compares by set membership or by network containment.
     """
     try:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.scope_id is not None:
+        ip = ipaddress.IPv6Address(ip.packed)
+    return ip
+
+
+def is_cloud_metadata_ip(ip_str: str) -> bool:
+    """Check if an IP address is a cloud metadata/credential endpoint.
+
+    These are always blocked for security reasons, even with allow_local=True. IPv6
+    transition forms are decoded, and zone identifiers dropped, so a metadata IP cannot be
+    smuggled in as IPv6.
+    """
+    ip = _parse_ip(ip_str)
+    if ip is None:
         return False
     if isinstance(ip, ipaddress.IPv4Address):
         return ip in _CLOUD_METADATA_IPV4
@@ -212,11 +231,11 @@ def is_private_ip(ip_str: str) -> bool:
     """Check if an IP address is in a private/internal range.
 
     Handles both IPv4 and IPv6 addresses, including IPv6 transition forms that embed an
-    IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, NAT64, ISATAP).
+    IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, NAT64, ISATAP) and zone-scoped
+    literals.
     """
-    try:
-        ip = ipaddress.ip_address(ip_str)
-    except ValueError:
+    ip = _parse_ip(ip_str)
+    if ip is None:
         # Invalid IP address, treat as potentially dangerous
         return True
     targets: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [ip]
