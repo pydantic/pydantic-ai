@@ -544,6 +544,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self._stream_response = stream_response
         self._on_complete = on_complete
         self._run_result = run_result
+        self._traceparent_value: str | None = None
+        """Captured when the stream finishes, while the agent run span is still open.
+
+        A settled result is for handing the run to code that outlives the stream, which is exactly
+        when the span has closed and the ambient trace context is gone, so it cannot be read lazily.
+        """
 
     @property
     def result(self) -> AgentRunResult[OutputDataT]:
@@ -560,7 +566,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 so the run has no settled output to settle on.
         """
         from ._agent_graph import GraphAgentState
-        from ._instrumentation import current_otel_traceparent
         from .run import AgentRunResult
 
         if (run_result := self._run_result) is not None:
@@ -583,9 +588,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     metadata=self.metadata,
                 ),
                 _new_message_index=self._new_message_index,
-                # The agent run span is still open while the stream's context manager is, which is
-                # where a settled result is taken; `AgentRun._traceparent` reads it the same way.
-                _traceparent_value=current_otel_traceparent(),
+                _traceparent_value=self._traceparent_value,
             )
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
@@ -837,9 +840,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self._all_messages.append(message)
 
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
+        from ._instrumentation import current_otel_traceparent
+
         if self.is_complete:
             return
         self.is_complete = True
+        self._traceparent_value = current_otel_traceparent()
         if message is not None:
             self._record_response(message)
         if self._on_complete is not None:
