@@ -276,6 +276,22 @@ def validate_url_protocol(url: str) -> tuple[str, bool]:
     return scheme, scheme == 'https'
 
 
+def _normalized_host(host: str) -> str:
+    """Normalize a hostname, or a domain-list entry, to the form the two are compared in.
+
+    DNS is case-insensitive and treats `host.` (with the FQDN root label) and `host` as the
+    same name, so both spellings have to land on one value before an exact-match comparison.
+    Leaving the root label in would also bypass the allow/blocklists and skip the IP-literal
+    fast path (e.g. `169.254.169.254.`).
+
+    `urlparse` already lowercases a URL's host, but an `allowed_domains` or `blocked_domains`
+    entry comes straight from the caller, so it is normalized here rather than at the call
+    site: an entry only differing from the host in case or a root label is the same domain,
+    and a blocklist that silently failed to match one would be worse than useless.
+    """
+    return host.lower().rstrip('.')
+
+
 def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
     """Extract hostname, path, port, and protocol info from a URL.
 
@@ -291,11 +307,8 @@ def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
     parsed = urlparse(url)
     hostname = parsed.hostname
 
-    # Strip the trailing-dot (FQDN root label): DNS treats `host.` and `host` as the same,
-    # so leaving it in would bypass exact-match domain allow/blocklists and skip the
-    # IP-literal fast path (e.g. `169.254.169.254.`). urlparse already lowercases the host.
     if hostname:
-        hostname = hostname.rstrip('.')
+        hostname = _normalized_host(hostname)
 
     if not hostname:
         raise ValueError(f'Invalid URL: no hostname found in "{url}"')
@@ -428,15 +441,48 @@ def resolve_redirect_url(current_url: str, location: str) -> str:
         return urlunparse((parsed_current.scheme, parsed_current.netloc, f'{base_path}/{location}', '', '', ''))
 
 
+# IDNA (RFC 3490 section 3.1) treats these as label separators alongside `.`: ideographic full
+# stop, fullwidth full stop, halfwidth ideographic full stop.
+_IDNA_LABEL_SEPARATORS = ('\u3002', '\uff0e', '\uff61')
+
+
+def _domain_key(host: str) -> str:
+    """The form a hostname and a domain-list entry are compared in.
+
+    `getaddrinfo` IDNA-encodes a non-ASCII hostname before resolving it, and that encoding
+    folds spellings that a comparison on the raw string reads as different domains:
+    `\uff45\uff56\uff49\uff4c.\uff43\uff4f\uff4d` written in fullwidth characters, or
+    `evil\u3002com` with an ideographic full stop, both resolve to `evil.com`. Comparing the
+    raw string would let those past a blocklist while the request still reached the blocked
+    host, so both sides are compared in the ASCII form the resolver will actually use.
+
+    The three non-ASCII label separators are folded to `.` before the root label is stripped,
+    rather than relying on the codec: it maps them to `.` too, but only after the strip has
+    already run, so `evil.com\u3002` would otherwise key as `evil.com.` and miss an `evil.com`
+    entry.
+
+    A label the codec rejects (empty, or longer than 63 characters) is left as-is: it names a
+    host DNS cannot resolve, so the raw string is the only key it can have.
+    """
+    for separator in _IDNA_LABEL_SEPARATORS:
+        host = host.replace(separator, '.')
+    host = _normalized_host(host)
+    try:
+        return host.encode('idna').decode('ascii')
+    except UnicodeError:
+        return host
+
+
 def _check_domain(hostname: str, *, allowed_domains: list[str] | None, blocked_domains: list[str] | None) -> None:
     """Validate a hostname against allowed/blocked domain lists.
 
     Raises:
         ValueError: If the hostname is not allowed or is blocked.
     """
-    if allowed_domains is not None and hostname not in allowed_domains:
+    key = _domain_key(hostname)
+    if allowed_domains is not None and key not in {_domain_key(d) for d in allowed_domains}:
         raise ValueError(f'Domain {hostname!r} is not in the allowed domains list. Allowed: {allowed_domains}')
-    if blocked_domains is not None and hostname in blocked_domains:
+    if blocked_domains is not None and key in {_domain_key(d) for d in blocked_domains}:
         raise ValueError(f'Domain {hostname!r} is blocked.')
 
 
@@ -473,10 +519,10 @@ async def safe_download(
         headers: Additional HTTP headers to include in the request.
                 The `Host` header is always set to the original hostname
                 and cannot be overridden.
-        allowed_domains: If set, only these hostnames are permitted (exact match).
-                Checked on every hop including redirects.
-        blocked_domains: If set, these hostnames are rejected (exact match).
-                Checked on every hop including redirects.
+        allowed_domains: If set, only these hostnames are permitted (exact match, ignoring case,
+                a trailing dot, and IDNA spelling). Checked on every hop including redirects.
+        blocked_domains: If set, these hostnames are rejected (exact match, ignoring case,
+                a trailing dot, and IDNA spelling). Checked on every hop including redirects.
 
     Returns:
         The httpx.Response object.
