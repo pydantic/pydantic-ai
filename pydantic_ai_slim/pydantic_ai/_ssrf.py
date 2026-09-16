@@ -277,19 +277,19 @@ def validate_url_protocol(url: str) -> tuple[str, bool]:
 
 
 def _normalized_host(host: str) -> str:
-    """Normalize a hostname, or a domain-list entry, to the form the two are compared in.
+    """Drop the FQDN root label from a hostname or a domain-list entry.
 
-    DNS is case-insensitive and treats `host.` (with the FQDN root label) and `host` as the
-    same name, so both spellings have to land on one value before an exact-match comparison.
-    Leaving the root label in would also bypass the allow/blocklists and skip the IP-literal
-    fast path (e.g. `169.254.169.254.`).
+    DNS treats `host.` and `host` as the same name, so both spellings have to land on one value
+    before an exact-match comparison. Leaving the root label in would also bypass the
+    allow/blocklists and skip the IP-literal fast path (e.g. `169.254.169.254.`).
 
-    `urlparse` already lowercases a URL's host, but an `allowed_domains` or `blocked_domains`
-    entry comes straight from the caller, so it is normalized here rather than at the call
-    site: an entry only differing from the host in case or a root label is the same domain,
-    and a blocklist that silently failed to match one would be worse than useless.
+    Case is deliberately left alone here. `urlparse` has already lowercased a URL's host, and
+    the one part it leaves cased is an IPv6 zone identifier, which names an interface and *is*
+    case-sensitive (`if_nametoindex('ETH0')` is not `if_nametoindex('eth0')`) — so lowercasing
+    here would change which interface a `fe80::1%25ETH0` request goes out of. Entries are
+    case-folded in `_domain_key` instead, where the result is only ever compared, never dialed.
     """
-    return host.lower().rstrip('.')
+    return host.rstrip('.')
 
 
 def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
@@ -458,6 +458,9 @@ def _domain_key(host: str) -> str:
     raw string would let those past a blocklist while the request still reached the blocked
     host, so both sides are compared in the ASCII form the resolver will actually use.
 
+    The host is case-folded here rather than in `_normalized_host`, because this result is only
+    ever compared, never dialed: see that function on IPv6 zone identifiers.
+
     The root label is stripped again *after* encoding, because a non-ASCII separator is only
     turned into a `.` by the codec, i.e. after the first strip has already run: `evil.com\u2024`
     would otherwise key as `evil.com.` and miss an `evil.com` entry. Stripping afterwards covers
@@ -469,7 +472,7 @@ def _domain_key(host: str) -> str:
     """
     for separator in _IDNA_LABEL_SEPARATORS:
         host = host.replace(separator, '.')
-    host = _normalized_host(host)
+    host = _normalized_host(host).lower()
     try:
         return host.encode('idna').decode('ascii').rstrip('.')
     except UnicodeError:

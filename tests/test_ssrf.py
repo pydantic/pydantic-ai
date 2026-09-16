@@ -15,6 +15,7 @@ from pydantic_ai._ssrf import (
     _DEFAULT_TIMEOUT,  # pyright: ignore[reportPrivateUsage]
     _MAX_REDIRECTS,  # pyright: ignore[reportPrivateUsage]
     ResolvedUrl,
+    _domain_key,  # pyright: ignore[reportPrivateUsage]
     build_url_with_ip,
     extract_host_and_port,
     is_cloud_metadata_ip,
@@ -172,6 +173,32 @@ class TestIsPrivateIp:
     )
     def test_ipv4_mapped_ipv6_public(self, ip: str) -> None:
         assert is_private_ip(ip) is False
+
+    @pytest.mark.parametrize(
+        ('host', 'entry'),
+        [
+            ('b\u00fccher.example', 'xn--bcher-kva.example'),
+            ('xn--bcher-kva.example', 'b\u00fccher.example'),
+            ('B\u00dcCHER.example.', 'xn--bcher-kva.example'),
+        ],
+    )
+    def test_domain_key_folds_unicode_and_punycode(self, host: str, entry: str) -> None:
+        """The two spellings of an internationalized name key the same.
+
+        Asserted on `_domain_key` rather than through `safe_download`, because a raw unicode
+        `Host` header cannot be sent at all (`httpx2.Request` raises `UnicodeEncodeError` on
+        it), so such a URL is unreachable for reasons that have nothing to do with matching.
+        """
+        assert _domain_key(host) == _domain_key(entry)
+
+    def test_domain_key_preserves_zone_case_for_the_connection(self) -> None:
+        """Case-folding happens in the key, never on the host that gets dialed.
+
+        An IPv6 zone identifier names an interface and is case-sensitive, so lowercasing it in
+        `extract_host_and_port` would send a `fe80::1%25ETH0` request out of a different one.
+        """
+        hostname, *_ = extract_host_and_port('http://[fe80::1%25ETH0]/status')
+        assert hostname == 'fe80::1%25ETH0'
 
     def test_invalid_ip_treated_as_private(self) -> None:
         """Invalid IP addresses should be treated as potentially dangerous."""
@@ -1203,9 +1230,8 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download(url, blocked_domains=['evil.com'])
 
-    @pytest.mark.parametrize('url', ['https://b\u00fccher.example/page', 'https://xn--bcher-kva.example/page'])
-    async def test_allowed_domains_folds_idna(self, url: str, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
-        """An internationalized entry matches the URL in either spelling, unicode or punycode."""
+    async def test_allowed_domains_folds_idna(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """An internationalized entry matches the punycode URL that resolves to the same name."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         mock_response = AsyncMock()
         mock_response.is_redirect = False
@@ -1214,7 +1240,7 @@ class TestSafeDownload:
         mock_client.get.return_value = mock_response
         mock_ssrf_client.return_value = mock_client
 
-        await safe_download(url, allowed_domains=['b\u00fccher.example'])
+        await safe_download('https://xn--bcher-kva.example/page', allowed_domains=['b\u00fccher.example'])
 
     async def test_domain_key_falls_back_on_unencodable_host(self, mock_dns: AsyncMock) -> None:
         """A label the IDNA codec rejects is compared as-is rather than raising."""
