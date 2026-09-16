@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -817,7 +817,7 @@ class _LocalHTMLHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _local_html_page(page: str) -> Iterator[str]:
+def _local_html_page(page: str) -> Generator[str, None, None]:
     """Serves `page` on an ephemeral loopback port for the duration of the context."""
     handler = type('ServedPageHandler', (_LocalHTMLHandler,), {'page': page})
     server = ThreadingHTTPServer(('127.0.0.1', 0), handler)
@@ -834,8 +834,8 @@ async def test_fetch_html_excludes_script_and_style_source():
     """Fetched HTML keeps page text but drops script/style source and image markdown."""
     html = '<script>window.x = 1;</script><style>.a{color:red}</style><p>Text</p><img src="a.png">'
     with _local_html_page(html) as url:
-        tool = web_fetch_tool(allow_local_urls=True)
-        result = await tool.function(url)
+        tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=True, timeout=30)
+        result = await tool(url)
 
     assert isinstance(result, dict)
     assert 'Text' in result['content']
@@ -850,8 +850,8 @@ async def test_max_content_length_bounds_page_text_not_script_source():
     text_body = 'A' * 60
     html = f'<script>{script_body}</script><p>{text_body}</p>'
     with _local_html_page(html) as url:
-        tool = web_fetch_tool(allow_local_urls=True, max_content_length=40)
-        result = await tool.function(url)
+        tool = WebFetchLocalTool(max_content_length=40, allow_local_urls=True, timeout=30)
+        result = await tool(url)
 
     assert isinstance(result, dict)
     assert result['content'].startswith('A' * 40)

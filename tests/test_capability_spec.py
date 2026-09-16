@@ -3270,6 +3270,8 @@ def test_web_fetch_local_true_silent():
 async def test_capability_web_fetch_local_excludes_script_and_style(monkeypatch: pytest.MonkeyPatch):
     """WebFetch(local=True)'s resolved tool drops script/style contents when converting HTML."""
     pytest.importorskip('markdownify', reason='web-fetch extra not installed')
+    from typing import cast
+
     import httpx2
 
     from pydantic_ai.tools import Tool
@@ -3292,7 +3294,10 @@ async def test_capability_web_fetch_local_excludes_script_and_style(monkeypatch:
     assert isinstance(resolved, Tool)
     assert resolved.name == 'web_fetch'
 
-    result = await resolved.function('https://93.184.215.14/page')
+    # `Tool.function`'s declared type expects a `RunContext` first, but web_fetch's
+    # function is a bound `WebFetchLocalTool.__call__` taking only the URL.
+    fetch = cast('Callable[[str], Any]', resolved.function)  # type: ignore[reportUnknownMemberType]
+    result = await fetch('https://93.184.215.14/page')
 
     assert isinstance(result, dict)
     assert 'Text' in result['content']
