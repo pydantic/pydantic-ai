@@ -22,7 +22,7 @@ from pydantic_ai.tools import Tool
 
 try:
     from bs4 import BeautifulSoup, Tag
-    from bs4.element import Comment, Doctype, NavigableString, PageElement
+    from bs4.element import NavigableString
     from markdownify import MarkdownConverter
 except ImportError as _import_error:
     raise ImportError(
@@ -37,6 +37,9 @@ _WHITESPACE_RUN_RE = re.compile(r'[\t \r\n]+')
 _LINE_WITH_CONTENT_RE = re.compile(r'^(.*)', flags=re.MULTILINE)
 # `markdownify`'s stub doesn't declare its per-tag `convert_<tag>` methods, which it looks up by name.
 _upstream_convert_li: Callable[[MarkdownConverter, Tag, str, set[str]], str] = getattr(MarkdownConverter, 'convert_li')
+_upstream_process_text: Callable[[MarkdownConverter, NavigableString, set[str] | None], str] = getattr(
+    MarkdownConverter, 'process_text'
+)
 _TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
 _TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
@@ -180,28 +183,22 @@ class _MarkdownConverter(MarkdownConverter):
         super().__init__(**options)
         self._ol_indexes: dict[int, int] = {}
 
-    def convert_soup(self, soup: BeautifulSoup) -> str:
-        # Collapse whitespace runs in text outside `<pre>` ahead of time, the way `process_text`
-        # would, so its regexes only ever see runs of one character. Upstream skips comments and
-        # doctypes but processes every other string, CDATA and processing instructions included.
-        # One explicit-stack walk, rather than `find_parent('pre')` per node, keeps this linear on
-        # deeply nested documents too.
-        self._ol_indexes = {}
-        stack: list[tuple[PageElement, bool]] = [(soup, False)]
-        while stack:
-            node, in_pre = stack.pop()
-            if isinstance(node, Tag):
-                in_pre = in_pre or node.name == 'pre'
-                stack.extend((child, in_pre) for child in node.children)
-                if node.name == 'ol':
-                    index = 0
-                    for child in node.children:
-                        if isinstance(child, Tag) and child.name == 'li':
-                            self._ol_indexes[id(child)] = index
-                            index += 1
-            elif not in_pre and isinstance(node, NavigableString) and not isinstance(node, (Comment, Doctype)):
-                node.replace_with(type(node)(_WHITESPACE_RUN_RE.sub(_collapse_whitespace_run, node)))
-        return super().convert_soup(soup)
+    def process_text(self, el: NavigableString, parent_tags: set[str] | None = None) -> str:
+        # Collapse whitespace runs ahead of time, the way upstream's regexes would, so they only
+        # ever see runs of one character. Upstream reads the node's text and its neighbours, so
+        # hand it a detached stand-in carrying the same links rather than editing the tree:
+        # `replace_with` has to find the node among its siblings, which is linear per node.
+        if parent_tags is None:
+            parent_tags = set()
+        if 'pre' not in parent_tags:
+            normalized = _WHITESPACE_RUN_RE.sub(_collapse_whitespace_run, el)
+            if normalized != el:
+                stand_in = type(el)(normalized)
+                stand_in.parent = el.parent
+                stand_in.previous_sibling = el.previous_sibling
+                stand_in.next_sibling = el.next_sibling
+                el = stand_in
+        return _upstream_process_text(self, el, parent_tags)
 
     def convert_pre(self, el: Tag, text: str, parent_tags: set[str]) -> str:
         # Mirrors upstream with its default `strip_pre='strip'` applied linearly; the code language
@@ -215,15 +212,23 @@ class _MarkdownConverter(MarkdownConverter):
         if parent is None or parent.name != 'ol':
             return _upstream_convert_li(self, el, text, parent_tags)
         # The rest mirrors upstream's ordered-list branch, with the sibling count replaced by
-        # the index recorded in `convert_soup`.
+        # a per-list index.
         text = (text or '').strip()
         if not text:
             return '\n'
+        if id(el) not in self._ol_indexes:
+            # Upstream counts each item's previous siblings, which is quadratic per list; index
+            # the list once instead.
+            index = 0
+            for child in parent.children:
+                if isinstance(child, Tag) and child.name == 'li':
+                    self._ol_indexes[id(child)] = index
+                    index += 1
         start_attr = parent.get('start')
         # Upstream checks `isnumeric()` before `int()`, which raises on digits like `²`; treat
         # those as no start rather than letting the page abort the run.
         start = int(start_attr) if isinstance(start_attr, str) and start_attr.isdecimal() else 1
-        bullet = f'{start + self._ol_indexes.get(id(el), 0)}. '
+        bullet = f'{start + self._ol_indexes[id(el)]}. '
         bullet_indent = ' ' * len(bullet)
 
         def indent_line(match: re.Match[str]) -> str:

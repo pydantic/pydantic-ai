@@ -722,15 +722,17 @@ class TestMarkdownConverter:
             pytest.param('<pre>' + ' ' * 300_000 + 'x</pre>', id='spaces-in-pre'),
             pytest.param('<ol>' + '<li>x</li>' * 50_000 + '</ol>', id='long-ordered-list'),
             pytest.param('<div>x' * 20_000, id='deep-nesting'),
+            pytest.param('x <i></i>' * 50_000, id='many-sibling-text-nodes'),
         ],
     )
     def test_converts_pathological_runs_quickly(self, html: str):
-        """Whitespace runs, `<pre>` padding, ordered lists, and deep nesting are handled in linear time.
+        """Whitespace runs, `<pre>` padding, ordered lists, deep nesting, and wide trees are handled in linear time.
 
-        `markdownify` on its own takes minutes on the first four: a run of spaces restarts its
-        whitespace regexes at every character, and each `<li>` recounts its previous siblings.
-        The nested page can't be converted at all (it exceeds the recursion limit), but finding
-        that out must not take long either. The bound is generous; the point is that it isn't minutes.
+        `markdownify` on its own takes minutes on the whitespace and list shapes: a run of spaces
+        restarts its whitespace regexes at every character, and each `<li>` recounts its previous
+        siblings. The nested page can't be converted at all (it exceeds the recursion limit), but
+        finding that out must not take long either, and neither may normalizing text among tens of
+        thousands of siblings. The bound is generous; the point is that it isn't minutes.
         """
         start = time.perf_counter()
         try:
