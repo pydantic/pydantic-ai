@@ -1224,3 +1224,28 @@ rapid_mlx_model = OpenAIChatModel(
 )
 agent = Agent(rapid_mlx_model)
 ```
+
+### AnonRouter
+
+[AnonRouter](https://anonrouter.ai/) is an OpenAI-compatible router that serves models from several upstream providers behind one endpoint, identified as `creator/model`.
+
+AnonRouter doesn't have a dedicated provider class, so you can use it with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] by setting the `base_url` and `api_key`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'meta-llama/llama-3.3-70b',
+    provider=OpenAIProvider(
+        base_url='https://api.anonrouter.ai/v1',
+        api_key='your-anonrouter-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+!!! note
+    AnonRouter uses single-use tickets by default. Enable [OpenAI-compatible access](https://docs.anonrouter.ai/compatibility) for this key in the AnonRouter dashboard; a key without that permission is rejected with a `403`.
