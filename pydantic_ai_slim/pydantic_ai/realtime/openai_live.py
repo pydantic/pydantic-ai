@@ -415,8 +415,7 @@ class OpenAILiveConnection(RealtimeConnection):
         """Cancel the read in flight so closing the socket doesn't strand its exception."""
         self._closed = True
         if (task := self._recv_task) is not None:
-            self._recv_task = None
-            task.cancel()
+            self._cancel_read()
             with suppress(asyncio.CancelledError, websockets.WebSocketException):
                 await task
 
@@ -440,6 +439,8 @@ class OpenAILiveConnection(RealtimeConnection):
                 # A cancelled read is not caught here: `aclose()` sets `_closed` before cancelling,
                 # so that path returns above rather than reaching this call.
                 except websockets.ConnectionClosedOK:
+                    # The read started above can no longer complete, and nothing will await it.
+                    self._cancel_read()
                     # A graceful close ends whatever was in flight. Live never says a turn is over,
                     # so without this the last reply would be settled as interrupted even though the
                     # model had finished speaking and the session closed normally.
@@ -454,9 +455,15 @@ class OpenAILiveConnection(RealtimeConnection):
                 yield event
 
     def _start_read(self) -> asyncio.Task[str | bytes]:
-        """Begin the next read, remembering it so `aclose()` can cancel it."""
+        """Begin the next read, remembering it so it can be cancelled on the way out."""
         self._recv_task = asyncio.create_task(_recv(self._ws))
         return self._recv_task
+
+    def _cancel_read(self) -> None:
+        """Cancel the read in flight, if any, so it never completes unobserved."""
+        if (task := self._recv_task) is not None:
+            self._recv_task = None
+            task.cancel()
 
     def _silence_timeout(self) -> float | None:
         """How long until the current turn could end, or `None` when nothing is pending.

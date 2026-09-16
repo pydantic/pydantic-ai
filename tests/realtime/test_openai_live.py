@@ -14,9 +14,7 @@ from typing import Any
 
 import anyio
 import pytest
-import websockets
 from inline_snapshot import snapshot
-from websockets.frames import Close
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -57,8 +55,10 @@ from pydantic_ai.usage import RequestUsage
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import websockets
     from openai.types.live import ServerEvent, SessionConfig
     from pydantic import TypeAdapter
+    from websockets.frames import Close
 
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.realtime import openai_live as live_module
