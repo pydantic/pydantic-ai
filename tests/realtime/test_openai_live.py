@@ -19,6 +19,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    BinaryContent,
     FilePart,
     ModelRequest,
     ModelResponse,
@@ -385,6 +386,106 @@ async def test_tool_result_continues_the_delegated_response() -> None:
     )
 
 
+def _open_delegation(connection: OpenAILiveConnection, *, call_ids: tuple[str, ...] = ()) -> None:
+    """Open a Responses delegation and have the backend ask for `call_ids`."""
+    connection._map_event(  # pyright: ignore[reportPrivateUsage]
+        _event(
+            {
+                'type': 'session.delegation.created',
+                'event_id': 'e1',
+                'offset_ms': 0,
+                'delegation': {'id': 'd1', 'type': 'delegation', 'target': 'responses'},
+            }
+        )
+    )
+    for call_id in call_ids:
+        connection._map_response_event(  # pyright: ignore[reportPrivateUsage]
+            {
+                'type': 'response.output_item.done',
+                'item': {'type': 'function_call', 'call_id': call_id, 'name': 'weather', 'arguments': '{}'},
+            },
+            delegation_id='d1',
+        )
+
+
+@pytest.mark.parametrize('nested_type', ['response.failed', 'response.incomplete'])
+def test_a_backend_that_gives_up_releases_the_turn_clock(nested_type: str) -> None:
+    """A delegation suspends the clock, so a backend that stops short has to close it too.
+
+    Only `response.completed` used to clear the delegation, so a failed one left the map non-empty
+    for the rest of the session and no turn could ever be reported complete again.
+    """
+    connection = _connection()
+    _open_delegation(connection, call_ids=('c1',))
+    assert connection._silence_timeout() is None  # pyright: ignore[reportPrivateUsage]
+
+    connection._map_response_event({'type': nested_type}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+
+    assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+    # The clock runs again, so this turn — and every later one — can still end.
+    assert connection._silence_timeout() is not None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_parallel_tool_calls_continue_once_every_result_is_in() -> None:
+    """The backend resumes from all of its outputs together, so the first result is not the cue."""
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1', 'c2'))
+
+    await connection.send(ToolResult('c1', output='14C'))
+    # Continuing here would answer with `c2` missing, and solicit a second response when it lands.
+    assert [event['type'] for event in sent] == ['response.item.create']
+
+    await connection.send(ToolResult('c2', output='rainy'))
+    assert [event['type'] for event in sent] == snapshot(
+        ['response.item.create', 'response.item.create', 'response.create']
+    )
+
+
+async def test_a_late_completion_does_not_end_a_delegation_mid_continuation() -> None:
+    """Answering before the asking response completes must not hand the turn back early."""
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            pass
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    await connection.send(ToolResult('c1', output='14C'))
+
+    # The completion of the response that *asked* for the tool arrives only now. Closing the
+    # delegation on it would restart the clock while the continuation is still being generated.
+    connection._map_response_event({'type': 'response.completed'}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    assert connection._delegations  # pyright: ignore[reportPrivateUsage]
+    assert connection._silence_timeout() is None  # pyright: ignore[reportPrivateUsage]
+
+    # The continuation itself is what ends the delegation.
+    connection._map_response_event({'type': 'response.completed'}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_tool_result_media_is_refused() -> None:
+    """Live carries no media, so a result that needs it fails with nothing on the wire."""
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)  # pragma: no cover
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    result = ToolResult('c1', output='see this', content=[BinaryContent(data=b'x', media_type='image/png')])
+
+    with pytest.raises(UserError, match='does not accept media in tool results'):
+        await connection.send(result)
+
+    assert sent == []
+
+
 def test_unknown_events_are_ignored() -> None:
     """A future event type is not a reason to end a call in progress."""
     assert _connection()._map_frame('{"type": "session.something.new"}') == []  # pyright: ignore[reportPrivateUsage]
@@ -639,7 +740,6 @@ def test_seeding_skips_content_it_cannot_carry() -> None:
     """Empty transcripts and parts with no text equivalent are dropped, not sent as blanks."""
     messages = [
         ModelRequest(parts=[SpeechPart(speaker='user', transcript=None)]),
-        ModelRequest(parts=[RetryPromptPart(content='try again', tool_name='t', tool_call_id='1')]),
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='   ')]),
         ModelRequest(parts=[UserPromptPart(content='kept')]),
     ]
@@ -648,6 +748,44 @@ def test_seeding_skips_content_it_cannot_carry() -> None:
         [{'role': 'user', 'content': [{'type': 'input_text', 'text': 'kept'}]}]
     )
     assert seed_input_items([ModelResponse(parts=[FilePart(content=None)])], provider_name='openai') == []  # pyright: ignore[reportArgumentType]
+
+
+def test_seeding_keeps_a_failed_tool_round() -> None:
+    """A retry carries the outcome of the call before it.
+
+    Dropping it seeds the `ToolCallPart` as a call that was never answered, so the backend reads a
+    round that failed as one that succeeded and does not try again.
+    """
+    messages = [
+        ModelResponse(parts=[ToolCallPart(tool_name='weather', args={'city': 'Utrecht'}, tool_call_id='1')]),
+        ModelRequest(parts=[RetryPromptPart(content='unknown city', tool_name='weather', tool_call_id='1')]),
+        # A retry with no tool name is output validation rather than a tool round.
+        ModelRequest(parts=[RetryPromptPart(content='not a number')]),
+    ]
+
+    assert seed_input_items(messages, provider_name='openai') == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Called `weather` with {"city":"Utrecht"}.'}],
+            },
+            {
+                'role': 'developer',
+                'content': [
+                    {'type': 'input_text', 'text': '`weather` failed: unknown city\n\nFix the errors and try again.'}
+                ],
+            },
+            {
+                'role': 'developer',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': 'The previous attempt failed: Validation feedback:\nnot a number\n\nFix the errors and try again.',
+                    }
+                ],
+            },
+        ]
+    )
 
 
 async def test_unrelated_frames_during_the_handshake_are_skipped(model: OpenAILiveModel) -> None:

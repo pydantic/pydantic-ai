@@ -1154,7 +1154,7 @@ navigation:
                 path: "api/realtime/openai.md"
                 slug: "api/realtime/openai"
               - page: "live"
-                path: "api/realtime/openai-live.md"
+                path: "api/realtime/openai_live.md"
                 slug: "api/realtime/openai_live"
               - page: "google"
                 path: "api/realtime/google.md"

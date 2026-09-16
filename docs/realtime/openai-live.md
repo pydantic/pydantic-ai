@@ -127,8 +127,9 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 
 Voice, audio format, and instructions are fixed for the life of the session; only the delegation
 backend can be reconfigured, which is why these are session-start settings rather than things to
-change mid-call. Live exposes no turn-detection, truncation, token-limit, or temperature controls,
-and the shared settings that name them [raise rather than being ignored](#what-raises).
+change mid-call. Live exposes no turn-detection, truncation, or token-limit controls, and the shared
+settings that name them [raise rather than being ignored](#what-raises). It has no temperature or
+other sampling control at all, on either the spoken model or the delegated backend.
 
 ## The turn boundary is inferred
 
@@ -243,6 +244,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response], and
   [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt].
 - Sending an image, and seeding history that contains audio or images.
+- A [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `content` carries media. Live takes no
+  media at all, so the result is refused before anything is sent rather than reaching the backend
+  without the material that explains it. Put what the model needs in the tool's return value.
 
 ## Gateway
 

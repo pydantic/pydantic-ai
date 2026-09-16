@@ -46,6 +46,7 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     RealtimeSessionErrorEvent,
+    RetryPromptPart,
     SpeechPart,
     TextContent,
     TextPart,
@@ -254,6 +255,11 @@ def _seed_request_part(part: Any, *, provider_name: str) -> tuple[_SeedRole, str
         return 'user', part.transcript or ''
     if isinstance(part, ToolReturnPart):
         return 'developer', f'Result of `{part.tool_name}`: {part.model_response_str()}'
+    if isinstance(part, RetryPromptPart):
+        # Without this the `ToolCallPart` before it seeds as a call with no outcome, and the backend
+        # reads a round that failed as one that succeeded.
+        attempt = f'`{part.tool_name}` failed' if part.tool_name else 'The previous attempt failed'
+        return 'developer', f'{attempt}: {part.model_response()}'
     return None
 
 
@@ -311,12 +317,24 @@ def _prompt_text(part: UserPromptPart, *, provider_name: str) -> str:
     return '\n'.join(texts)
 
 
+#: Nested Responses events that end one backend response. Only `completed` carries a result; the
+#: other two are the backend giving up, and none of them is the end of the *delegation* on its own.
+_TERMINAL_DELEGATED_RESPONSE_EVENTS = frozenset({'response.completed', 'response.failed', 'response.incomplete'})
+
+
 @dataclass
 class _Delegation:
     """A unit of work the Live model handed to the Responses backend."""
 
     id: str
     pending_tool_calls: set[str] = field(default_factory=set[str])
+    outstanding_responses: int = 1
+    """Backend responses still owed, counting the one that opened the delegation.
+
+    A continuation we solicit with `response.create` adds another. The delegation is only over once
+    nothing is owed and no tool call is unanswered, which is what keeps the turn clock suspended
+    across a tool round instead of ending the turn while the backend is still working.
+    """
 
 
 class OpenAILiveConnection(RealtimeConnection):
@@ -331,7 +349,7 @@ class OpenAILiveConnection(RealtimeConnection):
     non-silent audio frame) is what drives the turn clock.
     """
 
-    transport_errors: ClassVar[tuple[type[Exception], ...]] = (websockets.WebSocketException,)
+    transport_errors: ClassVar[tuple[type[Exception], ...]] = (websockets.WebSocketException, OSError)
 
     def __init__(
         self,
@@ -396,8 +414,17 @@ class OpenAILiveConnection(RealtimeConnection):
 
     async def _send_tool_result(self, result: ToolResult) -> None:
         """Return a tool result to the delegated Responses backend and let it continue."""
+        if result.content:
+            # Refused before the output item is sent, so a result Live cannot carry in full fails
+            # with nothing on the wire rather than reaching the backend without the media that
+            # explains it. Live takes no media at all, so there is nowhere to put this.
+            raise UserError(
+                'OpenAI GPT-Live does not accept media in tool results, so the `content` of a '
+                "`ToolReturn` cannot be sent. Put what the model needs in the tool's return value."
+            )
         delegation_id = self._call_delegations.pop(result.tool_call_id, None)
-        if delegation_id is not None and (delegation := self._delegations.get(delegation_id)) is not None:
+        delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
+        if delegation is not None:
             delegation.pending_tool_calls.discard(result.tool_call_id)
         await self._send_event(
             {
@@ -405,7 +432,16 @@ class OpenAILiveConnection(RealtimeConnection):
                 'item': {'type': 'function_call_output', 'call_id': result.tool_call_id, 'output': result.output},
             }
         )
-        # A delegated response waiting on tool results does not resume on its own.
+        if delegation is not None and delegation.pending_tool_calls:
+            # With `parallel_tool_calls` the backend asked for several at once and resumes from all
+            # of their outputs together. Continuing after the first would answer with the rest
+            # missing, and solicit a second response when they arrive.
+            return
+        # A delegated response waiting on tool results does not resume on its own. The continuation
+        # is a response the delegation is now owed, so the clock stays suspended until it lands even
+        # if the completion of the response that asked for the tools has yet to arrive.
+        if delegation is not None:
+            delegation.outstanding_responses += 1
         await self._send_event({'type': 'response.create'})
 
     async def _send_event(self, event: dict[str, Any]) -> None:
@@ -575,12 +611,9 @@ class OpenAILiveConnection(RealtimeConnection):
         """Map one nested Responses streaming event from the delegated backend."""
         nested_type = nested.get('type')
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
-        if nested_type == 'response.completed':
-            # The backend finished. If it asked for tools, the call is still outstanding and another
-            # response follows once we answer, so the delegation stays open until that one lands.
-            if delegation is not None and not delegation.pending_tool_calls:
-                del self._delegations[delegation.id]
-                self._heard_voice()
+        if nested_type in _TERMINAL_DELEGATED_RESPONSE_EVENTS:
+            if delegation is not None:
+                self._settle_delegation(delegation, gave_up=nested_type != 'response.completed')
             return self._map_backend_usage(nested.get('response'))
         if nested_type != 'response.output_item.done':
             return []
@@ -604,6 +637,23 @@ class OpenAILiveConnection(RealtimeConnection):
                 response_usage_follows=False,
             ),
         ]
+
+    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool) -> None:
+        """Account for one finished backend response, closing the delegation once it owes nothing.
+
+        A delegation suspends the turn clock, so leaving a dead one in the map would keep the session
+        from ever reporting another turn boundary: a backend that fails or stops short has to close
+        it just as a completed one does.
+        """
+        delegation.outstanding_responses -= 1
+        if gave_up:
+            # Nothing further is coming for this delegation — no continuation, and no answer to any
+            # call it had asked for — so it must not hold the clock open waiting for one.
+            delegation.pending_tool_calls.clear()
+            delegation.outstanding_responses = 0
+        if delegation.outstanding_responses <= 0 and not delegation.pending_tool_calls:
+            self._delegations.pop(delegation.id, None)
+            self._heard_voice()
 
     def _map_backend_usage(self, response: Any) -> list[RealtimeCodecEvent]:
         """Accumulate the delegated backend's token usage at the run level.
