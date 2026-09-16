@@ -399,6 +399,59 @@ class TestWebFetchLocalTool:
         assert result['url'] == 'https://example.com/page'
         assert mock_dl.call_args[1]['blocked_domains'] == ['evil.com']
 
+    async def test_fetch_html_table_without_th_keeps_its_header(self):
+        """A markdown table cannot start with a body row.
+
+        Without `table_infer_header` markdownify puts an empty header above a table
+        that carries no `<th>`, and the column names end up in the first body row,
+        so the model reads `Plan` and `Price` as data under two unnamed columns.
+        """
+        html = (
+            '<html><body><table>'
+            '<tr><td>Plan</td><td>Price</td></tr>'
+            '<tr><td>Starter</td><td>9 EUR</td></tr>'
+            '</table></body></html>'
+        )
+        mock_response = httpx2.Response(
+            200,
+            text=html,
+            headers={'content-type': 'text/html'},
+            request=httpx2.Request('GET', 'https://example.com/page'),
+        )
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com/page')
+
+        assert isinstance(result, dict)
+        assert result['content'] == '| Plan | Price |\n| --- | --- |\n| Starter | 9 EUR |'
+
+    async def test_fetch_html_table_with_th_is_unchanged(self):
+        """The control: a table that marks its header already converted correctly."""
+        html = (
+            '<html><body><table>'
+            '<tr><th>Plan</th><th>Price</th></tr>'
+            '<tr><td>Starter</td><td>9 EUR</td></tr>'
+            '</table></body></html>'
+        )
+        mock_response = httpx2.Response(
+            200,
+            text=html,
+            headers={'content-type': 'text/html'},
+            request=httpx2.Request('GET', 'https://example.com/page'),
+        )
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com/page')
+
+        assert isinstance(result, dict)
+        assert result['content'] == '| Plan | Price |\n| --- | --- |\n| Starter | 9 EUR |'
+
     async def test_fetch_markdown_response(self):
         """Server returning text/markdown is used as-is without markdownify conversion."""
         markdown_content = '# Hello\n\nThis is **markdown** from the server.'

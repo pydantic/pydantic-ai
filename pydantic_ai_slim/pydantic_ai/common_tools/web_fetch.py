@@ -118,7 +118,12 @@ class WebFetchLocalTool:
                 content = text
             elif not media_type or media_type in ('text/html', 'application/xhtml+xml'):
                 title = _extract_title(text)
-                content = md(text, strip=['img', 'script', 'style'])
+                # `table_infer_header`: a markdown table cannot start with a body row,
+                # so without it markdownify puts an empty header above any table that
+                # carries no `<th>` and the column names drop into the first body row.
+                # Plenty of pages are written that way, and the header is what gives
+                # every value in the table its meaning.
+                content = md(text, strip=['img', 'script', 'style'], table_infer_header=True)
             elif media_type == 'application/json':
                 try:
                     parsed = json.loads(text)
