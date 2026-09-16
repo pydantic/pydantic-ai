@@ -387,7 +387,11 @@ class SessionInstrumentation:
             attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
         if settings.include_model_request_parameters:
             if self.model_request_parameters is not None:
-                attributes.update(model_request_parameters_attributes(self.model_request_parameters))
+                attributes.update(
+                    model_request_parameters_attributes(
+                        self.model_request_parameters, include_content=settings.include_content
+                    )
+                )
             if self.model_settings:
                 attributes['model_settings'] = safe_to_json(serialize_any(self.model_settings)).decode()
         if self.model_settings and (max_tokens := self.model_settings.get('max_tokens')) is not None:

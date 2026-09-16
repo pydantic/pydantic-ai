@@ -340,11 +340,30 @@ def model_metric_attributes(
 
 
 def model_request_parameters_attributes(
-    model_request_parameters: ModelRequestParameters,
+    model_request_parameters: ModelRequestParameters, *, include_content: bool = True
 ) -> dict[str, AttributeValue]:
-    return {
-        'model_request_parameters': safe_to_json(_serialize_model_request_parameters(model_request_parameters)).decode()
-    }
+    serialized = _serialize_model_request_parameters(model_request_parameters)
+    if not include_content:
+        # `instruction_parts` carry the agent's instructions verbatim, which is the "proprietary
+        # prompts" half of what the setting withholds -- and dynamic parts can be built from deps.
+        # Their origin and ids stay, so what the parts are and how they cache is still visible.
+        for part in instruction_parts_of(serialized):
+            part.pop('content', None)
+    return {'model_request_parameters': safe_to_json(serialized).decode()}
+
+
+def instruction_parts_of(serialized_parameters: Any) -> list[dict[str, Any]]:
+    """The serialized `instruction_parts`, or nothing if the shape isn't what we expect.
+
+    `_serialize_model_request_parameters` falls back to inference when the declared schema can't
+    dump the value, so the shape isn't guaranteed.
+    """
+    if not isinstance(serialized_parameters, dict):
+        return []  # pragma: no cover
+    parts = cast('Any', serialized_parameters).get('instruction_parts')
+    if not isinstance(parts, list):
+        return []
+    return [part for part in cast('list[Any]', parts) if isinstance(part, dict)]
 
 
 def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
@@ -577,7 +596,9 @@ def open_model_request_span(
     }
     json_schema_properties: dict[str, dict[str, str]] = {}
     if settings.include_model_request_parameters:
-        attributes.update(model_request_parameters_attributes(prepared_parameters))
+        attributes.update(
+            model_request_parameters_attributes(prepared_parameters, include_content=settings.include_content)
+        )
         json_schema_properties['model_request_parameters'] = {'type': 'object'}
     attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
 
