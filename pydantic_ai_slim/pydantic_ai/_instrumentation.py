@@ -489,6 +489,11 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
     errors and user exceptions may echo the rejected arguments. The type and `escaped` formatting
     match what `Span.record_exception` would have produced.
     """
+    # `use_span` records nothing on a span that isn't recording, and neither does this: the SDK
+    # formats the traceback before `add_event` drops it, so an exception whose `__str__` raises
+    # would surface that failure in place of the original error.
+    if not span.is_recording():
+        return
     if include_content:
         span.record_exception(error, escaped=escaped)
         return
@@ -508,9 +513,29 @@ def set_error_status(span: Span, error: BaseException, *, include_content: bool)
     The SDK's description is `f'{type(exc).__name__}: {exc}'`, which repeats the message the
     exception event carries, so it is withheld alongside it when content capture is off.
     """
+    if not span.is_recording():
+        return
     span.set_status(
         Status(StatusCode.ERROR, description=f'{type(error).__name__}: {error}' if include_content else None)
     )
+
+
+@contextmanager
+def record_uncaught_errors(span: Span, *, include_content: bool) -> Generator[None]:
+    """Record exceptions leaving `span`'s scope the way `use_span` would have.
+
+    For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
+    both jobs to the caller. `use_span` recorded the exception unescaped and described the ERROR
+    status with it; both repeat the message, so both follow `include_content`. Enter this around
+    the span's whole scope -- the scope `use_span` covered -- not just the call that may fail, so
+    that failures while finalizing the span still mark it.
+    """
+    try:
+        yield
+    except Exception as error:
+        record_exception(span, error, include_content=include_content, escaped=False)
+        set_error_status(span, error, include_content=include_content)
+        raise
 
 
 @contextmanager
@@ -564,13 +589,16 @@ def open_model_request_span(
 
     record_metrics: Callable[[], None] | None = None
     try:
-        with settings.tracer.start_as_current_span(
-            span_name,
-            attributes=attributes,
-            kind=SpanKind.CLIENT,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span:
+        with (
+            settings.tracer.start_as_current_span(
+                span_name,
+                attributes=attributes,
+                kind=SpanKind.CLIENT,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span,
+            record_uncaught_errors(span, include_content=settings.include_content),
+        ):
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
@@ -616,16 +644,7 @@ def open_model_request_span(
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
 
-            try:
-                yield finish, prepared_request_context
-            except Exception as e:
-                # Stand in for what the two `..._on_exception=False` arguments turned off, matching
-                # `use_span` exactly: it records only `Exception`, does not mark what it records as
-                # escaped, and describes the status with the exception. A provider's error response
-                # body travels in that message, so it follows `include_content`.
-                record_exception(span, e, include_content=settings.include_content, escaped=False)
-                set_error_status(span, e, include_content=settings.include_content)
-                raise
+            yield finish, prepared_request_context
     finally:
         if record_metrics:
             record_metrics()

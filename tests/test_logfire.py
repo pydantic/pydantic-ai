@@ -1,11 +1,15 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsList
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ValidationError
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -4156,11 +4160,16 @@ def test_exception_events_honor_include_content(
 
     # The run span's status description repeats the exception message, and is not part of the
     # exported span dicts above, so it is checked separately.
-    descriptions = [span.status.description for span in capfire.exporter.exported_spans if span.status.description]
-    if include_content:
-        assert descriptions == ([] if failure == 'failed' else [IsStr(regex=r'\w+: [\s\S]+')])
-    else:
-        assert descriptions == []
+    errored = [span for span in capfire.exporter.exported_spans if span.status.status_code is StatusCode.ERROR]
+    assert [span.name for span in errored] == [name for name, _, _ in _EXPECTED_EXCEPTION_EVENTS[failure]]
+    # Only the run span carries a description: `use_span` set one, the tool spans never did.
+    assert [span.status.description for span in errored] == [
+        (IsStr(regex=r'\w+: [\s\S]+') if include_content else None) if name.startswith('invoke_agent') else None
+        for name, _, _ in _EXPECTED_EXCEPTION_EVENTS[failure]
+    ]
+    if include_content and failure == 'exception':
+        # Pinned exactly, because the promise is to reproduce the SDK's `f'{type(e).__name__}: {e}'`.
+        assert errored[-1].status.description == 'ValueError: exception-secret'
 
 
 class _Interrupted(BaseException):
@@ -4235,3 +4244,67 @@ def test_model_request_exception_events_honor_include_content(capfire: CaptureLo
         assert all(set(attributes) == {'exception.type', 'exception.escaped'} for _, attributes in events)
         assert 'secret' not in str(spans)
         assert descriptions == []
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_run_span_records_failures_from_its_own_finalization(capfire: CaptureLogfire) -> None:
+    """The run span's finalization is inside the scope `use_span` used to cover.
+
+    `record_exception=False` / `set_status_on_exception=False` switch the SDK's recording off for
+    the whole span, so the stand-in has to wrap the whole span body rather than just the run. With
+    warnings raised as errors the end-of-run mutation warning comes out of the `finally`, and the
+    span still has to end up ERROR with the exception recorded on it.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('corrupt_history', {}, tool_call_id='call_1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(model=FunctionModel(model_function), capabilities=[Instrumentation()])
+
+    @agent.tool
+    async def corrupt_history(ctx: RunContext) -> str:
+        first_part = ctx.messages[0].parts[0]
+        assert isinstance(first_part, UserPromptPart)
+        first_part.content = 'mutated prompt'
+        return 'ok'
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', MessageHistoryMutatedWarning)
+        with pytest.raises(MessageHistoryMutatedWarning):
+            await agent.run('original prompt')
+
+    [run_span] = [
+        span
+        for span in capfire.exporter.exported_spans
+        # Logfire exports a pending span alongside the real one; only the latter carries the status.
+        if span.name.startswith('invoke_agent') and (span.attributes or {}).get('logfire.span_type') != 'pending_span'
+    ]
+    assert run_span.status.status_code is StatusCode.ERROR
+    assert [event.name for event in run_span.events] == ['exception']
+
+
+def test_exception_recording_skipped_when_span_is_not_recording() -> None:
+    """`use_span` left a non-recording span's exception alone, and so does the stand-in.
+
+    The SDK formats the traceback before `add_event` discards it, so recording on a sampled-out
+    span would surface a `__str__` failure in place of the error that actually happened.
+    """
+
+    class Unformattable(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError('formatting blew up')
+
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise Unformattable
+
+    agent = Agent(
+        FunctionModel(boom),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=TracerProvider(sampler=ALWAYS_OFF)))
+        ],
+    )
+    with pytest.raises(Unformattable):
+        agent.run_sync('hello')
