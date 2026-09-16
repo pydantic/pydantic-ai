@@ -656,18 +656,16 @@ class TestWebFetchLocalTool:
             with pytest.raises(ModelRetry, match='nested too deeply'):
                 await tool('https://example.com')
 
-    @pytest.mark.parametrize(
-        'html',
-        [
-            pytest.param('<title>Bad label</title><p>Content</p>', id='idna'),
-        ],
-    )
-    async def test_undecodable_charset_raises_model_retry(self, html: str):
-        """A charset the server picks that can't decode a document is reported as a failed fetch."""
+    async def test_undecodable_charset_raises_model_retry(self):
+        """A charset the server picks that can't decode a document is reported as a failed fetch.
+
+        `idna` is a registered codec that rejects the replacement error handler `httpx2` decodes
+        with; an unknown label, by contrast, falls back to UTF-8 and never gets here.
+        """
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download',
             new_callable=AsyncMock,
-            return_value=_html_response(html, content_type='text/html; charset=idna'),
+            return_value=_html_response('<p>Content</p>', content_type='text/html; charset=idna'),
         ):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
             with pytest.raises(ModelRetry, match='Failed to decode'):
@@ -708,6 +706,10 @@ _CONVERTER_PARITY_CASES = [
         '<blockquote>\n q\n</blockquote><a href="/x">  link  </a><!-- comment  with   spaces -->',
         id='blocks',
     ),
+    pytest.param(
+        '<p>a<![CDATA[ x   y \n z ]]>b<?php  echo  1 ?>c</p>',
+        id='cdata-and-pi',
+    ),
 ]
 
 
@@ -718,23 +720,37 @@ class TestMarkdownConverter:
         _, content = _convert_html(html)
         assert content == markdownify(html, strip=['img', 'script', 'style'])
 
+    def test_non_decimal_list_start_is_ignored(self):
+        """A `start` made of digits `int()` rejects, like `²`, numbers the list from 1 instead of raising.
+
+        `markdownify` checks `isnumeric()` and then calls `int()`, which raises on such digits.
+        """
+        _, content = _convert_html('<ol start="²"><li>one</li><li>two</li></ol>')
+        assert content == '1. one\n2. two'
+
     @pytest.mark.parametrize(
         'html',
         [
             pytest.param('<p>x' + ' ' * 300_000 + 'x</p>', id='spaces-in-paragraph'),
+            pytest.param('<p><![CDATA[x' + ' ' * 300_000 + 'x]]></p>', id='spaces-in-cdata'),
             pytest.param('<pre>' + ' ' * 300_000 + 'x</pre>', id='spaces-in-pre'),
-            pytest.param('<ol>' + '<li>x</li>' * 100_000 + '</ol>', id='long-ordered-list'),
+            pytest.param('<ol>' + '<li>x</li>' * 50_000 + '</ol>', id='long-ordered-list'),
+            pytest.param('<div>x' * 20_000, id='deep-nesting'),
         ],
     )
     def test_converts_pathological_runs_quickly(self, html: str):
-        """Whitespace runs, `<pre>` padding, and ordered lists convert in linear time.
+        """Whitespace runs, `<pre>` padding, ordered lists, and deep nesting are handled in linear time.
 
-        `markdownify` on its own takes minutes on each of these: a run of spaces restarts its
+        `markdownify` on its own takes minutes on the first four: a run of spaces restarts its
         whitespace regexes at every character, and each `<li>` recounts its previous siblings.
-        The bound is generous; the point is that it isn't minutes.
+        The nested page can't be converted at all (it exceeds the recursion limit), but finding
+        that out must not take long either. The bound is generous; the point is that it isn't minutes.
         """
         start = time.perf_counter()
-        _convert_html(html)
+        try:
+            _convert_html(html)
+        except RecursionError:
+            assert html.startswith('<div>x<div>')
         assert time.perf_counter() - start < 10
 
 

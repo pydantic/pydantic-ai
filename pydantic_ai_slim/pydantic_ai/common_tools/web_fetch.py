@@ -22,7 +22,7 @@ from pydantic_ai.tools import Tool
 
 try:
     from bs4 import BeautifulSoup, Tag
-    from bs4.element import NavigableString
+    from bs4.element import Comment, Doctype, NavigableString, PageElement
     from markdownify import MarkdownConverter
 except ImportError as _import_error:
     raise ImportError(
@@ -120,7 +120,7 @@ class WebFetchLocalTool:
         if not media_type or is_text_like_media_type(media_type):
             try:
                 text = response.text
-            except (UnicodeError, LookupError) as e:
+            except UnicodeError as e:
                 # The server picks the charset, and not every registered codec can decode a
                 # document (`idna`, say), so don't let a bad label take the run down.
                 raise ModelRetry(f'Failed to decode {url}: {e}') from e
@@ -177,19 +177,31 @@ class _MarkdownConverter(MarkdownConverter):
     Each override produces exactly what the upstream step produces.
     """
 
+    def __init__(self, **options: Any):
+        super().__init__(**options)
+        self._ol_indexes: dict[int, int] = {}
+
     def convert_soup(self, soup: BeautifulSoup) -> str:
         # Collapse whitespace runs in text outside `<pre>` ahead of time, the way `process_text`
-        # would, so its regexes only ever see runs of one character.
-        for node in soup.find_all(string=True):
-            if type(node) is NavigableString and node.find_parent('pre') is None:
-                node.replace_with(NavigableString(_WHITESPACE_RUN_RE.sub(_collapse_whitespace_run, node)))
-        self._ol_indexes: dict[int, int] = {}
-        for ol in soup.find_all('ol'):
-            index = 0
-            for child in ol.children:
-                if isinstance(child, Tag) and child.name == 'li':
-                    self._ol_indexes[id(child)] = index
-                    index += 1
+        # would, so its regexes only ever see runs of one character. Upstream skips comments and
+        # doctypes but processes every other string, CDATA and processing instructions included.
+        # One explicit-stack walk, rather than `find_parent('pre')` per node, keeps this linear on
+        # deeply nested documents too.
+        self._ol_indexes = {}
+        stack: list[tuple[PageElement, bool]] = [(soup, False)]
+        while stack:
+            node, in_pre = stack.pop()
+            if isinstance(node, Tag):
+                in_pre = in_pre or node.name == 'pre'
+                stack.extend((child, in_pre) for child in node.children)
+                if node.name == 'ol':
+                    index = 0
+                    for child in node.children:
+                        if isinstance(child, Tag) and child.name == 'li':
+                            self._ol_indexes[id(child)] = index
+                            index += 1
+            elif not in_pre and isinstance(node, NavigableString) and not isinstance(node, (Comment, Doctype)):
+                node.replace_with(type(node)(_WHITESPACE_RUN_RE.sub(_collapse_whitespace_run, node)))
         return super().convert_soup(soup)
 
     def convert_pre(self, el: Tag, text: str, parent_tags: set[str]) -> str:
@@ -213,7 +225,9 @@ class _MarkdownConverter(MarkdownConverter):
         if not text:
             return '\n'
         start_attr = parent.get('start')
-        start = int(start_attr) if isinstance(start_attr, str) and start_attr.isnumeric() else 1
+        # Upstream checks `isnumeric()` before `int()`, which raises on digits like `²`; treat
+        # those as no start rather than letting the page abort the run.
+        start = int(start_attr) if isinstance(start_attr, str) and start_attr.isdecimal() else 1
         bullet = f'{start + self._ol_indexes.get(id(el), 0)}. '
         bullet_indent = ' ' * len(bullet)
 
