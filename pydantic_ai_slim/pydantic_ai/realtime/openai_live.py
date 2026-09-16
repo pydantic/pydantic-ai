@@ -606,15 +606,21 @@ class OpenAILiveConnection(RealtimeConnection):
         ]
 
     def _map_backend_usage(self, response: Any) -> list[RealtimeCodecEvent]:
-        """Accumulate the delegated backend's token usage.
+        """Accumulate the delegated backend's token usage at the run level.
 
         Live meters its own audio by the second and reports no tokens for it, but the Responses
         backend it delegates to is billed per token like any other model — and that is where most of
         a call's token cost is. The nested lifecycle snapshot carries the same `usage` object a direct
         Responses call would, so it is mapped by the same code, keeping cache and reasoning
         breakdowns (and genai-prices' view of them) identical either way.
+
+        Those tokens are run-level rather than response-scoped, like input audio transcription usage:
+        a *different* model spent them on a nested request, while the `ModelResponse` being assembled
+        is the Live model's spoken turn and carries Live's own name. Attributing them to it would
+        price one model's tokens at another's rate for anything that reads `ModelResponse.usage`. The
+        run total is unaffected, so token `UsageLimits` still bound the backend.
         """
-        if not isinstance(response, dict):  # pragma: no cover
+        if not isinstance(response, dict):
             return []
         try:
             parsed = _responses_adapter.validate_python(response)
@@ -623,7 +629,7 @@ class OpenAILiveConnection(RealtimeConnection):
         mapped = map_openai_usage(parsed, self._provider_name, self._provider_url, parsed.model)
         if not mapped.has_values():
             return []  # pragma: no cover
-        return [SessionUsage(mapped)]
+        return [SessionUsage(mapped, response_scoped=False)]
 
     def _map_usage(self, cumulative_seconds: float) -> list[RealtimeCodecEvent]:
         """Emit the *increment* since the last report.

@@ -483,8 +483,8 @@ async def test_aclose_cancels_the_pending_read() -> None:
     connection = OpenAILiveConnection(ws, turn_silence_ms=10)  # pyright: ignore[reportArgumentType]
 
     async def drain() -> None:
-        async for _ in connection:  # pragma: no cover
-            pass
+        async for _ in connection:
+            pass  # pragma: no cover
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(drain)
@@ -728,8 +728,9 @@ def test_delegated_backend_token_usage_is_accumulated() -> None:
     # The cache and reasoning breakdowns survive, so cost accounting matches a direct Responses call.
     assert reported.usage.cache_write_tokens == 805
     assert reported.usage.details['reasoning_tokens'] == 3
-    # Token usage belongs to the response it paid for, unlike the session's audio seconds.
-    assert reported.response_scoped is True
+    # A different model spent these tokens on a nested request, so like the session's audio seconds
+    # they belong to the run and not to the Live model's spoken `ModelResponse`.
+    assert reported.response_scoped is False
 
 
 async def test_a_clean_close_finalizes_the_reply() -> None:

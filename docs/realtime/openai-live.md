@@ -198,6 +198,11 @@ The Live model itself reports no token counts, but the Responses backend it dele
 per token like any other model, and that usage is accumulated with its cache and reasoning
 breakdowns intact. In a call that delegates, most of the token cost is there.
 
+Those tokens land on the session's [`RunUsage`][pydantic_ai.usage.RunUsage] too, not on the
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] for the turn: the backend is a different model
+on a separate meter, while the response records what Live spoke. Read delegated token usage from
+`session.usage`, and expect `ModelResponse.usage` on a Live turn to carry no tokens.
+
 Session duration has a sharp consequence for [usage limits](observability.md#usage-and-limits): no
 [`UsageLimits`][pydantic_ai.usage.UsageLimits] field caps it, so a token limit bounds the delegated
 backend but never the spoken call itself. Tool-call and request limits still apply. Cap the call with your own timer or by closing the session.
