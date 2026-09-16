@@ -20,8 +20,7 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
 
 try:
-    from bs4 import BeautifulSoup
-    from markdownify import MarkdownConverter
+    from markdownify import markdownify as md
 except ImportError as _import_error:
     raise ImportError(
         'Please install `markdownify` to use the web fetch tool, '
@@ -31,8 +30,9 @@ except ImportError as _import_error:
 __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
+_TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
+_TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
-_MAX_TITLE_LENGTH = 1_000
 
 
 class WebFetchResult(TypedDict):
@@ -147,17 +147,28 @@ class WebFetchLocalTool:
 
 
 def _convert_html(html: str) -> tuple[str, str]:
-    """Return the `<title>` text (empty if there is none) and the markdown conversion of the HTML.
+    """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
+    return _extract_title(html), md(html, strip=['img', 'script', 'style'])
 
-    The document is parsed once and the tree is shared between both, using the same `html.parser`
-    backend `markdownify` uses when handed a string.
+
+def _extract_title(html: str) -> str:
+    """Extract the raw text of the first `<title>` element.
+
+    A single forward scan: the first `<title` start and the `</title>` end are matched
+    case-insensitively, the `>` closing the start tag literally. Each step either finds its
+    marker or settles the result, and the patterns are plain literals with nothing to backtrack
+    over, so the cost is linear in the size of the document regardless of how malformed it is.
     """
-    soup = BeautifulSoup(html, 'html.parser')
-    # An unclosed `<title>` swallows the rest of the document as its text, so bound the title
-    # separately from `max_content_length`, which only applies to the content.
-    title = soup.title.get_text().strip()[:_MAX_TITLE_LENGTH] if soup.title is not None else ''
-    content = MarkdownConverter(strip=['img', 'script', 'style']).convert_soup(soup)
-    return title, content
+    opening = _TITLE_OPEN_RE.search(html)
+    if opening is None:
+        return ''
+    open_end = html.find('>', opening.end())
+    if open_end == -1:
+        return ''
+    closing = _TITLE_CLOSE_RE.search(html, open_end + 1)
+    if closing is None:
+        return ''
+    return html[open_end + 1 : closing.start()].strip()
 
 
 def _clean_whitespace(text: str) -> str:
