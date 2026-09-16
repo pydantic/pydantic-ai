@@ -4185,3 +4185,26 @@ def test_run_span_leaves_base_exceptions_unrecorded(capfire: CaptureLogfire) -> 
     assert [
         span['name'] for span in spans for event in span.get('events', []) if event['name'] == 'exception'
     ] == snapshot(['execute_tool my_tool'])
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_span_reports_the_runs_own_usage_not_the_conversations(capfire: CaptureLogfire) -> None:
+    """Carrying `usage=` across a conversation must not inflate each run's span.
+
+    `RunUsage` is accumulated into in place, so a run handed the previous run's object would
+    otherwise report the conversation's running total, and anything summing agent-run spans would
+    count the earlier turns again. The caller's own total is unaffected: that is what they asked
+    for by passing it.
+    """
+    agent = Agent(TestModel(custom_output_text='hi'), capabilities=[Instrumentation()])
+
+    first = agent.run_sync('one')
+    second = agent.run_sync('two', message_history=first.all_messages(), usage=first.usage)
+
+    reported = [
+        span['attributes']['gen_ai.aggregated_usage.input_tokens']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if 'gen_ai.aggregated_usage.input_tokens' in span['attributes']
+    ]
+    assert reported == snapshot([51, 52])
+    assert second.usage.input_tokens == snapshot(103)
