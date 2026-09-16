@@ -7,6 +7,9 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsList
+
+# `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ValidationError
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -44,17 +47,17 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics
+from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
 
-try:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
+with try_import():
     # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
     # `pydantic-ai-slim` / `pydantic-evals` install groups either.
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
-    from opentelemetry.trace import StatusCode
+
+try:
+    import logfire
+    from logfire.testing import CaptureLogfire
 except ImportError:  # pragma: lax no cover
     logfire_installed = False
 else:
