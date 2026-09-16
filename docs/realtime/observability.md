@@ -51,7 +51,7 @@ Breaches raise [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]
 
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
-[OpenAI GPT-Live](openai-openai-live.md#usage-is-measured-in-seconds),
+[OpenAI GPT-Live](openai-live.md#usage-is-measured-in-seconds),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
 [Google Gemini](gemini.md#feature-support-and-limitations), and
 [xAI](xai.md#feature-support-and-limitations) pages. GPT-Live is the one that does not report tokens
