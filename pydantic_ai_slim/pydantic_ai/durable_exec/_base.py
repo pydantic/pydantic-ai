@@ -435,6 +435,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if ctx.agent is None:
             return
         run_capabilities = ctx._run_capabilities_by_id or {}  # pyright: ignore[reportPrivateUsage]
+        if unreachable := sorted({key[0] for key in self._bound_capability_operations} - run_capabilities.keys()):
+            # Without this the operations would dispatch nowhere and their methods would run inline,
+            # non-durably, with nothing said — precisely what a durable operation exists to prevent.
+            ids = ', '.join(repr(capability_id) for capability_id in unreachable)
+            raise UserError(
+                f'No capability with id {ids} is present in this run, but one was bound to the agent '
+                'and contributes durable operations. A `for_run` replacement has to keep the '
+                "capability's `id`: it identifies the capability across the run, and persisted "
+                'operation identity and worker-side recovery are built on it.'
+            )
         for capability_id, capability in run_capabilities.items():
             for bound_capability_id, operation_name in self._bound_capability_operations:
                 if capability_id != bound_capability_id:

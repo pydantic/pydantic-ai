@@ -748,6 +748,40 @@ async def test_per_request_hook_dispatches_on_the_run_instance_it_already_built(
     assert capability.replacements == snapshot(1)
 
 
+async def test_run_replacement_that_drops_the_bound_id_is_refused() -> None:
+    """A replacement under a different `id` leaves the bound operations unreachable.
+
+    Dispatch resolves a capability by `id`, so the operations would have run inline and
+    non-durably instead — the one outcome a durable operation exists to rule out.
+    """
+
+    class IdChangingOperation(AbstractCapability[Any]):
+        id = 'id_changing_operation'
+
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            replacement = IdChangingOperation()
+            replacement.id = 'renamed_for_this_run'
+            return replacement
+
+        @durable_operation('operation')
+        async def operation(self, ctx: RunContext[Any]) -> None: ...
+
+    agent = Agent(
+        TestModel(),
+        name='id_changing',
+        capabilities=[IdChangingOperation(), RecordingDurability()],
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('test')
+    assert str(exc_info.value) == snapshot(
+        "No capability with id 'id_changing_operation' is present in this run, but one was bound to "
+        'the agent and contributes durable operations. A `for_run` replacement has to keep the '
+        "capability's `id`: it identifies the capability across the run, and persisted operation "
+        'identity and worker-side recovery are built on it.'
+    )
+
+
 async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:
     capability = Operations()
     first_agent = Agent(TestModel(), name='first_agent', capabilities=[capability, RecordingDurability()])

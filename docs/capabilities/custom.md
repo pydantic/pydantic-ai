@@ -905,6 +905,8 @@ agent = Agent(TestModel(), capabilities=[Summaries()])
 
 Mark each operation method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names and must remain stable, while the Python method can be freely renamed. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
 
+A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may return a fresh instance — the operation dispatches on whichever instance the run is using, from `before_run` and from per-request hooks alike. The replacement has to keep the capability's `id`, since that is what dispatch and worker-side recovery resolve it by; Pydantic AI raises a `UserError` at the start of the run if a bound capability's ID is no longer present.
+
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 
 The live-value hooks `get_toolset`, `get_wrapper_toolset`, `wrap_run`, `wrap_node_run`, `wrap_model_request`, `wrap_tool_validate`, `wrap_tool_execute`, `wrap_output_validate`, `wrap_output_process`, and `wrap_run_event_stream` cannot be decorated because their handlers or values cannot cross a durable boundary. Pydantic AI raises a `UserError` naming the incompatible hook during agent construction.
