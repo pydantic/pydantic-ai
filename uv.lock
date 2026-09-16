@@ -7241,7 +7241,7 @@ lint = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
+    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1,<1" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "spec", "temporal", "ui", "vertexai", "xai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
@@ -7505,7 +7505,7 @@ requires-dist = [
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
-    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.6.1" },
+    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.6.1,<1" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=3.3.0,<4" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<4" },
     { name = "genai-prices", specifier = ">=0.0.62" },
