@@ -4107,7 +4107,7 @@ def test_exception_events_honor_include_content(
         model_calls += 1
         if model_calls <= 2:
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 1})])
-        return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+        return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(
         FunctionModel(call_tool),
