@@ -17,8 +17,10 @@ from pytest_mock import MockerFixture
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.text import Text
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart, __version__, _display
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
@@ -231,6 +233,34 @@ def test_mcp_config_interactive(capfd: CaptureFixture[str], mocker: MockerFixtur
     output = capfd.readouterr().out
     assert 'Called tool temp_get_weather_forecast' in output
     assert 'The weather in a is sunny and 26 degrees Celsius.' in ' '.join(output.split())
+
+
+def test_mcp_config_banner_omits_the_tool_count(
+    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, tmp_path: Path
+):
+    """`tools: 0` beside a session full of MCP tools would be worse than saying nothing at all.
+
+    Startup can't count them: only a `FunctionToolset` holds its tools synchronously, and an MCP
+    server would have to be connected to and asked. The count is left out rather than understated.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    config_file = tmp_path / 'mcp_servers.json'
+    config_file.write_text(
+        json.dumps({'mcpServers': {'temp': {'command': 'python', 'args': ['-m', 'tests.mcp_server']}}})
+    )
+
+    with create_pipe_input() as inp:
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+        mocker.patch('pydantic_ai._display.banner_available', return_value=True)
+
+        with cli_agent.override(model=TestModel()):
+            assert cli(['--mcp-config', str(config_file)]) == 0
+
+    output = capfd.readouterr().out
+    assert 'capabilities:' in output, 'the banner should still be shown'
+    assert 'tools:' not in output
 
 
 # Sentinel for the case where `--mcp-config` is handed an existing path that isn't a readable file.
@@ -1500,3 +1530,340 @@ def test_clai_web_answers_to_the_host_it_binds_to(mocker: MockerFixture, env: Te
 
     assert mock_create.call_args.kwargs['allowed_hosts'] == ['devbox.example']
     assert mock_uvicorn.call_args.kwargs['host'] == 'devbox.example'
+
+
+LOGO_MARKER = _display._LOGO_LINES[-1]  # pyright: ignore[reportPrivateUsage]
+"""The logo's closing row, standing in for the whole banner having landed in the output."""
+
+
+@pytest.fixture
+def terminal_clai(env: TestEnv) -> Iterator[None]:
+    """A `clai` session that believes it owns a terminal, and starts with the banner unclaimed."""
+    env.set('FORCE_COLOR', '1')
+    env.remove('CI')
+    env.remove('PYDANTIC_AI_NO_BANNER')
+    # The suite that asserts on the banner is the one place a test run is allowed to show one.
+    env.remove('PYTEST_VERSION')
+    _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
+    try:
+        yield
+    finally:
+        _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.fixture
+def agent_clai(env: TestEnv) -> Iterator[None]:
+    """A `clai` a coding agent started, whose output is a pipe it reads back rather than a terminal."""
+    env.set('AI_AGENT', 'some-harness')
+    env.remove('CI')
+    env.remove('PYDANTIC_AI_NO_BANNER')
+    env.remove('PYTEST_VERSION')
+    _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
+    try:
+        yield
+    finally:
+        _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
+
+
+def _plain(output: str) -> str:
+    """The output as the user reads it, with the colour the banner is styled in taken back off."""
+    return Text.from_ansi(output).plain
+
+
+def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None):
+    env.set('OPENAI_API_KEY', 'test')
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['hello']) == 0
+
+    output = _plain(capfd.readouterr().out)
+    assert LOGO_MARKER in output
+    # clai shows the same banner a script gets, rather than heading it with its own name and version.
+    assert f'pydantic-ai v{__version__}' in output
+    assert 'clai - Pydantic AI CLI' not in output
+    assert 'model: openai:gpt-5 • tools: 0 • capabilities: 0' in output
+    # The banner carries the observability pointer, so clai doesn't repeat its own header line.
+    # Matched on the label, not the prose, which is the banner's to reword.
+    assert 'observability:' in output
+    assert 'with openai:gpt-5' not in output
+
+
+def test_clai_nested_in_an_agent_still_opens_with_a_banner(
+    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, agent_clai: None
+):
+    """A harness running `clai` reads what it writes, so a pipe is no reason to hold the banner back."""
+    env.set('OPENAI_API_KEY', 'test')
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['hello']) == 0
+
+    output = capfd.readouterr().out
+    assert LOGO_MARKER in output
+    # Nothing renders the codes for a pipe, so the console leaves them out rather than writing them raw.
+    assert '\x1b[' not in output
+
+
+def test_clai_intro_names_the_agent_the_user_asked_for(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+    terminal_clai: None,
+):
+    env.set('OPENAI_API_KEY', 'test')
+    create_test_module(custom_agent=Agent(TestModel()))
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+    # The loaded agent has no name of its own, so the banner falls back to the path the user gave.
+    assert 'agent: test_module:custom_agent' in _plain(capfd.readouterr().out)
+
+
+def test_clai_intro_drops_observability_for_an_instrumented_agent(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+    terminal_clai: None,
+):
+    env.set('OPENAI_API_KEY', 'test')
+    instrumented = Agent(TestModel(), name='observed')
+    instrumented.instrument = True
+    create_test_module(custom_agent=instrumented)
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+    output = _plain(capfd.readouterr().out)
+    assert 'agent: observed' in output
+    assert 'observability: off' not in output
+
+
+def test_clai_intro_drops_observability_when_instrumented_globally(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+    terminal_clai: None,
+):
+    """`instrument_all()` leaves `agent.instrument` as `None`, so reading it would advertise Logfire
+    to someone already sending traces there."""
+    env.set('OPENAI_API_KEY', 'test')
+    create_test_module(custom_agent=Agent(TestModel(), name='observed'))
+    mocker.patch('pydantic_ai._cli.ask_agent')
+    Agent.instrument_all()
+    try:
+        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+    finally:
+        Agent.instrument_all(False)
+
+    output = _plain(capfd.readouterr().out)
+    assert 'agent: observed' in output
+    assert 'observability: off' not in output
+
+
+def test_run_chat_banner_names_the_model_the_session_will_use(
+    mocker: MockerFixture, tmp_path: Path, terminal_clai: None
+):
+    """Under `override(model=...)` the prompts go to the override, so the banner has to say so."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hi')])  # pragma: no cover
+
+    console, io = _chat_console()
+    agent = Agent(TestModel(), name='support_agent')
+
+    with agent.override(model=FunctionModel(respond)):
+        with create_pipe_input() as inp:
+            _exit_immediately(mocker, inp)
+            anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
+
+    output = _plain(io.getvalue())
+    assert 'model: function:function:respond:' in output
+    assert 'test:test' not in output
+
+
+def test_run_chat_shows_a_banner_for_an_agent_that_only_has_an_override(
+    mocker: MockerFixture, tmp_path: Path, terminal_clai: None
+):
+    """The override is the session's model, so deciding on `agent.model` alone would skip the banner."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hi')])  # pragma: no cover
+
+    console, io = _chat_console()
+    agent = Agent(name='modelless_agent')
+
+    with agent.override(model=FunctionModel(respond)):
+        with create_pipe_input() as inp:
+            _exit_immediately(mocker, inp)
+            anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
+
+    assert 'agent: modelless_agent • model: function:function:respond:' in _plain(io.getvalue())
+
+
+def test_clai_intro_counts_tools_from_an_override(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+    terminal_clai: None,
+):
+    """`override(tools=...)` builds a fresh function toolset, leaving the agent's own untouched."""
+
+    def ping() -> str:
+        return 'pong'  # pragma: no cover
+
+    env.set('OPENAI_API_KEY', 'test')
+    agent = Agent(TestModel(), name='overridden')
+    create_test_module(custom_agent=agent)
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    with agent.override(tools=[ping]):
+        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+    assert 'tools: 1' in _plain(capfd.readouterr().out)
+
+
+def test_run_chat_opens_even_if_the_banner_cannot_be_written(
+    mocker: MockerFixture, tmp_path: Path, terminal_clai: None
+):
+    """A terminal whose encoding can't take the banner shouldn't take the session down with it."""
+
+    class NoSeparatorIO(StringIO):
+        """Rejects the separator between the banner's details, as an ASCII terminal rejects it.
+
+        The logo itself is plain ASCII, so the banner's own unencodable characters are what a
+        terminal under `LC_ALL=C` chokes on. Narrowed to this one rather than all of them, so that
+        the rest of the session still writes and the test can show it survived.
+        """
+
+        def write(self, s: str) -> int:
+            if _display._INFO_SEPARATOR in s:  # pyright: ignore[reportPrivateUsage]
+                raise UnicodeEncodeError('ascii', s, 0, 1, 'ordinal not in range(128)')
+            return super().write(s)
+
+    io = NoSeparatorIO()
+    console = Console(file=io, force_terminal=True)
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        assert anyio.run(run_chat, True, Agent(TestModel()), console, 'monokai', 'pydantic-ai', tmp_path) == 0
+
+    # The chat opened and ran to its `/exit` without a header, rather than not at all.
+    assert LOGO_MARKER not in io.getvalue()
+    assert 'Exiting' in _plain(io.getvalue())
+
+
+def test_clai_intro_falls_back_to_one_line_when_banner_is_suppressed(
+    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None
+):
+    env.set('PYDANTIC_AI_NO_BANNER', '1')
+    env.set('OPENAI_API_KEY', 'test')
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['hello']) == 0
+
+    # The one-liner clai has always printed, styled per-segment, so ANSI codes sit between the words.
+    output = capfd.readouterr().out
+    assert LOGO_MARKER not in output
+    assert 'observability' not in output
+    assert 'clai - Pydantic AI CLI' in output
+    assert 'openai:gpt-5' in output
+
+
+def test_clai_run_does_not_print_a_second_banner(capfd: CaptureFixture[str], env: TestEnv, terminal_clai: None):
+    """The banner belongs at startup, not in the middle of the answer to the first prompt."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    assert cli(['--model', 'test', 'hello']) == 0
+
+    # `ask_agent` claims the banner, so the run inside it has nothing left to print.
+    assert capfd.readouterr().out.count(LOGO_MARKER) == 1
+
+
+def test_clai_web_does_not_print_a_banner(mocker: MockerFixture, env: TestEnv, terminal_clai: None):
+    env.set('OPENAI_API_KEY', 'test')
+    mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    assert cli(['web']) == 0
+
+    # A server's first chat request would otherwise print the banner into its log, long after start.
+    assert _display.claim_banner() is False
+
+
+def _exit_immediately(mocker: MockerFixture, inp: Any) -> None:
+    inp.send_text('/exit\n')
+    mocker.patch('pydantic_ai._cli.PromptSession', return_value=PromptSession[Any](input=inp, output=DummyOutput()))
+
+
+def _chat_console() -> tuple[Console, StringIO]:
+    io = StringIO()
+    return Console(file=io, force_terminal=True), io
+
+
+def test_run_chat_shows_banner_for_a_users_own_agent(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):
+    """`Agent.to_cli()` prints no header of its own, so without this its session announces nothing."""
+    console, io = _chat_console()
+    agent = Agent(TestModel(), name='support_agent')
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
+
+    output = _plain(io.getvalue())
+    assert LOGO_MARKER in output
+    # A user's own agent gets the same banner a script does, not clai's.
+    assert 'Pydantic AI CLI' not in output
+    assert f'pydantic-ai v{__version__}' in output
+    assert 'agent: support_agent • model: test:test • tools: 0 • capabilities: 0' in output
+
+
+def test_run_chat_without_a_model_shows_no_banner(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):
+    """There is nothing to say about the model yet, and the first prompt will fail on it anyway."""
+    console, io = _chat_console()
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        anyio.run(run_chat, True, Agent(), console, 'monokai', 'pydantic-ai', tmp_path)
+
+    assert LOGO_MARKER not in io.getvalue()
+
+
+def test_run_chat_on_a_wrapped_agent_shows_no_banner(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):
+    """The counts the banner reports come off `Agent`; a wrapper keeps the silence it has today."""
+    console, io = _chat_console()
+    agent = WrapperAgent(Agent(TestModel(), name='support_agent'))
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
+
+    assert LOGO_MARKER not in io.getvalue()
+
+
+def test_clai_chat_session_does_not_print_a_second_banner(
+    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None
+):
+    """`_run_chat_command` prints the intro, so `run_chat` must find the banner already claimed."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        with cli_agent.override(model=TestModel(custom_output_text='hi')):
+            assert cli([]) == 0
+
+    assert capfd.readouterr().out.count(LOGO_MARKER) == 1
+
+
+def test_auto_suggest_completes_a_slash_command():
+    """A typed prefix of a slash command wins over whatever history would have suggested."""
+    suggestion = CustomAutoSuggest(['/exit']).get_suggestion(Buffer(), Document('/e'))
+
+    assert suggestion is not None and suggestion.text == 'xit'
+
+
+def test_auto_suggest_falls_back_to_history_for_a_non_command():
+    """Text matching no slash command leaves the history suggestion in place — here, none."""
+    assert CustomAutoSuggest(['/exit']).get_suggestion(Buffer(), Document('hello')) is None
