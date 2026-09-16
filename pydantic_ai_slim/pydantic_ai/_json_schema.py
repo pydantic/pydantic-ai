@@ -114,6 +114,10 @@ class JsonSchemaTransformer(ABC):
         elif type_ == 'array':
             schema = self._handle_array(schema)
         elif type_ is None:
+            # `properties` etc. apply without an explicit `type`, so an object-shaped typeless
+            # node must be walked too, or its nested `$ref`s are never inlined.
+            if any(k in schema for k in ('properties', 'additionalProperties', 'patternProperties')):
+                schema = self._handle_object(schema)
             schema = self._handle_union(schema, 'allOf')
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')

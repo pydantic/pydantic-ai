@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import Tool, ToolDefinition
 
 
 class _PassthroughTransformer(JsonSchemaTransformer):
@@ -508,3 +510,129 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
     assert set(result['$defs']) == {'Node', 'Node_root'}
     # The definition the root points at is intact, not overwritten by the root.
     assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
+
+
+def test_inline_defs_typeless_object_properties_are_inlined():
+    """A typeless node carrying object keywords must not strand `$ref`s when `$defs` is dropped.
+
+    The issue's schema: the root has `properties` but no `type`, so only its composition members
+    were walked, `$defs` was dropped anyway, and the `#/$defs/Payload` pointer was left dangling.
+    """
+    schema = {
+        '$defs': {'Payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+        'properties': {'payload': {'$ref': '#/$defs/Payload'}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert result == {'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}}
+
+
+def test_inline_defs_typeless_object_with_union_is_walked_once():
+    """A typeless node with both object and composition keywords is walked exactly once.
+
+    The object-keyword walk and the union walk cover disjoint keys, so each subschema is visited
+    once, and a definition referenced from both sides is walked once and deepcopied per site.
+    """
+    transformed: list[str] = []
+
+    class _TitleRecordingTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            if title := schema.get('title'):
+                transformed.append(title)
+            return schema
+
+    schema = {
+        '$defs': {
+            'Extra': {
+                'title': 'Extra',
+                'type': 'object',
+                'properties': {'b': {'type': 'integer', 'title': 'B'}},
+            }
+        },
+        'properties': {'a': {'type': 'string'}},
+        'anyOf': [{'$ref': '#/$defs/Extra'}, {'type': 'string'}],
+    }
+
+    result = _TitleRecordingTransformer(deepcopy(schema)).walk()
+
+    assert transformed == ['B', 'Extra']  # children first, each exactly once
+    assert result == {
+        'properties': {'a': {'type': 'string'}},
+        'anyOf': [
+            {
+                'title': 'Extra',
+                'type': 'object',
+                'properties': {'b': {'type': 'integer', 'title': 'B'}},
+            },
+            {'type': 'string'},
+        ],
+    }
+
+
+def test_typed_object_properties_inlining_control():
+    """An explicit `type: object` node with the same shape keeps today's inlining behavior."""
+    schema = {
+        '$defs': {'Payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+        'type': 'object',
+        'properties': {'payload': {'$ref': '#/$defs/Payload'}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert result == {
+        'type': 'object',
+        'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+    }
+
+
+def test_tool_from_schema_typeless_properties_inlined_before_request():
+    """`Tool.from_schema` schemas are inlined for meta-profile models before any request is built.
+
+    Rides the Ollama (meta profile) `customize_request_parameters` dispatch: before the fix the
+    provider-bound tool declaration carried a dangling `#/$defs/Payload` pointer.
+    """
+    pytest.importorskip('openai')
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.ollama import OllamaProvider
+
+    schema = {
+        '$defs': {'Payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+        'properties': {'payload': {'$ref': '#/$defs/Payload'}},
+    }
+    tool = Tool.from_schema(
+        lambda **kwargs: None,
+        name='my_tool',
+        description='Uses the payload',
+        json_schema=deepcopy(schema),
+    )
+
+    model = OpenAIChatModel('llama3.2', provider=OllamaProvider(base_url='http://localhost:11434/v1'))
+    result = model.customize_request_parameters(ModelRequestParameters(function_tools=[tool.tool_def]))
+
+    assert result.function_tools[0].parameters_json_schema == {
+        'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}
+    }
+
+
+def test_custom_toolset_tool_definition_typeless_properties_inlined():
+    """A hand-authored `ToolDefinition`, the custom-toolset and MCP surface, is inlined too."""
+    pytest.importorskip('openai')
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.ollama import OllamaProvider
+
+    tool_definition = ToolDefinition(
+        name='my_tool',
+        description='Uses the payload',
+        parameters_json_schema={
+            '$defs': {'Payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+            'properties': {'payload': {'$ref': '#/$defs/Payload'}},
+        },
+    )
+
+    model = OpenAIChatModel('llama3.2', provider=OllamaProvider(base_url='http://localhost:11434/v1'))
+    result = model.customize_request_parameters(ModelRequestParameters(function_tools=[tool_definition]))
+
+    assert result.function_tools[0].parameters_json_schema == {
+        'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}
+    }
