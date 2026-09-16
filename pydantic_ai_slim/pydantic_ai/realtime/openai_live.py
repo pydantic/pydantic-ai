@@ -95,7 +95,17 @@ from .settings import RealtimeModelSettings
 try:
     import websockets
     from openai import AsyncOpenAI
-    from openai.types.live import ServerEvent
+    from openai.types.live import (
+        DelegationCreatedEvent,
+        ErrorEvent,
+        InputTranscriptDeltaEvent,
+        OutputAudioDeltaEvent,
+        OutputTranscriptDeltaEvent,
+        ResponseEvent,
+        ServerEvent,
+        SessionClosedEvent,
+        SessionUsageUpdatedEvent,
+    )
     from openai.types.responses import Response
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
@@ -306,7 +316,7 @@ class _Delegation:
     """A unit of work the Live model handed to the Responses backend."""
 
     id: str
-    pending_tool_calls: set[str] = field(default_factory=set)
+    pending_tool_calls: set[str] = field(default_factory=set[str])
 
 
 class OpenAILiveConnection(RealtimeConnection):
@@ -338,6 +348,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._provider_url = provider_url
         self._turn_silence = turn_silence_ms / 1000
         self._recv_task: asyncio.Task[str | bytes] | None = None
+        self._closed = False
         self._response_open = False
         self._input_open = False
         self._last_voice = 0.0
@@ -402,6 +413,7 @@ class OpenAILiveConnection(RealtimeConnection):
 
     async def aclose(self) -> None:
         """Cancel the read in flight so closing the socket doesn't strand its exception."""
+        self._closed = True
         if (task := self._recv_task) is not None:
             self._recv_task = None
             task.cancel()
@@ -413,20 +425,20 @@ class OpenAILiveConnection(RealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         # One read is always in flight: the next one starts before this frame is handled, so nothing
         # arrives while the consumer is busy and no frame is dropped between iterations.
-        self._recv_task = asyncio.create_task(_recv(self._ws))
+        pending = self._start_read()
         while True:
             # Never cancel the pending `recv()`: a cancelled read can drop the frame it already holds,
             # so the turn clock is a timeout on the wait rather than on the read.
-            done, _ = await asyncio.wait({self._recv_task}, timeout=self._silence_timeout())
-            if (task := self._recv_task) is None:
+            done, _ = await asyncio.wait({pending}, timeout=self._silence_timeout())
+            if self._closed:
                 # `aclose()` cancelled the read while we were waiting on it.
                 return
             if done:
-                self._recv_task = asyncio.create_task(_recv(self._ws))
+                finished, pending = pending, self._start_read()
                 try:
-                    raw = task.result()
-                # A cancelled read is not caught here: `aclose()` clears `_recv_task` before
-                # cancelling, so that path returns above rather than reaching this call.
+                    raw = finished.result()
+                # A cancelled read is not caught here: `aclose()` sets `_closed` before cancelling,
+                # so that path returns above rather than reaching this call.
                 except websockets.ConnectionClosedOK:
                     # A graceful close ends whatever was in flight. Live never says a turn is over,
                     # so without this the last reply would be settled as interrupted even though the
@@ -440,6 +452,11 @@ class OpenAILiveConnection(RealtimeConnection):
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
             for event in self._expire_quiet_turn():
                 yield event
+
+    def _start_read(self) -> asyncio.Task[str | bytes]:
+        """Begin the next read, remembering it so `aclose()` can cancel it."""
+        self._recv_task = asyncio.create_task(_recv(self._ws))
+        return self._recv_task
 
     def _silence_timeout(self) -> float | None:
         """How long until the current turn could end, or `None` when nothing is pending.
@@ -491,22 +508,28 @@ class OpenAILiveConnection(RealtimeConnection):
         return self._map_event(event)
 
     def _map_event(self, event: ServerEvent) -> list[RealtimeCodecEvent]:
-        kind = event.type
-        if kind == 'session.output_audio.delta':
+        """Translate one Live server event, ignoring the ones the session has no vocabulary for.
+
+        Dispatch is on the parsed SDK types rather than the `type` string so each branch narrows to
+        the payload it reads. The events not handled here are the SIP transport notices, the sideband
+        audio reflections, and the acknowledgements of our own commands, none of which change what a
+        session has said or heard.
+        """
+        if isinstance(event, OutputAudioDeltaEvent):
             return self._map_output_audio(_b64decode(event.delta))
-        if kind == 'session.output_transcript.delta':
+        if isinstance(event, OutputTranscriptDeltaEvent):
             return [*self._open_response(), OutputTranscript(event.delta)]
-        if kind == 'session.input_transcript.delta':
+        if isinstance(event, InputTranscriptDeltaEvent):
             self._input_open = True
             self._heard_voice()
             return [InputTranscript(event.delta)]
-        if kind == 'session.delegation.created':
+        if isinstance(event, DelegationCreatedEvent):
             return self._map_delegation(event)
-        if kind == 'response.event':
-            return self._map_response_event(event.event, delegation_id=event.delegation_id)
-        if kind in ('session.usage.updated', 'session.closed'):
+        if isinstance(event, ResponseEvent):
+            return self._map_response_event(cast('dict[str, Any]', event.event), delegation_id=event.delegation_id)
+        if isinstance(event, (SessionUsageUpdatedEvent, SessionClosedEvent)):
             return self._map_usage(event.usage.seconds)
-        if kind == 'error':
+        if isinstance(event, ErrorEvent):
             return [RealtimeSessionErrorEvent(message=event.error.message, code=event.error.code)]
         return []
 
@@ -523,7 +546,7 @@ class OpenAILiveConnection(RealtimeConnection):
             return [AudioDelta(data=pcm)]
         return []
 
-    def _map_delegation(self, event: Any) -> list[RealtimeCodecEvent]:
+    def _map_delegation(self, event: DelegationCreatedEvent) -> list[RealtimeCodecEvent]:
         delegation = event.delegation
         if delegation.target == 'client':
             # This adapter configures Responses delegation; say so rather than stalling silently
@@ -553,8 +576,11 @@ class OpenAILiveConnection(RealtimeConnection):
             return self._map_backend_usage(nested.get('response'))
         if nested_type != 'response.output_item.done':
             return []
-        item = nested.get('item')
-        if not isinstance(item, dict) or item.get('type') != 'function_call':
+        raw_item = nested.get('item')
+        if not isinstance(raw_item, dict):
+            return []
+        item = cast('dict[str, Any]', raw_item)
+        if item.get('type') != 'function_call':
             return []
         call_id = cast('str', item['call_id'])
         if delegation is not None:

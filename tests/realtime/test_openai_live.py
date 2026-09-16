@@ -21,7 +21,6 @@ from websockets.frames import Close
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    CachePoint,
     FilePart,
     ModelRequest,
     ModelResponse,
@@ -48,6 +47,7 @@ from pydantic_ai.realtime.codec import (
     ResponseDone,
     SessionUsage,
     TextContext,
+    ToolCall,
     ToolResult,
     TruncateOutput,
 )
@@ -96,8 +96,12 @@ def _connection(**kwargs: Any) -> OpenAILiveConnection:
     return OpenAILiveConnection(object(), **kwargs)  # pyright: ignore[reportArgumentType]
 
 
-def _event(payload: dict[str, Any]) -> Any:
-    return TypeAdapter(ServerEvent).validate_python(payload)
+_server_events: TypeAdapter[ServerEvent] = TypeAdapter(ServerEvent)
+
+
+def _event(payload: dict[str, Any]) -> ServerEvent:
+    """Parse a raw Live frame the way the connection does, so tests drive real SDK event objects."""
+    return _server_events.validate_python(payload)
 
 
 def test_live_model_names_route_to_the_live_protocol(env: Any) -> None:
@@ -465,13 +469,12 @@ async def test_response_completed_without_a_delegation_is_ignored() -> None:
     """A nested event we can't correlate is not an error; Live says it may be uncorrelated."""
     connection = _connection()
     assert connection._map_response_event({'type': 'response.completed'}, delegation_id=None) == []  # pyright: ignore[reportPrivateUsage]
-    assert (
-        connection._map_response_event(  # pyright: ignore[reportPrivateUsage]
-            {'type': 'response.output_item.done', 'item': {'type': 'function_call', 'call_id': 'c', 'name': 'n'}},
-            delegation_id='missing',
-        )[-1].tool_call_id  # pyright: ignore[reportAttributeAccessIssue]
-        == 'c'
-    )
+    # A completed output item that carries no item object at all is likewise nothing to map.
+    assert connection._map_response_event({'type': 'response.output_item.done'}, delegation_id=None) == []  # pyright: ignore[reportPrivateUsage]
+    assert connection._map_response_event(  # pyright: ignore[reportPrivateUsage]
+        {'type': 'response.output_item.done', 'item': {'type': 'function_call', 'call_id': 'c', 'name': 'n'}},
+        delegation_id='missing',
+    )[-1] == ToolCall('c', tool_name='n', args='{}', response_usage_follows=False)
 
 
 async def test_aclose_cancels_the_pending_read() -> None:
@@ -503,8 +506,10 @@ def test_error_events_keep_the_session_usable() -> None:
             }
         )
     )
-    assert events == [RealtimeSessionErrorEvent(message='nope', code='bad_thing')]
-    assert events[0].recoverable is True  # pyright: ignore[reportAttributeAccessIssue]
+    error = events[0]
+    assert isinstance(error, RealtimeSessionErrorEvent)
+    assert error == RealtimeSessionErrorEvent(message='nope', code='bad_thing')
+    assert error.recoverable is True
 
 
 def test_reconnect_does_not_restore_state() -> None:
@@ -581,11 +586,15 @@ def _patched_connect(ws: _FakeWebSocket) -> Any:
             ws.closed = True
 
     original = live_module.websockets.connect
-    live_module.websockets.connect = lambda *args, **kwargs: _Opening()  # pyright: ignore[reportAttributeAccessIssue]
+
+    def _connect(*args: Any, **kwargs: Any) -> _Opening:
+        return _Opening()
+
+    live_module.websockets.connect = _connect
     try:
         yield
     finally:
-        live_module.websockets.connect = original  # pyright: ignore[reportAttributeAccessIssue]
+        live_module.websockets.connect = original
 
 
 async def test_a_new_turn_starts_after_the_previous_one_ended() -> None:
@@ -629,7 +638,7 @@ async def test_a_user_turn_alone_is_finalized_when_the_model_stays_silent() -> N
 def test_seeding_skips_content_it_cannot_carry() -> None:
     """Empty transcripts and parts with no text equivalent are dropped, not sent as blanks."""
     messages = [
-        ModelRequest(parts=[SpeechPart(speaker='user', transcript=None), CachePoint()]),
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript=None)]),
         ModelRequest(parts=[RetryPromptPart(content='try again', tool_name='t', tool_call_id='1')]),
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='   ')]),
         ModelRequest(parts=[UserPromptPart(content='kept')]),
@@ -683,7 +692,7 @@ def test_delegated_backend_token_usage_is_accumulated() -> None:
     Most of a call's token cost lives in the backend, so dropping this would under-report the run.
     """
     connection = _connection()
-    completed = {
+    completed: dict[str, Any] = {
         'type': 'response.event',
         'event_id': 'e1',
         'delegation_id': 'd1',
