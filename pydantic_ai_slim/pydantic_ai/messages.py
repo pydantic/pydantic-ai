@@ -242,7 +242,7 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier, usedforsecurity=False).hexdigest()[:6]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
@@ -271,7 +271,7 @@ class FileUrl(ABC):
     - `MistralModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
-    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None)] = field(
         compare=False, default=None
     )
 
@@ -294,11 +294,30 @@ class FileUrl(ABC):
         _identifier: str | None = None,
     ) -> None: ...  # pragma: no cover
 
-    @pydantic.computed_field
     @property
     def media_type(self) -> str:
-        """Return the media type of the file, based on the URL or the provided `media_type`."""
+        """Return the media type of the file, based on the URL or the provided `media_type`.
+
+        Raises:
+            ValueError: If the media type can't be inferred from the URL and wasn't provided.
+        """
         return self._media_type or self._infer_media_type()
+
+    def media_type_or_none(self) -> str | None:
+        """Return the media type of the file for serialization, or `None` if it can't be inferred.
+
+        Unlike `media_type`, this never raises, so history that contains a URL Pydantic AI can't
+        read a media type out of still serializes and round-trips, with `media_type` as `null`.
+        """
+        try:
+            return self._media_type or self._infer_media_type()
+        except ValueError:
+            return None
+
+    @pydantic.field_serializer('_media_type')
+    def _serialize_media_type(self, media_type: str | None, _info: pydantic.SerializationInfo) -> str | None:
+        """Serialize the stored or inferred media type, or `None` when it can't be inferred."""
+        return self.media_type_or_none()
 
     @pydantic.computed_field
     @property
@@ -331,7 +350,7 @@ class FileUrl(ABC):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class VideoUrl(FileUrl):
     """A URL to a video."""
 
@@ -397,7 +416,7 @@ class VideoUrl(FileUrl):
         return _video_format_lookup[self.media_type]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
@@ -444,7 +463,7 @@ class AudioUrl(FileUrl):
         return _audio_format_lookup[self.media_type]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class ImageUrl(FileUrl):
     """A URL to an image."""
 
@@ -490,7 +509,7 @@ class ImageUrl(FileUrl):
         return _image_format_lookup[self.media_type]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class DocumentUrl(FileUrl):
     """The URL of the document."""
 

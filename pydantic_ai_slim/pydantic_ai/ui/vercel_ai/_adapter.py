@@ -1095,7 +1095,7 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 ui_parts.append(
                     FileUIPart(
                         url=item.url,
-                        media_type=item.media_type,
+                        media_type=item.media_type_or_none() or '',
                         # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
                         # Google `video_metadata`) and non-default `force_download`; see `FileUrl`.
                         provider_metadata=dump_provider_metadata(

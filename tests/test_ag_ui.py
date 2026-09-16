@@ -6869,6 +6869,27 @@ def test_dump_messages_multimodal_url() -> None:
     )
 
 
+def test_dump_messages_extensionless_url_media_type() -> None:
+    """Test that a URL whose media type can't be inferred dumps an empty `mime_type` instead of raising."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/img')])])
+    ]
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'source': {'type': 'url', 'value': 'https://example.com/img', 'mime_type': ''},
+                        'type': 'image',
+                    }
+                ],
+            }
+        ]
+    )
+
+
 def test_dump_messages_legacy_binary_content() -> None:
     """Test that media URLs and BinaryContent are dumped as BinaryInputContent with ag_ui_version < 0.1.15."""
     messages: list[ModelMessage] = [

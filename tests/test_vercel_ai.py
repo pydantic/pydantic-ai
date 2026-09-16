@@ -6094,6 +6094,18 @@ async def test_adapter_dump_messages_with_thinking():
     )
 
 
+def test_dump_messages_extensionless_url_media_type() -> None:
+    """A URL whose media type can't be inferred dumps an empty `media_type` instead of raising."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/image')])])
+    ]
+    result = VercelAIAdapter.dump_messages(messages)
+    file_part = next(part for part in result[0].parts if part.model_dump()['type'] == 'file')
+    dumped = file_part.model_dump(exclude_none=True)
+    assert dumped['url'] == 'https://example.com/image'
+    assert dumped['media_type'] == ''
+
+
 async def test_adapter_dump_messages_with_files():
     """Test dumping messages with file parts."""
     messages = [

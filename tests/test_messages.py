@@ -1683,6 +1683,20 @@ def test_tool_return_url_items_rehydrate_only_with_media_type(
     assert ModelMessagesTypeAdapter.dump_python(loaded)[0]['parts'][0]['content'] == expected_dump
 
 
+def test_extensionless_url_media_type_serializes_null_and_round_trips() -> None:
+    """A URL whose media type can't be inferred serializes `media_type: null` and round-trips."""
+    for url_part in (ImageUrl, AudioUrl, VideoUrl, DocumentUrl):
+        item = url_part(url='https://example.com/file')
+        with pytest.raises(ValueError):
+            _ = item.media_type  # direct access still raises
+        messages = [ModelRequest(parts=[UserPromptPart(content=[item])])]
+        dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+        content = dumped[0]['parts'][0]['content'][0]
+        assert content['media_type'] is None
+        reloaded = ModelMessagesTypeAdapter.validate_python(dumped)
+        assert json.loads(ModelMessagesTypeAdapter.dump_json(reloaded)) == dumped
+
+
 def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():
     """A mapping that spells one of our items out in full is that item, extra keys and all.
 

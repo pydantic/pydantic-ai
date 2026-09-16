@@ -212,7 +212,7 @@ def _user_content_to_input(
             from ._multimodal import media_url_to_multimodal
 
             return media_url_to_multimodal(item)
-        return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
+        return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type_or_none() or '')
     elif isinstance(item, BinaryContent):
         if use_multimodal:
             from ._multimodal import binary_to_multimodal
