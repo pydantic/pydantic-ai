@@ -207,6 +207,23 @@ class TestIsPrivateIp:
         """
         assert _domain_key(host) == _domain_key(entry)
 
+    @pytest.mark.parametrize(
+        ('host', 'entry', 'matches'),
+        [
+            ('fe80::1%25eth0', 'fe80::1%25eth0', True),
+            ('fe80::1%25ETH0', 'fe80::1%25eth0', False),
+            ('FE80::1%25eth0', 'fe80::1%25eth0', True),
+        ],
+    )
+    def test_domain_key_folds_the_address_but_not_the_zone(self, host: str, entry: str, matches: bool) -> None:
+        """A zone identifier names an interface, so two zones are two destinations.
+
+        Collapsing their case would let an `allowed_domains` entry for one interface
+        authorize a request out of another; the address itself is still case-folded,
+        since DNS and IPv6 literals are case-insensitive.
+        """
+        assert (_domain_key(host) == _domain_key(entry)) is matches
+
     def test_domain_key_preserves_zone_case_for_the_connection(self) -> None:
         """Case-folding happens in the key, never on the host that gets dialed.
 

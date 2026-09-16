@@ -491,7 +491,12 @@ def _domain_key(host: str) -> str:
     """
     for separator in _IDNA_LABEL_SEPARATORS:
         host = host.replace(separator, '.')
-    host = _normalized_host(host).lower()
+    address, separator, zone = _normalized_host(host).partition('%')
+    # Only the address is case-folded. A zone identifier names an interface and is
+    # case-sensitive, so `fe80::1%25eth0` and `fe80::1%25ETH0` are different destinations
+    # and must not collapse to one key -- an `allowed_domains` entry for one would
+    # otherwise authorize the other.
+    host = address.lower() + separator + zone
     try:
         return host.encode('idna').decode('ascii').rstrip('.')
     except UnicodeError:
