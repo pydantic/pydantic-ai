@@ -64,8 +64,7 @@ from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
-    RealtimeHandshakeError,
-    loads_obj,
+    expect_event,
     map_connect_errors,
     openai_websocket_auth_headers,
     realtime_websocket_url,
@@ -883,7 +882,7 @@ class OpenAILiveModel(RealtimeModel):
                 ws = await opening.__aenter__()
                 cm = opening
                 await ws.send(to_json({'type': 'session.start', 'session': session_config}).decode())
-                started = await _expect_started(ws, timeout=handshake_timeout)
+                started = await expect_event(ws, _SESSION_STARTED_EVENT, timeout=handshake_timeout)
             connection = OpenAILiveConnection(
                 ws,
                 model_name=started.get('session', {}).get('model'),
@@ -897,20 +896,3 @@ class OpenAILiveModel(RealtimeModel):
                 await connection.aclose()
             if cm is not None:  # pragma: no branch
                 await cm.__aexit__(None, None, None)
-
-
-async def _expect_started(ws: ClientConnection, *, timeout: float) -> dict[str, Any]:
-    """Read frames until the session starts, mapping a rejected configuration to a handshake error."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    while True:
-        try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - asyncio.get_running_loop().time()))
-        except asyncio.TimeoutError:
-            raise RealtimeHandshakeError(f'timed out waiting for a {_SESSION_STARTED_EVENT!r} event') from None
-        if not isinstance(raw, str):  # pragma: no cover
-            raise RealtimeHandshakeError(f'expected a text frame, got {type(raw).__name__}')
-        data = loads_obj(raw)
-        if data.get('type') == _SESSION_STARTED_EVENT:
-            return data
-        if data.get('type') == 'error':
-            raise RealtimeHandshakeError(data.get('error'))

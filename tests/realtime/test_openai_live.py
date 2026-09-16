@@ -799,6 +799,22 @@ async def test_unrelated_frames_during_the_handshake_are_skipped(model: OpenAILi
             assert connection.model_name == 'gpt-live-1'
 
 
+@pytest.mark.parametrize('frame', ['not json at all', '["a list, not an object"]'])
+async def test_a_malformed_handshake_frame_raises_a_realtime_error(model: OpenAILiveModel, frame: str) -> None:
+    """The handshake promises a `RealtimeError`; a bad frame must not escape as a bare `ValueError`.
+
+    `map_connect_errors` translates `RealtimeHandshakeError`, not the `ValueError` that parsing a
+    malformed frame raises, so this only holds while the shared `expect_event` helper does the
+    reading.
+    """
+    with _patched_connect(_FakeWebSocket([frame])):
+        with pytest.raises(RealtimeError):
+            async with model.connect(
+                messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+            ):
+                pass  # pragma: no cover
+
+
 def test_session_config_matches_the_provider_schema(model: OpenAILiveModel) -> None:
     """What we build is validated against the SDK's own session shape.
 
