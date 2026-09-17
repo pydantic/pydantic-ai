@@ -88,9 +88,11 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, message, message_part, try_import
 
 with try_import() as starlette_import_successful:
+    from starlette.exceptions import HTTPException
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
+    from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
     from pydantic_ai.ui.vercel_ai._utils import (
         dump_provider_metadata,
@@ -11297,3 +11299,38 @@ def test_tool_availability_delta_filters_malformed_added_values(added: Any, expe
     else:
         assert prepared == []
     assert messages == [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=expected_added)])]
+
+
+async def test_dispatch_request_rejects_cross_origin_forgeable_content_type() -> None:
+    """A `text/plain` body — postable cross-origin with no preflight — never reaches the agent.
+
+    The endpoint is mounted in the caller's own application, so this is defense in depth rather than
+    that application's whole CSRF story; see the UI adapter trust model. It is pinned per adapter
+    because the control living on one surface and not another is exactly how it went missing before.
+    """
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain;charset=UTF-8')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await VercelAIAdapter.dispatch_request(starlette_request, agent=agent)
+
+    assert exc_info.value.status_code == 415
+
+
+def test_allowed_content_types_visible_in_vercel_adapter_signatures():
+    from_request_parameters = inspect.signature(VercelAIAdapter.from_request).parameters
+
+    assert 'allowed_content_types' in from_request_parameters
+    assert from_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
+
+    dispatch_request_parameters = inspect.signature(VercelAIAdapter.dispatch_request).parameters
+
+    assert 'allowed_content_types' in dispatch_request_parameters
+    assert dispatch_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
