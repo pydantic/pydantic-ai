@@ -858,6 +858,22 @@ def test_bedrock_amazon_nova_2_lite():
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_amazon_nova_micro():
+    """Nova Micro is the text-only model in the family, so it is the one Nova that reads no video."""
+    profile = BedrockProvider.model_profile('us.amazon.nova-micro-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_prompt_caching': True,
+            'bedrock_top_k_variant': 'nova',
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_amazon_titan():
     """Titan models — basic Amazon profile, no Nova-specific overrides."""
     profile = BedrockProvider.model_profile('amazon.titan-text-express-v1')
