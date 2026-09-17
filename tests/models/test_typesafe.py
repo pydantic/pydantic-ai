@@ -207,7 +207,7 @@ async def test_bare_bool_output(
         {
             'response': {
                 'type': 'noul',
-                'instructions': {'question': 'Is this request harmful?'},
+                'instructions': 'Is this request harmful?',
             }
         }
     )
@@ -608,8 +608,12 @@ async def test_text_list_prompt(allow_model_requests: None):
     assert seen[0]['state'] == 'first\n\nsecond'
 
 
-async def test_system_prompt(allow_model_requests: None):
-    """A system prompt and the instructions both reach Jev as the instructions of every question."""
+async def test_system_prompts_are_judged_not_asked(allow_model_requests: None):
+    """A system prompt is something that was said, so it joins the state; the question is the instructions.
+
+    Whoever wrote it. Hoisting it into the question meant that judging another agent's run folded that
+    agent's persona into what Jev was asked, and nothing on a `SystemPromptPart` says whose it is.
+    """
     seen: list[dict[str, Any]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
@@ -618,16 +622,43 @@ async def test_system_prompt(allow_model_requests: None):
 
     agent = Agent(mock_model(record), output_type=bool, system_prompt='Be strict.', instructions='Is it harmful?')
     first = await agent.run('anything')
-    # A bare output has no field to describe, so what the agent was told to ask is the question.
-    assert seen[0]['questions']['response']['instructions']['question'] == 'Be strict.\n\nIs it harmful?'
+    assert seen[0]['questions']['response']['instructions'] == 'Is it harmful?'
+    assert seen[0]['state'] == snapshot({'history': [{'system': 'Be strict.'}], 'text': 'anything'})
 
-    # A system prompt later in the history is an instruction too, not part of the judged text.
+    # One arriving later in the history is judged the same way, not treated as a new instruction.
     history = [*first.all_messages(), ModelRequest(parts=[SystemPromptPart('Now be lenient.')])]
     await agent.run('again', message_history=history)
-    assert seen[1]['state']['text'] == 'again'
-    assert seen[1]['questions']['response']['instructions']['question'] == snapshot(
-        'Be strict.\n\nNow be lenient.\n\nIs it harmful?'
+    assert seen[1]['questions']['response']['instructions'] == 'Is it harmful?'
+    assert seen[1]['state'] == snapshot(
+        {
+            'history': [
+                {'system': 'Be strict.'},
+                {'user': 'anything'},
+                {'tool_call': {'name': 'final_result', 'args': {'response': True}}},
+                {'tool_return': {'name': 'final_result', 'content': 'Final result processed.'}},
+                {'system': 'Now be lenient.'},
+            ],
+            'text': 'again',
+        }
     )
+
+
+async def test_a_judged_agents_persona_stays_out_of_the_question(allow_model_requests: None):
+    """The case that motivated it: judging a run whose system prompt someone else wrote."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    judged = Agent(TestModel(custom_output_text='Arrr!'), system_prompt='You are a pirate. Always answer in rhyme.')
+    conversation = await judged.run('hello')
+
+    judge = Agent(mock_model(record), output_type=bool, instructions='Was the assistant polite?')
+    await judge.run('Judge the conversation above.', message_history=conversation.all_messages())
+
+    assert seen[0]['questions']['response']['instructions'] == 'Was the assistant polite?'
+    assert {'system': 'You are a pirate. Always answer in rhyme.'} in seen[0]['state']['history']
 
 
 async def test_direct_request_without_prompt(allow_model_requests: None):

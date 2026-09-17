@@ -73,7 +73,7 @@ agent = Agent(model, output_type=bool)
 
 `jev-latest` and `jev-preview` are aliases that move when TypeSafe ship a release; `jev-preview` runs ahead when there is a preview build. A versioned id is accepted too, whether or not it is listed:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 Agent('typesafe:jev-1.13.0', output_type=Ticket)
 ```
 
@@ -230,16 +230,13 @@ print(result.output)
 
 The whole history goes, so trim it to what the question is about — `message_history=conversation.all_messages()[-4:]`, or a [history processor](../message-history.md#processing-message-history). Accuracy falls as the state grows with detail the question does not need, and `jev-1.13` takes 64k tokens for the state and questions together, with 32k for the state plus the longest question.
 
-!!! warning "A judged agent's system prompt becomes part of the question"
-    A [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] anywhere in the history is treated as an instruction to Jev, because that is what makes `Agent(system_prompt=...)` work across turns. When the history is another agent's, its system prompt is folded into what Jev is *asked* rather than into what Jev judges — so `'You are a pirate'` ends up in front of `'Was the assistant polite?'`. Give the judge its question through `instructions=`, which is never read from the history, and strip system prompts from a conversation you did not write:
-
-    ```python {test="skip" lint="skip"}
-    history = [
-        message
-        for message in conversation.all_messages()
-        if not any(part.part_kind == 'system-prompt' for part in getattr(message, 'parts', []))
-    ]
-    ```
+!!! note "A system prompt is judged, not asked"
+    Jev is told what a conversation said and asked what the agent's `instructions` ask. A
+    [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is part of what was said, so it joins the state as
+    a `system` entry rather than becoming part of the question — including the agent's own `system_prompt=`.
+    Nothing on the part says who wrote it, so treating any of them as an instruction meant that judging another
+    agent's run folded that agent's persona into Jev's question. Give a Jev agent its question through
+    `instructions=`.
 
 ## What Jev answers badly
 

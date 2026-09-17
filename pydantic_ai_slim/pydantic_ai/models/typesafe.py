@@ -197,9 +197,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tool = _output_tool(model_request_parameters)
         properties = _properties(output_tool)
-        system_prompts, state = _map_messages(messages)
+        state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
-        instructions = '\n\n'.join([*system_prompts, *(part.content for part in instruction_parts)]) or None
+        instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         questions = _questions(properties, output_tool, instructions)
         settings = cast(TypeSafeModelSettings, model_settings or {})
 
@@ -333,17 +333,21 @@ def _questions(
         elif 'anyOf' in prop and all('const' in option for option in prop['anyOf']):
             options = {option['const']: option.get('description') for option in prop['anyOf']}
 
+        # A single value needs no labelling, and TypeSafe's advice is to start with a string; the object
+        # form earns its keys only once there is more than one thing in it.
+        asked: JSONContent | None = next(iter(ask.values())) if len(ask) == 1 else (ask or None)
+
         if options is not None:
             # `bool` is an `int` in Python but never a rubric level, and it is handled as a yes/no below.
             if options and all(isinstance(option, int) and not isinstance(option, bool) for option in options):
-                questions[name] = _score_question(name, cast('dict[int, str | None]', options), ask)
+                questions[name] = _score_question(name, cast('dict[int, str | None]', options), asked)
             elif len(options) < 2 or not all(isinstance(option, str) for option in options):
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: its options are not two or more strings. '
                     f'{_UNSUPPORTED_FIELD_HINT}'
                 )
             else:
-                questions[name] = Choice(instructions=ask or None, criteria=cast('dict[str, str | None]', options))
+                questions[name] = Choice(instructions=asked, criteria=cast('dict[str, str | None]', options))
         elif prop.get('type') == 'boolean' or (
             prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1
         ):
@@ -353,15 +357,16 @@ def _questions(
                 raise UserError(
                     f'Output field {name!r} asks Jev nothing. A question is not part of the text being judged: '
                     f'give the field a description, or the agent `instructions`, and leave the prompt to the '
-                    f'material the question is about.'
+                    f'material the question is about. A `system_prompt` will not do: Jev is told what was said, '
+                    f'not what to ask.'
                 )
-            questions[name] = Noul(instructions=ask)
+            questions[name] = Noul(instructions=asked)
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
 
 
-def _score_question(name: str, options: dict[int, str | None], ask: dict[str, JSONContent]) -> Score:
+def _score_question(name: str, options: dict[int, str | None], asked: JSONContent | None) -> Score:
     """A rubric question from an `IntEnum` or `Literal` of whole numbers, one description per level.
 
     Jev scores against an ordered rubric that starts at zero, so the levels have to be exactly that, and
@@ -380,7 +385,7 @@ def _score_question(name: str, options: dict[int, str | None], ask: dict[str, JS
             f'Output field {name!r} is a rubric, so every level needs to say what it means, and {missing} does not. '
             f'Give each member of the `IntEnum` a docstring describing that score.'
         )
-    return Score(instructions=ask or None, criteria=cast('list[JSONContent]', criteria))
+    return Score(instructions=asked, criteria=cast('list[JSONContent]', criteria))
 
 
 def _prompt_text(part: UserPromptPart) -> str:
@@ -392,14 +397,15 @@ def _prompt_text(part: UserPromptPart) -> str:
     return '\n\n'.join(cast(list[str], items))
 
 
-def _map_request(message: ModelRequest, *, latest: bool) -> tuple[list[str], list[JSONContent], list[str]]:
-    """Map a request to system prompts, history entries, and the text to judge."""
-    system_prompts: list[str] = []
+def _map_request(message: ModelRequest, *, latest: bool) -> tuple[list[JSONContent], list[str]]:
+    """Map a request to history entries and the text to judge."""
     history: list[JSONContent] = []
     prompt_parts: list[str] = []
     for part in message.parts:
         if isinstance(part, SystemPromptPart):
-            system_prompts.append(part.content)
+            # Whoever wrote it, a system prompt is something that was said in the conversation, so it is
+            # material to judge and not a question to ask. What Jev is asked comes from `instructions`.
+            history.append({'system': part.content})
         elif isinstance(part, UserPromptPart):
             text = _prompt_text(part)
             if latest:
@@ -417,7 +423,7 @@ def _map_request(message: ModelRequest, *, latest: bool) -> tuple[list[str], lis
             raise _unconverted_speech_part_error()
         else:
             assert_never(part)
-    return system_prompts, history, prompt_parts
+    return history, prompt_parts
 
 
 def _response_entries(message: ModelResponse) -> list[JSONContent]:
@@ -446,20 +452,18 @@ def _response_entries(message: ModelResponse) -> list[JSONContent]:
     return entries
 
 
-def _map_messages(messages: list[ModelMessage]) -> tuple[list[str], JSONContent]:
-    """The system prompts, and the state to judge.
+def _map_messages(messages: list[ModelMessage]) -> JSONContent:
+    """The state to judge.
 
     The latest user text on its own is the whole state, as the text TypeSafe's own examples pass. With a
     conversation behind it there are two parts to keep apart, so they get named: the text under judgement
     and the `history` before it.
     """
-    system_prompts: list[str] = []
     history: list[JSONContent] = []
     prompt_parts: list[str] = []
     for message in messages:
         if isinstance(message, ModelRequest):
-            request_system_prompts, entries, latest_prompt_parts = _map_request(message, latest=message is messages[-1])
-            system_prompts.extend(request_system_prompts)
+            entries, latest_prompt_parts = _map_request(message, latest=message is messages[-1])
             history.extend(entries)
             prompt_parts.extend(latest_prompt_parts)
         elif isinstance(message, ModelResponse):
@@ -471,8 +475,8 @@ def _map_messages(messages: list[ModelMessage]) -> tuple[list[str], JSONContent]
     if not (text or history):
         raise UserError('A request without user text is not supported by this model; Jev needs text to judge.')
     if not history:
-        return system_prompts, text
+        return text
     state: dict[str, JSONContent] = {'history': history}
     if text:
         state['text'] = text
-    return system_prompts, state
+    return state
