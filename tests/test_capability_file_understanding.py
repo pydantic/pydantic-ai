@@ -64,27 +64,35 @@ async def test_unsupported_files_are_described():
             'Compare these:',
             DocumentUrl('https://example.com/report.pdf'),
             BinaryContent(b'\x89PNG', media_type='image/png', identifier='chart'),
+            # The same document again: one file, one description.
+            DocumentUrl('https://example.com/report.pdf'),
         ]
     )
 
+    # A description is prose, so each block says `text/plain` rather than the media type of the file it replaces.
     assert last_prompt(seen) == snapshot(
         [
             'Compare these:',
             """\
------BEGIN FILE id="a5f6ba" type="application/pdf"-----
+-----BEGIN FILE id="a5f6ba" type="text/plain"-----
 A description of a5f6ba.
 -----END FILE id="a5f6ba"-----\
 """,
             """\
------BEGIN FILE id="chart" type="image/png"-----
+-----BEGIN FILE id="chart" type="text/plain"-----
 A description of chart.
------END FILE id="chart"-----""",
+-----END FILE id="chart"-----\
+""",
+            """\
+-----BEGIN FILE id="a5f6ba" type="text/plain"-----
+A description of a5f6ba.
+-----END FILE id="a5f6ba"-----\
+""",
         ]
     )
     assert describer.calls == 2
 
-    # The same file is not described twice, and a run without files asks nothing.
-    await agent.run([DocumentUrl('https://example.com/report.pdf')])
+    # A run without files asks nothing.
     await agent.run('just text')
     assert describer.calls == 2
     assert last_prompt(seen) == ['just text']
@@ -111,7 +119,7 @@ async def test_supported_files_are_sent_as_they_are():
     prompt = last_prompt(seen)
     assert prompt[0] is image
     assert prompt[1] is document
-    assert isinstance(prompt[2], str) and 'type="video/mp4"' in prompt[2]
+    assert isinstance(prompt[2], str) and 'type="text/plain"' in prompt[2]
     assert describer.calls == 1
 
 
@@ -204,6 +212,10 @@ a,b
     assert describer.calls == 0
 
 
+def _png(name: str) -> BinaryContent:
+    return BinaryContent(f'\x89PNG {name}'.encode(), media_type='image/png', identifier=name)
+
+
 async def test_descriptions_are_bounded(monkeypatch: pytest.MonkeyPatch):
     """The oldest description goes when the cache is full, so a long-lived agent does not grow without limit."""
     monkeypatch.setattr(file_understanding, '_MAX_DESCRIPTIONS', 2)
@@ -212,10 +224,55 @@ async def test_descriptions_are_bounded(monkeypatch: pytest.MonkeyPatch):
     agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
 
     for name in ['first', 'second', 'third']:
-        await agent.run([ImageUrl(f'https://example.com/{name}.png')])
+        await agent.run([_png(name)])
     assert describer.calls == 3
 
-    await agent.run([ImageUrl('https://example.com/third.png')])
+    await agent.run([_png('third')])
     assert describer.calls == 3, 'the newest is still cached'
-    await agent.run([ImageUrl('https://example.com/first.png')])
+    await agent.run([_png('first')])
     assert describer.calls == 4, 'the oldest was evicted'
+
+
+async def test_a_url_description_is_not_reused_by_another_run():
+    """A URL is not its content, so one run's description of it is never handed to the next.
+
+    The same URL can serve different bytes to different callers and stop resolving once a signature expires,
+    so reusing a description across runs would hand one caller a description of what another caller fetched.
+    """
+    describer = Describer()
+    text_only = TestModel(profile=ModelProfile(supports_image_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+
+    signed = ImageUrl('https://example.com/receipt.png?signature=abc')
+    await agent.run([signed])
+    await agent.run([signed])
+    assert describer.calls == 2
+
+    # Bytes are their own identity, so those are reused across runs.
+    await agent.run([_png('chart')])
+    await agent.run([_png('chart')])
+    assert describer.calls == 3
+
+
+async def test_a_url_is_not_described_twice_within_a_run():
+    """Within one run the description is reused, so a history carrying the same file costs one description."""
+    describer = Describer()
+    text_only = TestModel(profile=ModelProfile(supports_image_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+
+    url = ImageUrl('https://example.com/cat.png')
+    await agent.run([url, 'and again:', url])
+    assert describer.calls == 1
+
+
+async def test_a_url_is_described_every_time_without_a_run_id():
+    """With no run to scope it to, a URL's description is not kept at all rather than kept too widely."""
+    describer = Describer()
+    capability: FileUnderstanding[None] = FileUnderstanding(fallback_model=FunctionModel(describer))
+    profile = ModelProfile(supports_image_input=False)
+    item = ImageUrl('https://example.com/cat.png')
+
+    for _ in range(2):
+        await capability._describe_if_unsupported(item, profile, None)  # pyright: ignore[reportPrivateUsage]
+    assert describer.calls == 2
+    assert capability._descriptions == {}  # pyright: ignore[reportPrivateUsage]

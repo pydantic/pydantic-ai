@@ -59,7 +59,12 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
     A text-like document (plain text, CSV, JSON, XML, YAML) is not described but inlined as it is, the way models
     that read text files do. A provider file reference ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) is left alone.
-    Each file is described once per capability instance; the description is reused across steps and runs.
+
+    A file is described once and the description reused for the steps that follow, so a history that carries the
+    same file into every request costs one description. Binary content is reused for as long as the capability
+    lives, since the bytes are their own identity; a file given by URL is reused only within the run that fetched
+    it, because the same URL can serve different bytes to different callers and stop resolving once a signature
+    expires.
 
     Audio is left as it is: [`supports_audio_input`][pydantic_ai.profiles.ModelProfile.supports_audio_input]
     is about realtime speech history and is not set per model, so it cannot say which models read audio files.
@@ -92,10 +97,14 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         except NotImplementedError:
             # A `FallbackModel` has no profile of its own; which model answers is not known yet.
             return request_context
-        messages = [await self._replace_unsupported_files(message, profile) for message in request_context.messages]
+        messages = [
+            await self._replace_unsupported_files(message, profile, ctx.run_id) for message in request_context.messages
+        ]
         return replace(request_context, messages=messages)
 
-    async def _replace_unsupported_files(self, message: ModelMessage, profile: ModelProfile) -> ModelMessage:
+    async def _replace_unsupported_files(
+        self, message: ModelMessage, profile: ModelProfile, run_id: str | None
+    ) -> ModelMessage:
         if not isinstance(message, ModelRequest):
             return message
 
@@ -105,21 +114,29 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
                 part = replace(
                     part,
-                    content=[await self._describe_if_unsupported(item, profile) for item in part.content],
+                    content=[await self._describe_if_unsupported(item, profile, run_id) for item in part.content],
                 )
             parts.append(part)
         return replace(message, parts=parts) if parts != original_parts else message
 
-    async def _describe_if_unsupported(self, item: UserContent, profile: ModelProfile) -> UserContent:
+    async def _describe_if_unsupported(
+        self, item: UserContent, profile: ModelProfile, run_id: str | None
+    ) -> UserContent:
         if _accepted(item, profile):
             return item
         assert isinstance(item, ImageUrl | DocumentUrl | VideoUrl | BinaryContent)
-        key = item.url if isinstance(item, ImageUrl | DocumentUrl | VideoUrl) else hashlib.sha256(item.data).hexdigest()
-        if (description := self._descriptions.get(key)) is None:
-            if len(self._descriptions) >= _MAX_DESCRIPTIONS:
-                del self._descriptions[next(iter(self._descriptions))]
-            description = self._descriptions[key] = await self._describe(item)
-        return format_inlined_text_file(description, media_type=item.media_type, identifier=item.identifier)
+        key = _reuse_key(item, run_id)
+        description = self._descriptions.get(key) if key is not None else None
+        if description is None:
+            description = await self._describe(item)
+            if key is not None:
+                if len(self._descriptions) >= _MAX_DESCRIPTIONS:
+                    del self._descriptions[next(iter(self._descriptions))]
+                self._descriptions[key] = description
+        # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
+        # inlined as its own content instead of described, and that one keeps the media type it came with.
+        media_type = item.media_type if is_text_like_media_type(item.media_type) else 'text/plain'
+        return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
     @durable_operation(name='describe')
     async def _describe(self, item: ImageUrl | DocumentUrl | VideoUrl | BinaryContent) -> str:
@@ -136,6 +153,19 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         )
         result = await agent.run([item])
         return result.output
+
+
+def _reuse_key(item: ImageUrl | DocumentUrl | VideoUrl | BinaryContent, run_id: str | None) -> str | None:
+    """What identifies this file for reuse, or `None` when its description must not be reused.
+
+    Bytes are their own identity, so a description of them holds for anyone who sends the same bytes. A URL is
+    not its content: it can serve different bytes to different callers and stop resolving once a signature
+    expires, so a description of one is kept only for the run that fetched it, and not at all for a run with no
+    id to scope it to.
+    """
+    if isinstance(item, BinaryContent):
+        return hashlib.sha256(item.data).hexdigest()
+    return f'{run_id}:{item.url}' if run_id is not None else None
 
 
 def _accepted(item: UserContent, profile: ModelProfile) -> bool:
