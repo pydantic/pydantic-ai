@@ -3,12 +3,17 @@ from pathlib import Path
 
 import json_repair
 import pytest
+from logfire.testing import CaptureLogfire
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 
 pytestmark = pytest.mark.anyio
 
@@ -26,22 +31,33 @@ def model_for(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse])
     return FunctionModel(respond, stream_function=stream)
 
 
-class TestCoder:
-    async def test_dictionary_arguments(self, tmp_path: Path) -> None:
+@pytest.fixture(params=['standalone', 'coder'])
+def capabilities(request: pytest.FixtureRequest, tmp_path: Path) -> list[AbstractCapability[object]]:
+    if request.param == 'coder':
+        return [Coder(tmp_path)]
+    return [RepairToolArguments(), FileSystem(root_dir=tmp_path, content_hashes=False)]
+
+
+class TestRepairToolArguments:
+    async def test_dictionary_arguments(self, capabilities: list[AbstractCapability[object]], tmp_path: Path) -> None:
         model = TestModel(call_tools=['write_file'], seed=0)
-        agent = Agent(model, capabilities=[Coder(tmp_path)])
+        agent = Agent(model, capabilities=capabilities)
         result = await agent.run('Write a file')
         assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
 
     @pytest.mark.parametrize('error', [ValueError, RecursionError])
     async def test_repair_failure_retries(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+        self,
+        capabilities: list[AbstractCapability[object]],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        error: type[Exception],
     ) -> None:
         def fail(json_str: str, *, skip_json_loads: bool, ensure_ascii: bool) -> str:
             raise error('repair failed')
 
         monkeypatch.setattr(json_repair, 'repair_json', fail)
-        await self.test_invalid_schema_still_retries(tmp_path, '{"path": "hello.txt",}')
+        await self.test_invalid_schema_still_retries(capabilities, tmp_path, '{"path": "hello.txt",}')
 
     @pytest.mark.parametrize(
         'arguments',
@@ -53,7 +69,9 @@ class TestCoder:
             '{"path": "hello.txt", "content": "hello"',
         ],
     )
-    async def test_write_arguments(self, tmp_path: Path, arguments: str | dict[str, str]) -> None:
+    async def test_write_arguments(
+        self, capabilities: list[AbstractCapability[object]], tmp_path: Path, arguments: str | dict[str, str]
+    ) -> None:
         calls = 0
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -63,7 +81,7 @@ class TestCoder:
                 return ModelResponse(parts=[ToolCallPart('write_file', arguments)])
             return ModelResponse(parts=[TextPart('done')])
 
-        agent = Agent(model_for(respond), capabilities=[Coder(tmp_path)])
+        agent = Agent(model_for(respond), capabilities=capabilities)
         result = await agent.run('Write hello.txt')
         assert result.output == 'done'
         assert (tmp_path / 'hello.txt').read_text() == 'hello'
@@ -71,7 +89,9 @@ class TestCoder:
         assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
 
     @pytest.mark.parametrize('arguments', ['{"path": "hello.txt",}', '{"path": "hello.txt"}', 'not JSON'])
-    async def test_invalid_schema_still_retries(self, tmp_path: Path, arguments: str) -> None:
+    async def test_invalid_schema_still_retries(
+        self, capabilities: list[AbstractCapability[object]], tmp_path: Path, arguments: str
+    ) -> None:
         calls = 0
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -82,11 +102,13 @@ class TestCoder:
             assert any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
             return ModelResponse(parts=[TextPart('invalid arguments')])
 
-        agent = Agent(model_for(respond), capabilities=[Coder(tmp_path)])
+        agent = Agent(model_for(respond), capabilities=capabilities)
         await agent.run('Write hello.txt')
         assert not (tmp_path / 'hello.txt').exists()
 
-    async def test_repaired_edit_preserves_code(self, tmp_path: Path) -> None:
+    async def test_repaired_edit_preserves_code(
+        self, capabilities: list[AbstractCapability[object]], tmp_path: Path
+    ) -> None:
         path = tmp_path / 'hello.py'
         path.write_text('old\n')
         calls = 0
@@ -106,6 +128,34 @@ class TestCoder:
                 )
             return ModelResponse(parts=[TextPart('done')])
 
-        agent = Agent(model_for(respond), capabilities=[Coder(tmp_path)])
+        agent = Agent(model_for(respond), capabilities=capabilities)
         await agent.run('Edit hello.py')
         assert path.read_text() == 'print("日本語")\npath = "C:\\tmp"\n'
+
+    @pytest.mark.parametrize('arguments', ['{"value": "secret"}', '{"value": "secret",}', {'value': 'secret'}])
+    async def test_standalone_custom_tool_and_telemetry(
+        self, arguments: str | dict[str, str], capfire: CaptureLogfire
+    ) -> None:
+        calls = 0
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart('echo', arguments)])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
+        agent.instrument = InstrumentationSettings()
+        received: list[str] = []
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            received.append(value)
+            return value
+
+        await agent.run('Echo')
+        assert received == ['secret']
+        spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
+        assert len(spans) == int(isinstance(arguments, str) and arguments.endswith(',}'))
+        assert 'secret' not in str(spans)

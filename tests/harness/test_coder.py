@@ -43,7 +43,7 @@ def test_coder_unknown_export() -> None:
 def test_coder_members_and_parameters(tmp_path: Path) -> None:
     coder = Coder(tmp_path, instructions='Custom instructions')
     assert [type(capability).__name__ for capability in coder.capabilities] == [
-        '_RepairToolArguments',
+        'RepairToolArguments',
         'Capability',
         'FileSystem',
         'Shell',

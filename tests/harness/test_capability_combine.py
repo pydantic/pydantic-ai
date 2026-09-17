@@ -241,7 +241,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         _check_advisor,
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
-    '_RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
+    'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),

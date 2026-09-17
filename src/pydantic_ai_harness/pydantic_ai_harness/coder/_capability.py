@@ -2,48 +2,22 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from pathlib import Path
 
-import json_repair
-from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, RawToolArgs
-from pydantic_ai.messages import ToolCallPart
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
+from pydantic_ai.tools import AgentDepsT
 
 from pydantic_ai_harness.coder._instructions import INSTRUCTIONS
 from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
 from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, MAX_FOREGROUND_WAIT, Shell
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'list_files', 'grep')
 """The `FileSystem` tools `Coder` registers; `shell` covers directory creation, file metadata, and the rest."""
-
-
-class _RepairToolArguments(AbstractCapability[AgentDepsT]):
-    async def before_tool_validate(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: RawToolArgs,
-    ) -> RawToolArgs:
-        """Repair malformed JSON arguments before normal tool schema validation."""
-        if not isinstance(args, str):
-            return args
-        try:
-            json.loads(args)
-        except (json.JSONDecodeError, RecursionError):
-            with ctx.tracer.start_as_current_span('coder.repair_tool_arguments'):
-                try:
-                    return json_repair.repair_json(args, skip_json_loads=True, ensure_ascii=False)
-                except (ValueError, RecursionError):
-                    return args
-        return args
 
 
 class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
@@ -89,7 +63,7 @@ class Coder(CombinedCapability[AgentDepsT]):
     ) -> None:
         root = Path(workspace).resolve()
         capabilities: list[AbstractCapability[AgentDepsT]] = [
-            _RepairToolArguments[AgentDepsT](),
+            RepairToolArguments[AgentDepsT](),
             Capability[AgentDepsT](instructions=INSTRUCTIONS + ('\n' + instructions if instructions else '')),
             _file_system(root, unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](

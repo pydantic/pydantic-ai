@@ -52,7 +52,7 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
 
 `Coder(workspace)` is these capabilities, in this order:
 
-1. A private hook that repairs malformed JSON tool arguments before normal validation (see below).
+1. [`RepairToolArguments`](repair-tool-arguments.md) repairs malformed JSON tool arguments before normal validation (see below).
 2. A `Capability` carrying the default instructions, plus any `instructions=` you pass.
 3. [`FileSystem`](filesystem.md)`(root_dir=workspace, content_hashes=False, max_read_chars=60000, tools=FILE_TOOL_NAMES)`, where
    `FILE_TOOL_NAMES` is `read_file`, `write_file`, `edit_file`, `list_files`, and `grep`.
@@ -120,14 +120,14 @@ and `cli_runner.py`, without its identity or tone.
 
 ## Tool argument repair
 
-`Coder` uses `json-repair` for malformed JSON before Pydantic AI validates the tool schema.
+`Coder` composes [`RepairToolArguments`](repair-tool-arguments.md), which uses `json-repair` for malformed JSON before Pydantic AI validates the tool schema.
 Valid JSON and already-parsed arguments pass through unchanged. Missing fields and invalid types still
 follow normal validation and retry behavior. Repair applies to tools added alongside Coder too.
 If the repair parser raises a value or recursion error, original arguments go through normal validation.
 
 Repair is heuristic: malformed input can be ambiguous, and inferred strings may differ from the model's
 intent. It does not supply a schema to the repair library or bypass exact edit matching.
-Each attempt emits a `coder.repair_tool_arguments` span through `ctx.tracer`, without arguments or file
+Each attempt emits a `repair_tool_arguments` span through `ctx.tracer`, without arguments or file
 contents. Other Coder operations rely on core tool spans and on the events its `FileSystem` and `Shell`
 capabilities emit.
 
