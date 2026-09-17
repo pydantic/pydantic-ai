@@ -2,13 +2,12 @@
 
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness.coder._capability import Coder
-from pydantic_ai_harness.coder._events import ShellFinishedEvent, ShellOutputEvent, ShellStartedEvent
+from pydantic_ai_harness.coder._capability import FILE_TOOL_NAMES, Coder
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.coder._agent import coder_agent
 
-__all__ = ['Coder', 'ShellFinishedEvent', 'ShellOutputEvent', 'ShellStartedEvent', 'coder_agent']
+__all__ = ['FILE_TOOL_NAMES', 'Coder', 'coder_agent']
 
 
 def __getattr__(name: str) -> object:

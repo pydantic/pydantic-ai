@@ -31,7 +31,7 @@ FileOperation = Literal['write', 'edit', 'create_directory']
 """The change a `FileChangeRequestEvent` announces."""
 
 SearchKind = Literal['find', 'grep']
-"""Whether a `FilesSearchedEvent` matched names (`find_files`) or contents (`search_files`)."""
+"""Whether a `FilesSearchedEvent` matched names (`find_files`, `list_files`) or contents (`search_files`, `grep`)."""
 
 
 @dataclass(kw_only=True)

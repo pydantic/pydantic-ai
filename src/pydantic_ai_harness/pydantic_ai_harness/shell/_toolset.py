@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import errno
 import fnmatch
-import functools
 import os
-import re
 import shlex
 import signal
 import subprocess
@@ -14,7 +11,7 @@ import tempfile
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Concatenate, ParamSpec
+from typing import Any
 
 import anyio
 import anyio.abc
@@ -24,69 +21,20 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 
 from pydantic_ai_harness._output import truncate_tail
+from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT, CommandMode, run_persistent_command
+from pydantic_ai_harness.shell._policy import is_interactive_command, recoverable
 
 _IO_DRAIN_TIMEOUT: float = 2.0
 _KILL_GRACE_PERIOD: float = 2.0
 
-_P = ParamSpec('_P')
+RUN_SCOPED_TOOL_NAMES: tuple[str, ...] = ('run_command', 'start_command', 'check_command', 'stop_command')
+"""The default tools. Their commands are killed when the agent run ends."""
 
-# Spawning a command fails with a bare `OSError` for causes that have no
-# dedicated subclass, and with `FileNotFoundError`/`NotADirectoryError` for
-# causes that do. The errno says whose fault it is: these are the model's, and
-# it can act on them. Every other errno (EMFILE, ENOMEM) is the host's, and must
-# keep aborting the run rather than sending the model into a retry loop it
-# can't win.
-#
-# ENOENT and ENOTDIR reach here only from the working directory, since the
-# command string is handed to a shell that always exists -- a command whose own
-# executable is missing is reported by that shell on stderr, not by the spawn.
-#
-# Keyed by `OSError.errno`, which the stdlib types as `int | None`.
-_RECOVERABLE_ERRNOS: dict[int | None, str] = {
-    errno.ENOENT: 'The working directory no longer exists.',
-    errno.ENOTDIR: 'The working directory is no longer a directory.',
-}
+PERSISTENT_TOOL_NAME = 'shell'
+"""The opt-in tool whose commands outlive the agent run."""
 
-
-def _recoverable(
-    fn: Callable[Concatenate[ShellToolset, _P], Awaitable[str]],
-) -> Callable[Concatenate[ShellToolset, _P], Awaitable[str]]:
-    """Convert model-correctable errors into `ModelRetry`.
-
-    pyai only feeds `ModelRetry` back to the model as a retry prompt; any other
-    exception propagates and aborts the whole run. A denied command, a command
-    the OS refuses to spawn, and a working directory the model's own earlier
-    command destroyed are all things the model can recover from, so surface them
-    as a retry instead of crashing the agent.
-    """
-
-    @functools.wraps(fn)
-    async def wrapper(self: ShellToolset, *args: _P.args, **kwargs: _P.kwargs) -> str:
-        try:
-            return await fn(self, *args, **kwargs)
-        except PermissionError as e:
-            raise ModelRetry(str(e)) from e
-        except OSError as e:
-            reason = _RECOVERABLE_ERRNOS.get(e.errno)
-            if reason is None:
-                raise
-            # `str(e)` embeds the absolute host path; the reason alone doesn't.
-            raise ModelRetry(reason) from e
-
-    return wrapper
-
-
-def _is_interactive_command(command: str) -> bool:
-    """Detect commands that typically require interactive input."""
-    interactive_patterns = [
-        r'^(vi|vim|nano|emacs|less|more|top|htop|man)\b',
-        r'^sudo\s',
-        r'^passwd\b',
-        r'^ssh\b',
-        r'^telnet\b',
-        r'^ftp\b',
-    ]
-    return any(re.match(p, command.strip()) for p in interactive_patterns)
+SHELL_TOOL_NAMES: tuple[str, ...] = (*RUN_SCOPED_TOOL_NAMES, PERSISTENT_TOOL_NAME)
+"""Every tool `Shell` can register, in registration order."""
 
 
 class _BackgroundProcess:
@@ -113,6 +61,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     Supports synchronous execution (run_command) and background processes
     (start_command / check_command / stop_command). Output is streamed,
     truncated to fit model context, and labelled with stdout/stderr/exit code.
+    The opt-in `shell` tool instead starts commands that outlive the run and
+    returns handles to their output and exit status.
 
     Optionally tracks the working directory across calls so ``cd`` persists.
     """
@@ -130,6 +80,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         allow_interactive: bool,
         env: Mapping[str, str] | None = None,
         denied_env_patterns: Sequence[str] = (),
+        tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES,
     ) -> None:
         super().__init__()
         self._cwd = cwd.resolve()
@@ -145,25 +96,33 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._allow_interactive = allow_interactive
         self._env = dict(env) if env is not None else None
         self._denied_env_patterns = list(denied_env_patterns)
+        self._tools = tuple(tools)
         self._background: dict[str, _BackgroundProcess] = {}
 
         if self._allowed_commands and self._denied_commands:
             raise ValueError('Specify allowed_commands or denied_commands, not both.')
         if max_output_chars <= 0:
             raise ValueError('max_output_chars must be a positive integer.')
+        if unknown := sorted(set(self._tools) - set(SHELL_TOOL_NAMES)):
+            raise ValueError(f'Unknown shell tools: {", ".join(unknown)}. Available: {", ".join(SHELL_TOOL_NAMES)}.')
+        if PERSISTENT_TOOL_NAME in self._tools and not 0 < default_timeout <= MAX_FOREGROUND_WAIT:
+            raise ValueError(
+                f'default_timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds '
+                'for the shell tool.'
+            )
 
-        self.add_function(
-            self.run_command,
-            name='run_command',
-            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'},
-        )
-        self.add_function(
-            self.start_command,
-            name='start_command',
-            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'},
-        )
-        self.add_function(self.check_command, name='check_command')
-        self.add_function(self.stop_command, name='stop_command')
+        command_metadata = {'code_arg_name': 'command', 'code_arg_language': 'shell'}
+        registrations: dict[str, Callable[..., Awaitable[str]]] = {
+            'run_command': self.run_command,
+            'start_command': self.start_command,
+            'check_command': self.check_command,
+            'stop_command': self.stop_command,
+            PERSISTENT_TOOL_NAME: self.shell,
+        }
+        for name in SHELL_TOOL_NAMES:
+            if name in self._tools:
+                metadata = command_metadata if name in ('run_command', 'start_command', PERSISTENT_TOOL_NAME) else None
+                self.add_function(registrations[name], name=name, metadata=metadata)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Return a fresh instance per run so cwd and background processes are isolated.
@@ -185,6 +144,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             allow_interactive=self._allow_interactive,
             env=self._env,
             denied_env_patterns=self._denied_env_patterns,
+            tools=self._tools,
         )
 
     async def call_tool(
@@ -251,7 +211,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         (containers, sandboxes) for hard enforcement.
 
         Rejecting a command the OS could not accept belongs here rather than in
-        `_recoverable`: `anyio.open_process` reports a NUL byte or an
+        `recoverable`: `anyio.open_process` reports a NUL byte or an
         unencodable character as the same `ValueError` whether it came from
         `command`, the working directory, or a configured `env`, and only the
         first of those is the model's to fix.
@@ -267,7 +227,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         except UnicodeEncodeError as e:
             raise ModelRetry('The command contains characters that cannot be encoded for the operating system.') from e
 
-        if not self._allow_interactive and _is_interactive_command(command):
+        if not self._allow_interactive and is_interactive_command(command):
             raise PermissionError(f'Interactive commands are not allowed. Command: {command!r}')
 
         matched_op = self._first_denied_operator(command)
@@ -373,7 +333,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 tg.start_soon(_drain_stdout)
                 tg.start_soon(_drain_stderr)
 
-    @_recoverable
+    @recoverable
     async def run_command(self, command: str, *, timeout_seconds: float | None = None) -> str:
         """Execute a shell command and return its output.
 
@@ -449,7 +409,42 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             if cwd_file is not None:
                 cwd_file.unlink(missing_ok=True)
 
-    @_recoverable
+    @recoverable
+    async def shell(
+        self,
+        ctx: RunContext[AgentDepsT],
+        command: str,
+        *,
+        mode: CommandMode = 'foreground',
+        timeout: float | None = None,
+    ) -> str:
+        """Run a command that keeps running after this call and after the agent run.
+
+        Foreground waits up to `timeout` seconds (at most 270) for the command to
+        exit, then returns handles to the same still-running process. Background
+        returns the handles immediately. Both return the PID, the path of the
+        combined stdout/stderr log, and the path of a JSON status file whose
+        `exit_code` is null until the command exits. Read those files with your
+        other tools and stop the process with `kill` and the returned PID; no
+        notification arrives when it finishes.
+
+        Args:
+            ctx: The current agent run context.
+            command: The shell command to run.
+            mode: `foreground` to wait, `background` to return at once.
+            timeout: Seconds to wait in foreground mode (default: the configured timeout).
+        """
+        self._check_command(command)
+        return await run_persistent_command(
+            ctx,
+            command,
+            cwd=self._initial_cwd,
+            env=self._resolve_env(),
+            mode=mode,
+            timeout=self._default_timeout if timeout is None else timeout,
+        )
+
+    @recoverable
     async def start_command(self, command: str) -> str:
         """Start a long-running command in the background (e.g. a server or watcher).
 

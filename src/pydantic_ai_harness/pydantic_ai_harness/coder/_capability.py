@@ -12,10 +12,14 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from pydantic_ai_harness.coder._instructions import INSTRUCTIONS
-from pydantic_ai_harness.coder._toolset import CoderToolset
 from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
+from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, MAX_FOREGROUND_WAIT, Shell
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
+
+FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'list_files', 'grep')
+"""The `FileSystem` tools `Coder` registers; `shell` covers directory creation, file metadata, and the rest."""
 
 
 class _RepairToolArguments(AbstractCapability[AgentDepsT]):
@@ -49,6 +53,18 @@ class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
         return None
 
 
+def _file_system(workspace: Path, *, unrestricted: bool) -> FileSystem[AgentDepsT]:
+    if unrestricted:
+        return FileSystem[AgentDepsT](
+            root_dir=workspace.anchor,
+            cwd=workspace,
+            protected_patterns=[],
+            content_hashes=False,
+            tools=FILE_TOOL_NAMES,
+        )
+    return FileSystem[AgentDepsT](root_dir=workspace, content_hashes=False, tools=FILE_TOOL_NAMES)
+
+
 class Coder(CombinedCapability[AgentDepsT]):
     """Autonomous local coding with six tools and context management.
 
@@ -63,16 +79,21 @@ class Coder(CombinedCapability[AgentDepsT]):
         instructions: str | None = None,
         unrestricted_filesystem: bool = False,
     ) -> None:
+        root = Path(workspace).resolve()
         super().__init__(
             [
                 _RepairToolArguments[AgentDepsT](),
-                Capability[AgentDepsT](
-                    instructions=INSTRUCTIONS + ('\n' + instructions if instructions else ''),
-                    toolsets=[
-                        CoderToolset[AgentDepsT](Path(workspace), unrestricted_filesystem=unrestricted_filesystem)
-                    ],
+                Capability[AgentDepsT](instructions=INSTRUCTIONS + ('\n' + instructions if instructions else '')),
+                _file_system(root, unrestricted=unrestricted_filesystem),
+                Shell[AgentDepsT](
+                    cwd=root,
+                    denied_commands=[],
+                    default_timeout=MAX_FOREGROUND_WAIT,
+                    allow_interactive=True,
+                    denied_env_patterns=LLM_API_KEY_ENV_PATTERNS,
+                    tools=['shell'],
                 ),
-                RepoContext[AgentDepsT](workspace_dir=Path(workspace), expose_inventory_tool=False),
+                RepoContext[AgentDepsT](workspace_dir=root, expose_inventory_tool=False),
                 ClearToolResults[AgentDepsT](max_fraction=0.7),
                 WarnNearLimits[AgentDepsT](max_context_fraction=0.9),
                 _BoundToolOutputs[AgentDepsT](id=None, bands=[Band(over=64000, action=Truncate(max_chars=64000))]),

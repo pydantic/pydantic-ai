@@ -8,8 +8,10 @@ from pydantic_ai.capabilities import Capability
 from pydantic_ai.models.test import TestModel
 
 import pydantic_ai_harness.coder
-from pydantic_ai_harness.coder import Coder, coder_agent
+from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
+from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 
 
 def test_coder_agent_is_model_less_and_composed() -> None:
@@ -43,11 +45,18 @@ def test_coder_members_and_parameters(tmp_path: Path) -> None:
     assert [type(capability).__name__ for capability in coder.capabilities] == [
         '_RepairToolArguments',
         'Capability',
+        'FileSystem',
+        'Shell',
         'RepoContext',
         'ClearToolResults',
         'WarnNearLimits',
         '_BoundToolOutputs',
     ]
+    files = next(item for item in coder.capabilities if isinstance(item, FileSystem))
+    assert (files.root_dir, files.cwd, files.content_hashes, files.tools) == (tmp_path, None, False, FILE_TOOL_NAMES)
+    shell = next(item for item in coder.capabilities if isinstance(item, Shell))
+    assert (shell.cwd, shell.tools, shell.denied_commands, shell.allow_interactive) == (tmp_path, ['shell'], [], True)
+    assert shell.denied_env_patterns == LLM_API_KEY_ENV_PATTERNS
     context = next(item for item in coder.capabilities if isinstance(item, RepoContext))
     assert context.workspace_dir == tmp_path
     guidance = next(item for item in coder.capabilities if isinstance(item, Capability))

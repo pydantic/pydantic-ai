@@ -11,7 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FilteredToolset
 
-from pydantic_ai_harness.filesystem._toolset import READ_ONLY_TOOL_NAMES, FileSystemToolset
+from pydantic_ai_harness.filesystem._toolset import DEFAULT_TOOL_NAMES, READ_ONLY_TOOL_NAMES, FileSystemToolset
 
 _DEFAULT_PROTECTED: list[str] = [
     '.git/*',
@@ -27,12 +27,21 @@ _DEFAULT_PROTECTED: list[str] = [
 class FileSystem(AbstractCapability[AgentDepsT]):
     """File system access scoped to a root directory.
 
-    All paths are resolved relative to `root_dir`. Traversal above the root
-    is rejected. Symlinks are resolved before authorization.
+    Relative paths are resolved from `cwd` (by default `root_dir` itself).
+    Traversal above the root is rejected. Symlinks are resolved before
+    authorization.
     """
 
     root_dir: str | Path = '.'
     """Root directory for all file operations. Defaults to the current directory."""
+
+    cwd: str | Path | None = None
+    """Directory that relative paths resolve from; must be inside `root_dir`.
+
+    Defaults to `root_dir`. Set it to hand the model a project directory while
+    `root_dir` grants access to more (a parent directory, or the filesystem
+    root) without the model having to spell out absolute paths.
+    """
 
     allowed_patterns: Sequence[str] = field(default_factory=list[str])
     """If non-empty, only paths matching at least one glob pattern are accessible."""
@@ -62,6 +71,23 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     read_only: bool = False
     """Whether to expose only the tools in `READ_ONLY_TOOL_NAMES`."""
 
+    content_hashes: bool = True
+    """Whether tool results report content hashes and `write_file`/`edit_file` accept `expected_hash`.
+
+    The hashes give a model optimistic concurrency control over a workspace
+    that something else may also be editing. Turn them off for a single-writer
+    coding agent, where they only add tokens to every read and write.
+    """
+
+    tools: Sequence[str] = DEFAULT_TOOL_NAMES
+    """Which tools to register, from `FILE_SYSTEM_TOOL_NAMES`.
+
+    The default is every pure-Python tool. Name `list_files` and `grep` to add
+    the ripgrep-backed listing and search tools, which need the `rg` executable
+    on `PATH` (the `coder` extra installs it) and respect `.gitignore`.
+    `read_only` further narrows the selection to `READ_ONLY_TOOL_NAMES`.
+    """
+
     def __post_init__(self) -> None:
         # Runtime validation: dataclass field annotations are advisory, not enforced.
         # A config-driven caller could pass a string that would otherwise propagate.
@@ -87,6 +113,9 @@ class FileSystem(AbstractCapability[AgentDepsT]):
             max_search_results=self.max_search_results,
             max_find_results=self.max_find_results,
             id=self.id or 'file_system',
+            cwd=None if self.cwd is None else Path(self.cwd),
+            content_hashes=self.content_hashes,
+            tools=self.tools,
         )
         if self.read_only:
             return FilteredToolset(toolset, lambda ctx, tool: tool.name in READ_ONLY_TOOL_NAMES)

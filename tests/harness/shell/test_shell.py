@@ -26,10 +26,8 @@ from pydantic_ai.usage import RunUsage
 
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
-from pydantic_ai_harness.shell._toolset import (
-    ShellToolset,
-    _is_interactive_command,
-)
+from pydantic_ai_harness.shell._policy import is_interactive_command
+from pydantic_ai_harness.shell._toolset import ShellToolset
 
 
 def _env_toolset(
@@ -112,63 +110,63 @@ def _parse_command_id(result: str) -> str:
 
 class TestIsInteractiveCommand:
     def test_vi(self) -> None:
-        assert _is_interactive_command('vi file.txt') is True
+        assert is_interactive_command('vi file.txt') is True
 
     def test_vim(self) -> None:
-        assert _is_interactive_command('vim file.txt') is True
+        assert is_interactive_command('vim file.txt') is True
 
     def test_nano(self) -> None:
-        assert _is_interactive_command('nano file.txt') is True
+        assert is_interactive_command('nano file.txt') is True
 
     def test_less(self) -> None:
-        assert _is_interactive_command('less file.txt') is True
+        assert is_interactive_command('less file.txt') is True
 
     def test_top(self) -> None:
-        assert _is_interactive_command('top') is True
+        assert is_interactive_command('top') is True
 
     def test_sudo(self) -> None:
-        assert _is_interactive_command('sudo rm -rf /') is True
+        assert is_interactive_command('sudo rm -rf /') is True
 
     def test_ssh(self) -> None:
-        assert _is_interactive_command('ssh host') is True
+        assert is_interactive_command('ssh host') is True
 
     def test_regular_command(self) -> None:
-        assert _is_interactive_command('ls -la') is False
+        assert is_interactive_command('ls -la') is False
 
     def test_echo(self) -> None:
-        assert _is_interactive_command('echo hello') is False
+        assert is_interactive_command('echo hello') is False
 
     def test_grep(self) -> None:
-        assert _is_interactive_command('grep pattern file') is False
+        assert is_interactive_command('grep pattern file') is False
 
     def test_emacs(self) -> None:
-        assert _is_interactive_command('emacs file.txt') is True
+        assert is_interactive_command('emacs file.txt') is True
 
     def test_man(self) -> None:
-        assert _is_interactive_command('man ls') is True
+        assert is_interactive_command('man ls') is True
 
     def test_htop(self) -> None:
-        assert _is_interactive_command('htop') is True
+        assert is_interactive_command('htop') is True
 
     def test_telnet(self) -> None:
-        assert _is_interactive_command('telnet localhost 80') is True
+        assert is_interactive_command('telnet localhost 80') is True
 
     def test_ftp(self) -> None:
-        assert _is_interactive_command('ftp host') is True
+        assert is_interactive_command('ftp host') is True
 
     def test_passwd(self) -> None:
-        assert _is_interactive_command('passwd') is True
+        assert is_interactive_command('passwd') is True
 
     def test_more(self) -> None:
-        assert _is_interactive_command('more file.txt') is True
+        assert is_interactive_command('more file.txt') is True
 
     def test_not_prefix_match(self) -> None:
-        assert _is_interactive_command('view file.txt') is False
-        assert _is_interactive_command('vishnu') is False
+        assert is_interactive_command('view file.txt') is False
+        assert is_interactive_command('vishnu') is False
 
     def test_leading_spaces(self) -> None:
-        assert _is_interactive_command('  vi file.txt') is True
-        assert _is_interactive_command('  sudo rm') is True
+        assert is_interactive_command('  vi file.txt') is True
+        assert is_interactive_command('  sudo rm') is True
 
 
 @pytest.fixture

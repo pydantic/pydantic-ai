@@ -6,51 +6,13 @@ description: Autonomous coding with six tools and context management.
 # Coder
 
 `Coder` gives a Pydantic AI agent tools and guidance for investigating, editing, and testing a local codebase.
-It is a regular combined capability: Coder-specific tools and argument repair compose with repository context and context management.
+It is a regular combined capability made from [`FileSystem`](filesystem.md), [`Shell`](shell.md), [`RepoContext`](repo-context.md), and the [context management](compaction.md) capabilities, so you can use it whole or take it apart.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-## Filesystem scope
-
-File tools are workspace-scoped by default. For trusted local use,
-`Coder(unrestricted_filesystem=True)` roots file access at the workspace drive's
-filesystem root and disables protected-file patterns. Relative paths still resolve
-from the workspace; shell working directory and repository context are unchanged.
-On POSIX this permits paths such as `/tmp/example.py`; on Windows this covers the
-workspace drive, not other drives. OS permissions and file-change event listeners
-still apply. This permits modifying secrets and repository metadata: use it only
-when you trust the agent and its inputs. Shell commands were already unrestricted.
-
-`grep` accepts a regular file or directory. Both `grep` and `list_files` honor
-`unrestricted_filesystem`; scoped agents still reject paths outside the workspace.
-Shell finished events include a logical line count for log snapshots up to 1 MiB.
-Larger logs report `total_lines=None` instead of scanning the entire file, bounding
-both memory and scan work. UIs can show a generic truncation notice in that case.
-
-## Shell progress events
-
-Coder emits `ShellStartedEvent`, `ShellOutputEvent`, and `ShellFinishedEvent`
-through `ctx.emit`. Subscribe with core `@on_event` or consume the native agent
-stream. Events carry the tool-call ID. Foreground output combines stdout and
-stderr, is decoded incrementally, and is capped at 16,000 bytes per call in
-chunks of at most 4,096 bytes. Polling follows the existing 50 ms wait loop.
-Background calls do not tail output after returning; completion means the tool
-stopped waiting, not necessarily that the process exited. `exit_code=None`
-indicates no completed status was available. Finished events include the PID,
-output/status paths, and whether output was omitted. Tool results are unchanged.
-Cancellation retains existing process-group cleanup and may emit no finished
-event. Events contain command/output data and must be treated as untrusted by
-terminal consumers. These UI events add no telemetry spans; core already traces
-tool execution.
-
-## Benchmarking
-
-See the [Terminal-Bench 2.1 playbook](https://github.com/pydantic/pydantic-ai-harness/blob/main/pydantic_ai_harness/coder/TERMINAL_BENCH.md)
-for running Coder inside Harbor, pinning the adapter and harness, and inspecting trial results.
-
 ## Usage
 
-Install the Coder extra to include ripgrep (`rg`) for file listing and search:
+Install the Coder extra to include ripgrep (`rg`), which backs the `list_files` and `grep` tools:
 
 ```bash
 pip/uv-add "pydantic-ai-harness[coder]"
@@ -86,75 +48,73 @@ Use it with the Pydantic AI CLI:
 uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
 ```
 
+## Composition
+
+`Coder(workspace)` is these capabilities, in this order:
+
+1. A private hook that repairs malformed JSON tool arguments before normal validation (see below).
+2. A `Capability` carrying the default instructions, plus any `instructions=` you pass.
+3. [`FileSystem`](filesystem.md)`(root_dir=workspace, content_hashes=False, tools=FILE_TOOL_NAMES)`, where
+   `FILE_TOOL_NAMES` is `read_file`, `write_file`, `edit_file`, `list_files`, and `grep`.
+4. [`Shell`](shell.md)`(cwd=workspace, denied_commands=[], allow_interactive=True, default_timeout=270, denied_env_patterns=LLM_API_KEY_ENV_PATTERNS, tools=['shell'])`.
+5. [`RepoContext`](repo-context.md)`(workspace_dir=workspace, expose_inventory_tool=False)` for repository instructions and structure.
+6. [`ClearToolResults`](compaction.md)`(max_fraction=0.7)` and [`WarnNearLimits`](compaction.md)`(max_context_fraction=0.9)`.
+7. A private [`ToolOutputLimits`](tool-output-limits.md) specialization that truncates any tool result over 64,000 characters
+   without adding a spill-retrieval tool.
+
+Every tool comes from `FileSystem` or `Shell`; those pages document each one in full. Build the same
+agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,
+or allowlist commands.
+
 ## Six tools
 
 | Tool | Behavior |
 | --- | --- |
-| `read_file(path, offset=0, limit=None)` | Zero-based line offset, one-based displayed line numbers, up to 2,000 lines. No hash header. Reads stream up to 60,000 content characters; lines above 65,536 bytes require shell inspection. |
-| `write_file(path, content)` | Replace a file or create it in an existing directory. No expected hash. |
-| `edit_file(path, old_text=..., new_text=...)` | Replace exactly one occurrence of a non-empty string. |
-| `list_files(path='.', glob=None, limit=200)` | `rg --files`, respecting ignore rules. Returns at most 1,000 lines. |
-| `grep(pattern, ...)` | Ripgrep search with `path`, `glob`, `file_type`, `ignore_case`, `literal`, `context` (0-20), and `limit` (1-1,000). |
-| `shell(command, mode='foreground', timeout=270)` | Unrestricted foreground or background commands rooted at the workspace. |
+| `read_file(path, offset=0, limit=None)` | Zero-based line offset, one-based displayed line numbers, up to 2,000 lines. No hash header. |
+| `write_file(path, content)` | Create a file in an existing directory, or replace one. No `expected_hash`. |
+| `edit_file(path, old_text, new_text)` or `edit_file(path, replacements=[...])` | Exact replacements, each matching once; a batch is checked in memory and written only if every replacement matches. |
+| `list_files(path='.', glob=None)` | `rg --files`, sorted by path, respecting ignore files and skipping hidden files. |
+| `grep(pattern, ...)` | Ripgrep search with `path`, `glob`, `file_type`, `ignore_case`, `literal`, and `context` (0 to 20). |
+| `shell(command, mode='foreground', timeout=270)` | Unrestricted commands rooted at the workspace that outlive the run. |
 
-Edits also accept `replacements=[{'old_text': 'before', 'new_text': 'after'}, ...]` instead of the single pair.
-Each replacement must match exactly once in the result of the preceding replacement. All replacements are
-validated in memory before writing; a failed batch leaves the file unchanged. Do not mix the two forms.
-Read existing files first. File writes retain the standalone filesystem's protected-path rules
-(`.git`, `.env`, keys, and secrets); shell can bypass these rules.
+Results are bounded by `FileSystem`'s caps (2,000 lines per `read_file`, 1,000 lines or files per search or listing) and Coder's 64,000-character
+tool-output limit; a truncation marker means more output was omitted, so narrow the search rather than
+assuming it was complete. Use `shell` for `mkdir`, `find`, process inspection, and `kill`. File writes
+keep the standalone filesystem's protected-path rules (`.git`, `.env`, keys, and secrets); shell can bypass
+these rules. Coder does not include planning, delegation, or the run-scoped `run_command` family.
 
-Search output is bounded by returned lines (including context) and a 64,000-character cap.
-A truncation marker means more output was omitted; narrow the search rather than assuming it was complete.
-Use `shell` for `mkdir`, `find`, process inspection, and `kill`. Coder does not include planning,
-delegation, directory-creation, file-info, process-check, or process-start/stop tools.
+## Filesystem scope
+
+File tools are workspace-scoped by default. For trusted local use,
+`Coder(unrestricted_filesystem=True)` sets `FileSystem(root_dir=<workspace drive root>, cwd=workspace,
+protected_patterns=[])`: relative paths still resolve from the workspace, and absolute paths anywhere on
+the drive are accepted. On POSIX this permits paths such as `/tmp/example.py`; on Windows this covers the
+workspace drive, not other drives. OS permissions and file-change event listeners still apply. This permits
+modifying secrets and repository metadata: use it only when you trust the agent and its inputs. Shell commands
+were already unrestricted.
 
 ## Long-running commands
 
-Foreground waits at most 270 seconds (or a smaller positive `timeout`) and then returns handles for the
-same running process. Background returns those handles immediately. Both report a supervisor/session PID,
-an absolute output log path, and an absolute JSON status path. The status contains the child PID and
-`exit_code` (`null` while running); it may not exist until the supervisor has started. Output combines
-stdout and stderr; foreground returns the final 16,000 bytes available when it returns.
+`shell` is the [`Shell`](shell.md) capability's persistent tool. Foreground waits at most 270 seconds
+(or a smaller positive `timeout`) and then returns handles for the same running process; background returns
+them immediately. Both end with a PID, an absolute output log path, and an absolute JSON status path whose
+`exit_code` is `null` while the command runs; foreground puts the last 16,000 bytes of output before them. Commands outlive the agent run, so servers keep running; there
+is no completion notification or automatic wake-up after a final response. The Shell page covers the
+supervisor, cleanup, and the `CommandStartedEvent`, `CommandOutputEvent`, and `CommandFinishedEvent` progress
+events a UI can subscribe to.
 
-A detached supervisor publishes status and reaps the command. A daemon thread reaps the supervisor while
-the calling Python process is alive. Cancelled foreground calls terminate their process group because they cannot return handles.
-Successfully returned commands outlive individual agent runs and event loops, allowing
-servers to keep running. There is no agent scheduler, completion notification, or automatic wake-up after
-a final response. Commands and logs are host-local, not replay-safe durable workflow activities.
-
-Use `shell` to read the returned absolute log/status paths (they are outside the file tools' workspace).
-On POSIX, `kill -- -PID` targets the process group. The caller owns stopping servers and deleting their
-log directories when no longer needed. Logs are not rotated: bound verbose long-running commands yourself.
-A process killed externally before its supervisor publishes completion may leave a running status; inspect
-its PID as well. Windows callers should use the platform's process-tree termination command instead.
-
-Default guidance tells the agent to finish required work before giving a final response: do other useful
-work, then `sleep 60` and inspect status/output repeatedly until completion or a genuine blocker.
+The default instructions tell the agent to finish required work before giving a final response: do other
+useful work, then `sleep 60` and inspect status and output repeatedly until completion or a genuine blocker.
 Servers may remain running after startup and readiness are verified. Common LLM API-key environment
 variables are filtered from command environments; other host credentials and files remain accessible.
 
-## Instructions and composition
+## Instructions
 
 The default instructions emphasize autonomous investigation, focused edits, tests, DRY, YAGNI, SOLID,
 and pragmatic simplicity. The 600-line suggestion applies to new files, not a mandate to split existing
 large files. `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
 The instructions adapt the software-work and autonomy guidance in Code Puppy's `agent_code_puppy.py`
 and `cli_runner.py`, without its identity or tone.
-
-The composition, in order, is:
-
-1. Private malformed-JSON repair before normal tool validation.
-2. A regular `Capability` with default instructions and the six Coder tools.
-3. `RepoContext(workspace_dir=..., expose_inventory_tool=False)` for repository instructions and structure.
-4. `ClearToolResults(max_fraction=0.7)` and `WarnNearLimits(max_context_fraction=0.9)`.
-5. Private `ToolOutputLimits` specialization using `Band(over=64000, action=Truncate(max_chars=64000))`,
-   without the spill-retrieval tool. It adds no model calls.
-
-Use `Coder` for this exact composition, including its private tool implementations and JSON repair.
-Standalone `FileSystem`, `Shell`, `Planning`, and `SubAgents` remain available with their existing APIs
-for consumers assembling different agents. To migrate, remove Coder's `allowed_commands` and `subagents`
-constructor arguments and the `DEFAULT_ALLOWED_COMMANDS` import. Add standalone capabilities explicitly
-when their additional tools are wanted. Replace old `run_command`/`start_process` calls with `shell`.
 
 ## Tool argument repair
 
@@ -166,7 +126,13 @@ If the repair parser raises a value or recursion error, original arguments go th
 Repair is heuristic: malformed input can be ambiguous, and inferred strings may differ from the model's
 intent. It does not supply a schema to the repair library or bypass exact edit matching.
 Each attempt emits a `coder.repair_tool_arguments` span through `ctx.tracer`, without arguments or file
-contents. Other Coder operations rely on core tool spans. Writes and edits emit filesystem change-request and completion events. Bounded reads do not compute whole-file hashes or emit hash-bearing read events.
+contents. Other Coder operations rely on core tool spans and on the events its `FileSystem` and `Shell`
+capabilities emit.
+
+## Benchmarking
+
+See the [Terminal-Bench 2.1 playbook](https://github.com/pydantic/pydantic-ai-harness/blob/main/pydantic_ai_harness/coder/TERMINAL_BENCH.md)
+for running Coder inside Harbor, pinning the adapter and harness, and inspecting trial results.
 
 See the [source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/coder/).
 

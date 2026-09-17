@@ -15,13 +15,23 @@ from pydantic_ai_harness.filesystem._events import (
     FileWrittenEvent,
     SearchKind,
 )
-from pydantic_ai_harness.filesystem._toolset import READ_ONLY_TOOL_NAMES, FileSystemToolset
+from pydantic_ai_harness.filesystem._toolset import (
+    DEFAULT_TOOL_NAMES,
+    FILE_SYSTEM_TOOL_NAMES,
+    READ_ONLY_TOOL_NAMES,
+    RIPGREP_TOOL_NAMES,
+    FileSystemToolset,
+    Replacement,
+)
 
 __all__ = [
+    'DEFAULT_TOOL_NAMES',
     'FILE_SYSTEM_EVENTS',
+    'FILE_SYSTEM_TOOL_NAMES',
     'MAX_DIFF_SOURCE_CHARS',
     'MAX_EVENT_DIFF_CHARS',
     'READ_ONLY_TOOL_NAMES',
+    'RIPGREP_TOOL_NAMES',
     'DirectoryCreatedEvent',
     'DirectoryListedEvent',
     'FileChangeRequestEvent',
@@ -32,5 +42,6 @@ __all__ = [
     'FileSystemToolset',
     'FilesSearchedEvent',
     'FileWrittenEvent',
+    'Replacement',
     'SearchKind',
 ]

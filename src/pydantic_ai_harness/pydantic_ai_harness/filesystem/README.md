@@ -37,12 +37,57 @@ print(result.output)
 |---|---|
 | `read_file` | Read a text file with line numbers and a content hash. Binary files are detected and not dumped. Supports `offset`/`limit` paging. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
-| `edit_file` | Exact-string replacement; `old_text` must match exactly once. Optional `expected_hash`. |
+| `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
 | `search_files` | Regex search over file contents, optionally narrowed by an `include_glob`. |
 | `find_files` | Glob search over file names (e.g. `*.py`, `**/*.json`). The pattern is relative to `path`; absolute patterns are rejected. |
 | `create_directory` | Create a directory and any missing parents. |
 | `file_info` | Metadata for a file or directory (size, type, line count, hash, symlink target). |
+| `list_files` | Opt-in, ripgrep-backed: files under a directory, recursively, sorted by path, with an optional `glob`. |
+| `grep` | Opt-in, ripgrep-backed: content search with `glob`, `file_type`, `ignore_case`, `literal`, and `context` (0 to 20) options; a `path` may name a file or a directory. |
+
+### Tool selection and the ripgrep tools
+
+`tools` names the tools to register, from `FILE_SYSTEM_TOOL_NAMES`. The default,
+`DEFAULT_TOOL_NAMES`, is the eight pure-Python tools. `list_files` and `grep` run
+the `rg` executable, which must be on `PATH` (the `coder` extra installs it), so
+they are opt-in by name:
+
+```python
+from pydantic_ai_harness import FileSystem
+
+FileSystem(root_dir='./workspace', tools=['read_file', 'edit_file', 'list_files', 'grep'])
+```
+
+Both respect ripgrep's defaults: `.gitignore` inside a git repository and
+`.ignore` files anywhere. As in ripgrep, an explicit `glob` takes precedence
+over those ignore files; unlike ripgrep, dotfiles and dot-directories stay
+hidden even then, as with the other walkers. Output is sorted by path, so a capped
+result is a deterministic prefix rather than a random subset. `grep` reports
+matches as `path:line:text` and context lines as `path-line-text`, paths relative
+to `root_dir`; a pattern uses ripgrep's regex syntax unless `literal` is set. A
+missing `rg` or a pattern ripgrep rejects comes back to the model as a retry, so
+it can correct the call or use `search_files`/`find_files` instead. Every path
+ripgrep prints goes through the same containment and pattern checks as the other
+walkers before it is shown. `read_only=True` keeps only the tools in
+`READ_ONLY_TOOL_NAMES` from whatever `tools` selects.
+
+### Content hashes
+
+`content_hashes=False` drops the hash from `read_file` headers and from
+`write_file`/`edit_file` results, and removes the `expected_hash` parameter from
+those two tools. The hashes give a model optimistic concurrency control over a
+workspace that something else may also be editing; for a single-writer coding
+agent they only add tokens to every read and write. Events still carry
+`content_hash` either way.
+
+### Working directory
+
+`cwd` is the directory relative paths resolve from; it defaults to `root_dir`
+and must lie inside it. Set it to hand the model a project directory while
+`root_dir` grants access to more, such as a parent directory or the filesystem
+root, without the model spelling out absolute paths. Containment is still
+checked against `root_dir`, and event paths stay relative to `root_dir`.
 
 ## Events
 
@@ -58,7 +103,7 @@ lands, without parsing tool arguments:
 | `FileWrittenEvent` | stream | `write_file` | `path`, `root_dir`, `content_hash` |
 | `FileEditedEvent` | stream | `edit_file` | a `FileWrittenEvent` plus `diff`, `truncated` |
 | `DirectoryCreatedEvent` | stream | `create_directory` | `path`, `root_dir` |
-| `FilesSearchedEvent` | stream | `search_files`, `find_files` | `path`, `root_dir`, `pattern`, `search` (`grep` or `find`), `match_count`, `truncated` |
+| `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search` (`grep` or `find`), `match_count`, `truncated` |
 
 `FileChangeRequestEvent` is a decision. It fires after the path has passed the
 access checks and, for `write_file` and `edit_file`, after the conflict check,
@@ -157,7 +202,7 @@ applies the same rule to absolute symlink targets.
   outside -- via `..`, an absolute path, or a symlink -- is rejected. Symlinks
   are resolved with `os.path.realpath` *before* the containment check, and I/O
   then uses the resolved path. Directory walks (`list_directory`,
-  `search_files`, `find_files`) resolve each entry the same way and match the
+  `search_files`, `find_files`, `list_files`, `grep`) resolve each entry the same way and match the
   patterns against that resolved target, so a symlink cannot name a file
   outside the tree or present a denied file under a permitted name. These
   checks are pathname-based: if another process mutates the tree between
@@ -198,7 +243,7 @@ The three rules apply at two different granularities:
 - **Direct access** (`read_file`, `write_file`, `edit_file`, `file_info`,
   `create_directory`) gates the operation's target path. You must name a path
   that the patterns permit.
-- **Walkers** (`list_directory`, `search_files`, `find_files`) gate their root
+- **Walkers** (`list_directory`, `search_files`, `find_files`, `list_files`, `grep`) gate their root
   by denied patterns, but **not** by `allowed_patterns` -- a directory root
   like `.` never matches a file pattern such as `src/*.py`, so requiring it to
   would make every listing fail. Instead, the root is walked and each
@@ -210,12 +255,12 @@ So with `allowed_patterns=['*.py']`, `list_directory('.')` succeeds and shows
 only the `.py` entries; `read_file('notes.md')` is rejected.
 
 Matching `protected_patterns` alone does not hide an entry. Protected paths
-that pass the allowed, denied, and dotfile filters remain visible to all three
+that pass the allowed, denied, and dotfile filters remain visible to the
 walkers and directly readable via `read_file`/`file_info`; write operations
 reject them.
 
 > Dotfiles and dot-directories (`.git`, `.env`, `.github`, ...) are skipped by
-> all three walkers -- `list_directory`, `search_files`, and `find_files` --
+> every walker -- `list_directory`, `search_files`, `find_files`, `list_files`, and `grep` --
 > regardless of patterns.
 
 ## Configuration
@@ -225,13 +270,17 @@ from pydantic_ai_harness import FileSystem
 
 FileSystem(
     root_dir='.',                  # str | Path -- sandbox root
+    cwd=None,                      # where relative paths resolve from (defaults to root_dir)
     allowed_patterns=[],           # allowlist globs (empty = allow all)
     denied_patterns=[],            # denylist globs
     protected_patterns=[...],      # read-only globs (defaults to secrets/.git)
     max_read_lines=2000,           # cap for a single read_file
     max_list_results=1000,         # cap for list_directory
-    max_search_results=1000,       # cap for search_files
-    max_find_results=1000,         # cap for find_files
+    max_search_results=1000,       # cap for search_files and grep
+    max_find_results=1000,         # cap for find_files and list_files
+    read_only=False,               # keep only READ_ONLY_TOOL_NAMES
+    content_hashes=True,           # report hashes and accept expected_hash
+    tools=DEFAULT_TOOL_NAMES,      # which tools to register (add 'list_files', 'grep')
 )
 ```
 

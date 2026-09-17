@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 
-from pydantic_ai_harness.shell._toolset import ShellToolset
+from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, ShellToolset
 
 _DEFAULT_DENIED_COMMANDS: tuple[str, ...] = (
     'rm',
@@ -104,6 +104,18 @@ class Shell(AbstractCapability[AgentDepsT]):
     `LLM_API_KEY_ENV_PATTERNS` for a ready-made provider-credential denylist.
     """
 
+    tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES
+    """Which tools to register, from `SHELL_TOOL_NAMES`.
+
+    The default is the run-scoped family: `run_command`, `start_command`,
+    `check_command`, and `stop_command`, whose processes are killed when the run
+    ends. Name `shell` to register the persistent tool instead: its commands
+    outlive the run, a foreground call waits at most `default_timeout` seconds
+    (capped at 270) before returning handles to the still-running process, and
+    the model reads the returned log and status files with its other tools.
+    `persist_cwd` does not apply to `shell`; each command starts at `cwd`.
+    """
+
     def __post_init__(self) -> None:
         """Resolve the built-in denylist according to the selected policy."""
         if self.denied_commands is _DEFAULT_DENIED_COMMANDS:
@@ -122,4 +134,5 @@ class Shell(AbstractCapability[AgentDepsT]):
             allow_interactive=self.allow_interactive,
             env=self.env,
             denied_env_patterns=self.denied_env_patterns,
+            tools=self.tools,
         )

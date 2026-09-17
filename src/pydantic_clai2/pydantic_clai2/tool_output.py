@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
-from pydantic_ai_harness.coder import ShellFinishedEvent, ShellOutputEvent, ShellStartedEvent
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from rich.ansi import AnsiDecoder
 from rich.console import Console
 from rich.text import Text
@@ -113,7 +113,7 @@ class ToolOutput:
         self._header(name, f'{path!r} {details}')
         return True
 
-    def _shell_chunk(self, event: ShellOutputEvent) -> None:
+    def _shell_chunk(self, event: CommandOutputEvent) -> None:
         preview = self._shells.setdefault(event.tool_call_id, ShellPreview())
         for char in event.text:
             if preview.completed_lines >= self.shell_lines:
@@ -174,15 +174,15 @@ class ToolOutput:
 
     def render(self, event: AgentStreamEvent) -> bool:
         """Return whether this event belongs to the specialized tool display."""
-        if isinstance(event, ShellStartedEvent):
+        if isinstance(event, CommandStartedEvent):
             self._shells[event.tool_call_id] = ShellPreview()
             key = (event.tool_call_id, 'shell')
             if key not in self._headers:
                 self._header('shell', event.command)
             self._headers.discard(key)
-        elif isinstance(event, ShellOutputEvent):
+        elif isinstance(event, CommandOutputEvent):
             self._shell_chunk(event)
-        elif isinstance(event, ShellFinishedEvent):
+        elif isinstance(event, CommandFinishedEvent):
             preview = self._shells.pop(event.tool_call_id, ShellPreview())
             if preview.pending and preview.completed_lines < self.shell_lines:
                 self._shell_line(preview)
