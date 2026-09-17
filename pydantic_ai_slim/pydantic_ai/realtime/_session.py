@@ -36,6 +36,7 @@ from ..messages import (
     BinaryImage,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
+    EnqueuedMessagesEvent,
     FinishReason,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -126,6 +127,7 @@ RealtimeEvent = TypeAliasType(
     | FunctionToolResultEvent
     | DeferredToolRequestsEvent
     | DeferredToolResultsEvent
+    | EnqueuedMessagesEvent
     | RealtimeTurnCompleteEvent
     | RealtimeInputSpeechStartEvent
     | RealtimeResponseInterruptedEvent
@@ -149,7 +151,8 @@ other shared message parts, including [`TextPart`][pydantic_ai.messages.TextPart
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], inline deferred resolution
 as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
-[`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], and the rest as realtime
+[`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], enqueued-message delivery
+as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as realtime
 control-plane events.
 """
 
@@ -1285,18 +1288,7 @@ class RealtimeSession:
         completes (see `_execute_tool`) — neither is accepted here.
         """
         if isinstance(content, str):
-            solicits_response = respond is not False
-            if solicits_response:
-                self._reserve_response_request()
-            request = self._new_request([UserPromptPart(content=content)])
-            self._record_sent_request(request)
-            try:
-                await self._send_frame(content if solicits_response else TextContext(content))
-            except BaseException:
-                if solicits_response:
-                    self._pending_response_requests -= 1
-                self._remove_sent_request(request)
-                raise
+            await self._send_text(content, respond=respond is not False)
         elif isinstance(content, BinaryContent):
             if content.is_image:
                 await self._send_image(content, respond=respond is True)
@@ -1322,6 +1314,20 @@ class RealtimeSession:
                     await self.send(item, respond=respond if index == len(content) - 1 else False)
         else:
             assert_never(content)
+
+    async def _send_text(self, content: str, *, respond: bool) -> ModelRequest:
+        if respond:
+            self._reserve_response_request()
+        request = self._new_request([UserPromptPart(content=content)])
+        self._record_sent_request(request)
+        try:
+            await self._send_frame(content if respond else TextContext(content))
+        except BaseException:
+            if respond:
+                self._pending_response_requests -= 1
+            self._remove_sent_request(request)
+            raise
+        return request
 
     def enqueue(
         self,
@@ -2723,7 +2729,8 @@ class RealtimeSession:
                 return
             selected = self._pending_messages.pop_priority(priority)
             for pending in selected:
-                await self.send(_pending_message_text(pending))
+                request = await self._send_text(_pending_message_text(pending), respond=True)
+                self._queue_put(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=(request,)))
             if priority == 'asap':
                 self._asap_drain_deferred = False
 
