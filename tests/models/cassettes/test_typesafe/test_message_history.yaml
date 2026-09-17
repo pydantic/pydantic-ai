@@ -1,0 +1,97 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '268'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        response:
+          instructions:
+            goal: The final response which ends this conversation
+            instructions: Does the latest message mention a fruit?
+            question: response
+          type: noul
+      state:
+        prompt: I like apples.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '133'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        response:
+          noul: 0.86
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 312
+        output_tokens: 20
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '351'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        response:
+          instructions:
+            goal: The final response which ends this conversation
+            instructions: |-
+              Does the latest message mention a fruit?
+
+              Does the latest message mention a fruit?
+            question: response
+          type: noul
+      state:
+        previous_prompts:
+        - I like apples.
+        prompt: And bicycles.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '133'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        response:
+          noul: 0.04
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 335
+        output_tokens: 20
+    status:
+      code: 200
+      message: OK
+version: 1

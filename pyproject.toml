@@ -70,6 +70,7 @@ xai = ["pydantic-ai-slim[xai]=={{ version }}"]
 groq = ["pydantic-ai-slim[groq]=={{ version }}"]
 openrouter = ["pydantic-ai-slim[openrouter]=={{ version }}"]
 huggingface = ["pydantic-ai-slim[huggingface]=={{ version }}"]
+typesafe = ["pydantic-ai-slim[typesafe]=={{ version }}"]
 ag-ui = ["pydantic-ai-slim[ag-ui]=={{ version }}"]
 ui = ["pydantic-ai-slim[ui]=={{ version }}"]
 duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
@@ -183,6 +184,9 @@ pydantic-extra-types = false
 pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
+# `typesafe-sdk>=0.6.0` (the first release on `httpx2`, which `pydantic-ai-slim[typesafe]` needs) was
+# published on 2026-09-15, inside the 7-day window above. Drop this once it has aged out, on 2026-09-22.
+typesafe-sdk = false
 logfire = false
 logfire-api = false
 # Anthropic 1.3.0 is the first release listing `claude-fable-5-1` and `claude-mythos-5-1`.

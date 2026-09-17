@@ -1,0 +1,41 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '202'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        response:
+          instructions:
+            goal: The final response which ends this conversation
+            question: response
+          type: noul
+      state:
+        prompt: anything
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '142'
+      content-type:
+      - application/json
+    parsed_body:
+      detail:
+        error_type: authentication_error
+        message: Cannot authenticate with the server. Please check your API key and try again.
+    status:
+      code: 401
+      message: Unauthorized
+version: 1

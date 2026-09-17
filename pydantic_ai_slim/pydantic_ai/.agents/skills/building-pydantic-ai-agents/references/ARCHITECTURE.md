@@ -169,6 +169,7 @@ Need deterministic, fast tests?
 | Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
+| TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |
