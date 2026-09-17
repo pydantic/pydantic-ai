@@ -922,6 +922,11 @@ async def model_logic(  # noqa: C901
                 return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
+        elif m.content == 'My card was charged twice.':
+            # docs/models/typesafe.md: the prompt is the ticket, the questions are on the output type
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})]
+            )
         elif m.content == 'Jevantic gives Python programs typed, probabilistic decisions from Jev.':
             # docs/models/typesafe.md: a rubric answer keeps its expected score, which falls between levels
             return ModelResponse(

@@ -80,7 +80,7 @@ Every field of the output type is one question, and all of them go out in a sing
 | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
 | `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the level Jev thought most likely |
 
-The field description is the question text; an `Enum` field without one uses the enum's class docstring. The output type's docstring and the agent's instructions are context, so put the framing there and the per-field wording in the descriptions. A docstring under an `Enum` member, as in the example above, describes that option. A `Literal` has nowhere to put descriptions, so Jev only sees its option names.
+The field description is the question text; an `Enum` field without one uses the enum's class docstring. The output type's docstring and the agent's instructions are context, so put the framing there and the per-field wording in the descriptions — see [where the question goes](#where-the-question-goes). A docstring under an `Enum` member, as in the example above, describes that option. A `Literal` has nowhere to put descriptions, so Jev only sees its option names.
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the example below.
 
@@ -139,6 +139,37 @@ print(result.response.provider_details['scores'])
 The answer is the level Jev thought most likely, so it is always one of yours. `provider_details['scores']` keeps the expected score across the rubric, which falls between the levels — `0.16` here, not `0` — and is the number to average over a dataset. `probabilities` holds the whole distribution, keyed by level.
 
 Every level needs a docstring: a rubric whose levels are unexplained is not a rubric, so one without them is a [`UserError`][pydantic_ai.exceptions.UserError]. The levels must also start at `0` and run upwards without gaps, which is the shape Jev scores against.
+
+## Where the question goes
+
+Jev takes two separate things: the material to judge, and the questions to ask about it. TypeSafe's own guidance is that the state holds "the content and supporting facts" and the questions hold "the judgments the model should make about that material", so **the prompt is only what is being judged, and the question belongs on the output type**.
+
+That is the opposite habit to the one a language model teaches, where the question and the material go into one prompt together and the model sorts them out. Jev will not. `Agent('typesafe:jev-latest', output_type=bool)` with the question written into the prompt asks Jev nothing, and is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent — Jev rejects a yes/no question that carries neither instructions nor criteria.
+
+Put the question on the field, and the prompt carries the ticket alone:
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+    area: Literal['billing', 'bug', 'account', 'other'] = Field(description='Which team owns it?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=Ticket)
+result = agent.run_sync('My card was charged twice.')
+print(result.output)
+#> urgent=True area='billing'
+```
+
+For a single question an agent's `instructions` do the same job, and Jev answers the two spellings alike. Prefer the output type anyway: each field carries its own question, so several questions can be asked in one request, which is the thing Jev is fast at. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
 
 ## Judging a conversation
 

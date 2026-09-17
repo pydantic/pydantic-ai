@@ -319,7 +319,7 @@ async def test_message_history(
 async def test_http_error(allow_model_requests: None):
     """An API error is raised as `ModelHTTPError`, the same as for any other provider."""
     model = TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key='not-a-real-key'))
-    agent = Agent(model, output_type=bool)
+    agent = Agent(model, output_type=bool, instructions='Is this fine?')
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('anything')
     assert exc_info.value.status_code == snapshot(401)
@@ -330,7 +330,7 @@ async def test_http_error(allow_model_requests: None):
 async def test_fallback_on_http_error(allow_model_requests: None):
     """`FallbackModel` moves on from a Jev API error, so a language model can pick up the same output type."""
     jev = TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key='not-a-real-key'))
-    agent = Agent(FallbackModel(jev, TestModel()), output_type=bool)
+    agent = Agent(FallbackModel(jev, TestModel()), output_type=bool, instructions='Is this fine?')
     result = await agent.run('anything')
     assert result.output is False
     assert result.response.model_name == 'test'
@@ -392,6 +392,10 @@ class WithUnboundedFloat(BaseModel):
     score: float
 
 
+class WithUndescribedBool(BaseModel):
+    ok: bool
+
+
 @pytest.mark.parametrize(
     'output_type,match',
     [
@@ -402,10 +406,11 @@ class WithUnboundedFloat(BaseModel):
         pytest.param(WithUndescribedLevels, 'every level needs to say what it means', id='rubric-undescribed'),
         pytest.param(WithOneOption, 'options are not two or more strings', id='one-option'),
         pytest.param(WithUnboundedFloat, "Output field 'score' is not supported", id='unbounded-float'),
+        pytest.param(bool, "Output field 'response' asks Jev nothing", id='bare-bool-no-question'),
     ],
 )
 async def test_unsupported_output_fields(
-    allow_model_requests: None, typesafe_model: TypeSafeModel, output_type: type[BaseModel], match: str
+    allow_model_requests: None, typesafe_model: TypeSafeModel, output_type: type[BaseModel] | type[bool], match: str
 ):
     agent = Agent(typesafe_model, output_type=output_type)
     with pytest.raises(UserError, match=match):
@@ -413,7 +418,7 @@ async def test_unsupported_output_fields(
 
 
 async def test_function_tools_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
-    agent = Agent(typesafe_model, output_type=bool)
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
 
     @agent.tool_plain
     def lookup() -> str:
@@ -523,19 +528,19 @@ async def test_file_in_history_rejected(allow_model_requests: None, typesafe_mod
         ModelRequest(parts=[UserPromptPart('Draw a cat.')]),
         ModelResponse(parts=[FilePart(BinaryContent(b'\x89PNG', media_type='image/png'))]),
     ]
-    agent = Agent(typesafe_model, output_type=bool)
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
     with pytest.raises(UserError, match='Files are not supported'):
         await agent.run('Is it a cat?', message_history=history)
 
 
 async def test_non_text_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
-    agent = Agent(typesafe_model, output_type=bool)
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
     with pytest.raises(UserError, match='Files are not supported'):
         await agent.run(['look at this', BinaryContent(b'\x89PNG', media_type='image/png')])
 
 
 async def test_empty_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
-    agent = Agent(typesafe_model, output_type=bool)
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
     with pytest.raises(UserError, match='without user text is not supported'):
         await agent.run('')
 
@@ -547,7 +552,7 @@ async def test_text_list_prompt(allow_model_requests: None):
         seen.append(json.loads(request.content))
         return answers(response={'type': 'noul', 'noul': 0.9})
 
-    await Agent(mock_model(record), output_type=bool).run(['first', 'second'])
+    await Agent(mock_model(record), output_type=bool, instructions='Is this fine?').run(['first', 'second'])
     assert seen[0]['state'] == {'prompt': 'first\n\nsecond'}
 
 
@@ -602,7 +607,7 @@ async def test_direct_request_without_prompt(allow_model_requests: None):
 
 
 async def test_streaming_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
-    agent = Agent(typesafe_model, output_type=bool)
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
     with pytest.raises(UserError, match='does not support streamed requests'):
         async with agent.run_stream('anything'):
             pass  # pragma: no cover
@@ -624,9 +629,9 @@ async def test_connection_error(allow_model_requests: None):
     model = mock_model(refuse)
 
     with pytest.raises(ModelAPIError, match='refused'):
-        await Agent(model, output_type=bool).run('anything')
+        await Agent(model, output_type=bool, instructions='Is this fine?').run('anything')
 
-    agent = Agent(FallbackModel(model, TestModel()), output_type=bool)
+    agent = Agent(FallbackModel(model, TestModel()), output_type=bool, instructions='Is this fine?')
     result = await agent.run('anything')
     assert result.response.model_name == 'test'
 
@@ -648,7 +653,7 @@ async def test_unexpected_answer_type(allow_model_requests: None, answer: dict[s
 
     model = mock_model(wrong_kind)
     with pytest.raises(UnexpectedModelBehavior, match="Unexpected answer from TypeSafe for output field 'response'"):
-        await Agent(model, output_type=bool).run('anything')
+        await Agent(model, output_type=bool, instructions='Is this fine?').run('anything')
 
 
 async def test_invalid_response_body(allow_model_requests: None):
@@ -657,7 +662,7 @@ async def test_invalid_response_body(allow_model_requests: None):
     def broken(request: httpx2.Request) -> httpx2.Response:
         return answers(response={'type': 'choice'})
 
-    agent = Agent(FallbackModel(mock_model(broken), TestModel()), output_type=bool)
+    agent = Agent(FallbackModel(mock_model(broken), TestModel()), output_type=bool, instructions='Is this fine?')
     with pytest.raises(UnexpectedModelBehavior, match='Invalid response from TypeSafe'):
         await agent.run('anything')
 
@@ -670,7 +675,7 @@ async def test_missing_answer(allow_model_requests: None):
 
     model = mock_model(nothing)
     with pytest.raises(UnexpectedModelBehavior, match="output field 'response': None"):
-        await Agent(model, output_type=bool).run('anything')
+        await Agent(model, output_type=bool, instructions='Is this fine?').run('anything')
 
 
 async def test_settings_forwarded(allow_model_requests: None):
@@ -685,6 +690,7 @@ async def test_settings_forwarded(allow_model_requests: None):
     agent = Agent(
         model,
         output_type=bool,
+        instructions='Is this fine?',
         model_settings={
             'timeout': 7,
             'temperature': 0.0,

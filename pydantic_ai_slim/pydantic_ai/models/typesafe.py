@@ -329,10 +329,18 @@ def _questions(
                 )
             else:
                 questions[name] = Choice(instructions=ask or None, criteria=cast('dict[str, str | None]', options))
-        elif prop.get('type') == 'boolean':
-            questions[name] = Noul(instructions=ask or None)
-        elif prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1:
-            questions[name] = Noul(instructions=ask or None)
+        elif prop.get('type') == 'boolean' or (
+            prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1
+        ):
+            if not ask:
+                # A pick-one or a rubric still says what it is asking through its options; a yes/no has
+                # nothing else, and Jev rejects a question with neither instructions nor criteria.
+                raise UserError(
+                    f'Output field {name!r} asks Jev nothing. A question is not part of the text being judged: '
+                    f'give the field a description, or the agent `instructions`, and leave the prompt to the '
+                    f'material the question is about.'
+                )
+            questions[name] = Noul(instructions=ask)
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
