@@ -24,6 +24,7 @@ from . import (
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import CustomEventT
+from .capabilities._pending_messages import drain_pending_messages_at_end
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -48,17 +49,44 @@ _STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
+def _filtered_value(value: Any, spec: Any, *, keep: bool) -> Any:
+    """Apply one key's nested `include`/`exclude` spec to the value itself.
+
+    Filters the container rather than re-serializing it, so the value stays whatever the outer
+    schema expects. That bounds what can be applied: a plain set of keys or indices, against a
+    mapping or a sequence — `exclude={'metadata': {'api_key'}}` and `exclude={'messages': {0}}`,
+    the forms a caller reaches for to redact an entry or drop a message. A deeper spec, or one
+    aimed at a key whose value is neither (`usage`), would need that value re-serialized against a
+    sub-schema, so it is left alone; see `_filter_serialized`.
+    """
+    if not isinstance(spec, set):
+        return value
+    if isinstance(value, Mapping):
+        items = cast('Mapping[Any, Any]', value)
+        return {key: item for key, item in items.items() if (key in spec) is keep}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        items = cast('Sequence[Any]', value)
+        return [item for index, item in enumerate(items) if (index in spec) is keep]
+    return value
+
+
 def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict[str, Any]:
     """Apply the caller's `include`/`exclude` to the keys `AgentRunResult._serialize` synthesizes.
 
     Pydantic applies them to a model's own fields, which here are the private ones the public shape
-    replaces, so without this `exclude={'messages'}` would quietly dump the messages anyway. A spec
-    that reaches inside one of these keys rather than dropping it whole (`exclude={'messages': {0}}`)
-    is left to Pydantic, which serializes that value itself.
+    replaces, so without this `exclude={'messages'}` would quietly dump the messages anyway, and a
+    spec reaching *inside* a key (`exclude={'metadata': {'api_key'}}`) would emit in full the value
+    it was asked to redact.
+
+    What `_filtered_value` can apply bounds this: one level, against a mapping or sequence value.
+    A deeper spec (`exclude={'messages': {'__all__': {'parts'}}}`), or one aimed at `usage`, means
+    re-serializing that value against a sub-schema — Pydantic's per-field machinery rebuilt for
+    nine synthesized keys — and is not applied.
     """
-    if (include := info.include) is not None:
+    include, exclude = info.include, info.exclude
+    if include is not None:
         data = {key: value for key, value in data.items() if key in include}
-    if (exclude := info.exclude) is not None:
+    if exclude is not None:
         # A nested spec is a set or a mapping; anything else (`True`, `...`) drops the whole key.
         dropped = (
             exclude
@@ -66,7 +94,15 @@ def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict
             else {key for key, spec in exclude.items() if not isinstance(spec, (set, dict))}
         )
         data = {key: value for key, value in data.items() if key not in dropped}
-    return dict(data)
+
+    filtered = dict(data)
+    for spec, keep in ((include, True), (exclude, False)):
+        if not isinstance(spec, Mapping):
+            continue
+        for key, sub_spec in cast('Mapping[Any, Any]', spec).items():
+            if key in filtered:
+                filtered[key] = _filtered_value(filtered[key], sub_spec, keep=keep)
+    return filtered
 
 
 @dataclasses.dataclass(repr=False)
@@ -403,9 +439,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _utils.raise_if_cancelling()
         pre_hook_result = result
         result = await cap.after_node_run(run_context, node=node, result=result)
+        result = drain_pending_messages_at_end(run_context, result)
 
-        # If after_node_run changed the result, sync the graph runner state so
-        # agent_run.result correctly reflects whether the run is finished.
+        # If a capability hook or the pending-message drain changed the result, sync the graph
+        # runner state so agent_run.result correctly reflects whether the run is finished.
         if result is not pre_hook_result:
             self._sync_graph_state(result)
 
@@ -601,12 +638,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
-        Designed to be called from the same event loop driving `agent.iter()`. If
-        you're forwarding events from a different thread (e.g. a webhook handler
-        running on its own loop or thread), marshal the call back onto the agent's
-        loop first (e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`).
-        The drain's `queue[:] = remaining` pattern in `_drain_by_priority` isn't
-        atomic against concurrent appends from a different thread.
+        Safe to call directly from synchronous or asynchronous code, including
+        a callback running in another thread.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -628,6 +661,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             The `enqueue_id` of the queued message, echoed on the
             [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when it's
             delivered, or `None` when there was nothing to enqueue (an empty call).
+
+        Raises:
+            UserError: If the run has ended, since there'd be nowhere to deliver the message.
         """
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:

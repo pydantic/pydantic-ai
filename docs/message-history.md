@@ -659,6 +659,10 @@ into the conversation mid-run with [`RunContext.enqueue`][pydantic_ai.tools.RunC
 a realtime session). Use this when something happens during a
 run that the agent should know about — a tool wants to add follow-up context, an external event
 needs to *steer* the agent's plan, or background work needs to reach the agent when it completes.
+You can call any of these directly from synchronous or asynchronous code, including a tool or
+callback running in another thread. Calls after the run or session has ended raise
+[`UserError`][pydantic_ai.exceptions.UserError]. For standard runs, submission is synchronized with
+the final drain, so a concurrent call is either accepted for delivery or rejected as the run ends.
 
 A `priority` controls when the enqueued content is delivered:
 
@@ -735,9 +739,10 @@ async def main():
             node = await agent_run.next(node)
 ```
 
-`'when_idle'` messages are only drained when the agent would otherwise reach an `End` — that
-drain happens in `after_node_run`. `'asap'` messages are drained in `before_model_request`, and
-also at the same end-of-run point if anything arrived during the final step. Both fire however
+`'when_idle'` messages are only drained when the agent would otherwise reach an `End`. That
+drain runs after every capability's `after_node_run` hook, so a capability that redirects the run
+can still enqueue there. `'asap'` messages are drained in `before_model_request`, and also at the
+same end-of-run point if anything arrived during the final step. Both fire however
 you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
 [`AgentRun.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
 loop all deliver enqueued messages.
@@ -752,14 +757,6 @@ loop all deliver enqueued messages.
       system-prompt callback that re-enqueues on each reinjection), the run will
       loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
       run as a safety net.
-    - `enqueue` is designed to be called from the same event loop that drives the
-      agent run. Inside the run that's automatic: async tools, sync tools (which
-      Pydantic AI auto-wraps in a thread executor), and capability hooks all
-      enqueue safely because the drain only iterates between graph nodes, never
-      concurrently with a tool body. If you're forwarding events from a *different*
-      thread or loop (e.g. a webhook handler), marshal the call onto the agent's
-      loop first — e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`. The
-      drain isn't atomic against concurrent cross-thread appends.
 
 ## Processing Message History
 

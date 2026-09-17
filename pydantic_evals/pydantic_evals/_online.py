@@ -506,7 +506,7 @@ async def wait_for_evaluations(*, timeout: float = 30.0) -> None:
         def _join_threads() -> None:
             for thread in threads_snapshot:
                 thread.join(timeout=timeout)
-                if thread.is_alive():  # pragma: no cover
+                if thread.is_alive():
                     warnings.warn(f'Background evaluation thread did not complete within {timeout:.1f}s timeout')
 
         await run_sync(_join_threads)
