@@ -63,6 +63,7 @@ async def main():
         success_html='<!doctype html><h1>Signed in to My App</h1><p>You can close this tab.</p>',
         error_html='<!doctype html><h1>Login failed</h1><p>Close this tab and try again from My App.</p>',
     )
+    print(credentials.account_id)
 ```
 
 ## Persisting credentials
