@@ -749,6 +749,134 @@ async def test_tool_manager_reuse_self():
     assert tool_manager != updated_tool_manager
 
 
+async def test_tool_manager_rebuilds_within_step_when_capability_availability_changes():
+    """Tools are re-resolved mid-step when capability availability moved, without re-running the step transition.
+
+    Invariants an agent run can't reach today, so they're pinned directly rather than through
+    `Agent.run`. The retry carry-over sits behind the `run_step` short-circuit: a same-step rebuild
+    that dropped the accumulated counts would hand every tool a fresh budget mid-run, and one that
+    re-ran the carry-over would charge two units of that budget for a single failure. The per-step
+    accumulators have to survive it too, in both directions — `failed_tools` so the next step's
+    carry-over still charges the failure, `succeeded_tools` so it still clears the count of a tool
+    that recovered. And `AbstractToolset.for_run_step` is a step boundary with real lifecycle
+    effects (`DynamicToolset` exits and re-enters its inner toolset there, re-running its factory),
+    so a same-step rebuild has to reuse the already-transitioned toolset and only re-run
+    `get_tools`.
+    """
+    factory_calls = 0
+    flaky_calls = 0
+
+    def toolset_func(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal factory_calls
+        factory_calls += 1
+        toolset = FunctionToolset[None](max_retries=3)
+
+        @toolset.tool_plain
+        def failing_tool() -> int:
+            raise ModelRetry('This tool always fails')
+
+        @toolset.tool_plain
+        def flaky_tool() -> int:
+            nonlocal flaky_calls
+            flaky_calls += 1
+            if flaky_calls == 1:
+                raise ModelRetry('Not yet')
+            return flaky_calls
+
+        return toolset
+
+    secrets = Capability[None](id='secrets', description='Secret tools.', defer_loading=True)
+    step_1 = replace(build_run_context(None, run_step=1), capabilities={'secrets': secrets})
+
+    async with DynamicToolset(toolset_func) as dynamic_toolset:
+        tool_manager = await ToolManager[None](dynamic_toolset).for_run_step(step_1)
+        assert factory_calls == 1
+
+        for tool_name in ('failing_tool', 'flaky_tool'):
+            with pytest.raises(ToolRetryError):
+                await tool_manager.handle_call(ToolCallPart(tool_name=tool_name, args={}))
+
+        # A step advance charges both failures, so the same-step rebuild below has counts to carry.
+        tool_manager = await tool_manager.for_run_step(replace(step_1, run_step=2))
+        assert factory_calls == 2
+        assert tool_manager.ctx is not None
+        assert tool_manager.ctx.retries == snapshot({'failing_tool': 1, 'flaky_tool': 1})
+
+        with pytest.raises(ToolRetryError):
+            await tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={}))
+        assert await tool_manager.handle_call(ToolCallPart(tool_name='flaky_tool', args={})) == 2
+        assert tool_manager.failed_tools == {'failing_tool'}
+        assert tool_manager.succeeded_tools == {'flaky_tool'}
+
+        # Availability moves mid-step: same `run_step`, but the deferred capability is now loaded.
+        # (A fresh context carries no retries of its own, as the graph's does not.)
+        step_2_loaded = replace(step_1, run_step=2, loaded_capability_ids={'secrets'})
+        rebuilt = await tool_manager.for_run_step(step_2_loaded)
+
+        assert rebuilt is not tool_manager
+        # The step transition is not re-run, so the dynamic toolset's factory doesn't fire again.
+        assert factory_calls == 2
+        assert rebuilt.ctx is not None
+        # Retries carry through untouched: neither reset by the fresh context nor charged twice.
+        assert rebuilt.ctx.retries == snapshot({'failing_tool': 1, 'flaky_tool': 1})
+        # Both per-step accumulators survive, so the next step's carry-over sees this step's outcomes.
+        assert rebuilt.failed_tools == {'failing_tool'}
+        assert rebuilt.succeeded_tools == {'flaky_tool'}
+
+        # Availability unchanged: no rebuild, the same manager is returned.
+        assert await rebuilt.for_run_step(step_2_loaded) is rebuilt
+
+        # Advancing the step charges the failure exactly once and clears the recovered tool's count,
+        # and does re-run the transition.
+        advanced = await rebuilt.for_run_step(replace(step_2_loaded, run_step=3))
+        assert factory_calls == 3
+        assert advanced.ctx is not None
+        assert advanced.ctx.retries == snapshot({'failing_tool': 2})
+        assert advanced.failed_tools == set()
+        assert advanced.succeeded_tools == set()
+
+
+async def test_tool_manager_availability_snapshot_is_independent_of_the_shared_set():
+    """The recorded availability has to be a snapshot, and removal has to invalidate as well as addition.
+
+    The run's `loaded_capability_ids` is a single mutable set shared by reference with every
+    `RunContext` of the run: `_refresh_loaded_capability_ids` clears and updates it in place rather
+    than handing over a replacement, precisely so the copies stay in sync. A manager that recorded
+    the live set instead of a snapshot of it would compare it against itself and never invalidate.
+    Exercised here by mutating the very set the manager resolved against, which a test that passes
+    a fresh set per step does not do.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def plain_tool() -> int:  # pragma: no cover
+        return 1
+
+    secrets = Capability[None](id='secrets', description='Secret tools.', defer_loading=True)
+    loaded_capability_ids: set[str] = set()
+    ctx = replace(
+        build_run_context(None, run_step=1),
+        capabilities={'secrets': secrets},
+        loaded_capability_ids=loaded_capability_ids,
+    )
+    assert ctx.loaded_capability_ids is loaded_capability_ids
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(ctx)
+    assert tool_manager.resolved_capability_ids == snapshot(frozenset())
+
+    # Mutated in place, exactly as the run's own refresh does it.
+    loaded_capability_ids.add('secrets')
+    rebuilt = await tool_manager.for_run_step(ctx)
+    assert rebuilt is not tool_manager
+    assert rebuilt.resolved_capability_ids == snapshot(frozenset({'secrets'}))
+
+    # And back out: a processor can drop a load pair as easily as add one.
+    loaded_capability_ids.remove('secrets')
+    re_rebuilt = await rebuilt.for_run_step(ctx)
+    assert re_rebuilt is not rebuilt
+    assert re_rebuilt.resolved_capability_ids == snapshot(frozenset())
+
+
 async def test_tool_manager_retry_logic():
     """Test the retry logic with failed_tools and for_run_step method."""
 

@@ -7,6 +7,7 @@ import dataclasses
 import io
 import wave
 import weakref
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from copy import copy
 from dataclasses import dataclass, replace
@@ -14,6 +15,7 @@ from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
+import anyio
 from anyio import Lock
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
@@ -227,6 +229,12 @@ _FULL_PROFILE = RealtimeModelProfile(
 # audible glitch, so they get a far deeper window for the same trivial cost.
 _AUDIO_TAP_SIZE = 32
 _TRANSCRIPT_TAP_SIZE = 512
+_SESSION_DELTA_QUEUE_SIZE = 512
+# Structural events are some five per turn against one delta per audio frame, so they are not what
+# makes an unread queue large — but they are never superseded the way deltas are, so without their own
+# bound a session nothing iterates keeps every one of them for as long as it runs. The same 512 buys a
+# late iterator around a hundred turns of structure, comfortably more history than the deltas it keeps.
+_SESSION_STRUCTURAL_QUEUE_SIZE = 512
 _TapItem = TypeVar('_TapItem')
 _Tap = TypeVar('_Tap')
 
@@ -752,7 +760,12 @@ class RealtimeSession:
         # Iteration starts the pump lazily, but never tears it down: an early `break` can abandon the
         # reader generator without affecting resource lifetime, and `__aexit__` still drains everything
         # before the connection and toolset close.
-        self._queue: asyncio.Queue[RealtimeEvent | object] = asyncio.Queue()
+        self._queue: deque[RealtimeEvent | object] = deque()
+        self._queue_event = asyncio.Event()
+        self._queue_delta_count = 0
+        self._queue_dropped_deltas = 0
+        self._queue_structural_count = 0
+        self._queue_dropped_structural = 0
         self._queue_changed = object()
         self._tap_finished = object()
         self._audio_taps: set[_AudioTap] = set()
@@ -815,6 +828,8 @@ class RealtimeSession:
         self._entered = False
         self._closed = False
         self._closing_error: BaseException | None = None
+        self._teardown: asyncio.Task[None] | None = None
+        self._close_error: BaseException | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
         self._traceparent_value: str | None = None
@@ -853,8 +868,10 @@ class RealtimeSession:
     async def close(self) -> None:
         """Close the session and end its live stream views.
 
-        This method is idempotent. Active [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
-        and [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] iterators
+        This method is idempotent. Concurrent callers wait for the same teardown, which continues if
+        a caller is cancelled; leaving the session context waits for it to finish. Active
+        [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] and
+        [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] iterators
         finish cleanly, with any buffered items discarded. The surrounding model context owns the
         underlying connection, so it remains open until that context exits.
 
@@ -865,46 +882,55 @@ class RealtimeSession:
         Raises whatever ended the session — a provider hangup, an exceeded `usage_limits`, or a failed
         tool — if the event stream was never iterated, since there was nowhere else for it to surface.
         """
-        if not self._entered or self._closed:
+        if not self._entered:
             return
-        self._pending_messages.close()
-        self._closed = True
-        self._finish_taps(discard_pending=True)
-        if self._pump_task is not None:
-            # Cancelled before state is settled below so the pump can't mutate it mid-settlement;
-            # the task is awaited together with the rest afterwards.
-            self._pump_task.cancel()
-        if (early_error := self._closing_error or self._pump_error) is not None and (
-            chat_span := self._session_instrumentation.chat_span
-        ) is not None:
-            # The reply this span covers is being torn down by a failure; record it now, before the
-            # settlement below finalizes the interrupted response and ends the span cleanly.
-            self._session_instrumentation.record_error(chat_span, early_error)
-        self._flush_pending_users()
-        if (
-            self._pending_response_usage != RequestUsage()
-            and self._active_assistant is None
-            and not self._response_parts
-        ):
-            # Usage carried forward from an output-less turn boundary that no later response claimed.
-            # Better an empty response holding it than silently dropping billed tokens — and, with no
-            # reply in flight, nothing here was interrupted, so it isn't settled as such below.
-            self._finalize_response(response_occurred=True)
-        # Settle whatever the closing session still holds open, exactly as a reconnect settles state
-        # the provider lost: open user turns land in history, a reply cut off mid-generation is
-        # recorded as interrupted, and every still-running tool call gets a cancelled return. The
-        # returned events are discarded — the stream is closing and has no consumer left.
-        self._finalize_lost_state()
-        # A tool hanging up — `await ctx.realtime_session.close()` from its own tool task — must not
-        # cancel-and-gather itself: the task would become a child of the `gather` it is awaiting, and
-        # CPython's cancel delegation (`Task.cancel` -> `_GatheringFuture.cancel` -> `Task.cancel` ...)
-        # recurses without bound, leaving the tool orphaned and permanently uncancellable. Its call was
-        # settled with a cancelled return above like every other running call (without cancelling the
-        # task, which would interrupt this very method); the task itself is cancelled at the end
-        # instead, once the session is fully closed.
-        current_task = asyncio.current_task()
-        closing_from_own_task = current_task is not None and current_task in self._background_tasks
-        tasks = [task for task in self._background_tasks if task is not current_task]
+        if self._teardown is None:
+            self._pending_messages.close()
+            self._closed = True
+            self._finish_taps(discard_pending=True)
+            if self._pump_task is not None:
+                # Cancelled before state is settled below so the pump can't mutate it mid-settlement;
+                # the task is awaited together with the rest afterwards.
+                self._pump_task.cancel()
+            if (early_error := self._closing_error or self._pump_error) is not None and (
+                chat_span := self._session_instrumentation.chat_span
+            ) is not None:
+                # The reply this span covers is being torn down by a failure; record it now, before the
+                # settlement below finalizes the interrupted response and ends the span cleanly.
+                self._session_instrumentation.record_error(chat_span, early_error)
+            self._flush_pending_users()
+            if (
+                self._pending_response_usage != RequestUsage()
+                and self._active_assistant is None
+                and not self._response_parts
+            ):
+                # Usage carried forward from an output-less turn boundary that no later response claimed.
+                # Better an empty response holding it than silently dropping billed tokens — and, with no
+                # reply in flight, nothing here was interrupted, so it isn't settled as such below.
+                self._finalize_response(response_occurred=True)
+            # Settle whatever the closing session still holds open, exactly as a reconnect settles state
+            # the provider lost: open user turns land in history, a reply cut off mid-generation is
+            # recorded as interrupted, and every still-running tool call gets a cancelled return. The
+            # returned events are discarded — the stream is closing and has no consumer left.
+            self._finalize_lost_state()
+            self._teardown = asyncio.create_task(self._finish_teardown())
+        elif asyncio.current_task() in self._background_tasks:
+            # A tool closing the session is cancelled by the teardown, at the wait below of its own
+            # `close()` call. One that swallows that cancellation and calls `close()` again would wait
+            # for a teardown that is waiting for it, so there is nothing to wait for from this side.
+            return
+
+        # `asyncio.shield` lets a cancelled caller stop waiting while the teardown continues; the
+        # shielded scope makes an outer *anyio* cancellation — level-triggered, re-raised at every
+        # checkpoint — wait for the teardown instead of abandoning it (see `agent_docs/concurrency.md`).
+        with anyio.CancelScope(shield=True):
+            await asyncio.shield(self._teardown)
+        if (error := self._close_error) is not None:
+            self._close_error = None
+            raise error
+
+    async def _finish_teardown(self) -> None:
+        tasks = list(self._background_tasks)
         if self._pump_task is not None:
             tasks.append(self._pump_task)
         if tasks:
@@ -928,19 +954,10 @@ class RealtimeSession:
             final_result=self._final_result_text(),
             audio_chunks_dropped=self._audio_tap_drops,
             transcript_items_dropped=self._transcript_tap_drops,
+            queue_dropped_deltas=self._queue_dropped_deltas,
+            queue_dropped_structural=self._queue_dropped_structural,
         )
         self._loop = None
-
-        if closing_from_own_task:
-            # The tool that closed the session doesn't resume — there is no provider left to send its
-            # result to, and its cancelled return is already in history — mirroring the cancellation
-            # every other running call received from the drain, and what `ctx.cancel()` documents.
-            # `cancel()` on the running task is delivered at its next suspension point, which this
-            # `sleep(0)` is, so it raises `CancelledError` here rather than in the tool body. This also
-            # skips the pump-error re-raise below because there is no caller to receive it.
-            assert current_task is not None
-            current_task.cancel(msg='Realtime session exited')
-            await asyncio.sleep(0)
 
         # A session that was never iterated has nowhere else to learn that it failed: the pump's error is
         # normally raised out of `__aiter__`, so a caller using only `send()` and the
@@ -950,13 +967,89 @@ class RealtimeSession:
         # listening), nor over an exception already on its way out of the `async with` body.
         if self._closing_error is None and not self._stream_consumed:
             if self._pump_error is not None:
-                raise self._pump_error
+                self._close_error = self._pump_error
+                return
             # A failed tool (or background drain) surfaces through the queue rather than
             # `_pump_error`; with no consumer it would otherwise vanish here.
-            while not self._queue.empty():
-                item = self._queue.get_nowait()
+            while self._queue:
+                item = self._queue_get_nowait()
                 if isinstance(item, BaseException) and not isinstance(item, asyncio.CancelledError):
-                    raise item
+                    self._close_error = item
+                    return
+
+    def _queue_put(self, item: RealtimeEvent | object) -> None:
+        """Append an item, bounding the queue while no session iterator is active."""
+        if isinstance(item, PartDeltaEvent):
+            self._queue_delta_count += 1
+        elif self._is_structural(item):
+            self._queue_structural_count += 1
+        self._queue.append(item)
+        if not self._iterator_active:
+            self._trim_queue()
+        self._queue_event.set()
+
+    def _is_structural(self, item: RealtimeEvent | object) -> bool:
+        """Whether an item is a droppable non-delta event.
+
+        Excludes the parked exceptions `close()` sweeps for, and the wake-up sentinels whose arrival
+        is what makes the iterator re-check for a pump error or for termination — neither is history
+        a later reader can do without, and both are rare enough not to be what grows the queue.
+        """
+        return not isinstance(item, BaseException) and item is not self._queue_changed
+
+    def _trim_queue(self) -> None:
+        while self._queue_delta_count > _SESSION_DELTA_QUEUE_SIZE:
+            # Deltas make up the bulk of a backed-up queue, so the oldest one is close to the head: the
+            # scan and the deque deletion are linear only in what is kept ahead of it, which the
+            # structural bound below caps in turn.
+            oldest = next(index for index, queued in enumerate(self._queue) if isinstance(queued, PartDeltaEvent))
+            del self._queue[oldest]
+            self._queue_delta_count -= 1
+            self._queue_dropped_deltas += 1
+        while self._queue_structural_count > _SESSION_STRUCTURAL_QUEUE_SIZE:
+            position = next(
+                position
+                for position, queued in enumerate(self._queue)
+                if not isinstance(queued, PartDeltaEvent) and self._is_structural(queued)
+            )
+            evicted = self._queue[position]
+            del self._queue[position]
+            self._queue_structural_count -= 1
+            self._queue_dropped_structural += 1
+            if isinstance(evicted, PartStartEvent):
+                # A part's start always precedes its deltas and its end, so this is the whole part
+                # going: drop the rest of it rather than leave deltas a reader cannot attach to
+                # anything. Part indexes are unique for the life of the session (`_next_part_index`
+                # only ever increments), so this cannot reach a later part that reused the number.
+                self._drop_queued_part(evicted.index)
+
+    def _drop_queued_part(self, index: int) -> None:
+        for position in reversed(range(len(self._queue))):
+            queued = self._queue[position]
+            if not isinstance(queued, (PartDeltaEvent, PartEndEvent)) or queued.index != index:
+                continue
+            del self._queue[position]
+            if isinstance(queued, PartDeltaEvent):
+                self._queue_delta_count -= 1
+                self._queue_dropped_deltas += 1
+            else:
+                self._queue_structural_count -= 1
+                self._queue_dropped_structural += 1
+
+    def _queue_get_nowait(self) -> RealtimeEvent | object:
+        item = self._queue.popleft()
+        if isinstance(item, PartDeltaEvent):
+            self._queue_delta_count -= 1
+        elif self._is_structural(item):
+            self._queue_structural_count -= 1
+        return item
+
+    async def _queue_get(self) -> RealtimeEvent | object:
+        while not self._queue:
+            # Nothing can append between the clear and the wait: producers run on this event loop.
+            self._queue_event.clear()
+            await self._queue_event.wait()
+        return self._queue_get_nowait()
 
     @property
     def closed(self) -> bool:
@@ -1432,7 +1525,7 @@ class RealtimeSession:
         await self._send_frame(CommitAudio())
         self._user_turn_active = True
         for event in self._finalize_untranscribed_user():
-            await self._queue.put(event)
+            self._queue_put(event)
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
@@ -2369,11 +2462,7 @@ class RealtimeSession:
             self._finalize_response(interrupted=True)
         for tool_call_id, (task, call_part) in list(self._pending_tool_calls.items()):
             self._pending_tool_calls.pop(tool_call_id, None)
-            if task is not asyncio.current_task():
-                # A tool closing the session from its own task is cancelled by `close()` once the
-                # session is fully settled; cancelling it here would land at `close()`'s next await
-                # and cut the teardown short. Its call still gets the cancelled return below.
-                task.cancel()
+            task.cancel()
             cancelled_part = ToolReturnPart(
                 tool_name=call_part.tool_name,
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
@@ -2513,7 +2602,7 @@ class RealtimeSession:
         # of the `chat` spans. The session-level `realtime` span and per-response `chat` spans below
         # stay hand-managed for now — they move onto exchange-level capability hooks when those land.
         async def on_validate(args_valid: bool) -> None:
-            await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=args_valid))
+            self._queue_put(FunctionToolCallEvent(part=call_part, args_valid=args_valid))
             validation_done.set()
             for prerequisite in execution_prerequisites:
                 await prerequisite.wait()
@@ -2522,8 +2611,8 @@ class RealtimeSession:
             requests: DeferredToolRequests,
             results: DeferredToolResults,
         ) -> None:
-            await self._queue.put(DeferredToolRequestsEvent(requests))
-            await self._queue.put(DeferredToolResultsEvent(results))
+            self._queue_put(DeferredToolRequestsEvent(requests))
+            self._queue_put(DeferredToolResultsEvent(results))
 
         try:
             async with self._tool_manager_lock:
@@ -2633,8 +2722,8 @@ class RealtimeSession:
     def _pending_message_task_done(self, task: asyncio.Task[None]) -> None:
         self._background_tasks.discard(task)
         if not task.cancelled() and (error := task.exception()) is not None:
-            self._queue.put_nowait(error)
-        self._queue.put_nowait(self._queue_changed)
+            self._queue_put(error)
+        self._queue_put(self._queue_changed)
 
     async def _drain_pending_messages(self, priority: PendingMessagePriority) -> None:
         """Deliver queued text prompts of `priority` and record them as normal user turns."""
@@ -2761,7 +2850,7 @@ class RealtimeSession:
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.
-            await self._queue.put(e)
+            self._queue_put(e)
             if not self._stream_consumed and self._pump_task is not None:
                 # Nobody is reading the event stream, so the parked error can only surface from
                 # `close()` — and with the provider still waiting on a tool result it will never get,
@@ -2791,7 +2880,7 @@ class RealtimeSession:
             self._ordered_tool_events[order_index] = events
         else:
             for event in events:
-                await self._queue.put(event)
+                self._queue_put(event)
         if self._asap_drain_deferred and not self._tool_calls_awaiting_usage:
             await self._drain_pending_messages('asap')
 
@@ -2802,10 +2891,10 @@ class RealtimeSession:
         # `_pending_message_task_done`. Otherwise it vanishes with only an "exception was never
         # retrieved" warning at GC, silently losing the enqueued message with no signal to the consumer.
         if not task.cancelled() and (error := task.exception()) is not None:
-            self._queue.put_nowait(error)
+            self._queue_put(error)
         self._release_ordered_tool_events()
         # Wake the queue reader so it can finish once both the pump and the last tool are done.
-        self._queue.put_nowait(self._queue_changed)
+        self._queue_put(self._queue_changed)
 
     def _release_ordered_tool_events(self) -> None:
         """Emit `parallel_ordered_events` results in call order, once nothing is still running.
@@ -2817,7 +2906,7 @@ class RealtimeSession:
             return
         for order_index in sorted(self._ordered_tool_events):
             for event in self._ordered_tool_events[order_index]:
-                self._queue.put_nowait(event)
+                self._queue_put(event)
         self._ordered_tool_events.clear()
 
     async def _handle_pump_event(
@@ -2863,7 +2952,7 @@ class RealtimeSession:
             # `PartEndEvent(SpeechPart)` here rather than on the translation path, and the transcript
             # views would otherwise miss exactly the turns where the assistant speaks and acts.
             self._publish_taps(out)
-            await self._queue.put(out)
+            self._queue_put(out)
         mode = self._tool_manager.get_parallel_execution_mode()
         is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)
         # `parallel_ordered_events` keeps calls concurrent but hands their result events to the
@@ -2933,7 +3022,7 @@ class RealtimeSession:
                     outcome='interrupted',
                 )
                 for out in self._complete_tool_call(call_part, cancelled_part):
-                    await self._queue.put(out)
+                    self._queue_put(out)
             return False
         if isinstance(event, SessionUsage):
             await self._handle_usage_event(event)
@@ -2944,7 +3033,7 @@ class RealtimeSession:
                 # Before the event reaches the consumer, so the app observes an already-handled
                 # barge-in rather than racing the session to handle it.
                 await self._auto_barge_in(out)
-            await self._queue.put(out)
+            self._queue_put(out)
         if isinstance(event, ResponseDone):
             await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
@@ -2963,7 +3052,7 @@ class RealtimeSession:
             self._pump_finished = True
             if not self._closed:
                 self._finish_taps()
-            await self._queue.put(self._queue_changed)
+            self._queue_put(self._queue_changed)
             if token is not None:
                 otel_context.detach(token)
 
@@ -3046,14 +3135,14 @@ class RealtimeSession:
 
         async def queue_events() -> AsyncIterator[RealtimeEvent]:
             while True:
-                item = await self._queue.get()
+                item = await self._queue_get()
                 if item is self._queue_changed:
                     # A pump error takes priority over stuck background tools. Their cancellation and
                     # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
                     if self._pump_error is not None:
                         self._stream_exhausted = True
                         raise self._pump_error
-                    if self._pump_finished and not self._background_tasks and self._queue.empty():
+                    if self._pump_finished and not self._background_tasks and not self._queue:
                         self._stream_exhausted = True
                         return
                     continue
@@ -3070,7 +3159,8 @@ class RealtimeSession:
             async for event in stream_iterator:  # pragma: no branch
                 yield event
         finally:
-            try:
-                await aclose_all((stream_iterator, stream, source))
-            finally:
-                self._iterator_active = False
+            # Nobody reads the queue past this point, so the bound applies again before the wrapper's
+            # cleanup runs, however long that takes.
+            self._iterator_active = False
+            self._trim_queue()
+            await aclose_all((stream_iterator, stream, source))

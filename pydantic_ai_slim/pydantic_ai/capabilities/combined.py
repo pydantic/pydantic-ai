@@ -1109,6 +1109,11 @@ def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunConte
 
     Activity, not loading: an always-on capability is active for the whole run without ever being
     loaded, which is why the deferred branch below is the only one that consults history.
+
+    During tool-call dispatch that history question is answered against the provider that served the
+    response, via `_dispatch_active_capability_ids` — the same set `RunContext.is_tool_available`
+    authorizes the call from. Reading the narrower `active_capability_ids` here would let a tool the
+    gate admits on anchored evidence execute without its owner's `prepare_tools` ever running.
     """
     if capability.defer_loading is not True:
         return True
@@ -1116,4 +1121,4 @@ def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunConte
     # Deferred capabilities are required to have an explicit `id` (enforced in
     # `_build_run_capabilities`), which is also the key they're registered under, so we read
     # it directly rather than resolving the instance back to its run-local registry id.
-    return capability.id is not None and capability.id in ctx.active_capability_ids
+    return capability.id is not None and capability.id in ctx._dispatch_active_capability_ids  # pyright: ignore[reportPrivateUsage]
