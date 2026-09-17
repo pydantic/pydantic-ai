@@ -52,6 +52,7 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from .. import _usage_attribution
 from ._capability_operation import (
     CapabilityBoundOperation,
     CapabilityCacheIdentity,
@@ -497,7 +498,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         else:
             value = result.value
         if not (ctx.usage - usage_before).has_values():
-            ctx.usage.incr(result.usage_delta)
+            # Recorded, not incremented: the operation accumulated this delta across the durable
+            # boundary, where the activity's context can't reach the spans open back here.
+            _usage_attribution.record_usage(ctx.usage, result.usage_delta)
         return value
 
     def _capability_operation_parameter_transport(

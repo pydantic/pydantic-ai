@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -4255,6 +4256,58 @@ def test_run_span_reports_the_runs_own_usage_not_the_conversations(capfire: Capt
     ]
     assert reported == snapshot([51, 52])
     assert second.usage.input_tokens == snapshot(103)
+
+
+async def _run_delegating_agent(*, share_usage: bool, sequential: bool) -> None:
+    """Run a parent agent whose tool delegates to a second agent, once per tool call."""
+
+    async def delegate_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Force the two delegate runs to overlap, so a sibling's usage lands inside this run's window.
+        await asyncio.sleep(0.05)
+        return ModelResponse(parts=[TextPart('joke')], usage=RequestUsage(input_tokens=10, output_tokens=1))
+
+    delegate = Agent(FunctionModel(delegate_fn), name='delegate', capabilities=[Instrumentation()])
+
+    async def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=1000, output_tokens=5)
+        if len(messages) == 1:
+            calls = [ToolCallPart('pick', {'n': n}, tool_call_id=str(n)) for n in (1, 2)]
+            return ModelResponse(parts=calls, usage=usage)
+        return ModelResponse(parts=[TextPart('done')], usage=usage)
+
+    parent = Agent(FunctionModel(parent_fn), name='parent', capabilities=[Instrumentation()])
+
+    @parent.tool(sequential=sequential)
+    async def pick(ctx: RunContext[Any], n: int) -> str:
+        return (await delegate.run('x', usage=ctx.usage if share_usage else None)).output
+
+    await parent.run('go')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('share_usage', [True, False])
+@pytest.mark.parametrize('sequential', [True, False])
+@pytest.mark.anyio
+async def test_run_span_reports_its_subtree_usage_under_concurrent_delegation(
+    capfire: CaptureLogfire, share_usage: bool, sequential: bool
+) -> None:
+    """An agent-run span reports its span subtree, whatever the delegates do with the usage object.
+
+    Concurrent delegates handed the parent's `RunUsage` (the `usage=ctx.usage` pattern in
+    `docs/multi-agent-applications.md`) overlap in time, so neither the shared object's contents nor
+    an end-minus-start delta on it can say which run added what: each delegate would absorb its
+    sibling's tokens, by more the wider the fan-out. And a delegate that *doesn't* share the object
+    would leave its tokens off the parent, which contains its span either way. Usage is attributed
+    down the task stack instead, so all four combinations report the same subtrees.
+    """
+    await _run_delegating_agent(share_usage=share_usage, sequential=sequential)
+
+    reported = {
+        (span['name'], span['attributes']['gen_ai.aggregated_usage.input_tokens'])
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+    }
+    assert reported == snapshot({('invoke_agent delegate', 10), ('invoke_agent parent', 2020)})
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

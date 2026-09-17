@@ -1,0 +1,104 @@
+"""Guard the invariant that makes agent-run spans report their subtree's usage.
+
+`_usage_attribution` credits an increment to the run that made it *and* to every run containing it,
+which is what lets an agent-run span report its span subtree. A `RunUsage` field incremented
+directly still reaches the caller's total and the usage limits, so nothing fails loudly — the
+tokens just go missing from every containing span. That is invisible until someone sums spans, so
+it is guarded here rather than left to review.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+
+from pydantic_ai import _usage_attribution
+from pydantic_ai.usage import RequestUsage, RunUsage
+
+PACKAGE_ROOT = Path(_usage_attribution.__file__).parent
+
+# `requests`/`tool_calls` bumped in place, or tokens folded in with `incr`.
+BARE_MUTATION = re.compile(r'\.(?:requests|tool_calls)\s*\+=|\.incr\(')
+
+# A line that mutates something other than a live run's usage says so, and why, rather than being
+# waived by path: the files holding the real sites are also where a new one is most likely to land.
+MARKER = '# usage-attribution: '
+
+# `usage.py` defines the mutating API and `_usage_attribution.py` is its one caller.
+OWNERS = {Path('usage.py'), Path('_usage_attribution.py')}
+
+
+def test_no_bare_run_usage_mutation_outside_the_recorder() -> None:
+    """Every increment of a live run's usage must go through `_usage_attribution`."""
+    offenders: list[str] = []
+    for path in sorted(PACKAGE_ROOT.rglob('*.py')):
+        relative = path.relative_to(PACKAGE_ROOT)
+        if relative in OWNERS:
+            continue
+        lines = path.read_text().splitlines()
+        for number, line in enumerate(lines, start=1):
+            # The marker sits on the line, or just above it when that would overrun the line length.
+            preceding = lines[number - 2] if number > 1 else ''
+            if BARE_MUTATION.search(line) and MARKER not in line and MARKER not in preceding:
+                offenders.append(f'{relative}:{number}: {line.strip()}')
+
+    assert offenders == [], (
+        "Increment a run's usage through `_usage_attribution.record_*` so it is also credited to "
+        'the agent runs containing it; a bare increment leaves the tokens off every containing '
+        f"span. If the target is not a live run's usage, say so with `{MARKER}<reason>` on the "
+        'line. Offending lines:\n' + '\n'.join(offenders)
+    )
+
+
+def _record_usage(usage: RunUsage) -> None:
+    _usage_attribution.record_usage(usage, RequestUsage(input_tokens=3, output_tokens=1))
+
+
+@pytest.mark.parametrize(
+    'record,expected',
+    [
+        (_usage_attribution.record_request, RunUsage(requests=1)),
+        (_usage_attribution.record_tool_call, RunUsage(tool_calls=1)),
+        (_record_usage, RunUsage(input_tokens=3, output_tokens=1)),
+    ],
+    ids=['request', 'tool_call', 'usage'],
+)
+def test_record_credits_the_target_and_every_containing_run(
+    record: Callable[[RunUsage], None], expected: RunUsage
+) -> None:
+    """Each `record_*` reaches the run's own usage and every accumulator containing it, once."""
+    shared = RunUsage()
+    outer = RunUsage()
+    inner = RunUsage()
+
+    with _usage_attribution.accumulate(outer):
+        with _usage_attribution.accumulate(inner):
+            record(shared)
+
+    assert shared == expected
+    assert outer == expected
+    assert inner == expected
+
+
+def test_record_outside_any_run_only_touches_the_target() -> None:
+    """With no span open there is nothing to attribute to, and the target is still incremented."""
+    usage = RunUsage()
+    _usage_attribution.record_request(usage)
+    assert usage == RunUsage(requests=1)
+
+
+def test_accumulators_do_not_leak_to_siblings() -> None:
+    """A sibling's accumulator is not on this context's stack, which is the whole point."""
+    first = RunUsage()
+    second = RunUsage()
+
+    with _usage_attribution.accumulate(first):
+        _usage_attribution.record_request(RunUsage())
+    with _usage_attribution.accumulate(second):
+        _usage_attribution.record_usage(RunUsage(), RequestUsage(input_tokens=7))
+
+    assert first == RunUsage(requests=1)
+    assert second == RunUsage(input_tokens=7)

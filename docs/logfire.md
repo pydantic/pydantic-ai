@@ -277,6 +277,14 @@ By default, model request spans use the standard `gen_ai.usage.input_tokens` and
 
 This avoids double-counting in observability backends that aggregate usage attributes across parent and child spans, since agent run spans report the sum of their child model request spans' usage.
 
+An agent run span covers its whole subtree, so a run that [delegates to another agent](multi-agent-applications.md#agent-delegation) reports the delegate's tokens as well as its own, whether or not the delegate was handed the caller's usage via `usage=ctx.usage`. Concurrent delegates each report only their own subtree. To total a conversation, sum the outermost agent run spans; summing every agent run span counts a delegate's tokens once for each run containing it.
+
+!!! note "Delegation across a durable-execution boundary"
+    A tool running in a [Temporal](durable_execution/temporal.md) activity receives a copy of the run context, so a delegate run started there reports its own span but its tokens do not reach the calling run's span, the same way they do not reach the calling run's `result.usage`. See [Delegation inside a Temporal workflow](multi-agent-applications.md#agent-delegation).
+
+!!! note "`gen_ai.aggregated_usage.*` and `result.usage` answer different questions"
+    The span describes the work done under it. [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] describes the [`RunUsage`][pydantic_ai.usage.RunUsage] object the run accumulated into, which is what [`UsageLimits`][pydantic_ai.usage.UsageLimits] is checked against. They differ where the two aren't the same thing: carrying usage across a conversation with `usage=` makes `result.usage` the conversation's running total while each span still reports its own run, and a delegate that isn't handed the caller's usage keeps its tokens out of the caller's `result.usage` while the caller's span still reports them.
+
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
 
