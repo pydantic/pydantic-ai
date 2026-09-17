@@ -4,7 +4,7 @@ import base64
 import json
 import os
 import re
-from collections.abc import AsyncGenerator, Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from decimal import Decimal
@@ -17,6 +17,7 @@ import httpx2
 import pytest
 from dirty_equals import IsBytes
 from genai_prices.types import PriceCalculation
+from opentelemetry.trace import StatusCode
 
 import pydantic_ai.images as images_module
 import pydantic_ai.images._google_geometry as google_geometry
@@ -4455,3 +4456,43 @@ async def test_instrumentation_respects_content_and_request_parameter_flags(capf
         }
     )
     assert 'data' not in str(span)
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_instrumentation_exception_honors_include_content(capfire: CaptureLogfire, include_content: bool):
+    """A failing image generation follows `include_content` like the agent's spans do.
+
+    A provider error carries its response body in the exception message, so the exception event and
+    the ERROR status description on the image generation span are withheld when content capture is off.
+    """
+
+    class FailingImageGenerationModel(TestImageGenerationModel):
+        async def generate(
+            self,
+            prompt: str,
+            *,
+            images: Sequence[ImageGenerationInput] | None = None,
+            settings: ImageGenerationSettings | None = None,
+        ) -> ImageGenerationResult:
+            raise ModelHTTPError(status_code=400, model_name='failing', body='invalid prompt: image-secret')
+
+    generator = ImageGenerator(
+        FailingImageGenerationModel(), instrument=InstrumentationSettings(include_content=include_content)
+    )
+    with pytest.raises(ModelHTTPError):
+        await generator.generate('a robot')
+
+    [span] = [span for span in capfire.exporter.exported_spans if span.status.status_code is StatusCode.ERROR]
+    [event] = [event for event in span.events if event.name == 'exception']
+    attributes = dict(event.attributes or {})
+    assert attributes['exception.type'] == 'pydantic_ai.exceptions.ModelHTTPError'
+    assert attributes['exception.escaped'] == 'False'
+    if include_content:
+        assert {'exception.message', 'exception.stacktrace'} <= set(attributes)
+        assert 'image-secret' in str(attributes['exception.message'])
+        assert span.status.description is not None
+    else:
+        assert set(attributes) == {'exception.type', 'exception.escaped'}
+        assert span.status.description is None
+        assert 'image-secret' not in str(capfire.exporter.exported_spans)
