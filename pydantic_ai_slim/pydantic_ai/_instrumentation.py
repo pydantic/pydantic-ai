@@ -76,6 +76,18 @@ TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 )  # fmt: skip
 
+include_content_ctx: ContextVar[bool | None] = ContextVar('include_content', default=None)
+"""Carries the open `chat` span's `include_content` to code that updates that span without holding
+the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
+model answered. Set by `open_model_request_span` for the span's lifetime, so a refresh redacts the
+instruction content of the model it picked the way the span was opened, rather than guessing from
+what is already recorded. `None` means no instrumented request is open.
+
+A context variable for the same reason as `time_to_first_chunk_ctx`: `ModelRequestContext` is public
+and holds only the inputs to `Model.request[_stream]`, and `FallbackModel` reaches the span through
+`get_current_span()` anyway, so it is already relying on the ambient context.
+"""
+
 time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
 """Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
 `Instrumentation` capability, which reads it after `await handler(...)` returns — the handler runs
@@ -344,11 +356,16 @@ def model_request_parameters_attributes(
 ) -> dict[str, AttributeValue]:
     serialized = _serialize_model_request_parameters(model_request_parameters)
     if not include_content:
-        # `instruction_parts` carry the agent's instructions verbatim, which is the "proprietary
-        # prompts" half of what the setting withholds -- and dynamic parts can be built from deps.
-        # Their origin and ids stay, so what the parts are and how they cache is still visible.
+        # Two fields here are prompt text the user wrote, which is the "proprietary prompts" half of
+        # what the setting withholds: the instructions (whose dynamic parts can be built from deps)
+        # and the prompted-output template. Instruction parts keep their origin and ids, so what the
+        # parts are and how they cache is still visible. Tool and output *schemas* stay: they are the
+        # request's structure, not message content, and `include_model_request_parameters=False`
+        # drops the attribute entirely for anyone who wants them gone too.
         for part in instruction_parts_of(serialized):
             part.pop('content', None)
+        if isinstance(serialized, dict) and serialized.get('prompted_output_template') is not None:
+            cast('dict[str, Any]', serialized)['prompted_output_template'] = None
     return {'model_request_parameters': safe_to_json(serialized).decode()}
 
 
@@ -609,6 +626,7 @@ def open_model_request_span(
     attributes.update(model_settings_attributes(prepared_settings))
 
     record_metrics: Callable[[], None] | None = None
+    include_content_token = include_content_ctx.set(settings.include_content)
     try:
         with (
             settings.tracer.start_as_current_span(
@@ -667,6 +685,7 @@ def open_model_request_span(
 
             yield finish, prepared_request_context
     finally:
+        include_content_ctx.reset(include_content_token)
         if record_metrics:
             record_metrics()
 

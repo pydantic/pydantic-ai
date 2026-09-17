@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import json
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from copy import copy
@@ -16,7 +15,7 @@ from opentelemetry.util.types import AttributeValue
 from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import (
-    instruction_parts_of,
+    include_content_ctx,
     model_attributes,
     model_request_parameters_attributes,
 )
@@ -500,32 +499,19 @@ class FallbackModel(Model):
                     # Only refresh `model_request_parameters` if it was emitted at span open; its absence
                     # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
                     # it here would leak the attribute the setting is meant to suppress.
-                    if (recorded := attributes.get('model_request_parameters')) is not None:
+                    if 'model_request_parameters' in attributes:
                         span_attributes.update(
                             model_request_parameters_attributes(
                                 model_request_parameters,
-                                # The settings aren't reachable from here, so mirror the redaction the
-                                # span was opened with rather than re-adding instruction content it left
-                                # out. Same reasoning as the attribute's presence, one level down.
-                                include_content=_recorded_instruction_content(recorded),
+                                # The settings aren't reachable from here, so the span carries its
+                                # own `include_content` in a context variable. This refresh
+                                # serializes the *selected* model's parameters, whose instruction
+                                # parts the outer request may not have had at all, so it cannot be
+                                # inferred from what is already recorded.
+                                include_content=include_content_ctx.get() is not False,
                             )
                         )
                     span.set_attributes(span_attributes)
-
-
-def _recorded_instruction_content(recorded_parameters: AttributeValue) -> bool:
-    """Whether the `model_request_parameters` already on the span kept its instruction content.
-
-    `True` when there are no instruction parts to judge by, which keeps the default path -- content
-    included -- unchanged.
-    """
-    if not isinstance(recorded_parameters, str):
-        return True  # pragma: no cover
-    try:
-        parts = instruction_parts_of(json.loads(recorded_parameters))
-    except ValueError:  # pragma: no cover
-        return True
-    return all('content' in part for part in parts)
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

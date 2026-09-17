@@ -10,12 +10,14 @@ This module does. Each content channel gets a distinct sentinel, every run happe
 capture off, and the exported spans are scanned exhaustively -- names, attributes, event
 attributes, and status descriptions, from the raw `ReadableSpan`s rather than a dict view that
 omits the status and truncates stack traces. A channel that leaks names itself in the failure.
+
+Run metadata is deliberately not a channel here. It comes from the agent definition rather than
+from a user, and is expected to appear on spans; content in there is the caller's own doing.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -23,8 +25,10 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.output import PromptedOutput
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -57,7 +61,7 @@ SECRETS = {
     'final_output': 'SENTINEL-final-output',
     'model_text': 'SENTINEL-model-text',
     'provider_error_body': 'SENTINEL-provider-error-body',
-    'run_metadata': 'SENTINEL-run-metadata',
+    'prompted_output_template': 'SENTINEL-prompted-output-template',
 }
 
 
@@ -216,15 +220,29 @@ async def test_no_content_reaches_telemetry_when_the_provider_errors() -> None:
     assert leaked_channels(exporter.get_finished_spans()) == snapshot(set())
 
 
-async def test_no_content_reaches_telemetry_from_run_metadata() -> None:
-    """Metadata a caller attaches to the run."""
+async def test_no_content_reaches_telemetry_through_a_fallback_refresh() -> None:
+    """`FallbackModel` refreshes `model_request_parameters` once it knows which model answered.
+
+    The refresh serializes the *selected* model's parameters, so it can add instruction parts the
+    outer request never had -- a prompted-output template, say. It has no access to the settings,
+    which is why the span's `include_content` travels in a context variable: inferring it from what
+    is already recorded reads an absent `instruction_parts` list as "content was included".
+    """
     settings, exporter = redacted_setup()
 
-    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('done')])
+    def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=500, model_name='first', body='unavailable')
 
-    agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)])
-    metadata: dict[str, Any] = {'note': SECRETS['run_metadata']}
-    await agent.run(SECRETS['user_prompt'], metadata=metadata)
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('{"answer": "ok"}')])
+
+    # No agent-level instructions, so the outer request carries no instruction parts at all; the
+    # prompted output template is added by whichever model is selected.
+    agent = Agent(
+        FallbackModel(FunctionModel(fail), FunctionModel(respond)),
+        output_type=PromptedOutput(Output, template=SECRETS['prompted_output_template'] + ' {schema}'),
+        capabilities=[Instrumentation(settings=settings)],
+    )
+    await agent.run(SECRETS['user_prompt'])
 
     assert leaked_channels(exporter.get_finished_spans()) == snapshot(set())
