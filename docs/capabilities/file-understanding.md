@@ -30,6 +30,6 @@ FileUnderstanding(
 )
 ```
 
-The description reaches the model between `-----BEGIN FILE-----` and `-----END FILE-----` lines that name the file and its media type, the same way text files are inlined for models that take no attachments. Each file is described once per capability instance and the description is reused on later steps and runs, so a long conversation does not describe the same file again.
+The description reaches the model between `-----BEGIN FILE-----` and `-----END FILE-----` lines that name the file and its media type, the same way text files are inlined for models that take no attachments. A text-like document (plain text, CSV, JSON, XML, YAML) needs no describing and is inlined as it is. A provider file reference ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) is left alone, since only its own provider can read it. Each file is described once per capability instance and the description is reused on later steps and runs, so a long conversation does not describe the same file again; the last 256 descriptions are kept.
 
 A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] has no single profile, so the capability leaves its files alone. Use the capability with a single model when files need to be described.

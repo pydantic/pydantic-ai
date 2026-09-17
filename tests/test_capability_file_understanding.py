@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from pydantic_ai import (
@@ -14,7 +16,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.capabilities import FileUnderstanding
+from pydantic_ai.capabilities import FileUnderstanding, file_understanding
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -162,3 +164,58 @@ async def test_fallback_model_is_left_alone():
     await agent.run([ImageUrl('https://example.com/cat.png')])
     assert describer.calls == 0
     assert isinstance(last_prompt(seen)[0], ImageUrl)
+
+
+async def test_text_like_documents_are_inlined_not_described():
+    """A document the model could read as text is inlined as it is; the describer is not asked."""
+    seen: list[list[ModelMessage]] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    text_only = FunctionModel(capture, profile=ModelProfile(supports_document_input=False))
+    describer = Describer()
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    with patch('pydantic_ai.capabilities.file_understanding.download_item', new_callable=AsyncMock) as download:
+        download.return_value = {'data': 'Buy milk.', 'data_type': 'text/plain'}
+        await agent.run(
+            [
+                DocumentUrl('https://example.com/notes.txt'),
+                BinaryContent(b'a,b\n1,2', media_type='text/csv', identifier='table'),
+            ]
+        )
+
+    assert last_prompt(seen) == snapshot(
+        [
+            """\
+-----BEGIN FILE id="0f059c" type="text/plain"-----
+Buy milk.
+-----END FILE id="0f059c"-----\
+""",
+            """\
+-----BEGIN FILE id="table" type="text/csv"-----
+a,b
+1,2
+-----END FILE id="table"-----\
+""",
+        ]
+    )
+    assert describer.calls == 0
+
+
+async def test_descriptions_are_bounded(monkeypatch: pytest.MonkeyPatch):
+    """The oldest description goes when the cache is full, so a long-lived agent does not grow without limit."""
+    monkeypatch.setattr(file_understanding, '_MAX_DESCRIPTIONS', 2)
+    describer = Describer()
+    text_only = TestModel(profile=ModelProfile(supports_image_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+
+    for name in ['first', 'second', 'third']:
+        await agent.run([ImageUrl(f'https://example.com/{name}.png')])
+    assert describer.calls == 3
+
+    await agent.run([ImageUrl('https://example.com/third.png')])
+    assert describer.calls == 3, 'the newest is still cached'
+    await agent.run([ImageUrl('https://example.com/first.png')])
+    assert describer.calls == 4, 'the oldest was evicted'

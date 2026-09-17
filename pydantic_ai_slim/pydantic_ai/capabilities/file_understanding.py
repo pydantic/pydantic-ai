@@ -4,7 +4,7 @@ import hashlib
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai._utils import format_inlined_text_file
+from pydantic_ai._utils import format_inlined_text_file, is_text_like_media_type
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
@@ -16,7 +16,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import KnownModelName, Model, download_item
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -25,6 +25,9 @@ from .durable_operation import durable_operation
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
+
+_MAX_DESCRIPTIONS = 256
+"""Descriptions kept per capability instance; the oldest goes first, so a long-lived agent stays bounded."""
 
 _DEFAULT_INSTRUCTIONS = (
     'Describe this file in detail, so that someone who cannot see it can answer questions about it. '
@@ -54,6 +57,8 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     result = agent.run_sync([DocumentUrl('https://example.com/whatever.pdf')])
     ```
 
+    A text-like document (plain text, CSV, JSON, XML, YAML) is not described but inlined as it is, the way models
+    that read text files do. A provider file reference ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) is left alone.
     Each file is described once per capability instance; the description is reused across steps and runs.
 
     Audio is left as it is: [`supports_audio_input`][pydantic_ai.profiles.ModelProfile.supports_audio_input]
@@ -111,12 +116,20 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         assert isinstance(item, ImageUrl | DocumentUrl | VideoUrl | BinaryContent)
         key = item.url if isinstance(item, ImageUrl | DocumentUrl | VideoUrl) else hashlib.sha256(item.data).hexdigest()
         if (description := self._descriptions.get(key)) is None:
+            if len(self._descriptions) >= _MAX_DESCRIPTIONS:
+                del self._descriptions[next(iter(self._descriptions))]
             description = self._descriptions[key] = await self._describe(item)
         return format_inlined_text_file(description, media_type=item.media_type, identifier=item.identifier)
 
     @durable_operation(name='describe')
     async def _describe(self, item: ImageUrl | DocumentUrl | VideoUrl | BinaryContent) -> str:
+        """The file as text: a text-like document's own content, anything else as `fallback_model` describes it."""
         from pydantic_ai.agent import Agent
+
+        if isinstance(item, BinaryContent) and is_text_like_media_type(item.media_type):
+            return item.data.decode('utf-8')
+        if isinstance(item, DocumentUrl) and is_text_like_media_type(item.media_type):
+            return (await download_item(item, data_format='text'))['data']
 
         agent: Agent[None, str] = Agent(
             self.fallback_model, output_type=str, instructions=self.instructions or _DEFAULT_INSTRUCTIONS
