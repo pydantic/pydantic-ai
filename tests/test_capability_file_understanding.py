@@ -243,7 +243,9 @@ async def test_a_url_description_is_not_reused_by_another_run():
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
     agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
 
-    signed = ImageUrl('https://example.com/receipt.png?signature=abc')
+    # `media_type` is explicit because inferring it from a URL with a query string works on 3.13+ but not
+    # on 3.10; what this test is about is the signature, not the inference.
+    signed = ImageUrl('https://example.com/receipt.png?signature=abc', media_type='image/png')
     await agent.run([signed])
     await agent.run([signed])
     assert describer.calls == 2
