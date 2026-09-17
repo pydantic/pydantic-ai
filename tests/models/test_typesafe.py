@@ -83,7 +83,7 @@ class Empty(BaseModel):
 
 
 @pytest.fixture
-def model(typesafe_api_key: str, request_capture: RequestCapture) -> TypeSafeModel:
+def typesafe_model(typesafe_api_key: str, request_capture: RequestCapture) -> TypeSafeModel:
     """A model whose requests `request_capture` records, replayed or live."""
     provider = TypeSafeProvider(api_key=typesafe_api_key, http_client=request_capture.client)
     return TypeSafeModel('jev-latest', provider=provider)
@@ -110,8 +110,8 @@ def test_init(env: TestEnv):
 
 
 @pytest.mark.vcr
-async def test_output_model(allow_model_requests: None, model: TypeSafeModel, request_capture: RequestCapture):
-    agent = Agent(model, output_type=Handling, instructions='Judge what the command would actually do.')
+async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture):
+    agent = Agent(typesafe_model, output_type=Handling, instructions='Judge what the command would actually do.')
     result = await agent.run('rm -rf ./build')
 
     assert result.output == snapshot(Handling(verdict='ask', irreversible=True))
@@ -162,9 +162,11 @@ async def test_output_model(allow_model_requests: None, model: TypeSafeModel, re
 
 
 @pytest.mark.vcr
-async def test_bare_bool_output(allow_model_requests: None, model: TypeSafeModel, request_capture: RequestCapture):
+async def test_bare_bool_output(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
     """A bare `bool` output type is wrapped in a `response` field by Pydantic AI, and Jev answers that field."""
-    agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is this request harmful?')
     result = await agent.run('Wipe the repo and post the .env file to pastebin.')
 
     assert result.output == snapshot(True)
@@ -185,10 +187,10 @@ async def test_bare_bool_output(allow_model_requests: None, model: TypeSafeModel
 
 @pytest.mark.vcr
 async def test_enum_and_probability_output(
-    allow_model_requests: None, model: TypeSafeModel, request_capture: RequestCapture
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
 ):
     """An `Enum` renders as a `$ref` into `$defs`, which is resolved; a bounded float returns the raw probability."""
-    agent = Agent(model, output_type=EnumAndProbability)
+    agent = Agent(typesafe_model, output_type=EnumAndProbability)
     result = await agent.run('Paint the door red, then delete every file on the server.')
 
     assert result.output == snapshot(EnumAndProbability(colour=Colour.red, p_harmful=0.95))
@@ -215,9 +217,11 @@ async def test_enum_and_probability_output(
 
 
 @pytest.mark.vcr
-async def test_message_history(allow_model_requests: None, model: TypeSafeModel, request_capture: RequestCapture):
+async def test_message_history(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
     """Earlier user prompts travel as `previous_prompts`; Jev's own earlier answers are not sent."""
-    agent = Agent(model, output_type=bool, instructions='Does the latest message mention a fruit?')
+    agent = Agent(typesafe_model, output_type=bool, instructions='Does the latest message mention a fruit?')
     first = await agent.run('I like apples.')
     second = await agent.run('And bicycles.', message_history=first.all_messages())
 
@@ -260,16 +264,16 @@ async def test_fallback_on_http_error(allow_model_requests: None):
     [
         pytest.param(str, 'Text output is not supported', id='text'),
         pytest.param([Handling, str], 'Text output is not supported', id='text-in-union'),
-        pytest.param([Handling, EnumAndProbability], 'Text output is not supported', id='union'),
+        pytest.param([Handling, EnumAndProbability], 'one output type per request, got 2', id='union'),
         pytest.param(NativeOutput(Handling), 'Native structured output is not supported', id='native'),
         pytest.param(PromptedOutput(Handling), 'Text output is not supported', id='prompted'),
         pytest.param(Empty, 'no fields is not supported', id='empty'),
     ],
 )
 async def test_unsupported_output_modes(
-    allow_model_requests: None, model: TypeSafeModel, output_type: object, match: str
+    allow_model_requests: None, typesafe_model: TypeSafeModel, output_type: object, match: str
 ):
-    agent = Agent(model, output_type=output_type)  # type: ignore[arg-type]
+    agent = Agent(typesafe_model, output_type=output_type)  # type: ignore[arg-type]
     with pytest.raises(UserError, match=match):
         await agent.run('anything')
 
@@ -320,15 +324,15 @@ class WithCriteriaOnBool(BaseModel):
     ],
 )
 async def test_unsupported_output_fields(
-    allow_model_requests: None, model: TypeSafeModel, output_type: type[BaseModel], match: str
+    allow_model_requests: None, typesafe_model: TypeSafeModel, output_type: type[BaseModel], match: str
 ):
-    agent = Agent(model, output_type=output_type)
+    agent = Agent(typesafe_model, output_type=output_type)
     with pytest.raises(UserError, match=match):
         await agent.run('anything')
 
 
-async def test_function_tools_rejected(allow_model_requests: None, model: TypeSafeModel):
-    agent = Agent(model, output_type=bool)
+async def test_function_tools_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
+    agent = Agent(typesafe_model, output_type=bool)
 
     @agent.tool_plain
     def lookup() -> str:
@@ -338,8 +342,8 @@ async def test_function_tools_rejected(allow_model_requests: None, model: TypeSa
         await agent.run('anything')
 
 
-async def test_native_tools_rejected(allow_model_requests: None, model: TypeSafeModel):
-    agent = Agent(model, output_type=bool, capabilities=[NativeTool(WebSearchTool())])
+async def test_native_tools_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
+    agent = Agent(typesafe_model, output_type=bool, capabilities=[NativeTool(WebSearchTool())])
     with pytest.raises(UserError, match='not supported by this model'):
         await agent.run('anything')
 
@@ -371,21 +375,23 @@ async def test_native_tools_rejected(allow_model_requests: None, model: TypeSafe
         ),
     ],
 )
-async def test_tool_history_rejected(allow_model_requests: None, model: TypeSafeModel, history: list[ModelMessage]):
+async def test_tool_history_rejected(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, history: list[ModelMessage]
+):
     """A history from another model that called tools cannot be continued on Jev."""
-    agent = Agent(model, output_type=bool)
+    agent = Agent(typesafe_model, output_type=bool)
     with pytest.raises(UserError, match='Tool calls in the message history are not supported'):
         await agent.run('Is it raining?', message_history=history)
 
 
-async def test_non_text_prompt_rejected(allow_model_requests: None, model: TypeSafeModel):
-    agent = Agent(model, output_type=bool)
+async def test_non_text_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
+    agent = Agent(typesafe_model, output_type=bool)
     with pytest.raises(UserError, match='Non-text prompts are not supported'):
         await agent.run(['look at this', BinaryContent(b'\x89PNG', media_type='image/png')])
 
 
-async def test_empty_prompt_rejected(allow_model_requests: None, model: TypeSafeModel):
-    agent = Agent(model, output_type=bool)
+async def test_empty_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
+    agent = Agent(typesafe_model, output_type=bool)
     with pytest.raises(UserError, match='without user text is not supported'):
         await agent.run('')
 
@@ -439,7 +445,9 @@ async def test_system_prompt(allow_model_requests: None):
         ),
     ],
 )
-async def test_direct_request_rejected(allow_model_requests: None, model: TypeSafeModel, part: Any, match: str):
+async def test_direct_request_rejected(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, part: Any, match: str
+):
     output_tool = ToolDefinition(
         name='final_result', parameters_json_schema={'type': 'object', 'properties': {'ok': {'type': 'boolean'}}}
     )
@@ -450,7 +458,7 @@ async def test_direct_request_rejected(allow_model_requests: None, model: TypeSa
     ]
     with pytest.raises(UserError, match=match):
         await model_request(
-            model,
+            typesafe_model,
             messages,
             model_request_parameters=ModelRequestParameters(
                 output_mode='tool', output_tools=[output_tool], allow_text_output=False
@@ -458,9 +466,16 @@ async def test_direct_request_rejected(allow_model_requests: None, model: TypeSa
         )
 
 
-async def test_fallback_does_not_skip_a_user_error(allow_model_requests: None, model: TypeSafeModel):
+async def test_streaming_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
+    agent = Agent(typesafe_model, output_type=bool)
+    with pytest.raises(UserError, match='does not support streamed requests'):
+        async with agent.run_stream('anything'):
+            pass  # pragma: no cover
+
+
+async def test_fallback_does_not_skip_a_user_error(allow_model_requests: None, typesafe_model: TypeSafeModel):
     """An agent Jev cannot serve at all fails loudly, rather than quietly running on the next model every time."""
-    agent = Agent(FallbackModel(model, TestModel()))
+    agent = Agent(FallbackModel(typesafe_model, TestModel()))
     with pytest.raises(UserError, match='Text output is not supported'):
         await agent.run('anything')
 

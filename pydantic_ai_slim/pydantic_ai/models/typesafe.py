@@ -250,11 +250,16 @@ def _output_tool(model_request_parameters: ModelRequestParameters) -> ToolDefini
     """The one output tool Jev answers, or a `UserError` saying why this agent cannot run on Jev."""
     if model_request_parameters.function_tools:
         raise UserError('Tools are not supported by this model. Give the agent an `output_type` and no tools.')
-    output_tools = model_request_parameters.output_tools
-    if model_request_parameters.allow_text_output or len(output_tools) != 1:
+    if model_request_parameters.allow_text_output:
         raise UserError(
-            'Text output is not supported by this model. Give the agent exactly one structured `output_type`, '
+            'Text output is not supported by this model. Give the agent one structured `output_type`, '
             'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
+        )
+    output_tools = model_request_parameters.output_tools
+    if len(output_tools) != 1:
+        raise UserError(
+            f'This model fills one output type per request, got {len(output_tools)}. '
+            'Give the agent a single structured `output_type`.'
         )
     return output_tools[0]
 
@@ -280,7 +285,7 @@ def _questions(
         raise UserError('An `output_type` with no fields is not supported by this model; there is nothing to ask Jev.')
     for name, prop in properties.items():
         ask: dict[str, JSONContent] = {'question': prop.get('description') or name}
-        if output_tool.description:  # pragma: no branch
+        if output_tool.description:
             ask['goal'] = output_tool.description
         if instructions:
             ask['instructions'] = instructions

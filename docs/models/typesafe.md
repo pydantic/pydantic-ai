@@ -2,7 +2,7 @@
 
 [Jev](https://typesafe.ai) is not a language model. You give it a text and typed questions, and it answers each one with a confidence. It does not write text.
 
-`TypeSafeModel` lets an agent whose job is to decide something run on Jev like on any other model. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output. Change the model name and the same agent runs on a language model, so you can compare the two.
+[`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] lets an agent whose job is to decide something run on Jev like on any other model. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output. Change the model name and the same agent runs on a language model, so you can compare the two.
 
 ## Install
 
@@ -94,17 +94,17 @@ print(result.response.provider_details)
 
 ## What fails, and how
 
-Jev cannot write text, call tools, look at images, or change an answer. Anything that needs one of those is refused with a `UserError` before a request is sent, so a wrong agent costs nothing:
+Jev cannot write text, call tools, look at images, or change an answer. Anything that needs one of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, so a wrong agent costs nothing:
 
-- Output: text output, `str` in the output types, more than one output type, `NativeOutput`, `PromptedOutput`, an output type with no fields, or a field that is not one of the types above.
+- Output: text output, `str` in the output types, more than one output type, [`NativeOutput`][pydantic_ai.output.NativeOutput], [`PromptedOutput`][pydantic_ai.output.PromptedOutput], an output type with no fields, or a field that is not one of the types above.
 - Tools: function tools, toolsets and native tools.
 - Prompt: images, audio, video, documents, or no text at all.
 - History: tool calls and tool results from another model, native tools included, and deferred tool results. Earlier user prompts are sent as `previous_prompts`; earlier answers, from Jev or another model, are not.
-- Retries: an output validator that raises `ModelRetry`, or an answer Pydantic rejects. Jev cannot revise, so the run stops after the first request.
+- Retries: an output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or an answer Pydantic rejects. Jev cannot revise, so the run stops after the first request.
 
-A `FallbackModel` does not skip past a `UserError`, because it means the agent cannot run on Jev at all. It does fall back on `ModelHTTPError` and `ModelAPIError`, which Jev raises like any other model when the API returns an error or cannot be reached. A response the SDK cannot parse is `UnexpectedModelBehavior`, which is not skipped either.
+A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does not skip past a `UserError`, because it means the agent cannot run on Jev at all. It does fall back on [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] and [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which Jev raises like any other model when the API returns an error or cannot be reached. A response the SDK cannot parse is [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which is not skipped either.
 
-Jev does not stream. `run_stream`, `event_stream_handler` and the AG-UI and Vercel AI adapters all need streaming, so they are not supported, and neither is `count_tokens_before_request`.
+Jev does not stream. `run_stream`, `event_stream_handler` and the AG-UI and Vercel AI adapters all need streaming, so they are not supported, and neither is [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request].
 
 ## `provider` argument
 
@@ -120,7 +120,7 @@ agent = Agent(model, output_type=bool)
 ...
 ```
 
-You can also customize the `TypeSafeProvider` with a custom `http_client`:
+You can also customize the [`TypeSafeProvider`][pydantic_ai.providers.typesafe.TypeSafeProvider] with a custom `http_client`:
 
 ```python
 from httpx2 import AsyncClient
