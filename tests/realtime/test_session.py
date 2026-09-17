@@ -4461,6 +4461,182 @@ async def test_concurrent_iteration_raises() -> None:
         await anext(late)
 
 
+def _queued_realtime_events(session: _RealtimeSession) -> list[RealtimeEvent]:
+    return [
+        item
+        for item in session._queue  # pyright: ignore[reportPrivateUsage]
+        if isinstance(
+            item,
+            (
+                PartStartEvent,
+                PartDeltaEvent,
+                PartEndEvent,
+                RealtimeInputSpeechStartEvent,
+                RealtimeInputSpeechEndEvent,
+                RealtimeTurnCompleteEvent,
+            ),
+        )
+    ]
+
+
+async def test_unconsumed_session_queue_keeps_structural_events_and_latest_deltas() -> None:
+    chunks = [index.to_bytes(2, 'big') for index in range(2000)]
+    connection = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(),
+            *[AudioDelta(chunk) for chunk in chunks[:1000]],
+            RealtimeInputSpeechEndEvent(),
+            *[AudioDelta(chunk) for chunk in chunks[1000:]],
+            ResponseDone(),
+        ]
+    )
+
+    async with RealtimeSession(connection) as session:
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+
+        queued = _queued_realtime_events(session)
+        assert sum(isinstance(event, PartDeltaEvent) for event in queued) == 512
+        assert [type(event) for event in queued if not isinstance(event, PartDeltaEvent)] == [
+            RealtimeInputSpeechStartEvent,
+            PartStartEvent,
+            RealtimeInputSpeechEndEvent,
+            PartEndEvent,
+            RealtimeTurnCompleteEvent,
+        ]
+
+        late_events = [event async for event in session]
+        late_chunks = [
+            event.delta.audio_chunk
+            for event in late_events
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta)
+        ]
+        assert late_chunks == chunks[-512:]
+
+
+async def test_active_session_iterator_does_not_drop_deltas() -> None:
+    chunks = [index.to_bytes(2, 'big') for index in range(2000)]
+    async with RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks])) as session:
+        events = [event async for event in session]
+        assert [
+            event.delta.audio_chunk
+            for event in events
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta)
+        ] == chunks
+        assert session._queue_dropped_deltas == 0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_closing_session_iterator_bounds_remaining_deltas() -> None:
+    chunks = [index.to_bytes(2, 'big') for index in range(2000)]
+    async with RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks])) as session:
+        events = session.__aiter__()
+        assert isinstance(await anext(events), PartStartEvent)
+        assert isinstance(events, AsyncGenerator)
+        await events.aclose()
+
+        assert session._queue_delta_count == 512  # pyright: ignore[reportPrivateUsage]
+        assert session._queue_dropped_deltas == 1488  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_unconsumed_session_queue_bounds_structural_events() -> None:
+    """Structural events are never superseded the way deltas are, so they need their own bound.
+
+    Not a VCR test: it takes more turns than a recording holds to reach the cap at all.
+    """
+    turns = 200
+    events: list[RealtimeCodecEvent] = []
+    for index in range(turns):
+        events.append(RealtimeInputSpeechStartEvent())
+        events.extend(AudioDelta((index * 1000 + frame).to_bytes(4, 'big')) for frame in range(50))
+        events.append(RealtimeInputSpeechEndEvent())
+        events.append(ResponseDone())
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+        queued = _queued_realtime_events(session)
+        structural = [event for event in queued if not isinstance(event, PartDeltaEvent)]
+        assert len(structural) == 512
+        assert session._queue_dropped_structural == turns * 5 - 512  # pyright: ignore[reportPrivateUsage]
+        # The window that survives is the most recent one, and it still ends on a turn boundary.
+        assert isinstance(structural[-1], RealtimeTurnCompleteEvent)
+        # No delta is orphaned; `test_unconsumed_session_queue_never_orphans_a_delta` covers the
+        # densities where that takes evicting a part whole.
+        started = {event.index for event in structural if isinstance(event, PartStartEvent)}
+        assert {event.index for event in queued if isinstance(event, PartDeltaEvent)} <= started
+
+
+@pytest.mark.parametrize('frames_per_turn', [1, 2, 5, 50])
+async def test_unconsumed_session_queue_never_orphans_a_delta(frames_per_turn: int) -> None:
+    """Evicting a part start takes the rest of that part with it, at every audio-frame density.
+
+    A turn with few audio frames reaches the structural cap long before the delta cap, so the part
+    starts go while their deltas stay — which would leave a late iterator deltas it cannot attach to
+    anything. Parametrized because the defect is invisible at the frame counts a real voice turn has.
+    """
+    events: list[RealtimeCodecEvent] = []
+    for index in range(200):
+        events.append(RealtimeInputSpeechStartEvent())
+        events.extend(AudioDelta((index * 1000 + frame).to_bytes(4, 'big')) for frame in range(frames_per_turn))
+        events.append(RealtimeInputSpeechEndEvent())
+        events.append(ResponseDone())
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+        queued = _queued_realtime_events(session)
+        started = {event.index for event in queued if isinstance(event, PartStartEvent)}
+        assert {event.index for event in queued if isinstance(event, PartDeltaEvent)} <= started
+        assert {event.index for event in queued if isinstance(event, PartEndEvent)} <= started
+
+
+async def test_parked_exception_survives_a_trimmed_queue() -> None:
+    """A failure parked after heavy trimming is still delivered when the session closes."""
+    events: list[RealtimeCodecEvent] = []
+    for index in range(200):
+        events.append(RealtimeInputSpeechStartEvent())
+        events.append(AudioDelta(index.to_bytes(4, 'big')))
+        events.append(RealtimeInputSpeechEndEvent())
+        events.append(ResponseDone())
+
+    session = RealtimeSession(FakeRealtimeConnection(events))
+    with pytest.raises(RuntimeError, match='tool failed'):
+        async with session:
+            # Drain the turns first so the queue has done its evicting, then park: `_park_error` ends
+            # the receive side when nobody is iterating, so a failure cannot sit in the queue *while*
+            # trimming continues. That is why `_is_structural` excluding exceptions is defensive.
+            _ = [chunk async for chunk in session.stream_audio()]
+            session._park_error(RuntimeError('tool failed'))  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_active_session_iterator_does_not_drop_structural_events() -> None:
+    events: list[RealtimeCodecEvent] = []
+    for index in range(200):
+        events.append(RealtimeInputSpeechStartEvent())
+        events.append(AudioDelta(index.to_bytes(4, 'big')))
+        events.append(RealtimeInputSpeechEndEvent())
+        events.append(ResponseDone())
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        received = [event async for event in session]
+        assert session._queue_dropped_structural == 0  # pyright: ignore[reportPrivateUsage]
+        assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in received) == 200
+
+
+async def test_unconsumed_session_queue_keeps_parked_exception() -> None:
+    chunks = [index.to_bytes(2, 'big') for index in range(2000)]
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
+
+    with pytest.raises(RuntimeError, match='tool failed'):
+        async with session:
+            received: list[bytes] = []
+            async for chunk in session.stream_audio():
+                received.append(chunk)
+                if len(received) == 1:
+                    # Parked mid-stream, the shape a failing tool produces: the pump is running, so
+                    # ending the receive side finishes this very view and `close()` raises the error.
+                    session._park_error(RuntimeError('tool failed'))  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_direct_session_must_be_entered_and_streams_once() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]), _noop_runner)
 

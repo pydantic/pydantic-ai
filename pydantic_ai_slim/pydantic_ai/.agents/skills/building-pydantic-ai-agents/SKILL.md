@@ -324,6 +324,11 @@ Key facts for building realtime agents:
   `send_audio()` async iterable returns cleanly at its next chunk), or call `ctx.cancel()` to make
   the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely: cancelling the watchdog does
   not interrupt teardown, and the session context waits for teardown before exiting.
+- **Late event consumption is bounded**: while nothing is iterating the session, it retains only the
+  most recent 512 `PartDeltaEvent`s and the most recent 512 structural events, so a long call that
+  nobody iterates cannot grow without bound. Parts are dropped whole, so a late iterator never sees a
+  delta without its `PartStartEvent`. A parked failure is always retained. An active
+  `async for event in session` remains lossless.
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
   resolved instructions and tools are baked in and the API key stays on the server — then attach a
