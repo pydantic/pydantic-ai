@@ -48,6 +48,8 @@ from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
+from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -242,6 +244,7 @@ def test_docs_examples(
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
+    mocker.patch('pydantic_ai.images.infer_image_generation_model', side_effect=mock_infer_image_generation_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
@@ -304,6 +307,7 @@ def test_docs_examples(
     env.set('OPENAI_API_VERSION', '2024-05-01')
     env.set('OPENROUTER_API_KEY', 'testing')
     env.set('GITHUB_API_KEY', 'testing')
+    env.set('GITHUB_COPILOT_API_KEY', 'testing')
     env.set('GROK_API_KEY', 'testing')
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
@@ -320,6 +324,15 @@ def test_docs_examples(
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
     env.set('SNOWFLAKE_TOKEN', 'testing')
+
+    # The Codex provider reads the Codex CLI's `auth.json` (honoring `CODEX_HOME`) instead of an
+    # env var, so fake the file the same way the API keys above are faked.
+    codex_home = tmp_path_cwd / 'codex-home'
+    codex_home.mkdir(exist_ok=True)
+    (codex_home / 'auth.json').write_text(
+        json.dumps({'tokens': {'access_token': 'testing', 'refresh_token': 'testing', 'account_id': 'testing'}})
+    )
+    env.set('CODEX_HOME', str(codex_home))
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -1295,6 +1308,15 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)
+
+
+def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> ImageGenerationModel:
+    """Mock image generation model inference while validating the provider and model name."""
+    if isinstance(model, ImageGenerationModel):
+        return model
+
+    actual_model = infer_image_generation_model(model)
+    return TestImageGenerationModel(actual_model.model_name, provider_name=actual_model.system)
 
 
 def mock_infer_model(model: Model | KnownModelName) -> Model:

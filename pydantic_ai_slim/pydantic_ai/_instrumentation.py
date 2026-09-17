@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
-from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
+from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
@@ -75,6 +75,18 @@ TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 26214
 TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 )  # fmt: skip
+
+include_content_ctx: ContextVar[bool | None] = ContextVar('include_content', default=None)
+"""Carries the open `chat` span's `include_content` to code that updates that span without holding
+the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
+model answered. Set by `open_model_request_span` for the span's lifetime, so a refresh redacts the
+instruction content of the model it picked the way the span was opened, rather than guessing from
+what is already recorded. `None` means no instrumented request is open.
+
+A context variable for the same reason as `time_to_first_chunk_ctx`: `ModelRequestContext` is public
+and holds only the inputs to `Model.request[_stream]`, and `FallbackModel` reaches the span through
+`get_current_span()` anyway, so it is already relying on the ambient context.
+"""
 
 time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
 """Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
@@ -282,26 +294,37 @@ def has_stale_message_json(
     return False
 
 
-def provider_attributes(system: str, base_url: str | None = None) -> dict[str, AttributeValue]:
-    """Build the provider and server attributes shared by classic and realtime `chat` spans."""
-    attributes: dict[str, AttributeValue] = {
-        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
-        GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
-    }
+def server_attributes(base_url: str | None) -> dict[str, AttributeValue]:
+    """Map a model's `base_url` to the OTel `server.*` attributes, omitting what it doesn't carry.
+
+    `base_url` is an overridable property returning an arbitrary string, and `urlparse` defers
+    authority validation to `hostname`/`port`, so a non-numeric port parses fine and only raises
+    when the port is read. Attributes are best-effort telemetry, so an uninterpretable authority
+    yields no attributes rather than failing the request.
+    """
+    attributes: dict[str, AttributeValue] = {}
     if base_url:
         try:
             parsed = urlparse(base_url)
-            # `urlparse` defers port validation to `.port`, so a malformed port raises on the read, not the parse.
             hostname, port = parsed.hostname, parsed.port
         except ValueError:
             pass
         else:
-            if hostname:  # pragma: no branch
+            if hostname:
                 attributes['server.address'] = hostname
-            if port:  # pragma: no branch
+            if port:
                 attributes['server.port'] = port
 
     return attributes
+
+
+def provider_attributes(system: str, base_url: str | None = None) -> dict[str, AttributeValue]:
+    """Build the provider and server attributes shared by classic and realtime `chat` spans."""
+    return {
+        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
+        GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
+        **server_attributes(base_url),
+    }
 
 
 def model_attributes(model: AbstractModel) -> dict[str, AttributeValue]:
@@ -329,11 +352,43 @@ def model_metric_attributes(
 
 
 def model_request_parameters_attributes(
-    model_request_parameters: ModelRequestParameters,
+    model_request_parameters: ModelRequestParameters, *, include_content: bool = True
 ) -> dict[str, AttributeValue]:
-    return {
-        'model_request_parameters': safe_to_json(_serialize_model_request_parameters(model_request_parameters)).decode()
-    }
+    serialized = _serialize_model_request_parameters(model_request_parameters)
+    if not include_content:
+        # Two fields here are prompt text the user wrote, which is the "proprietary prompts" half of
+        # what the setting withholds: the instructions (whose dynamic parts can be built from deps)
+        # and the prompted-output template. Instruction parts keep their origin and ids, so what the
+        # parts are and how they cache is still visible. Tool and output *schemas* stay: they are the
+        # request's structure, not message content, and `include_model_request_parameters=False`
+        # drops the attribute entirely for anyone who wants them gone too.
+        for part in instruction_parts_of(serialized):
+            part.pop('content', None)
+        _blank_prompted_output_template(serialized)
+    return {'model_request_parameters': safe_to_json(serialized).decode()}
+
+
+def _blank_prompted_output_template(serialized_parameters: Any) -> None:
+    """Blank the prompted-output template, which is prompt text the user wrote."""
+    if not isinstance(serialized_parameters, dict):
+        return  # pragma: no cover
+    parameters = cast('dict[str, Any]', serialized_parameters)
+    if parameters.get('prompted_output_template') is not None:
+        parameters['prompted_output_template'] = None
+
+
+def instruction_parts_of(serialized_parameters: Any) -> list[dict[str, Any]]:
+    """The serialized `instruction_parts`, or nothing if the shape isn't what we expect.
+
+    `_serialize_model_request_parameters` falls back to inference when the declared schema can't
+    dump the value, so the shape isn't guaranteed.
+    """
+    if not isinstance(serialized_parameters, dict):
+        return []  # pragma: no cover
+    parts = cast('Any', serialized_parameters).get('instruction_parts')
+    if not isinstance(parts, list):
+        return []
+    return [part for part in cast('list[Any]', parts) if isinstance(part, dict)]
 
 
 def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
@@ -467,6 +522,66 @@ class _FinishModelRequestSpan(Protocol):
     def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
 
 
+def record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
+    """Record `error` on `span` as an `exception` event.
+
+    With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
+    only the exception type is kept: the message and stack trace of an exception raised around
+    a tool, a model request or an agent run can quote content the setting is meant to withhold --
+    a tool retry or failure carries the text the model sees, an exception chained from one repeats
+    that text in its stack trace, a provider's error response can echo the request, and validation
+    errors and user exceptions may echo the rejected arguments. The type and `escaped` formatting
+    match what `Span.record_exception` would have produced.
+    """
+    # `use_span` records nothing on a span that isn't recording, and neither does this: the SDK
+    # formats the traceback before `add_event` drops it, so an exception whose `__str__` raises
+    # would surface that failure in place of the original error.
+    if not span.is_recording():
+        return
+    if include_content:
+        span.record_exception(error, escaped=escaped)
+        return
+    error_type = type(error)
+    type_name = (
+        f'{error_type.__module__}.{error_type.__qualname__}'
+        if error_type.__module__ != 'builtins'
+        else error_type.__qualname__
+    )
+    # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
+    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
+
+
+def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
+    """Set `span`'s status to ERROR, describing it the way `use_span` would have.
+
+    The SDK's description is `f'{type(exc).__name__}: {exc}'`, which repeats the message the
+    exception event carries, so it is withheld alongside it when content capture is off.
+    """
+    if not span.is_recording():
+        return
+    span.set_status(
+        Status(StatusCode.ERROR, description=f'{type(error).__name__}: {error}' if include_content else None)
+    )
+
+
+@contextmanager
+def record_uncaught_errors(span: Span, *, include_content: bool) -> Generator[None]:
+    """Record exceptions leaving `span`'s scope the way `use_span` would have.
+
+    For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
+    both jobs to the caller. `use_span` recorded the exception unescaped and described the ERROR
+    status with it; both repeat the message, so both follow `include_content`. Enter this around
+    the span's whole scope -- the scope `use_span` covered -- not just the call that may fail, so
+    that failures while finalizing the span still mark it.
+    """
+    try:
+        yield
+    except Exception as error:
+        record_exception(span, error, include_content=include_content, escaped=False)
+        set_error_status(span, error, include_content=include_content)
+        raise
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
@@ -506,7 +621,9 @@ def open_model_request_span(
     }
     json_schema_properties: dict[str, dict[str, str]] = {}
     if settings.include_model_request_parameters:
-        attributes.update(model_request_parameters_attributes(prepared_parameters))
+        attributes.update(
+            model_request_parameters_attributes(prepared_parameters, include_content=settings.include_content)
+        )
         json_schema_properties['model_request_parameters'] = {'type': 'object'}
     attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
 
@@ -517,8 +634,18 @@ def open_model_request_span(
     attributes.update(model_settings_attributes(prepared_settings))
 
     record_metrics: Callable[[], None] | None = None
+    include_content_token = include_content_ctx.set(settings.include_content)
     try:
-        with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
+        with (
+            settings.tracer.start_as_current_span(
+                span_name,
+                attributes=attributes,
+                kind=SpanKind.CLIENT,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span,
+            record_uncaught_errors(span, include_content=settings.include_content),
+        ):
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
@@ -566,6 +693,7 @@ def open_model_request_span(
 
             yield finish, prepared_request_context
     finally:
+        include_content_ctx.reset(include_content_token)
         if record_metrics:
             record_metrics()
 

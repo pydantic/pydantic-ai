@@ -16,6 +16,10 @@
 
 ::: pydantic_ai.providers.openai
 
+::: pydantic_ai.providers.openai_codex
+    options:
+      inherited_members: true
+
 ::: pydantic_ai.providers.xai
 
 ::: pydantic_ai.providers.deepseek
@@ -45,6 +49,8 @@
 ::: pydantic_ai.providers.heroku.HerokuProvider
 
 ::: pydantic_ai.providers.github.GitHubProvider
+
+::: pydantic_ai.providers.github_copilot.GitHubCopilotProvider
 
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
 
