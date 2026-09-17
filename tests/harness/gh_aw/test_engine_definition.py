@@ -129,10 +129,17 @@ class _Engine(BaseModel):
     behaviors: _Behaviors
 
 
+class _PreAgentStep(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
+    run: str
+
+
 class _Frontmatter(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
     engine: _Engine
+    pre_agent_steps: list[_PreAgentStep] = Field(alias='pre-agent-steps')
 
 
 class _Invocation(BaseModel):
@@ -198,11 +205,30 @@ class _ParsedLog(BaseModel):
         return [block.text for entry in self.log_entries for block in entry.message.content if block.type == 'text']
 
 
-def behaviors() -> _Behaviors:
-    """The `engine.behaviors` block, read from the definition gh-aw consumes."""
+def definition() -> _Frontmatter:
+    """Read the frontmatter gh-aw consumes."""
     lines = DEFINITION.read_text(encoding='utf-8').splitlines()
     frontmatter: object = yaml.safe_load('\n'.join(lines[1 : lines.index('---', 1)]))
-    return _Frontmatter.model_validate(frontmatter).engine.behaviors
+    return _Frontmatter.model_validate(frontmatter)
+
+
+def behaviors() -> _Behaviors:
+    """The `engine.behaviors` block, read from the definition gh-aw consumes."""
+    return definition().engine.behaviors
+
+
+def test_install_includes_spec_extra_for_yaml_agents() -> None:
+    requirements = [
+        argument
+        for step in definition().pre_agent_steps
+        for line in step.run.splitlines()
+        if line.strip().startswith('python3 -P -m pip install ')
+        for argument in shlex.split(line)
+        if argument.startswith('pydantic-ai-slim[')
+    ]
+    (requirement,) = requirements
+    extras = requirement.split('[', 1)[1].split(']', 1)[0].split(',')
+    assert 'spec' in extras
 
 
 def launch(tmp_path: Path, env: dict[str, str]) -> _Invocation:

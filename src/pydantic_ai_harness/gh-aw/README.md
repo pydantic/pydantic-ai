@@ -10,10 +10,9 @@ A workflow has to write the `imports:` line itself. gh-aw's engine catalog maps
 the `pydantic-ai` id to this path, but only to suggest it: naming the engine
 without the import fails to compile with a tip carrying the line to add.
 
-The engine runs the [Pydantic AI](https://ai.pydantic.dev) CLI (`pai`) over an agent
-composed from this package's `Coder` capability: filesystem, shell, planning,
-repository context and an explorer sub-agent, plus one toolset per MCP server the
-gh-aw gateway exposes.
+The engine runs the [Pydantic AI](https://ai.pydantic.dev) CLI (`pai`) with `Coder`
+by default, providing filesystem access and unrestricted shell commands inside the sandbox,
+plus the gh-aw gateway's MCP tools.
 
 ## Quick start
 
@@ -63,7 +62,7 @@ private directory it creates inside the sandbox, puts that directory on
 `PYTHONPATH`, and passes `-a gh_aw_agent:agent`. The CLI and its
 dependencies are installed before the agent starts, with
 `pip install --user "pydantic-ai-harness[cli]==<engine version>"
-"pydantic-ai-slim[anthropic,openai,mcp]>=2.36.0"`. The pinned harness version is
+"pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.36.0"`. The pinned harness version is
 `engine.version` in `pydantic.md`, and it always names a published release: lint
 refuses a pull request whose pin is not on PyPI. The `2.36.0` floor is the first
 pydantic-ai release carrying `pai --mcp-config`, and the `anthropic` extra is what
@@ -164,6 +163,102 @@ CLI, so module-level work in your agent runs once too. An agent that fails to im
 or is not an `Agent` fails the step with the Python traceback. A spec file, and the
 dotted `module.attribute` form `pai` also accepts, are left to the CLI, which reports
 its own error.
+
+The target does not have to live in the repository. The harness exports assembled
+agents as importable variables, so `PAI_AGENT: pydantic_ai_harness.researcher:researcher_agent`
+runs `Researcher` with no agent code in the repository at all, given a `steps:` block
+installing the `researcher` extra. `pydantic_ai_harness.coder:coder_agent` names the
+default composition explicitly.
+
+The engine installs the `spec` extra for YAML parsing. A `.yml`, `.yaml` or `.json` spec
+covers instructions plus built-in capabilities, and
+the gateway's MCP servers still reach it through `--mcp-config`. Unlike a module it has
+to carry a `model:`, because `Agent.from_spec()` rejects a spec without one and builds
+that model while loading the file, before the CLI's `-m` override. Use the client prefix
+that the engine configures, not the workflow's provider prefix: `openai-chat:<model>` for
+`copilot/`, `codex/` and `openai/`, or `anthropic:<model>` for `anthropic/`. With
+`PAI_BASE_URL`, use `openai-chat:<model>` regardless of the workflow provider. `-m` then
+replaces the model, so only the workflow's copy selects the model used for the run. A spec cannot
+name a harness capability: spec capability names resolve through a closed registry that
+the harness is not part of, and the CLI passes no `custom_capability_types`
+(pydantic/pydantic-ai#8334). Nor can it define a function tool. Either needs a module.
+
+## Observability
+
+The engine instruments the agent whenever gh-aw supplies an OTLP endpoint. A workflow
+turns that on with `observability.otlp`, plus an allowlist entry for the backend's host,
+because the egress firewall otherwise drops the export:
+
+```yaml
+network:
+  allowed:
+    - logfire-us.pydantic.dev
+observability:
+  otlp:
+    endpoint:
+      - url: https://logfire-us.pydantic.dev
+        headers:
+          Authorization: ${{ secrets.LOGFIRE_TOKEN }}
+```
+
+gh-aw injects `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
+`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `TRACEPARENT` into the workflow
+environment when, and only when, an endpoint is configured, and workflow-level environment
+reaches both the pre-agent step and the agent container. The endpoint variable is what the
+engine keys on: with it set, the install step adds `logfire` and the launcher calls
+`logfire.configure()` and `logfire.instrument_pydantic_ai()` before importing the agent
+target, then attaches the W3C context from `TRACEPARENT`. With it unset, neither happens
+and the install costs nothing.
+
+These choices are not defaults, and each is load-bearing.
+
+- **`send_to_logfire="if-token-present"`.** The default requires a `LOGFIRE_TOKEN` in the
+  environment and raises without one. The credential here is a header value gh-aw holds,
+  not an environment variable, so the export is driven by the endpoint alone and works
+  against any backend. A token that does reach the agent's environment adds Logfire as a
+  second destination rather than replacing the endpoint, prompts and completions included;
+  gh-aw strips `${{ secrets.* }}` out of `engine.env`, so that takes a workflow putting one
+  in its own `env:` or a `steps:` block.
+- **Private `config_dir` and `data_dir`.** Both point to a mode-0700 temporary directory
+  under `/tmp`, outside the checkout even if `TMPDIR` points into it. This prevents
+  checkout `pyproject.toml` settings and `.logfire/logfire_credentials.json` from selecting
+  a telemetry destination. Explicit directory arguments also override `LOGFIRE_CONFIG_DIR`
+  and `LOGFIRE_CREDENTIALS_DIR`; `LOGFIRE_TOKEN` in the environment remains supported.
+  The directory stays alive through the process and is removed at interpreter shutdown,
+  after exporter shutdown handlers run.
+- **`console=False`.** logfire's console exporter writes every span to stderr, which is the
+  stream this definition's `log-parser` reads.
+- **The `TRACEPARENT` attach, with `distributed_tracing=True`.** gh-aw sets the variable for
+  behavior-defined engines (`applyTraceContextEnvToMap` in
+  `pkg/workflow/behavior_defined_engine.go`) so that an engine can nest its spans under the
+  workflow run's span, but neither logfire nor the OpenTelemetry SDK reads it from the
+  environment. Without the attach each run produces a second, unrelated trace. The flag is
+  what marks the propagated context as deliberate; logfire warns on every run without it,
+  because extracting incoming context is usually accidental.
+- **`OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER` default to `none`.** logfire's OTLP
+  setup is per signal, so an endpoint alone also builds metrics and logs exporters that POST
+  to `/v1/metrics` and `/v1/logs`. A traces-only backend answers `404`, and the step log then
+  carries `Failed to export metrics batch code: 404` once per export while the run still
+  succeeds. These are the standard OpenTelemetry switches rather than a logfire argument, so
+  a workflow that has a backend for those signals can set either one back to `otlp`.
+
+The engine contributes no resource attributes of its own. `OTEL_RESOURCE_ATTRIBUTES`
+already carries `gh-aw.engine.id` (`pydantic-ai`), `gh-aw.workflow.name`,
+`gh-aw.repository`, `gh-aw.run.id` and `github.run_id`, and `logfire.configure()` merges
+the variable into the resource, so `gh-aw.engine.id` is the filter that finds runs of this
+engine in a backend. The configuration line the engine logs gains an `otlp=` segment while
+this is active, carrying the endpoint's origin only: userinfo and query parameters are
+credentials, and a run log is not a private place to put one.
+
+A `PAI_AGENT` module that calls `logfire.configure()` itself runs after the engine's call
+and replaces it, whole rather than argument by argument, so it has to restate the three
+settings above: `send_to_logfire="if-token-present"` or it raises, `console=False` or the
+`log-parser` reads spans, and `distributed_tracing=True` or it warns on every run. The
+context attached from `TRACEPARENT` survives the reconfiguration. Reconfiguration must also
+supply private `config_dir` and `data_dir` values with process-lifetime cleanup; omitting
+these re-enables checkout configuration and credentials. Such a module also has
+to install `logfire` through the workflow's own `steps:` if it imports it on runs that
+configure no endpoint.
 
 ## gh-aw compatibility
 

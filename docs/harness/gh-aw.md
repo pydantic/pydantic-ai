@@ -1,6 +1,6 @@
 ---
 title: Run your own Pydantic AI agent as a GitHub Agentic Workflow
-description: Define a pydantic_ai.Agent in your repository and have gh-aw run it on issues, pull requests or a schedule, with MCP tools and safe outputs.
+description: Run your own Pydantic AI agent headless in GitHub Actions, on issues, pull requests or a schedule, sandboxed, with MCP tools and safe outputs.
 ---
 
 # Run your own Pydantic AI agent as a GitHub Agentic Workflow
@@ -8,10 +8,26 @@ description: Define a pydantic_ai.Agent in your repository and have gh-aw run it
 [GitHub Agentic Workflows](https://github.com/github/gh-aw) (gh-aw) runs an agent from a
 Markdown file in `.github/workflows/`: it triggers on issues, pull requests or a schedule,
 starts the agent in a container behind an egress firewall, hands it MCP tools, and writes
-what the agent produces back to GitHub through safe outputs. This page walks through
-pointing that machinery at an agent your own repository defines, rather than at the coder
-agent the [`pydantic-ai` engine](https://github.com/pydantic/pydantic-ai-harness/tree/main/gh-aw)
-composes by default.
+what the agent produces back to GitHub through safe outputs. The
+[`pydantic-ai` engine](https://github.com/pydantic/pydantic-ai-harness/tree/main/gh-aw)
+points that machinery at a Pydantic AI agent, which can be the
+[`Coder`](/ai/harness/coder/) composition it runs by default, another agent the harness
+ships, or one your own repository defines. The three are laid out in
+[Start from `Coder`, `Researcher`, or your own](#start-from-coder-researcher-or-your-own);
+this page then walks through the last of them end to end.
+
+This is the agent running **headless**: on a GitHub runner, on the events you choose, with
+nobody at a prompt. Its output is a comment, a pull request or a commit rather than a reply
+on a screen, and the only place to see what it did afterwards is the run log and whatever
+telemetry you configured, which is why [Observability](#observability) is a section rather
+than an aside.
+
+Every model vendor ships an action for this shape, each one running that vendor's agent on
+that vendor's models. The difference here is that the agent is yours: your instructions,
+your tools, your [capabilities](/ai/capabilities/overview/), and [any
+model](/ai/models/overview/) a string swap away, in a repository you can also run from the
+terminal, serve over a web UI, or call from your own backend. It is the same `Agent` object
+in all of them.
 
 The finished repository is
 [dsfaccini/gh-aw-pydantic-ai-demo](https://github.com/dsfaccini/gh-aw-pydantic-ai-demo);
@@ -43,6 +59,53 @@ import-based engine like this one, so it is not part of the configuration below.
   when a workflow declares the `create-issue` safe output, and fails compilation if issues
   are off.
 - Actions enabled on the repository (see [Repository settings](#repository-settings)).
+
+## Start from `Coder`, `Researcher`, or your own
+
+**Use `Coder` by default.** Omit `PAI_AGENT` to use [`Coder`](/ai/harness/coder/),
+with filesystem access and unrestricted shell commands inside the sandbox.
+No agent module is needed:
+
+```yaml
+---
+on:
+  issues:
+    types: [opened]
+permissions:
+  contents: read
+  issues: read
+imports:
+  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+engine:
+  id: pydantic-ai
+  model: openai/gpt-5
+safe-outputs:
+  add-comment:
+---
+```
+
+**Another ready-made agent.** The harness exports assembled agents as importable variables,
+so `PAI_AGENT` can name one directly and the repository still contains no agent code:
+
+```yaml
+engine:
+  id: pydantic-ai
+  model: openai/gpt-5
+  env:
+    PAI_AGENT: pydantic_ai_harness.researcher:researcher_agent
+steps:
+  - name: Install the researcher extra
+    run: python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[researcher]"
+```
+
+[`Researcher`](/ai/harness/researcher/) needs its own extra for the local search and fetch
+fallbacks, which is what the `steps:` block installs, and its searches need the hosts it
+reaches on the workflow's `network:` allowlist. `pydantic_ai_harness.coder:coder_agent` is
+the same shape for the coder agent, and is worth naming explicitly when a workflow wants
+the default composition but also wants `PAI_AGENT` set for clarity.
+
+**Your own agent.** The rest of this page. Reach for it when the agent needs its own tools,
+its own instructions, or a composition the harness does not ship.
 
 ## The agent module
 
@@ -102,7 +165,7 @@ Four things about that module.
   here to show that repository code is importable and that the agent's own tools work
   alongside the MCP tools gh-aw supplies.
 - **No third-party imports.** The engine installs `pydantic-ai-harness[cli]` and
-  `pydantic-ai-slim[anthropic,openai,mcp]`, so `pydantic_ai` is importable without any
+  `pydantic-ai-slim[anthropic,openai,mcp,spec]`, so `pydantic_ai` is importable without any
   setup of your own. Anything else your agent imports is installed by a workflow-level
   `steps:` block (see [Dependencies](#dependencies)).
 
@@ -110,9 +173,59 @@ The module is imported once, by the interpreter that then runs the CLI in the sa
 so module-level work runs once. An agent that raises on import fails the step with its
 Python traceback rather than a one-line "could not load agent" message.
 
-`PAI_AGENT` also accepts a `.yml`, `.yaml` or `.json`
-[agent spec](/ai/core-concepts/agent-spec/) instead of an import path. A spec cannot name
-harness capabilities, so a module is the form to use when the agent composes any of them.
+## The agent as a spec instead
+
+`PAI_AGENT` takes a `.yml`, `.yaml` or `.json` [agent spec](/ai/core-concepts/agent-spec/)
+wherever it takes an import path, so a repository that is already configuring one thing in
+YAML can configure the agent the same way, in a file beside the workflow:
+
+```yaml
+engine:
+  id: pydantic-ai
+  model: openai/gpt-5
+  env:
+    PAI_AGENT: triage_agent.yml
+```
+
+```yaml {title="triage_agent.yml"}
+name: triage
+model: openai-chat:gpt-5
+instructions: |
+  You triage one GitHub issue. Read the issue in the prompt, then post exactly one
+  comment with the `safeoutputs_add_comment` tool. Suggest a label; do not apply one.
+  Do not edit files. Do not open issues.
+capabilities:
+  - Thinking:
+      effort: medium
+```
+
+The engine installs the `spec` extra for YAML parsing.
+
+**The spec needs a `model:` even though it does not decide the model.** A module can leave
+the model out, because an `Agent` may be constructed without one, but `Agent.from_spec()`
+rejects a spec that names none, and it builds that model while loading the file, before
+the CLI's `-m` override. Use the client prefix that the engine configures, not the
+workflow's provider prefix: `openai-chat:<model>` for `copilot/`, `codex/` and `openai/`,
+or `anthropic:<model>` for `anthropic/`. With `PAI_BASE_URL`, use `openai-chat:<model>`
+regardless of the workflow provider. The engine then passes `-m` to replace the model.
+For example, pair `openai/gpt-5` in the workflow with `openai-chat:gpt-5` in the spec;
+only the workflow's copy selects the model used for the run.
+
+The gateway's MCP servers still arrive through `--mcp-config`, so a spec agent gets the
+safe outputs and the GitHub tools on the same terms as a module.
+
+Two things a spec cannot do today, both of which send you back to a module:
+
+- **Name a harness capability.** A spec resolves capability names through a closed registry
+  that the harness capabilities are not part of, and the CLI passes no
+  `custom_capability_types`, so a spec reaches the built-in capabilities and nothing else.
+  `Coder`, `Researcher` and the rest are module-only. See
+  [pydantic-ai#8334](https://github.com/pydantic/pydantic-ai/issues/8334).
+- **Define a function tool.** The `label_catalog` tool above is Python, and there is no
+  spec form for it.
+
+Instructions plus built-in capabilities is the shape a spec handles well. Anything past
+that is a module.
 
 ## The workflow file
 
@@ -217,6 +330,12 @@ Commit all of it, together with the `.md`. The compiled workflow's `Check workfl
 file` step recomputes the frontmatter hash at run time and fails the run when the lock does
 not match the source, so a stale or missing lock stops the workflow rather than running an
 old configuration.
+
+Every compile prints `Using experimental engine: Pydantic AI`. The engine definition
+declares itself experimental to gh-aw, which is a statement about this definition's
+interface with gh-aw rather than about Pydantic AI: the two projects are moving, and the
+definition is free to change how it bridges them. Pin the `imports:` ref to a tag or a SHA
+when that matters, as described above.
 
 Compiling this workflow for the first time prints a security-review warning listing
 `CODEX_API_KEY` and `OPENAI_API_KEY` as new restricted secrets. gh-aw records the secrets,
@@ -434,6 +553,168 @@ endpoint is used regardless.
 
 The comment lands on the issue with a gh-aw footer naming the workflow and linking its run,
 followed by an HTML comment recording the engine, its version and the model.
+
+## Observability
+
+gh-aw exports spans for its own setup and conclusion steps once a workflow configures an
+OpenTelemetry backend, and this engine extends that to the agent: the agent run, every
+model request and every tool call arrive as Pydantic AI spans in the same trace, with no
+Python of your own.
+
+`observability:` names the backend and `network:` lets the export through the egress
+firewall:
+
+```yaml
+network:
+  allowed:
+    - logfire-us.pydantic.dev
+observability:
+  otlp:
+    endpoint:
+      - url: https://logfire-us.pydantic.dev
+        headers:
+          Authorization: ${{ secrets.LOGFIRE_TOKEN }}
+```
+
+Both halves are needed. The allowlist merges with the domains the engine already permits
+(PyPI, GitHub, the model provider) rather than replacing them, and without the entry the
+firewall drops the export while the run itself still succeeds, which at the backend looks
+the same as a workflow that was never configured.
+
+Set the token as a repository secret, the same way the provider credential is set:
+
+```bash
+gh aw secrets set LOGFIRE_TOKEN --value "<write-token>"
+```
+
+Use `logfire-eu.pydantic.dev` for a project in the EU region: the host has to match the
+region the token belongs to. Logfire's OTLP ingest takes the token bare, with no `Bearer`
+prefix, which is the form gh-aw documents for `Authorization` headers generally.
+
+**The telemetry credential does reach the agent.** The model credential does not: it stays
+in gh-aw's api-proxy on the other side of the sandbox boundary, which is why there is no
+`PAI_API_KEY` (see [Credentials](#credentials)). The OTLP header is different. gh-aw
+delivers it to the agent process as `OTEL_EXPORTER_OTLP_HEADERS`, because that is how the
+SDKs running inside the sandbox are meant to reach the backend. Use a write token, which
+cannot read data back out of the project.
+
+### What the engine does with it
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` is gh-aw's signal that observability is configured, and it is
+what the engine keys on. When it is set, and only then:
+
+- **`logfire` is installed** alongside the CLI, so a workflow without observability pays
+  nothing for it.
+- **The launcher configures and instruments** before it imports your agent, so an agent that
+  starts work at import time is already traced. `send_to_logfire` is `'if-token-present'`
+  and the console exporter is off: the spans go to the endpoint the workflow configured,
+  not to a Logfire project of the engine's choosing, and not into the step log, where they
+  would also reach the log parser.
+- **A `LOGFIRE_TOKEN` in the agent's environment adds a destination rather than replacing
+  one.** `'if-token-present'` means spans go to that project as well as to the OTLP endpoint
+  above, prompts and completions included. gh-aw keeps `${{ secrets.* }}` values out of the
+  agent's environment when they come from `engine.env`, so this happens only when a workflow
+  puts a token in its own `env:` or a `steps:` block, which is the explicit way to ask for
+  it. Leave the token out and the workflow's endpoint is the only place anything goes.
+- **Configuration and credentials stay outside the checkout.** The launcher passes explicit
+  `config_dir` and `data_dir` values pointing to a mode-0700 temporary directory under `/tmp`,
+  even if `TMPDIR` points into the checkout. Checkout `pyproject.toml` settings and
+  `.logfire/logfire_credentials.json` cannot select a telemetry destination. These arguments
+  also override `LOGFIRE_CONFIG_DIR` and `LOGFIRE_CREDENTIALS_DIR`, without disabling an
+  environment `LOGFIRE_TOKEN`. The directory lives through the process and is removed at
+  interpreter shutdown, after exporter shutdown handlers run.
+- **The trace context is attached.** gh-aw publishes the run's W3C trace context in
+  `TRACEPARENT` so that an engine can nest its spans under the workflow span, but neither
+  Logfire nor the OpenTelemetry SDK reads that variable on its own. Attaching it is what
+  keeps the agent's spans in the workflow's trace instead of a second, unrelated one.
+- **Traces are the only signal sent.** An OTLP endpoint covers metrics and logs as well, and
+  a backend that accepts traces alone answers `404` to those, once per export, in the step
+  log. The engine therefore defaults `OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER` to
+  `none`. Set either in the workflow to turn that signal back on for a backend that takes
+  it; token counts are on the spans either way.
+
+The configuration line the engine prints gains an `otlp=` segment, carrying the endpoint's
+origin and no more, because userinfo and query parameters in an endpoint are credentials and
+a run log is readable by anyone who can read the repository. It is there so that a run log
+says whether telemetry was on, and roughly where it went:
+
+```text
+[pydantic-ai] provider=openai model=gpt-5 baseUrl=http://api-proxy:10000/v1 agent=my_agent:agent otlp=https://logfire-us.pydantic.dev
+```
+
+Pydantic AI's spans are exported straight to the backend and are not mirrored into the
+`otel.jsonl` file that `gh aw logs --artifacts agent` downloads; that file carries the spans
+gh-aw's own JavaScript helpers emit.
+
+### Finding the runs
+
+gh-aw puts the run's identity in `OTEL_RESOURCE_ATTRIBUTES` and `logfire.configure()` merges
+that into the resource, so every span carries it without the engine adding any attributes of
+its own:
+
+| Attribute | Value |
+|---|---|
+| `gh-aw.engine.id` | `pydantic-ai` |
+| `gh-aw.workflow.name` | The workflow's name |
+| `gh-aw.repository` | `owner/name` |
+| `gh-aw.run.id`, `github.run_id` | The Actions run id |
+
+`gh-aw.engine.id = 'pydantic-ai'` is the filter for every run of this engine across every
+repository reporting to one backend, and `gh-aw.run.id` joins a trace back to its Actions
+run.
+
+### Any OpenTelemetry backend
+
+Nothing above is specific to Logfire beyond the host and the header. `observability.otlp`
+takes any endpoint that accepts OTLP over HTTP, and gh-aw's
+[OpenTelemetry reference](https://github.github.com/gh-aw/reference/open-telemetry/)
+documents a Sentry setup as well as Google Cloud Telemetry through Workload Identity
+Federation in place of a static header. Swap the `url`, the `headers` and the host on the
+allowlist; the rest of this section is unchanged.
+
+### Configuring it from your own agent
+
+A `PAI_AGENT` module that calls `logfire.configure()` itself runs after the engine's call and
+replaces it, which is how to set a service name, scrubbing rules or extra span processors.
+It replaces the whole configuration, not the arguments you restate, so carry over the ones
+above that are load-bearing:
+
+```python
+import atexit
+import tempfile
+
+logfire_dir = tempfile.TemporaryDirectory(prefix='gh-aw-logfire-', dir='/tmp')
+atexit.register(logfire_dir.cleanup)
+
+import logfire
+
+logfire.configure(
+    send_to_logfire='if-token-present',
+    console=False,
+    distributed_tracing=True,
+    config_dir=logfire_dir.name,
+    data_dir=logfire_dir.name,
+)
+logfire.instrument_pydantic_ai()
+```
+
+Things to know before you do:
+
+- **Keep both directories private for the process lifetime.** Omitting `config_dir` or
+  `data_dir` re-enables checkout configuration or credentials. Register cleanup before
+  configuring Logfire so exporter shutdown handlers run first.
+- **`console=False` is not optional.** Leaving it out restores logfire's console exporter,
+  which writes every span to stderr, which is the stream the engine's log parser reads.
+- **`distributed_tracing=True` keeps you in the run's trace.** The engine has already
+  attached the context from `TRACEPARENT` by the time your module is imported, and that
+  attachment survives, but without the flag logfire warns about it on every run.
+- **A bare `logfire.configure()` fails here.** Its `send_to_logfire` default requires a
+  `LOGFIRE_TOKEN` in the environment, and the token in the frontmatter above is a header
+  value rather than an environment variable. Pass `send_to_logfire='if-token-present'`, as
+  the engine does.
+- **`logfire` is only installed when an endpoint is configured.** A module that imports it
+  unconditionally needs it in the workflow's own `steps:` install as well, or the agent
+  fails to import on a run with observability off.
 
 ## Troubleshooting
 
