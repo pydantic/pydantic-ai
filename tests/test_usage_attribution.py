@@ -31,11 +31,11 @@ MARKER = '# usage-attribution: '
 OWNERS = {Path('usage.py'), Path('_usage_attribution.py')}
 
 
-def test_no_bare_run_usage_mutation_outside_the_recorder() -> None:
-    """Every increment of a live run's usage must go through `_usage_attribution`."""
+def find_bare_mutations(root: Path) -> list[str]:
+    """Return `path:line: source` for each unmarked in-place usage mutation under `root`."""
     offenders: list[str] = []
-    for path in sorted(PACKAGE_ROOT.rglob('*.py')):
-        relative = path.relative_to(PACKAGE_ROOT)
+    for path in sorted(root.rglob('*.py')):
+        relative = path.relative_to(root)
         if relative in OWNERS:
             continue
         lines = path.read_text().splitlines()
@@ -44,13 +44,35 @@ def test_no_bare_run_usage_mutation_outside_the_recorder() -> None:
             preceding = lines[number - 2] if number > 1 else ''
             if BARE_MUTATION.search(line) and MARKER not in line and MARKER not in preceding:
                 offenders.append(f'{relative}:{number}: {line.strip()}')
+    return offenders
 
-    assert offenders == [], (
+
+def test_no_bare_run_usage_mutation_outside_the_recorder() -> None:
+    """Every increment of a live run's usage must go through `_usage_attribution`."""
+    assert find_bare_mutations(PACKAGE_ROOT) == [], (
         "Increment a run's usage through `_usage_attribution.record_*` so it is also credited to "
         'the agent runs containing it; a bare increment leaves the tokens off every containing '
         f"span. If the target is not a live run's usage, say so with `{MARKER}<reason>` on the "
-        'line. Offending lines:\n' + '\n'.join(offenders)
+        'line. Offending lines:\n' + '\n'.join(find_bare_mutations(PACKAGE_ROOT))
     )
+
+
+@pytest.mark.parametrize(
+    'source,expected',
+    [
+        ('usage.requests += 1', ['probe.py:1: usage.requests += 1']),
+        ('usage.tool_calls += 1', ['probe.py:1: usage.tool_calls += 1']),
+        ('usage.incr(response.usage)', ['probe.py:1: usage.incr(response.usage)']),
+        (f'usage.requests += 1  {MARKER}a copy, for a check only', []),
+        (f'{MARKER}a copy, for a check only\nusage.requests += 1', []),
+        ('usage.requests = 1', []),
+    ],
+    ids=['requests', 'tool_calls', 'incr', 'marked-inline', 'marked-above', 'not-in-place'],
+)
+def test_the_guard_catches_what_it_claims_to(tmp_path: Path, source: str, expected: list[str]) -> None:
+    """The guard is only worth having if it fires, so prove it does before trusting a clean run."""
+    (tmp_path / 'probe.py').write_text(source + '\n')
+    assert find_bare_mutations(tmp_path) == expected
 
 
 def _record_usage(usage: RunUsage) -> None:
