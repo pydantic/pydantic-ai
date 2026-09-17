@@ -879,7 +879,7 @@ class RealtimeSession:
         ) is not None:
             # The reply this span covers is being torn down by a failure; record it now, before the
             # settlement below finalizes the interrupted response and ends the span cleanly.
-            SessionInstrumentation.record_error(chat_span, early_error)
+            self._session_instrumentation.record_error(chat_span, early_error)
         self._flush_pending_users()
         if (
             self._pending_response_usage != RequestUsage()
