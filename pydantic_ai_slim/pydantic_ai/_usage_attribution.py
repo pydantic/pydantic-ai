@@ -26,11 +26,16 @@ from contextvars import ContextVar
 
 from .usage import RequestUsage, RunUsage
 
-__all__ = ('accumulate', 'credit_applied', 'record_request', 'record_tool_call', 'record_usage')
+__all__ = ('accumulate', 'credit_applied', 'record_request', 'record_tool_call', 'record_usage', 'watch')
 
 _active: ContextVar[tuple[RunUsage, ...]] = ContextVar['tuple[RunUsage, ...]'](
     'pydantic_ai.usage_attribution', default=()
 )
+
+# Mirrors keyed by the object recorded into, not by the recording task: a run sharing its usage with
+# a concurrent delegate sees that delegate's records land on the same object from another task, and
+# a caller asking "what was recorded into this object" means all of it. See `watch`.
+_mirrors: list[tuple[RunUsage, RunUsage]] = []
 
 
 @contextmanager
@@ -43,9 +48,33 @@ def accumulate(run_usage: RunUsage) -> Generator[None]:
         _active.reset(token)
 
 
+@contextmanager
+def watch(target: RunUsage) -> Generator[RunUsage]:
+    """Mirror everything recorded into `target` while the block runs.
+
+    Unlike [`accumulate`][], this follows the *object* rather than the task, so it also sees what a
+    concurrently running sibling records into the same shared `RunUsage`. That is what makes the
+    difference from the object's own delta the part nothing recorded — a direct mutation.
+    """
+    mirror = RunUsage()
+    entry = (target, mirror)
+    _mirrors.append(entry)
+    try:
+        yield mirror
+    finally:
+        _mirrors.remove(entry)
+
+
+def _mirror(usage: RunUsage, recorded: RunUsage | RequestUsage) -> None:
+    for target, mirror in _mirrors:
+        if target is usage:
+            mirror.incr(recorded)
+
+
 def record_request(usage: RunUsage) -> None:
     """Count one model request against this run's usage and every run containing it."""
     usage.requests += 1
+    _mirror(usage, RunUsage(requests=1))
     for run_usage in _active.get():
         run_usage.requests += 1
 
@@ -53,6 +82,7 @@ def record_request(usage: RunUsage) -> None:
 def record_tool_call(usage: RunUsage) -> None:
     """Count one successful tool call against this run's usage and every run containing it."""
     usage.tool_calls += 1
+    _mirror(usage, RunUsage(tool_calls=1))
     for run_usage in _active.get():
         run_usage.tool_calls += 1
 
@@ -76,5 +106,6 @@ def record_usage(usage: RunUsage, recorded: RunUsage | RequestUsage) -> None:
     accumulated across the boundary — which carries its own requests and tool calls.
     """
     usage.incr(recorded)
+    _mirror(usage, recorded)
     for run_usage in _active.get():
         run_usage.incr(recorded)

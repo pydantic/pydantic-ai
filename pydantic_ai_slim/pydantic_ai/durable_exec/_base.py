@@ -51,7 +51,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.usage import RunUsage
 
 from .. import _usage_attribution
 from ._capability_operation import (
@@ -481,11 +480,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError('Durable capability operations require a non-realtime `Model` on `RunContext`.')
         model_id = ctx.model_id if ctx.model_id is not None else self._find_model_id(cast('Model[Any]', model))
         usage_before = copy.copy(ctx.usage)
-        # Whatever the operation records the ordinary way — a nested agent run started from it, for
-        # one — already reaches the spans containing this run, so it has to be excluded from the
-        # direct mutation credited below rather than counted twice.
-        recorded = RunUsage()
-        with _usage_attribution.accumulate(recorded):
+        # Whatever is recorded into `ctx.usage` the ordinary way — by a nested agent run started
+        # from this operation, or by a sibling sharing the object — already reaches the spans
+        # containing this run, so it has to come off the delta below rather than be counted twice.
+        with _usage_attribution.watch(ctx.usage) as recorded:
             result = cast(
                 CapabilityOperationResult[Any],
                 await self._bound_capability_operations[key](
@@ -509,9 +507,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             # boundary, where the activity's context can't reach the spans open back here.
             _usage_attribution.record_usage(ctx.usage, result.usage_delta)
         else:
-            # Executed in process, so it added to `ctx.usage` itself. Only the part it did not
-            # record is missing from the spans containing this run; crediting `applied` whole would
-            # count a nested run's usage twice, once through its own records and once here.
+            # Executed in process, so it added to `ctx.usage` itself. Only the part nothing
+            # recorded is missing from the spans containing this run; crediting `applied` whole
+            # would count a nested or concurrent run's usage twice, once through its own records
+            # and once here.
             _usage_attribution.credit_applied(applied - recorded)
         return value
 

@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
@@ -48,16 +49,24 @@ from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    CapabilityEvent,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
     StreamedResponse,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
@@ -1190,6 +1199,75 @@ async def test_operation_usage_reaches_the_run_span_whether_executed_or_replayed
     # Tokens as well as details: the operation starts a nested agent run that records its own usage
     # the ordinary way, so crediting the whole `ctx.usage` delta on top would count it twice.
     assert reported == snapshot([(102, 3, 7), (102, 3, 7)])
+
+
+class DirectlyMutatingOperation(AbstractCapability[Any]):
+    """A durable operation that adds to `ctx.usage` itself, slowly enough to overlap a sibling."""
+
+    id = 'directly_mutating_operation'
+
+    @durable_operation('mutate')
+    async def mutate(self, ctx: RunContext[Any], delay: float) -> None:
+        await anyio.sleep(delay)
+        ctx.usage.details['op_units'] = (
+            ctx.usage.details.get('op_units', 0) + 1
+        )  # usage-attribution: the case under test
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_operation_usage_excludes_what_a_concurrent_sibling_recorded(capfire: CaptureLogfire) -> None:
+    """A sibling's usage recorded during an operation's window is not credited to the run twice.
+
+    The operation adds to `ctx.usage` directly, so the difference between the object's delta and
+    what was recorded into it is what the containing spans still need. A delegate running in a
+    sibling tool records into that same object from another task, so measuring "what was recorded"
+    per task rather than per object would leave the delegate's tokens in that difference and credit
+    them a second time.
+    """
+    operation = DirectlyMutatingOperation()
+
+    delegate = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('d')], usage=RequestUsage(input_tokens=10))),
+        name='delegate',
+    )
+
+    def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=1000)
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('slow', {}, tool_call_id='1'), ToolCallPart('delegating', {}, tool_call_id='2')],
+                usage=usage,
+            )
+        return ModelResponse(parts=[TextPart('done')], usage=usage)
+
+    agent = Agent(
+        FunctionModel(parent_fn),
+        name='parent',
+        capabilities=[operation, RecordingDurability(), Instrumentation()],
+    )
+
+    @agent.tool
+    async def slow(ctx: RunContext[Any]) -> str:
+        await operation.mutate(ctx, 0.1)
+        return 'slow'
+
+    @agent.tool
+    async def delegating(ctx: RunContext[Any]) -> str:
+        return (await delegate.run('x', usage=ctx.usage)).output
+
+    result = await agent.run('go')
+
+    reported = [
+        span['attributes'].get('gen_ai.aggregated_usage.input_tokens')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+        and span['attributes'].get('gen_ai.agent.name') == 'parent'
+    ]
+    # The run's span reports its subtree, which is exactly what the run accumulated: two parent
+    # requests and the delegate's one. The delegate overlaps the operation, so crediting the
+    # operation's whole `ctx.usage` delta would report 2020 here.
+    assert reported == snapshot([2010])
+    assert result.usage.input_tokens == snapshot(2010)
 
 
 @dataclass(kw_only=True)
