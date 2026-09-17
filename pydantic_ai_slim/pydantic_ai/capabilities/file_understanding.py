@@ -63,10 +63,10 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     fallback_model: Model | KnownModelName | str
     """The model that describes the files, with its provider: `'openai:gpt-5.6-sol'`, or a `Model`."""
 
+    _: KW_ONLY
+
     instructions: str | None = None
     """What to write about each file. The default asks for a description someone who cannot see the file could answer questions from."""
-
-    _: KW_ONLY
 
     id: str | None = 'file_understanding'
     """One-off: an agent describes files one way, so the id is fixed by default.
