@@ -1324,6 +1324,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             )
         return tools
 
+    async def get_tool_for_tool_def(
+        self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]
+    ) -> ToolsetTool[AgentDepsT]:
+        # An MCP tool is fully described by its definition, so there is nothing to ask the server for.
+        return self.tool_for_tool_def(tool_def, ctx=ctx)
+
     def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
         """Build the tool to call for a tool definition that was already prepared elsewhere.
 

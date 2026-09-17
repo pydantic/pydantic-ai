@@ -7,6 +7,7 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
@@ -62,6 +63,7 @@ from pydantic_ai.durable_exec._toolset import (
     DurableMCPToolset,
     DynamicToolInfo,
     DynamicToolsResult,
+    RunResolvedToolset,
     ToolConfig,
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
@@ -76,7 +78,7 @@ from pydantic_ai.durable_exec._toolset import (
 )
 from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, RetryPromptPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1487,3 +1489,219 @@ async def test_args_validator_disappearing_after_discovery_is_rejected() -> None
 
     with pytest.raises(UserError, match="Tool 'changed' has no `args_validator`"):
         await run_args_validator(tool, {}, ctx)
+
+
+def _counting_mcp_server() -> tuple[Any, dict[str, int]]:
+    """An in-process MCP server that counts the protocol methods a run actually reaches it with."""
+    pytest.importorskip('mcp')
+    from fastmcp import FastMCP
+    from fastmcp.server.middleware import Middleware, MiddlewareContext
+
+    counts: dict[str, int] = {}
+    server: FastMCP[None] = FastMCP('run_resolved')
+
+    @server.tool
+    def echo(text: str) -> str:
+        return f'echo: {text}'
+
+    class Counter(Middleware):
+        async def on_message(self, context: MiddlewareContext[Any], call_next: Any) -> Any:
+            method = context.method or '<unknown>'
+            counts[method] = counts.get(method, 0) + 1
+            return await call_next(context)
+
+    server.add_middleware(Counter())
+    return server, counts
+
+
+def _two_tool_calls_model() -> FunctionModel:
+    step = 0
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal step
+        step += 1
+        if step <= 2:
+            return ModelResponse(parts=[ToolCallPart('echo', {'text': f'hi {step}'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(model)
+
+
+async def _run_dynamic_mcp_agent(*, per_run_step: bool) -> tuple[dict[str, int], int]:
+    from pydantic_ai.mcp import MCPToolset
+
+    server, counts = _counting_mcp_server()
+    resolutions = 0
+
+    def factory(ctx: RunContext[None]) -> MCPToolset[None]:
+        nonlocal resolutions
+        resolutions += 1
+        return MCPToolset(server, id='inner-mcp')
+
+    durability = JournalDurability(name='agent')
+    durable = durability._build_dynamic_toolset(  # pyright: ignore[reportPrivateUsage]
+        DynamicToolset(factory, id='dynamic', per_run_step=per_run_step)
+    )
+    result = await Agent(_two_tool_calls_model(), toolsets=[durable]).run('go')
+    assert result.output == 'done'
+    return counts, resolutions
+
+
+async def test_run_resolved_dynamic_toolset_is_entered_once_per_run() -> None:
+    """A `per_run_step=False` dynamic toolset costs one MCP session for the whole durable run.
+
+    The run resolves the toolset once — resolving does no I/O — and the first durable unit that
+    needs it enters it and leaves it entered, so the toolset's own `cache_tools` serves every later
+    unit. Before, every unit built, entered and tore down its own toolset, so three model requests
+    and two tool calls cost five `initialize`/`tools/list` round trips instead of one: see
+    https://github.com/pydantic/pydantic-ai/issues/8054. This is what a non-durable run has always
+    done, and what an `MCPToolset` attached directly to the agent does.
+    """
+    counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=False)
+
+    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert resolutions == snapshot(1)
+
+
+async def test_per_run_step_dynamic_toolset_still_resolves_per_unit() -> None:
+    """A `per_run_step=True` factory keeps resolving inside each durable unit.
+
+    Its `for_run_step` swaps the inner toolset in place, so a run-resolved instance shared by
+    parallel tool-call units would race. The factory asked to be re-evaluated per step, so the
+    per-unit resolution that has always happened is also what it asked for.
+    """
+    counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=True)
+
+    assert counts == snapshot({'initialize': 5, 'tools/list': 5, 'tools/call': 2})
+    assert resolutions == snapshot(5)
+
+
+async def test_dynamic_unit_resolves_its_own_toolset_when_the_run_context_cannot_carry_one() -> None:
+    """A unit that can't reach the run's resolved toolset resolves its own, as it always did.
+
+    A resolved toolset is a live object, so an engine that serializes the run context into the unit
+    (Temporal) or dispatches it to another process never receives one. `get_dynamic_tools` and
+    `call_dynamic_tool` are what those engines call, so they must stand alone given a bare context.
+    """
+    from pydantic_ai.mcp import MCPToolset
+
+    server, counts = _counting_mcp_server()
+    resolutions = 0
+
+    def factory(ctx: RunContext[None]) -> MCPToolset[None]:
+        nonlocal resolutions
+        resolutions += 1
+        return MCPToolset(server, id='inner-mcp')
+
+    dynamic = DynamicToolset(factory, id='dynamic', per_run_step=False)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    assert ctx._run_resolved_toolsets is None  # pyright: ignore[reportPrivateUsage]
+
+    discovered = await get_dynamic_tools(dynamic, ctx)
+    tool_def = discovered.tools['echo'].tool_def
+    assert await call_dynamic_tool(dynamic, 'echo', {'text': 'hi'}, ctx, tool_def=tool_def) == snapshot('echo: hi')
+
+    # Each call stands on its own: it built, entered and tore down its own toolset.
+    assert resolutions == snapshot(2)
+    assert counts == snapshot({'initialize': 2, 'tools/list': 2, 'tools/call': 1})
+
+
+async def test_run_resolved_toolset_closes_only_what_a_unit_entered() -> None:
+    """The run closes the toolset it holds, and only if some durable unit actually entered it.
+
+    A run can end without any unit needing the toolset — cancelled, short-circuited, or failed
+    before discovery — and resolving it never connected, so there is nothing to exit.
+    """
+    exits = 0
+
+    class RecordingToolset(FunctionToolset[None]):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            nonlocal exits
+            exits += 1
+            return await super().__aexit__(*args)
+
+    never_entered = RunResolvedToolset('dynamic', RecordingToolset())
+    await never_entered.aclose(None, None, None)
+    assert exits == 0
+
+    entered = RunResolvedToolset('dynamic', RecordingToolset())
+    toolset = await entered.entered()
+    # Entering again is the second unit reusing what the first one opened, not a second session.
+    assert await entered.entered() is toolset
+    await entered.aclose(None, None, None)
+    assert exits == 1
+
+    # Closing twice is not an error: the run holds the only reference and closes once.
+    await entered.aclose(None, None, None)
+    assert exits == 1
+
+
+async def test_parallel_tool_call_units_share_one_session() -> None:
+    """Tool-call units running in parallel enter the run's toolset once between them.
+
+    Each unit asks the run for the toolset it resolved, so without a gate they would race to open a
+    session and the loser's would never be closed.
+    """
+    from pydantic_ai.mcp import MCPToolset
+
+    server, counts = _counting_mcp_server()
+    resolutions = 0
+
+    def factory(ctx: RunContext[None]) -> MCPToolset[None]:
+        nonlocal resolutions
+        resolutions += 1
+        return MCPToolset(server, id='inner-mcp')
+
+    step = 0
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal step
+        step += 1
+        if step == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('echo', {'text': 'a'}), ToolCallPart('echo', {'text': 'b'})],
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    durability = JournalDurability(name='agent')
+    durable = durability._build_dynamic_toolset(  # pyright: ignore[reportPrivateUsage]
+        DynamicToolset(factory, id='dynamic', per_run_step=False)
+    )
+    result = await Agent(FunctionModel(model), toolsets=[durable]).run('go')
+
+    assert result.output == 'done'
+    assert resolutions == snapshot(1)
+    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+
+
+async def test_closing_the_wrapper_passes_on_how_it_was_exited() -> None:
+    """Closing the run's toolset forwards the wrapper's own `__aexit__` arguments.
+
+    The units that used the toolset each returned long ago, so how the wrapper was exited is the
+    only thing left that can tell a toolset whether to roll back or commit what it did. (An agent
+    run exits its toolsets cleanly even when the run raises — a directly attached `MCPToolset` sees
+    the same `None` — so this is the context-manager contract, not the run's error path.)
+    """
+    exits: list[type[BaseException] | None] = []
+
+    class RecordingToolset(FunctionToolset[None]):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            exits.append(args[0] if args else None)
+            return await super().__aexit__(*args)
+
+    async def echo(text: str) -> str: ...  # pragma: no cover
+
+    durability = JournalDurability(name='agent')
+    durable = durability._build_dynamic_toolset(  # pyright: ignore[reportPrivateUsage]
+        DynamicToolset(lambda _: RecordingToolset([echo]), id='dynamic', per_run_step=False)
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    run_toolset = await durable.for_run(ctx)
+    async with run_toolset:
+        # Discovery is what enters the resolved toolset, so there is something left to close.
+        await run_toolset.get_tools(ctx)
+        assert exits == []
+        error = RuntimeError('run blew up')
+        assert await run_toolset.__aexit__(type(error), error, error.__traceback__) is None
+
+    assert exits == snapshot([RuntimeError])
