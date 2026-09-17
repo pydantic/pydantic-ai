@@ -4159,11 +4159,34 @@ async def test_unconsumed_session_queue_bounds_structural_events() -> None:
         assert session._queue_dropped_structural == turns * 5 - 512  # pyright: ignore[reportPrivateUsage]
         # The window that survives is the most recent one, and it still ends on a turn boundary.
         assert isinstance(structural[-1], RealtimeTurnCompleteEvent)
-        # No delta is orphaned: the structural window spans far more turns than the delta window,
-        # so the part start every surviving delta belongs to is still queued ahead of it. This is why
-        # the two bounds can be the same number.
+        # No delta is orphaned; `test_unconsumed_session_queue_never_orphans_a_delta` covers the
+        # densities where that takes evicting a part whole.
         started = {event.index for event in structural if isinstance(event, PartStartEvent)}
         assert {event.index for event in queued if isinstance(event, PartDeltaEvent)} <= started
+
+
+@pytest.mark.parametrize('frames_per_turn', [1, 2, 5, 50])
+async def test_unconsumed_session_queue_never_orphans_a_delta(frames_per_turn: int) -> None:
+    """Evicting a part start takes the rest of that part with it, at every audio-frame density.
+
+    A turn with few audio frames reaches the structural cap long before the delta cap, so the part
+    starts go while their deltas stay — which would leave a late iterator deltas it cannot attach to
+    anything. Parametrized because the defect is invisible at the frame counts a real voice turn has.
+    """
+    events: list[RealtimeCodecEvent] = []
+    for index in range(200):
+        events.append(RealtimeInputSpeechStartEvent())
+        events.extend(AudioDelta((index * 1000 + frame).to_bytes(4, 'big')) for frame in range(frames_per_turn))
+        events.append(RealtimeInputSpeechEndEvent())
+        events.append(ResponseDone())
+
+    async with RealtimeSession(FakeRealtimeConnection(events)) as session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+        queued = _queued_realtime_events(session)
+        started = {event.index for event in queued if isinstance(event, PartStartEvent)}
+        assert {event.index for event in queued if isinstance(event, PartDeltaEvent)} <= started
+        assert {event.index for event in queued if isinstance(event, PartEndEvent)} <= started
 
 
 async def test_unconsumed_session_queue_keeps_exceptions_under_structural_pressure() -> None:

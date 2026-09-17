@@ -76,10 +76,9 @@ iterator; [`closed`][pydantic_ai.realtime.RealtimeSession.closed] reports the st
 
 If nothing is iterating the session, the session keeps the most recent 512 part delta events
 (audio, transcript, and text) and the most recent 512 structural events for a late `async for`;
-older ones are discarded. Because a turn produces a handful of structural events against one delta
-per audio frame, the structural window spans far more of the conversation than the delta one, so a
-retained delta always still has its part start. A failure parked for the consumer is never
-discarded.
+older ones are discarded. Discarding a part's start discards the rest of that part with it, so a late
+iterator never receives a delta it cannot attach to a part. A failure parked for the consumer is
+never discarded.
 
 ### Live captions
 

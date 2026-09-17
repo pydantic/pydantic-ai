@@ -1008,14 +1008,34 @@ class RealtimeSession:
             self._queue_delta_count -= 1
             self._queue_dropped_deltas += 1
         while self._queue_structural_count > _SESSION_STRUCTURAL_QUEUE_SIZE:
-            oldest = next(
-                index
-                for index, queued in enumerate(self._queue)
+            position = next(
+                position
+                for position, queued in enumerate(self._queue)
                 if not isinstance(queued, PartDeltaEvent) and self._is_structural(queued)
             )
-            del self._queue[oldest]
+            evicted = self._queue[position]
+            del self._queue[position]
             self._queue_structural_count -= 1
             self._queue_dropped_structural += 1
+            if isinstance(evicted, PartStartEvent):
+                # A part's start always precedes its deltas and its end, so this is the whole part
+                # going: drop the rest of it rather than leave deltas a reader cannot attach to
+                # anything. Part indexes are unique for the life of the session (`_next_part_index`
+                # only ever increments), so this cannot reach a later part that reused the number.
+                self._drop_queued_part(evicted.index)
+
+    def _drop_queued_part(self, index: int) -> None:
+        for position in reversed(range(len(self._queue))):
+            queued = self._queue[position]
+            if not isinstance(queued, (PartDeltaEvent, PartEndEvent)) or queued.index != index:
+                continue
+            del self._queue[position]
+            if isinstance(queued, PartDeltaEvent):
+                self._queue_delta_count -= 1
+                self._queue_dropped_deltas += 1
+            else:
+                self._queue_structural_count -= 1
+                self._queue_dropped_structural += 1
 
     def _queue_get_nowait(self) -> RealtimeEvent | object:
         item = self._queue.popleft()
