@@ -19,7 +19,7 @@ from pydantic_ai.providers.openai_codex import (
 from rich.console import Console
 
 from . import theme
-from .credential_store import load_codex_credentials, save_codex_credentials
+from .credential_store import credentials_path, load_codex_credentials, save_codex_credentials
 
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
@@ -104,6 +104,9 @@ class CodexAuth:
         finally:
             browser.cancel()
             await asyncio.gather(browser, return_exceptions=True)
+        # A keyring save removes the file, so its presence means the fallback was used.
+        if (path := credentials_path()).exists():
+            return f'Codex connected. No OS keyring is available, so credentials are saved in plaintext at {path}.'
         return 'Codex connected. Credentials saved in the OS credential store.'
 
     async def _receive(self, flow: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
