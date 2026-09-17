@@ -943,8 +943,11 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
-          # The canary runs on tag refs only, and `docs-only` runs only for Markdown-only PRs.
+          # The canary is advisory because it tests dependency versions we do not lock; its failures
+          # signal upstream drift rather than release blockers. It runs on tag refs only, and
+          # `docs-only` runs only for Markdown-only PRs.
           # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
+          allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
               needs.classify.outputs.docs_only == 'true'
