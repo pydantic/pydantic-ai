@@ -35,6 +35,7 @@ from .project_settings import ProjectSettings
 from .set_menu import open_settings_menu
 from .settings_store import SettingsStore
 from .status import Status, StatusLine
+from .usage_report import cost_line, session_usage, usage_command
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -143,6 +144,20 @@ async def chat(
             name='new',
             description='Clear conversation history',
             handler=lambda _: session.clear() or 'Conversation cleared.',
+        )
+    )
+    commands.register(
+        Command(
+            name='usage',
+            description='Show tokens and cost per turn',
+            handler=lambda _: usage_command(session.messages, console=console),
+        )
+    )
+    commands.register(
+        Command(
+            name='cost',
+            description='Show retained history cost and tokens',
+            handler=lambda _: cost_line(session_usage(session.messages)),
         )
     )
     commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
@@ -323,6 +338,7 @@ def _reset_status(command: str, status: Status) -> None:
         status.context_tokens = None
         status.context_alert = False
         status.output_tokens = None
+        status.cost = None
         status.streamed_chars = 0
 
 
@@ -388,5 +404,6 @@ async def _run_prompt(
         return TurnEnd(text=text, outcome='failed', error=exc)
     finally:
         status.activity = 'ready'
+        status.cost = session_usage(session.messages).total.cost
         session.on_context_usage = None
         await renderer.finish()

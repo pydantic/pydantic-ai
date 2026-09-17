@@ -3,6 +3,7 @@
 import asyncio
 import io
 import re
+from decimal import Decimal
 
 import pytest
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
@@ -36,6 +37,11 @@ def test_toolbar_paints_the_context_figure_on_alert() -> None:
     assert status.toolbar() == [('', 'm | context: '), (WARNING, '90'), ('', ' tokens | ~0 streamed tokens | ready')]
     status.context_alert = False
     assert status.toolbar()[1] == ('', '90')
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
+    status.cost = Decimal('0.0123')
+    status.context_alert = True
+    assert status.toolbar()[1] == (WARNING, '90')
+    assert '$0.0123' in status.toolbar()[2][1]
     assert ''.join(text for _, text in status.toolbar()) == status.text()
 
 

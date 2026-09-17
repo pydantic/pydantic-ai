@@ -179,6 +179,8 @@ the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
 | `model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
 | `commands.py` | `Command`, the registry, completion |
+| `usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
+| `status.py` | the footer `Status` fields and the `StatusLine` row painter |
 | `config.py` | `Settings`, `PluginSettings` |
 | `settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
 | `project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
