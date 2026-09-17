@@ -29,7 +29,6 @@ engine:
   version: "0.31.0"
   display-name: Pydantic AI
   description: Pydantic AI CLI (pai) running the pydantic-ai-harness coder agent with MCP tool support
-  experimental: true
   mcp: true
   provider:
     name: github
