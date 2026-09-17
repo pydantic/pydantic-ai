@@ -10,10 +10,11 @@ from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from rich.console import Console
 
-from . import theme
+from . import openrouter, theme
 from ._branding import print_banner
 from ._completion_adapter import COMPLETION_STYLE, PromptCompleter
 from ._rendering import StreamRenderer
@@ -74,7 +75,13 @@ async def chat(
     session = Session(agent, deps=deps, plugins=plugins, usage_limits=usage_limits)
     session.model = settings.model
     auth = CodexAuth(console)
-    session.resolve_model = lambda name: auth.model(name) if name.startswith('openai-codex:') else name
+
+    async def resolve_model(name: str) -> Model | str:
+        if name.startswith('openrouter:'):
+            return await asyncio.to_thread(openrouter.model, name)
+        return auth.model(name) if name.startswith('openai-codex:') else name
+
+    session.resolve_model = resolve_model
     if session.model is None and agent.model is None:
         console.print('Choose a model with /set model <Tab>.', style=theme.INFO)
 

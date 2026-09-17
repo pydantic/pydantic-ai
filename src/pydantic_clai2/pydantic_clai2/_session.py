@@ -35,7 +35,7 @@ class Session(Generic[DepsT, OutputT]):
     ) -> None:
         self.model: str | None = None
         self.model_settings: ModelSettings | None = None
-        self.resolve_model: Callable[[str], Model | str] = lambda name: name
+        self.resolve_model: Callable[[str], Model | str | Awaitable[Model | str]] = lambda name: name
         self.agent = agent
         self.deps = deps
         self.plugins: Sequence[AgentCapability[DepsT]] = tuple(plugins)
@@ -62,12 +62,15 @@ class Session(Generic[DepsT, OutputT]):
             raise RuntimeError('A conversation can only run one prompt at a time')
         self._running = True
         try:
+            model = self.resolve_model(self.model) if self.model is not None else None
+            if isinstance(model, Awaitable):
+                model = await model
             with capture_run_messages() as messages:
                 try:
                     result = await self.agent.run(
                         text,
                         deps=self.deps,
-                        model=self.resolve_model(self.model) if self.model is not None else None,
+                        model=model,
                         model_settings=self.model_settings,
                         message_history=self._messages,
                         capabilities=self.plugins,

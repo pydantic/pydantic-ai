@@ -8,6 +8,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
+from . import openrouter
 from ._rendering import markdown_style
 from .command_context import CommandContext
 from .field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow, shown
@@ -174,7 +175,7 @@ class ModelMenu:
 
     def providers(self) -> list[str]:
         """Unique provider prefixes from the merged catalog."""
-        return sorted({model.name.partition(':')[0] for model in self.models})
+        return sorted({model.name.partition(':')[0] for model in self.models} | {'openrouter'})
 
     def build_providers(self) -> Menu:
         """Choose a provider before browsing its models."""
@@ -204,13 +205,15 @@ def _tokens(count: int | None) -> str:
     return f'{count:,} tokens' if count is not None else ''
 
 
-def run_model_flow(menu: ModelMenu, runners: Runners = TERMINAL) -> list[str]:
+def run_model_flow(menu: ModelMenu, runners: Runners = TERMINAL, *, connect_provider: bool = False) -> list[str]:
     """Show the list; Enter picks and closes, `Ctrl+S` edits settings and returns to the list."""
     messages: list[str] = []
     while True:
         selection = runners.run_list(menu.build_providers())
         if selection.cancelled or selection.item is None or not isinstance(selection.item.value, str):
             return messages
+        if selection.item.value == 'openrouter' and connect_provider:
+            raise _ConnectProvider(messages)
         provider_menu = menu.for_provider(selection.item.value)
         if _run_provider(provider_menu, runners, messages):
             return messages
@@ -234,5 +237,26 @@ def _run_provider(menu: ModelMenu, runners: Runners, messages: list[str]) -> boo
 
 async def open_model_menu(context: CommandContext, *, run: Callable[[ModelMenu], list[str]] | None = None) -> str:
     """Show the menu in a thread; the pick and any settings edits apply to the next prompt."""
-    messages = await run_worker(lambda: (run or run_model_flow)(ModelMenu(context)))
-    return '\n'.join(messages) or 'No changes.'
+
+    def flow(menu: ModelMenu) -> list[str]:
+        return run_model_flow(menu, connect_provider=True)
+
+    accumulated: list[str] = []
+    while True:
+        try:
+            messages = await run_worker(lambda: (run or flow)(ModelMenu(context)))
+        except _ConnectProvider as request:
+            accumulated.extend(request.messages)
+            result = await openrouter.connect(context, [])
+            if result == 'Connection cancelled.':
+                continue
+            return '\n'.join([*accumulated, result])
+        return '\n'.join([*accumulated, *messages]) or 'No changes.'
+
+
+class _ConnectProvider(Exception):
+    """Release the menu worker before prompting or awaiting provider discovery."""
+
+    def __init__(self, messages: list[str]) -> None:
+        self.messages = messages
+        super().__init__()

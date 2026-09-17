@@ -103,7 +103,7 @@ def test_model_settings_source(tmp_path: Path) -> None:
 def test_provider_catalog_and_back_navigation(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
     menu = ModelMenu(context)
-    assert menu.providers() == sorted({model.name.partition(':')[0] for model in menu.models})
+    assert menu.providers() == sorted({model.name.partition(':')[0] for model in menu.models} | {'openrouter'})
     codex = menu.for_provider('openai-codex')
     assert all(model.provider == 'openai-codex' for model in codex.models)
     assert {f'openai-codex:gpt-5.6-{suffix}' for suffix in ('luna', 'terra', 'sol')} <= {
