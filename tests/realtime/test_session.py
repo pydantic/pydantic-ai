@@ -4733,10 +4733,14 @@ async def test_unconsumed_session_queue_keeps_structural_events_and_latest_delta
 
         queued = _queued_realtime_events(session)
         assert sum(isinstance(event, PartDeltaEvent) for event in queued) == 512
+        # The pair after the speech end is the user placeholder this PR adds: a VAD segment whose
+        # transcript never arrives is finalized as a content-less `SpeechPart` rather than vanishing.
         assert [type(event) for event in queued if not isinstance(event, PartDeltaEvent)] == [
             RealtimeInputSpeechStartEvent,
             PartStartEvent,
             RealtimeInputSpeechEndEvent,
+            PartStartEvent,
+            PartEndEvent,
             PartEndEvent,
             RealtimeTurnCompleteEvent,
         ]
@@ -4793,7 +4797,9 @@ async def test_unconsumed_session_queue_bounds_structural_events() -> None:
         queued = _queued_realtime_events(session)
         structural = [event for event in queued if not isinstance(event, PartDeltaEvent)]
         assert len(structural) == 512
-        assert session._queue_dropped_structural == turns * 5 - 512  # pyright: ignore[reportPrivateUsage]
+        # Seven structural events per turn, not five: the untranscribed-segment placeholder this PR
+        # adds contributes a part start and end of its own.
+        assert session._queue_dropped_structural == turns * 7 - 512  # pyright: ignore[reportPrivateUsage]
         # The window that survives is the most recent one, and it still ends on a turn boundary.
         assert isinstance(structural[-1], RealtimeTurnCompleteEvent)
         # No delta is orphaned; `test_unconsumed_session_queue_never_orphans_a_delta` covers the

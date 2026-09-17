@@ -1155,7 +1155,9 @@ async def test_session_span_counts_dropped_session_queue_structural_events() -> 
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
-    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 200 * 5 - 512
+    # Seven structural events per turn, not five: the untranscribed-segment placeholder this PR adds
+    # contributes a part start and end of its own.
+    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 200 * 7 - 512
 
 
 async def test_session_span_includes_resolved_run_attributes() -> None:
