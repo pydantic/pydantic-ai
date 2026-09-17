@@ -989,12 +989,17 @@ class BedrockConverseModel(Model[BaseClient]):
                 if thinking is not False:
                     existing['thinking'] = {'type': 'adaptive'}
                     # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
+                    # The merged profile carries the Anthropic xhigh flag, so `xhigh` passes through on the same
+                    # models as the direct API. Bedrock rejects it on the other models, where it maps to `max`.
                     if (
                         profile.get('bedrock_supports_effort', False)
                         and isinstance(thinking, str)
                         and 'output_config' not in existing
                     ):
-                        existing['output_config'] = {'effort': resolve_anthropic_effort(thinking, supports_xhigh=False)}
+                        effort = resolve_anthropic_effort(
+                            thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                        )
+                        existing['output_config'] = {'effort': effort}
             elif thinking is False:
                 existing['thinking'] = {'type': 'disabled'}
             else:
