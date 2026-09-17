@@ -90,15 +90,15 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
             success_html: The page shown in the browser once the authorization code arrives.
                 Defaults to a plain "You can close this tab." page.
             error_html: The page shown when the provider reports an authorization error instead
-                of a code. Defaults to the same page as `success_html`.
+                of a code. Defaults to the same plain page, not to `success_html`.
         """
         parsed = urlparse(self.redirect_uri)
         address = (parsed.hostname or 'localhost', parsed.port or 80)
         callback_path = parsed.path
         expected_state = self.state
         result: dict[str, str] = {}
-        success_page = (success_html or _DEFAULT_CALLBACK_HTML).encode()
-        error_page = (error_html or _DEFAULT_CALLBACK_HTML).encode()
+        success_page = (_DEFAULT_CALLBACK_HTML if success_html is None else success_html).encode()
+        error_page = (_DEFAULT_CALLBACK_HTML if error_html is None else error_html).encode()
 
         class CallbackHandler(BaseHTTPRequestHandler):
             def setup(self) -> None:

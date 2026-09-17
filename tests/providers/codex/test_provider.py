@@ -921,7 +921,10 @@ async def test_exchange_code_from_callback_denied():
 
 
 async def test_exchange_code_from_callback_custom_html(monkeypatch: pytest.MonkeyPatch):
-    """Custom pages replace the default for this flow's outcomes only; stray requests keep the default."""
+    """Custom pages replace the default for this flow's outcomes only; stray requests keep the default.
+
+    An empty string is a deliberate empty response, not a request for the default page.
+    """
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     success_html = '<!doctype html><h1>Signed in, olé</h1>'
@@ -942,6 +945,14 @@ async def test_exchange_code_from_callback_custom_html(monkeypatch: pytest.Monke
     exchange = asyncio.create_task(flow.exchange_code_from_callback(success_html=success_html, error_html=error_html))
     denied = await _get_callback(url, {'state': flow.state, 'error': 'access_denied'})
     assert denied.text == error_html
+    with pytest.raises(UserError, match='Authorization failed: access_denied'):
+        await exchange
+
+    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback(success_html=success_html, error_html=''))
+    denied = await _get_callback(url, {'state': flow.state, 'error': 'access_denied'})
+    assert denied.text == ''
     with pytest.raises(UserError, match='Authorization failed: access_denied'):
         await exchange
 
