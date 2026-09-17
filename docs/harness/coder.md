@@ -106,17 +106,17 @@ supervisor, cleanup, and the `CommandStartedEvent`, `CommandOutputEvent`, and `C
 events a UI can subscribe to.
 
 The default instructions tell the agent to finish required work before giving a final response: do other
-useful work, then `sleep 60` and inspect status and output repeatedly until completion or a genuine blocker.
+useful work, then poll status and output until completion or a genuine blocker.
 Servers may remain running after startup and readiness are verified. Common LLM API-key environment
 variables are filtered from command environments; other host credentials and files remain accessible.
 
 ## Instructions
 
-The default instructions emphasize autonomous investigation, focused edits, tests, DRY, YAGNI, SOLID,
-and pragmatic simplicity. The 600-line suggestion applies to new files, not a mandate to split existing
-large files. `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
-The instructions adapt the software-work and autonomy guidance in Code Puppy's `agent_code_puppy.py`
-and `cli_runner.py`, without its identity or tone.
+The default instructions keep engineering guidance brief: autonomous investigation and completion,
+focused changes and verification, and pragmatic DRY, YAGNI, SOLID, and the Zen of Python.
+Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
+`Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
+Use it for additional policy, such as file-size limits or a preferred verification workflow.
 
 ## Tool argument repair
 

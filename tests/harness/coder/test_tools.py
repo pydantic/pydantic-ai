@@ -38,6 +38,21 @@ class TestCoder:
         assert 'replacements' in tools['edit_file'].parameters_json_schema['properties']
         assert tools['shell'].parameters_json_schema['properties']['mode']['enum'] == ['foreground', 'background']
 
+    @pytest.mark.parametrize('extra_instructions', [None, '', 'Keep new files under 400 lines.'])
+    async def test_instructions(self, tmp_path: Path, extra_instructions: str | None) -> None:
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[Coder(tmp_path, instructions=extra_instructions, repo_context=False)]).run(
+            'Inspect instructions'
+        )
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        guidance = next(part.content for part in parts if 'Zen of Python' in part.content)
+        default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
+        assert len(default.split()) < 180
+        assert all(principle in default for principle in ('DRY', 'YAGNI', 'SOLID'))
+        if extra_instructions:
+            assert guidance.endswith('\n' + extra_instructions)
+
     @pytest.mark.parametrize('repo_context', [True, False])
     async def test_repo_context_is_optional(self, tmp_path: Path, repo_context: bool) -> None:
         (tmp_path / 'AGENTS.md').write_text('Always answer in haiku.\n')

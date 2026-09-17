@@ -61,7 +61,7 @@ def test_coder_members_and_parameters(tmp_path: Path) -> None:
     assert context.workspace_dir == tmp_path
     guidance = next(item for item in coder.capabilities if isinstance(item, Capability))
     instructions = str(guidance.get_instructions())
-    for text in ('Custom instructions', 'DRY', 'YAGNI', 'SOLID', '600', 'sleep 60', '270'):
+    for text in ('Custom instructions', 'DRY', 'YAGNI', 'SOLID', 'Zen of Python'):
         assert text in instructions
     assert coder.capabilities[-1].id is None
     assert isinstance(coder.for_agent(Agent(TestModel())), Coder)
