@@ -70,6 +70,8 @@ Examples of providers and models that can be used are:
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 
+[Image generation](image-generation.md) routes through the gateway as `gateway/google:<model>`, which serves the Gemini image models over Google Cloud.
+
 ### Pydantic AI
 
 Before you start, make sure you are on version 1.16 or later of `pydantic-ai`. To update to the latest version run:
