@@ -214,6 +214,11 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
     echo the rejected arguments. The type and `escaped` formatting match what
     `Span.record_exception` would have produced.
     """
+    # `use_span` records nothing on a span that isn't recording, and neither does this: the SDK
+    # formats the traceback before `add_event` drops it, so an exception whose `__str__` raises
+    # would surface that failure in place of the original error.
+    if not span.is_recording():
+        return
     if include_content:
         span.record_exception(error, escaped=escaped)
         return
@@ -233,6 +238,8 @@ def set_error_status(span: Span, error: BaseException, *, include_content: bool)
     The SDK's description is `f'{type(exc).__name__}: {exc}'`, which repeats the message the
     exception event carries, so it is withheld alongside it when content capture is off.
     """
+    if not span.is_recording():
+        return
     span.set_status(
         Status(StatusCode.ERROR, description=f'{type(error).__name__}: {error}' if include_content else None)
     )
