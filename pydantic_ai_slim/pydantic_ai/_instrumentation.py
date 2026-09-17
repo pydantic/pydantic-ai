@@ -356,39 +356,37 @@ def model_request_parameters_attributes(
 ) -> dict[str, AttributeValue]:
     serialized = _serialize_model_request_parameters(model_request_parameters)
     if not include_content:
-        # Two fields here are prompt text the user wrote, which is the "proprietary prompts" half of
-        # what the setting withholds: the instructions (whose dynamic parts can be built from deps)
-        # and the prompted-output template. Instruction parts keep their origin and ids, so what the
-        # parts are and how they cache is still visible. Tool and output *schemas* stay: they are the
-        # request's structure, not message content, and `include_model_request_parameters=False`
-        # drops the attribute entirely for anyone who wants them gone too.
-        for part in instruction_parts_of(serialized):
-            part.pop('content', None)
-        _blank_prompted_output_template(serialized)
+        serialized = _redact_model_request_parameters(serialized)
+        if serialized is None:
+            return {}
     return {'model_request_parameters': safe_to_json(serialized).decode()}
 
 
-def _blank_prompted_output_template(serialized_parameters: Any) -> None:
-    """Blank the prompted-output template, which is prompt text the user wrote."""
-    if not isinstance(serialized_parameters, dict):
-        return  # pragma: no cover
-    parameters = cast('dict[str, Any]', serialized_parameters)
-    if parameters.get('prompted_output_template') is not None:
-        parameters['prompted_output_template'] = None
+def _redact_model_request_parameters(serialized_parameters: Any) -> Any:
+    """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
+    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
+    the prompted-output template. Instruction parts keep their origin and ids, so what the parts are
+    and how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
+    structure rather than message content, and `include_model_request_parameters=False` drops the
+    whole attribute for anyone who wants them gone as well.
 
-def instruction_parts_of(serialized_parameters: Any) -> list[dict[str, Any]]:
-    """The serialized `instruction_parts`, or nothing if the shape isn't what we expect.
-
-    `_serialize_model_request_parameters` falls back to inference when the declared schema can't
-    dump the value, so the shape isn't guaranteed.
+    `_serialize_model_request_parameters` falls back to inferring a shape, which for a value it cannot
+    walk -- a tool whose `metadata` holds an arbitrary object, say -- is the request's string
+    representation, instructions and all. There is nothing to redact in a string, so that is reported
+    as unredactable rather than exported.
     """
     if not isinstance(serialized_parameters, dict):
-        return []  # pragma: no cover
-    parts = cast('Any', serialized_parameters).get('instruction_parts')
-    if not isinstance(parts, list):
-        return []
-    return [part for part in cast('list[Any]', parts) if isinstance(part, dict)]
+        return None
+    parameters = cast('dict[str, Any]', serialized_parameters)
+    parts = parameters.get('instruction_parts')
+    if isinstance(parts, list):
+        for part in cast('list[Any]', parts):
+            if isinstance(part, dict):
+                cast('dict[str, Any]', part).pop('content', None)
+    if parameters.get('prompted_output_template') is not None:
+        parameters['prompted_output_template'] = None
+    return parameters
 
 
 def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
@@ -634,7 +632,8 @@ def open_model_request_span(
     attributes.update(model_settings_attributes(prepared_settings))
 
     record_metrics: Callable[[], None] | None = None
-    include_content_token = include_content_ctx.set(settings.include_content)
+    previous_include_content = include_content_ctx.get()
+    include_content_ctx.set(settings.include_content)
     try:
         with (
             settings.tracer.start_as_current_span(
@@ -693,7 +692,7 @@ def open_model_request_span(
 
             yield finish, prepared_request_context
     finally:
-        include_content_ctx.reset(include_content_token)
+        include_content_ctx.set(previous_include_content)
         if record_metrics:
             record_metrics()
 
@@ -711,6 +710,11 @@ def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
     the composite enters it around each segment without depending on OpenTelemetry itself.
     """
     captured = otel_context.get_current()
+    # The span's redaction policy has to travel with it: a streaming segment reads
+    # `include_content_ctx` in the consumer task, which never saw the `set` in
+    # `open_model_request_span`, so without this a `FallbackModel` refresh there would fall back to
+    # the default and re-export instruction content the span was opened without.
+    captured_include_content = include_content_ctx.get()
 
     @contextmanager
     def attach_captured_context() -> Generator[None]:
@@ -722,11 +726,17 @@ def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
         # 'Failed to detach context' (surfaced verbatim in the Pyodide output panel). `attach()` is a plain
         # `set`, which never fails cross-context, so it restores `previous` silently. See #6569.
         previous = otel_context.get_current()
+        previous_include_content = include_content_ctx.get()
         otel_context.attach(captured)
+        # Restored with `set` rather than `reset` for the same reason as `previous` above: this CM is
+        # held across the `yield`, so an interrupted streamed run finalizes it in a different
+        # `Context`, where `ContextVar.reset` raises `ValueError: ... created in a different Context`.
+        include_content_ctx.set(captured_include_content)
         try:
             yield
         finally:
             otel_context.attach(previous)
+            include_content_ctx.set(previous_include_content)
 
     return attach_captured_context
 
