@@ -205,6 +205,9 @@ Telephony (`ulaw_8000`) agents are not supported.
   `corrected_agent_response` when the response was still streaming. A barge-in during playback of
   an already-delivered response surfaces only as an interruption event: the session's history keeps
   the full generated text even though the user heard less of it.
+- [`send(text, respond=False)`](turns.md#text-turns) is delivered as a `contextual_update`: the
+  agent reads it from its next turn on, without stopping what it is saying or replying to it. It is
+  context, not history, so it does not seed the conversation (see the feature table).
 - Usage reports LLM context consumption only (as `input_tokens`), and only when `context_usage` is
   in the agent's `conversation.client_events` list (it is not by default). Reports arrive after
   each turn completes and accumulate into the run total without attaching to a specific response.

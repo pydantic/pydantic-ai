@@ -87,6 +87,7 @@ from .codec import (
     RealtimeInput,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolResult,
 )
@@ -1290,9 +1291,10 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the ElevenLabs Agents conversation.
 
-        Accepts `BinaryAudio` (raw PCM16 mono at the agent's input rate), a `str` text turn, and
-        `ToolResult`. Manual turn-taking verbs, response cancellation, truncation, and images are not
-        supported by the conversation WebSocket.
+        Accepts `BinaryAudio` (raw PCM16 mono at the agent's input rate), a `str` text turn,
+        `TextContext` (a `contextual_update`: context the agent reads from its next turn on, without
+        interrupting or answering), and `ToolResult`. Manual turn-taking verbs, response
+        cancellation, truncation, and images are not supported by the conversation WebSocket.
         """
         if isinstance(content, BinaryAudio):
             require_pcm_audio(content, provider_name=_PROVIDER_LABEL)
@@ -1300,6 +1302,11 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
             await self._send_event({'user_audio_chunk': base64.b64encode(content.data).decode('ascii')})
         elif isinstance(content, str):
             await self._send_event({'type': 'user_message', 'text': content})
+        elif isinstance(content, TextContext):
+            # Injected into the LLM's view of the conversation without a user turn, so the agent
+            # neither stops speaking nor replies; the optional `context_id` (which lets a later update
+            # supersede an earlier one) has no counterpart in `TextContext` and is not sent.
+            await self._send_event({'type': 'contextual_update', 'text': content.text})
         elif isinstance(content, ToolResult):
             if content.tool_call_id in self._fire_and_forget_tool_call_ids:
                 # The agent asked for fire-and-forget; the server tolerates a result sent anyway

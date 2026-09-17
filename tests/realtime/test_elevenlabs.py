@@ -40,6 +40,7 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolResult,
 )
@@ -1518,6 +1519,15 @@ async def test_send_text_frames_user_message() -> None:
     connection, ws = _connection()
     await connection.send('What is the weather?')
     assert ws.sent_frames() == [{'type': 'user_message', 'text': 'What is the weather?'}]
+
+
+async def test_send_text_context_frames_contextual_update() -> None:
+    # `session.send(text, respond=False)` reaches the codec as `TextContext`; ElevenLabs' counterpart
+    # is `contextual_update`, which the agent reads from its next turn on without interrupting or
+    # replying. Its optional `context_id` has no `TextContext` equivalent and is never sent.
+    connection, ws = _connection()
+    await connection.send(TextContext('The visitor is called Ada.'))
+    assert ws.sent_frames() == [{'type': 'contextual_update', 'text': 'The visitor is called Ada.'}]
 
 
 async def test_send_tool_result_frames_client_tool_result() -> None:
