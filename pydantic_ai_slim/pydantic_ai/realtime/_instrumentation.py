@@ -25,6 +25,7 @@ from .._instrumentation import (
     model_metric_attributes,
     model_request_parameters_attributes,
     provider_attributes,
+    record_exception,
     redact_binary_content,
     response_attributes,
     response_price_calculation,
@@ -450,8 +451,15 @@ class SessionInstrumentation:
             name, context=self.context, attributes=span_attributes, kind=SpanKind.INTERNAL
         ).end()
 
-    @staticmethod
-    def record_error(span: Span, error: BaseException) -> None:
+    def record_error(self, span: Span, error: BaseException) -> None:
+        """Record `error` on `span` as an escaped exception and mark the span ERROR.
+
+        Session and provider errors carry the same content-bearing messages the classic spans
+        withhold -- a realtime `ModelHTTPError` puts the provider's error body in its message,
+        and a `RealtimeError` relays the provider's own error text -- so the event follows
+        `include_content`. The status is set without a description either way.
+        """
         if span.is_recording():
-            span.record_exception(error, escaped=True)
+            settings = self.settings
+            record_exception(span, error, include_content=settings is not None and settings.include_content)
             span.set_status(StatusCode.ERROR)

@@ -40,6 +40,10 @@ agent = Agent(
 )
 ```
 
+A realtime session takes its model per call rather than through this capability, so pass the same
+kind of factory to [`infer_realtime_model()`][pydantic_ai.realtime.infer_realtime_model] instead:
+`agent.realtime(infer_realtime_model('openai:gpt-realtime', provider_factory=...))`.
+
 The resolver may be synchronous or asynchronous. Its full callable signature is
 `(ModelResolutionContext[Deps], str) -> Model | None | Awaitable[Model | None]`.
 The convenience capability adapts both forms to the asynchronous

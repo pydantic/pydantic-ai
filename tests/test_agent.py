@@ -10903,7 +10903,8 @@ async def test_thinking_only_response_after_tool_call_retries():
     )
 
 
-async def test_hitl_tool_approval():
+@pytest.mark.parametrize('serialize_history', [False, True])
+async def test_hitl_tool_approval(serialize_history: bool):
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
@@ -10927,9 +10928,11 @@ async def test_hitl_tool_approval():
     model = FunctionModel(model_function)
 
     agent = Agent(model, output_type=[str, DeferredToolRequests])
+    deleted_files: list[str] = []
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
+        deleted_files.append(path)
         return f'File {path!r} deleted'
 
     @agent.tool_plain
@@ -10937,6 +10940,7 @@ async def test_hitl_tool_approval():
         return f'File {path!r} created with content: {content}'
 
     result = await agent.run('Create new_file.py and delete ok_to_delete.py and never_delete.py')
+    assert deleted_files == []
     messages = result.all_messages()
     assert messages == snapshot(
         [
@@ -10995,12 +10999,17 @@ async def test_hitl_tool_approval():
         )
     )
 
+    if serialize_history:
+        messages = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+        assert messages == result.all_messages()
+
     result = await agent.run(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
             approvals={'ok_to_delete': True, 'never_delete': ToolDenied('File cannot be deleted')},
         ),
     )
+    assert deleted_files == ['ok_to_delete.py']
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -12711,6 +12720,86 @@ async def test_agent_blank_text_response_token_limit(output_type: Any):
 
     with pytest.raises(UnexpectedModelBehavior, match='token limit'):
         await agent.run('hello')
+
+
+async def test_run_stream_max_output_tokens_raises_unexpected_model_behavior(allow_model_requests: None):
+    """A length-exhausted stream raises `UnexpectedModelBehavior` instead of silently finalizing `None`."""
+
+    pytest.importorskip('openai')
+    from openai.types import responses as resp
+    from openai.types.responses.response import IncompleteDetails
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, response_message
+
+    created_response = response_message([])
+    created_response.status = 'in_progress'
+    incomplete_response = created_response.model_copy(update={'status': 'incomplete'})
+    incomplete_response.incomplete_details = IncompleteDetails(reason='max_output_tokens')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseCreatedEvent(
+                response=created_response,
+                type='response.created',
+                sequence_number=0,
+            ),
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=1,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, output_type=str | None)
+
+    with pytest.raises(UnexpectedModelBehavior, match='token limit'):
+        async with agent.run_stream('hello'):
+            pass
+
+
+async def test_run_stream_content_filter_raises_content_filter_error(allow_model_requests: None):
+    """A content-filtered stream raises `ContentFilterError`, matching the non-streaming path."""
+
+    pytest.importorskip('openai')
+    from openai.types import responses as resp
+    from openai.types.responses.response import IncompleteDetails
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, response_message
+
+    created_response = response_message([])
+    created_response.status = 'in_progress'
+    incomplete_response = created_response.model_copy(update={'status': 'incomplete'})
+    incomplete_response.incomplete_details = IncompleteDetails(reason='content_filter')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseCreatedEvent(
+                response=created_response,
+                type='response.created',
+                sequence_number=0,
+            ),
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=1,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, output_type=str | None)
+
+    with pytest.raises(
+        ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
+    ):
+        async with agent.run_stream('hello'):
+            pass
 
 
 async def test_agent_allows_none_output_after_tool():

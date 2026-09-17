@@ -42,6 +42,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
     AbstractNativeTool,
@@ -53,7 +54,12 @@ from ..native_tools import (
 )
 from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
-from ..profiles.google import GoogleModelProfile
+from ..profiles.google import (
+    GOOGLE_THINKING_LEVEL_SCALE,
+    GOOGLE_THINKING_LEVELS,
+    GoogleModelProfile,
+    GoogleThinkingLevel,
+)
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
 from ..tools import ToolDefinition
@@ -442,9 +448,14 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
     assert_never(service_tier)  # pragma: no cover
 
 
-def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
+_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
+    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
+}
+
+
+def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     """Normalize unified thinking effort to a Gemini thinking level."""
-    level_by_effort: dict[ThinkingEffort, Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']] = {
+    level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
         'minimal': 'MINIMAL',
         'low': 'LOW',
         'medium': 'MEDIUM',
@@ -454,13 +465,35 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'L
     return level_by_effort[thinking]
 
 
-def _resolve_google_thinking_level(
-    thinking: ThinkingEffort, profile: GoogleModelProfile
-) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
-    """Map unified thinking to the closest thinking level the model supports."""
-    if thinking == 'minimal' and not profile.get('google_supports_minimal_thinking_level', True):
-        return 'LOW'
-    return _thinking_effort_to_level(thinking)
+def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
+    """Map unified thinking to the closest thinking level the model supports.
+
+    Snaps to the nearest supported level on the `MINIMAL < LOW < MEDIUM < HIGH` scale;
+    equidistant levels round down to the cheaper one.
+    """
+    levels = profile.get('google_thinking_levels')
+    if levels is None:
+        # Sparse profile without a level set: fall back to the boolean floor flag.
+        levels = (
+            GOOGLE_THINKING_LEVELS
+            if profile.get('google_supports_minimal_thinking_level', True)
+            else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
+        )
+    if not levels:
+        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
+    if unknown := levels - GOOGLE_THINKING_LEVELS:
+        raise UserError(
+            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
+            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
+        )
+    requested = _GOOGLE_THINKING_LEVEL_ORDER[_thinking_effort_to_level(thinking)]
+    return min(
+        levels,
+        key=lambda level: (
+            abs(_GOOGLE_THINKING_LEVEL_ORDER[level] - requested),
+            _GOOGLE_THINKING_LEVEL_ORDER[level],
+        ),
+    )
 
 
 @dataclass(init=False)
@@ -1120,6 +1153,10 @@ class GoogleModel(Model[Client]):
         for m in messages:
             if isinstance(m, ModelRequest):
                 message_parts: list[PartDict] = []
+                # Held back so the split below can't leave framed tool media sharing a `Content` with
+                # a `function_response`, which Gemini reads as model-authored (#4210) — the opposite
+                # of the attribution the framing exists to give it.
+                tool_return_media: list[PartDict] = []
 
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
@@ -1127,7 +1164,9 @@ class GoogleModel(Model[Client]):
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.extend(await self._map_tool_return(part))
+                        function_response_part, framed_media = await self._map_tool_return(part)
+                        message_parts.append(function_response_part)
+                        tool_return_media.extend(framed_media)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
@@ -1148,6 +1187,15 @@ class GoogleModel(Model[Client]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
+
+                if tool_return_media:
+                    # After the last `function_response`, not after every part: a `ToolReturn.content`
+                    # user part trails the tool returns in the same request, and appending to the end
+                    # would put the developer's message between a call and the file it produced.
+                    # Anywhere earlier and the split below would leave media sharing a `Content` with
+                    # a later `function_response`.
+                    after_last_response = max(i for i, p in enumerate(message_parts) if 'function_response' in p) + 1
+                    message_parts[after_last_response:after_last_response] = tool_return_media
 
                 # Work around a Gemini bug where content objects containing functionResponse parts are treated as
                 # role=model even when role=user is explicitly specified.
@@ -1192,12 +1240,15 @@ class GoogleModel(Model[Client]):
 
         return system_instruction, contents
 
-    async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
+    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[PartDict, list[PartDict]]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
-        For Gemini 3+ models with supported MIME types, files are sent inside
-        `function_response.parts` for efficiency. Unsupported types become separate
-        parts after the function_response (fallback strategy).
+        Returns the `function_response` part and, separately, any files this model can't carry
+        inside it. For Gemini 3+ models with supported MIME types, files are sent inside
+        `function_response.parts` for efficiency and the second element is empty. Unsupported types
+        fall back to ordinary parts, each framed by `_tool_result_provenance_tags`; the caller emits
+        those after every `function_response` in the request, which is why they carry the framing
+        rather than relying on sitting next to the call they belong to.
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
         supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
@@ -1212,9 +1263,9 @@ class GoogleModel(Model[Client]):
                 function_response_parts.append(fr_part)
             else:
                 fallback_refs.append(f'See file {file.identifier}.')
-                fallback_parts.append({'text': f'This is file {file.identifier}:'})
+                open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, file.identifier)
                 file_part = await self._map_file_to_part(file)
-                fallback_parts.append(file_part)
+                fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 
         if part.outcome == 'failed':
             # Google's function-response schema prescribes an `error` key (mirroring the `output` key
@@ -1237,10 +1288,7 @@ class GoogleModel(Model[Client]):
         if function_response_parts:
             function_response_dict['parts'] = function_response_parts
 
-        result: list[PartDict] = [{'function_response': function_response_dict}]
-        result.extend(fallback_parts)
-
-        return result
+        return {'function_response': function_response_dict}, fallback_parts
 
     def _validate_uploaded_file(self, file: UploadedFile) -> tuple[str, str]:
         """Validate an `UploadedFile` and return (`file_uri`, `mime_type`).

@@ -1,5 +1,6 @@
 ---
 title: Pydantic AI
+hideTitle: true
 description: "How Python does AI: agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end."
 ---
 
@@ -37,7 +38,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](capabilities/image-generation.md) and [embeddings](embeddings.md) come in the same box.
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](image-generation.md) and [embeddings](embeddings.md) come in the same box.
 
 **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
@@ -45,7 +46,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered.
 
-=== "Coding agent"
+=== "Coding agent" {#coding-agent}
 
     A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
 
@@ -86,7 +87,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
-=== "Data extraction"
+=== "Data extraction" {#data-extraction}
 
     Give the agent an [output type](output.md) and [tools](tools.md), and every run comes back validated and typed:
 
@@ -125,7 +126,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
 
-=== "Durable workflow"
+=== "Durable workflow" {#durable-workflow}
 
     Attach [`TemporalDurability`](durable_execution/temporal.md) and the same agent runs inside a [Temporal](durable_execution/temporal.md) workflow under [durable execution](durable_execution/overview.md): every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
 
@@ -162,7 +163,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Durable Execution](durable_execution/overview.md)
 
-=== "Realtime voice"
+=== "Realtime voice" {#realtime-voice}
 
     Put the same agent on a live voice session, [tools](realtime/tools.md) and [capabilities](realtime/capabilities.md) included:
 
@@ -197,9 +198,9 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
 
-=== "Image gen"
+=== "Image gen" {#image-gen}
 
-    Ask for an image and make it the run's typed [output](output.md):
+    Generate an image with a dedicated image model, no agent run required:
 
     ```bash
     pip/uv-add pydantic-ai
@@ -208,16 +209,16 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ```python {title="logo_generation.py"}
     from pathlib import Path
 
-    from pydantic_ai import Agent, BinaryImage
+    from pydantic_ai import ImageGenerator
 
-    agent = Agent('openai:gpt-5.6-sol', output_type=BinaryImage)
-    result = agent.run_sync('Generate a minimalist logo for a coffee shop called Extract.')
-    Path('logo.png').write_bytes(result.output.data)
+    generator = ImageGenerator('openai:gpt-image-2')
+    result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
+    Path('logo.png').write_bytes(result.image.data)
     ```
 
-    [Provider-native generation](native-tools.md#image-generation-tool) on models that support it (like this one), a [subagent fallback](capabilities/image-generation.md) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
+    That [standalone image API](image-generation.md) is for when your application decides; when an agent run decides, there is [provider-native generation](native-tools.md#image-generation-tool) with `output_type=BinaryImage` for a typed image [output](output.md#image-output), and the [`ImageGeneration` capability](capabilities/image-generation.md) with its fallbacks for models that generate no images of their own.
 
-    **Build this →** [Image Generation](capabilities/image-generation.md)
+    **Build this →** [Image Generation](image-generation.md)
 
 !!! tip "No API key yet?"
     You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.

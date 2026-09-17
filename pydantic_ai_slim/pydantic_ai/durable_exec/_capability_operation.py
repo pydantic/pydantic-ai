@@ -276,7 +276,7 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 result = await operation(*args, **kwargs)
             else:
                 dispatcher = (
-                    self._get_durable_operation_bindings().get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
+                    self._durable_operation_bindings.get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
                     if ctx.agent is not None
                     else None
                 )

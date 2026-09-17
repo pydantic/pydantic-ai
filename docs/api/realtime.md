@@ -63,9 +63,12 @@ only, in the shared message vocabulary ([`RealtimeSessionInput`][pydantic_ai.rea
 plain `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent] (including
 [`BinaryImage`][pydantic_ai.messages.BinaryImage] and
 [`BinaryAudio`][pydantic_ai.messages.BinaryAudio]), or a sequence of
-these. Turn-taking and interruption go through the dedicated
+these. A string solicits a response, while an image is context-only by default; use `respond` to
+override either behavior. Turn-taking and interruption go through the dedicated
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] methods (`commit_audio()`, `clear_audio()`,
-`create_response()`, `interrupt()`), not `send()`.
+`create_response()`, `interrupt()`), not `send()`. Use
+[`RealtimeSession.enqueue()`][pydantic_ai.realtime.RealtimeSession.enqueue] to queue text or system
+prompt parts for delivery after the active response, or once the model is idle.
 
 **Consumption views** —
 [`RealtimeSession.stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] yields model
@@ -77,7 +80,8 @@ run concurrently with each other and with the session's raw event iterator.
 live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.closed] exposes its state.
 
 The low-level [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send] accepts the
-normalized [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput] — a `str` text turn, a raw-PCM
+normalized [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput] — a `str` text turn, a
+[`TextContext`][pydantic_ai.realtime.codec.TextContext] item added without soliciting a reply, a raw-PCM
 [`BinaryAudio`][pydantic_ai.messages.BinaryAudio] chunk, or a
 [`BinaryImage`][pydantic_ai.messages.BinaryImage] frame — which additionally includes the
 turn-control verbs ([`CommitAudio`][pydantic_ai.realtime.codec.CommitAudio],

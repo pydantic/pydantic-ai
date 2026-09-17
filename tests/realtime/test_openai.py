@@ -85,6 +85,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolResult,
     TruncateOutput,
@@ -1767,8 +1768,12 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                     'type': 'message',
                     'role': 'user',
                     'content': [
-                        {'type': 'input_text', 'text': 'This is file result.png:'},
+                        {
+                            'type': 'input_text',
+                            'text': '<tool_result tool_name="inspect" tool_call_id="call-image" file_id="result.png">',
+                        },
                         {'type': 'input_image', 'image_url': 'data:image/png;base64,cmVzdWx0LWltYWdl'},
+                        {'type': 'input_text', 'text': '</tool_result>'},
                     ],
                 },
             },
@@ -2118,6 +2123,23 @@ async def test_connection_send_text() -> None:
     create = json.loads(ws.sent[0])
     assert create['item']['content'][0]['text'] == 'hello'
     assert json.loads(ws.sent[1]) == {'type': 'response.create'}
+
+
+@pytest.mark.anyio
+async def test_connection_send_text_context() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(TextContext('background'))
+    assert [json.loads(frame) for frame in ws.sent] == [
+        {
+            'type': 'conversation.item.create',
+            'item': {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'background'}],
+            },
+        }
+    ]
 
 
 @pytest.mark.anyio
@@ -3810,6 +3832,23 @@ def test_profile() -> None:
     assert profile.get('supported_native_tools') == frozenset()
     assert profile.get('audio_input_sample_rate') == 24000
     assert profile.get('audio_output_sample_rate') == 24000
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'supports_thinking'),
+    [
+        ('gpt-realtime-2', True),
+        ('gpt-realtime-2.1', True),
+        ('gpt-realtime-2.1-2026-01-01', True),
+        ('gpt-realtime-2-mini', True),
+        ('gpt-realtime', False),
+        ('gpt-realtime-mini', False),
+        ('gpt-realtime-2025-08-28', False),
+        ('gpt-realtime-mini-2025-10-06', False),
+    ],
+)
+def test_profile_supports_thinking_at_model_family_boundary(model_name: str, supports_thinking: bool) -> None:
+    assert OpenAIRealtimeModel(model_name).profile.get('supports_thinking') is supports_thinking
 
 
 def test_provider_driven_profile_merges_defaults_varies_by_model_and_intersects_native_tools() -> None:

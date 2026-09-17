@@ -310,6 +310,30 @@ Prefer naming the classes. Filtering by type isn't only about narrowing the `eve
 
 Returning a replacement event from `hooks.on.event` is deprecated. Use `hooks.on.run_event_stream` to transform, replace, or filter events.
 
+#### Listening without a `Hooks` capability
+
+When events are all you want to observe, [`@agent.on_event`][pydantic_ai.agent.Agent.on_event] registers a listener straight on the agent, with the same filtering, typing and `timeout=`:
+
+```python {title="agent_on_event.py"}
+from pydantic_ai import Agent, FunctionToolCallEvent, RunContext
+
+agent = Agent('test')
+called_tools: list[str] = []
+
+
+@agent.on_event(FunctionToolCallEvent)
+async def track_tools(ctx: RunContext, event: FunctionToolCallEvent) -> None:
+    called_tools.append(event.part.tool_name)
+```
+
+Bare works the same way: `@agent.on_event` on its own sees every event.
+
+Listeners registered on the agent join after its own capabilities, so they see the events those emitted, and they survive an overridden root capability. Capability ordering still applies: one asking for `position='innermost'` keeps that position and its listeners run after these. An agent that never calls `on_event` is unaffected: with nothing registered, the listener capability is never added to the run at all.
+
+Like `hooks.on.event`, they dispatch *upstream* of `run_event_stream`: a listener sees each event as emitted, not as finally delivered, so a capability that rewrites or drops events in its stream wrapper does so after every listener has run — and a listener can see an event no consumer ever receives. When you need the delivered stream, wrap it with `run_event_stream` or consume [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+Only events can be registered this way. The other hook families are interceptors — they sit in a wrap chain, take and return the value, and where they sit relative to the other capabilities is a choice you need to make — so they go on a `Hooks` capability whose position in `capabilities=` is yours to pick.
+
 ## Tool hook filtering
 
 Tool hooks (validation and execution) support a `tools` parameter to target specific tools by name:

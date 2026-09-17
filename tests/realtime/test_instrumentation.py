@@ -37,6 +37,7 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import provider_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -230,6 +231,48 @@ async def test_owner_error_marks_active_chat_and_session_spans() -> None:
     assert spans['chat gpt-realtime'].status.is_ok is False
     assert spans['invoke_agent agent'].status.is_ok is False
     assert all(span.events for span in spans.values())
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_error_events_honor_include_content(include_content: bool) -> None:
+    """Session and provider errors follow the setting, like the classic spans' exceptions do.
+
+    A realtime `ModelHTTPError` carries the provider's error body in its message and a
+    `RealtimeError` relays the provider's own error text, so the message and stack trace are
+    withheld when content capture is off. The ERROR status carries no description either way.
+    """
+    settings, exporter = _settings(include_content=include_content)
+    session = RealtimeSession(
+        _Connection([OutputTranscript(text='partial')]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    with pytest.raises(ModelHTTPError):
+        async with session:
+            stream = session.__aiter__()
+            await anext(stream)
+            raise ModelHTTPError(status_code=400, model_name='gpt-realtime', body='invalid content: prompt-secret')
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    events = [
+        (name, dict(event.attributes or {}))
+        for name, span in spans.items()
+        for event in span.events
+        if event.name == 'exception'
+    ]
+    assert [(name, attributes['exception.type']) for name, attributes in events] == [
+        ('chat gpt-realtime', 'pydantic_ai.exceptions.ModelHTTPError'),
+        ('invoke_agent agent', 'pydantic_ai.exceptions.ModelHTTPError'),
+    ]
+    assert all(span.status.description is None for span in spans.values())
+    if include_content:
+        assert all({'exception.message', 'exception.stacktrace'} <= set(a) for _, a in events)
+        assert 'prompt-secret' in str(events)
+    else:
+        assert all(set(a) == {'exception.type', 'exception.escaped'} for _, a in events)
+        assert 'prompt-secret' not in str(events)
 
 
 async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() -> None:
@@ -1049,6 +1092,27 @@ async def test_session_span_counts_dropped_transcript_items() -> None:
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 0
+    assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
+
+
+async def test_session_span_counts_dropped_transcript_deltas() -> None:
+    # Live captions have their own subscription with the same bounded window; a slow `delta=True`
+    # consumer drops oldest updates and the drops land in the same span attribute as finals.
+    settings, exporter = _settings()
+    transcripts = [str(index) for index in range(520)]
+    session = RealtimeSession(
+        _Connection([InputTranscript(text=transcript, is_final=False) for transcript in transcripts]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        updates = [update async for update in session.stream_transcripts(delta=True)]
+        assert [update.delta for update in updates] == transcripts[-512:]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
     assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
 
 

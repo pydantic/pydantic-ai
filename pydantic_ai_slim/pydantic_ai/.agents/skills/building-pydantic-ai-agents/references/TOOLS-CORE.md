@@ -58,6 +58,10 @@ Useful `RunContext` fields include:
 - `ctx.realtime` — whether the run is a realtime session
 - `ctx.realtime_session` — the live `RealtimeSession` once connected (`None` in classic runs and before connect)
 
+Inside a realtime tool, `await ctx.realtime_session.close()` hangs up cleanly: the calling tool does
+not resume, and its call is recorded as interrupted. Use `ctx.cancel()` instead when the session
+context should raise `RunCancelled`; that route also records the call as interrupted.
+
 ## Use MCP Servers
 
 For URL-based MCP servers, use the `MCP` capability — it runs the MCP server locally by default and lets you opt into the model provider's native MCP support with `native=True`. See the [MCP capability docs](https://pydantic.dev/docs/ai/capabilities/mcp/).
