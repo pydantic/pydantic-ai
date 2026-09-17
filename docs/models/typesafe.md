@@ -83,7 +83,9 @@ The field description is the question text; an `Enum` field without one uses the
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the example below.
 
-Jev's confidence in each answer it gave is on the response, so you can act on how sure it was, for example by asking a human below a threshold. It is confidence in the answer, not the probability of yes: a `False` returned from a probability of 0.01 is a confident no, and reports 0.99. A `float` field asks for the probability itself, so that is the answer and there is no separate confidence for it.
+Jev's confidence in each answer it gave is on the response, so you can act on how sure it was, for example by asking a human below a threshold. It is confidence in the answer, not the probability of a yes: a `False` answered from a probability of 0.01 is a confident no, and reports 0.99, so one threshold reads the same way whichever way the answer went.
+
+A `float` field has no entry. Jev answers every yes/no question with a probability; a `bool` field turns that into a yes or a no, and the confidence is what was lost in the rounding. A `float` field keeps the probability as the answer, so nothing was lost and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement, and repeating it under `confidence` would invite a threshold that filters out the low-risk customers rather than the uncertain ones. If you want the same "how far from undecided" reading for a `float`, it is `abs(value - 0.5) * 2`.
 
 ```python
 from pydantic_ai import Agent
