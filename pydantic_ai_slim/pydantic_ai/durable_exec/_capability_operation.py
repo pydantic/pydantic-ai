@@ -457,13 +457,12 @@ def bind_declaration_body(
     replacement may be a specialized subclass, and its override is the implementation the run asked
     for. A decorated override is reached through its marker, which carries the undecorated target so
     binding it doesn't re-enter dispatch; an override of a `base_hook_durable_operation` hook carries
-    no marker of its own and is bound as it stands.
+    no marker of its own and is bound as it stands. A replacement that doesn't carry the method at
+    all falls back to the declared one, which is also what the lookup's default resolves to.
     """
-    function = declaration.function
-    member = getattr(type(capability), function.__name__, None)
-    if member is not None:
-        override = get_durable_operation_marker(member)
-        function = override.function if override is not None else member
+    member = getattr(type(capability), declaration.function.__name__, declaration.function)
+    marker = get_durable_operation_marker(member)
+    function = marker.function if marker is not None else member
     return function.__get__(capability, type(capability))
 
 
