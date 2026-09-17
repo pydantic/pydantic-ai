@@ -62,8 +62,14 @@ Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
-`http://localhost:1455/auth/callback`. It times out after five minutes. The browser
-must be able to reach that callback on the machine running CLAI.
+`http://localhost:1455/auth/callback`. It times out after five minutes.
+
+If the browser cannot reach that callback on the machine running CLAI (for
+example over SSH), the redirect fails in the browser. Copy the URL from the
+address bar and paste it at the prompt CLAI shows under the login link; the bare
+`code` value works too. CLAI checks the URL's `state` against the current login
+before exchanging the code. Whichever arrives first, the callback or the paste,
+completes the login.
 
 Tokens live in the configured Python `keyring` backend under service `pydantic-clai2`,
 not in SQLite or `~/.codex/auth.json`. Large token bundles are split across keyring
