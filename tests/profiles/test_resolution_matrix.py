@@ -574,7 +574,7 @@ def test_google_gemini_2_5_flash_image():
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_image_output': True,
             'supports_tools': False,
-            'supports_video_input': True,
+            'supports_video_input': False,
             'supports_thinking': True,
         }
     )
@@ -2364,7 +2364,12 @@ def test_huggingface_bare_name_returns_none():
 def test_huggingface_meta_llama():
     profile = HuggingFaceProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_inline_system_prompts': True}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_document_input': False,
+            'supports_video_input': False,
+        }
     )
 
 
@@ -2377,6 +2382,8 @@ def test_huggingface_deepseek():
             'thinking_always_enabled': True,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
+            'supports_document_input': False,
+            'supports_video_input': False,
         }
     )
 
@@ -2389,6 +2396,8 @@ def test_huggingface_qwen():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
+            'supports_document_input': False,
+            'supports_video_input': False,
         }
     )
 
@@ -2397,7 +2406,12 @@ def test_huggingface_qwen():
 def test_huggingface_moonshotai():
     profile = HuggingFaceProvider.model_profile('moonshotai/Kimi-K2-Instruct-0905')
     assert _normalize(profile) == snapshot(
-        {'ignore_streamed_leading_whitespace': True, 'supports_inline_system_prompts': True}
+        {
+            'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
+            'supports_document_input': False,
+            'supports_video_input': False,
+        }
     )
 
 

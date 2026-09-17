@@ -256,6 +256,36 @@ async def test_a_url_description_is_not_reused_by_another_run():
     assert describer.calls == 3
 
 
+async def test_the_same_bytes_under_two_media_types_are_two_files():
+    """The media type decides whether bytes are described or decoded, so it is part of their identity."""
+    seen: list[list[ModelMessage]] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    text_only = FunctionModel(capture, profile=ModelProfile(supports_image_input=False, supports_document_input=False))
+    describer = Describer()
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+
+    data = b'a,b\n1,2'
+    await agent.run([BinaryContent(data, media_type='image/png', identifier='as-image')])
+    await agent.run([BinaryContent(data, media_type='text/csv', identifier='as-text')])
+
+    assert describer.calls == 1, 'the image was described; the CSV is inlined, not described'
+    # The CSV reached the model as its own content, not as the description written for the image.
+    assert last_prompt(seen) == snapshot(
+        [
+            """\
+-----BEGIN FILE id="as-text" type="text/csv"-----
+a,b
+1,2
+-----END FILE id="as-text"-----\
+""",
+        ]
+    )
+
+
 async def test_a_url_is_not_described_twice_within_a_run():
     """Within one run the description is reused, so a history carrying the same file costs one description."""
     describer = Describer()

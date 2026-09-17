@@ -164,7 +164,9 @@ def _reuse_key(item: ImageUrl | DocumentUrl | VideoUrl | BinaryContent, run_id: 
     id to scope it to.
     """
     if isinstance(item, BinaryContent):
-        return hashlib.sha256(item.data).hexdigest()
+        # The media type is part of the identity, not a label on it: the same bytes are described when they
+        # are an image and decoded when they are a CSV, so hashing the bytes alone returns the wrong one.
+        return hashlib.sha256(item.media_type.encode() + b'\0' + item.data).hexdigest()
     return f'{run_id}:{item.url}' if run_id is not None else None
 
 
