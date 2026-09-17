@@ -116,33 +116,34 @@ def model_request_parameters_attributes(
 ) -> dict[str, AttributeValue]:
     serialized = serialize_any(model_request_parameters)
     if not include_content:
-        # Two fields here are prompt text the user wrote, which is the "proprietary prompts" half of
-        # what the setting withholds: the instructions (whose dynamic parts can be built from deps)
-        # and the prompted-output template. Tool and output *schemas* stay: request structure rather
-        # than message content, and `include_model_request_parameters=False` drops the attribute.
-        for part in instruction_parts_of(serialized):
-            part.pop('content', None)
-        _blank_prompted_output_template(serialized)
+        serialized = _redact_model_request_parameters(serialized)
+        if serialized is None:
+            return {}
     return {'model_request_parameters': to_json(serialized).decode()}
 
 
-def _blank_prompted_output_template(serialized_parameters: Any) -> None:
-    """Blank the prompted-output template, which is prompt text the user wrote."""
+def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
+    """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
+
+    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
+    the prompted-output template. Instruction parts keep their origin and ids. Tool and output
+    *schemas* stay -- request structure rather than message content.
+
+    `serialize_any` infers a shape, which for a value it cannot walk -- a tool whose `metadata` holds
+    an arbitrary object, say -- is the request's string representation, instructions and all. There
+    is nothing to redact in a string, so that is reported as unredactable rather than exported.
+    """
     if not isinstance(serialized_parameters, dict):
-        return  # pragma: no cover
+        return None
     parameters = cast('dict[str, Any]', serialized_parameters)
+    parts = parameters.get('instruction_parts')
+    if isinstance(parts, list):
+        # Each part is an `InstructionPart`, inferred as its fields, so a mapping with `content`.
+        for part in cast('list[dict[str, Any]]', parts):
+            part.pop('content', None)
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
-
-
-def instruction_parts_of(serialized_parameters: Any) -> list[dict[str, Any]]:
-    """The serialized `instruction_parts`, or nothing when the shape isn't what we expect."""
-    if not isinstance(serialized_parameters, dict):
-        return []  # pragma: no cover
-    parts = cast('Any', serialized_parameters).get('instruction_parts')
-    if not isinstance(parts, list):
-        return []
-    return [part for part in cast('list[Any]', parts) if isinstance(part, dict)]
+    return parameters
 
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:
@@ -213,6 +214,11 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
     echo the rejected arguments. The type and `escaped` formatting match what
     `Span.record_exception` would have produced.
     """
+    # `use_span` records nothing on a span that isn't recording, and neither does this: the SDK
+    # formats the traceback before `add_event` drops it, so an exception whose `__str__` raises
+    # would surface that failure in place of the original error.
+    if not span.is_recording():
+        return
     if include_content:
         span.record_exception(error, escaped=escaped)
         return
@@ -232,18 +238,46 @@ def set_error_status(span: Span, error: BaseException, *, include_content: bool)
     The SDK's description is `f'{type(exc).__name__}: {exc}'`, which repeats the message the
     exception event carries, so it is withheld alongside it when content capture is off.
     """
+    if not span.is_recording():
+        return
     span.set_status(
         Status(StatusCode.ERROR, description=f'{type(error).__name__}: {error}' if include_content else None)
     )
 
 
-include_content_ctx: ContextVar[bool | None] = ContextVar('include_content', default=None)
+@dataclass(frozen=True)
+class ContentPolicy:
+    """One span's `include_content`, tagged with the span it was set for.
+
+    The tag is what makes the variable safe to read. Restoring it is a plain `set` rather than a
+    `reset` (an interrupted streamed run finalizes the context manager in a different `Context`,
+    where `reset` raises), and a `set` lands only in the `Context` that runs it, so the `Context`
+    that opened the request can be left holding a finished request's value. Naming the span means a
+    reader can only honour a policy set for the span in front of it, and anything else fails closed.
+    """
+
+    span_id: int
+    include_content: bool
+
+
+include_content_ctx: ContextVar[ContentPolicy | None] = ContextVar('include_content', default=None)
 """Carries the open `chat` span's `include_content` to code that updates that span without holding
 the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
 model answered. Set by `open_model_request_span` for the span's lifetime, so a refresh redacts the
 instruction content of the model it picked the way the span was opened, rather than guessing from
-what is already recorded. `None` means no instrumented request is open.
+what is already recorded. Read it through `span_include_content`, never directly. `None` means no
+instrumented request is open.
 """
+
+
+def span_include_content(span: Span) -> bool:
+    """Whether `span` was opened with content capture, defaulting to `False` when nothing says so.
+
+    Fails closed on every answer but "this span's own request wanted content": no request open, or a
+    policy belonging to a different span, both mean nothing vouches for exporting content here.
+    """
+    policy = include_content_ctx.get()
+    return policy is not None and policy.span_id == span.get_span_context().span_id and policy.include_content
 
 
 @contextmanager
@@ -312,7 +346,7 @@ def open_model_request_span(
                 attributes[f'gen_ai.request.{key}'] = value
 
     record_metrics: Callable[[], None] | None = None
-    include_content_token = include_content_ctx.set(settings.include_content)
+    previous_include_content = include_content_ctx.get()
     try:
         with settings.tracer.start_as_current_span(
             span_name,
@@ -321,6 +355,11 @@ def open_model_request_span(
             record_exception=False,
             set_status_on_exception=False,
         ) as span:
+            # Set inside the `with`, because the policy names the span it speaks for. Restored with
+            # `set` rather than `reset`: this generator can be finalized in a different `Context`
+            # when a streamed run is interrupted, where `ContextVar.reset` raises.
+            include_content_ctx.set(ContentPolicy(span.get_span_context().span_id, settings.include_content))
+
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
@@ -392,7 +431,7 @@ def open_model_request_span(
                 set_error_status(span, e, include_content=settings.include_content)
                 raise
     finally:
-        include_content_ctx.reset(include_content_token)
+        include_content_ctx.set(previous_include_content)
         if record_metrics:
             record_metrics()
 

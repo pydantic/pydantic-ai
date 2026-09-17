@@ -18,8 +18,8 @@ from pydantic_ai._instrumentation import (
     get_instructions,
     open_model_request_span,
     record_exception as _record_exception,
+    record_uncaught_errors as _record_uncaught_errors,
     serialize_any,
-    set_error_status as _set_error_status,
 )
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
@@ -151,29 +151,25 @@ class Instrumentation(AbstractCapability[Any]):
             if rendered is not None:
                 span_attributes['gen_ai.agent.description'] = rendered
 
-        with settings.tracer.start_as_current_span(
-            names.get_agent_run_span_name(agent_name),
-            attributes=span_attributes,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span:
+        with (
+            settings.tracer.start_as_current_span(
+                names.get_agent_run_span_name(agent_name),
+                attributes=span_attributes,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span,
+            # Stands in for what the two `..._on_exception=False` arguments turned off, over the
+            # span's whole scope the way `use_span` covered it -- not just the run, but the
+            # finalization below, whose failures have to keep marking the span.
+            _record_uncaught_errors(span, include_content=settings.include_content),
+        ):
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
             token = _otel_attach(otel_ctx)
             result: AgentRunResult[Any] | None = None
             try:
-                try:
-                    result = await handler()
-                except Exception as e:
-                    # Stand in for what the two `..._on_exception=False` arguments turned off,
-                    # matching `use_span` exactly: it records only `Exception` (a `BaseException`
-                    # such as a cancellation is not an error), does not mark what it records as
-                    # escaped, and describes the status with the exception. That description
-                    # repeats the message, so it is withheld along with the event's.
-                    _record_exception(span, e, include_content=settings.include_content, escaped=False)
-                    _set_error_status(span, e, include_content=settings.include_content)
-                    raise
+                result = await handler()
 
                 if settings.include_content and span.is_recording():
                     span.set_attribute(

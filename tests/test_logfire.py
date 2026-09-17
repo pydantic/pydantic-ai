@@ -6,6 +6,9 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsList
+
+# `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -30,7 +33,13 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics
+from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
+
+with try_import():
+    # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
+    # `pydantic-ai-slim` / `pydantic-evals` install groups either.
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 try:
     import logfire
@@ -4291,3 +4300,63 @@ def test_model_request_exception_events_honor_include_content(capfire: CaptureLo
         assert all(set(attributes) == {'exception.type', 'exception.escaped'} for _, attributes in events)
         assert 'secret' not in str(spans)
         assert descriptions == []
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_run_span_records_failures_from_its_own_finalization(
+    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run span's finalization is inside the scope `use_span` used to cover.
+
+    `record_exception=False` / `set_status_on_exception=False` switch off the SDK's recording for
+    the whole span, so the stand-in has to wrap the whole span body rather than just the run. A
+    failure while computing the end-of-run attributes comes out of the `finally`, and the span still
+    has to end up ERROR with the exception on it.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    def boom(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise ValueError('finalization failed')
+
+    monkeypatch.setattr(Instrumentation, '_run_span_end_attributes', boom)
+    agent = Agent(model=FunctionModel(model_function), capabilities=[Instrumentation()])
+
+    with pytest.raises(ValueError, match='finalization failed'):
+        await agent.run('hello')
+
+    [run_span] = [
+        span
+        for span in capfire.exporter.exported_spans
+        # Logfire exports a pending span alongside the real one; only the latter carries the status.
+        if span.name.startswith('agent run') and (span.attributes or {}).get('logfire.span_type') != 'pending_span'
+    ]
+    assert run_span.status.status_code is StatusCode.ERROR
+    assert [event.name for event in run_span.events] == ['exception']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_exception_recording_skipped_when_span_is_not_recording() -> None:
+    """`use_span` left a non-recording span's exception alone, and so does the stand-in.
+
+    The SDK formats the traceback before `add_event` discards it, so recording on a sampled-out
+    span would surface a `__str__` failure in place of the error that actually happened.
+    """
+
+    class Unformattable(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError('formatting blew up')
+
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise Unformattable
+
+    agent = Agent(
+        FunctionModel(boom),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=TracerProvider(sampler=ALWAYS_OFF)))
+        ],
+    )
+    with pytest.raises(Unformattable):
+        agent.run_sync('hello')
