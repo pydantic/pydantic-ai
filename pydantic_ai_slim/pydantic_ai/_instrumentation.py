@@ -4,6 +4,7 @@ import itertools
 import warnings
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from urllib.parse import urlparse
@@ -111,9 +112,37 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 
 
 def model_request_parameters_attributes(
-    model_request_parameters: ModelRequestParameters,
+    model_request_parameters: ModelRequestParameters, *, include_content: bool = True
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': to_json(serialize_any(model_request_parameters)).decode()}
+    serialized = serialize_any(model_request_parameters)
+    if not include_content:
+        # Two fields here are prompt text the user wrote, which is the "proprietary prompts" half of
+        # what the setting withholds: the instructions (whose dynamic parts can be built from deps)
+        # and the prompted-output template. Tool and output *schemas* stay: request structure rather
+        # than message content, and `include_model_request_parameters=False` drops the attribute.
+        for part in instruction_parts_of(serialized):
+            part.pop('content', None)
+        _blank_prompted_output_template(serialized)
+    return {'model_request_parameters': to_json(serialized).decode()}
+
+
+def _blank_prompted_output_template(serialized_parameters: Any) -> None:
+    """Blank the prompted-output template, which is prompt text the user wrote."""
+    if not isinstance(serialized_parameters, dict):
+        return  # pragma: no cover
+    parameters = cast('dict[str, Any]', serialized_parameters)
+    if parameters.get('prompted_output_template') is not None:
+        parameters['prompted_output_template'] = None
+
+
+def instruction_parts_of(serialized_parameters: Any) -> list[dict[str, Any]]:
+    """The serialized `instruction_parts`, or nothing when the shape isn't what we expect."""
+    if not isinstance(serialized_parameters, dict):
+        return []  # pragma: no cover
+    parts = cast('Any', serialized_parameters).get('instruction_parts')
+    if not isinstance(parts, list):
+        return []
+    return [part for part in cast('list[Any]', parts) if isinstance(part, dict)]
 
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:
@@ -208,6 +237,31 @@ def set_error_status(span: Span, error: BaseException, *, include_content: bool)
     )
 
 
+include_content_ctx: ContextVar[bool | None] = ContextVar('include_content', default=None)
+"""Carries the open `chat` span's `include_content` to code that updates that span without holding
+the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
+model answered. Set by `open_model_request_span` for the span's lifetime, so a refresh redacts the
+instruction content of the model it picked the way the span was opened, rather than guessing from
+what is already recorded. `None` means no instrumented request is open.
+"""
+
+
+@contextmanager
+def record_uncaught_errors(span: Span, *, include_content: bool) -> Generator[None]:
+    """Record exceptions leaving `span`'s scope the way `use_span` would have.
+
+    For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
+    both jobs to the caller. Enter this around the span's whole scope -- the scope `use_span`
+    covered -- so that failures while finalizing the span still mark it.
+    """
+    try:
+        yield
+    except Exception as error:
+        record_exception(span, error, include_content=include_content, escaped=False)
+        set_error_status(span, error, include_content=include_content)
+        raise
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
@@ -238,7 +292,7 @@ def open_model_request_span(
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': operation,
         **model_attributes(model),
-        **model_request_parameters_attributes(prepared_parameters),
+        **model_request_parameters_attributes(prepared_parameters, include_content=settings.include_content),
         **get_agent_run_baggage_attributes(),
         'logfire.json_schema': to_json(
             {
@@ -258,6 +312,7 @@ def open_model_request_span(
                 attributes[f'gen_ai.request.{key}'] = value
 
     record_metrics: Callable[[], None] | None = None
+    include_content_token = include_content_ctx.set(settings.include_content)
     try:
         with settings.tracer.start_as_current_span(
             span_name,
@@ -337,6 +392,7 @@ def open_model_request_span(
                 set_error_status(span, e, include_content=settings.include_content)
                 raise
     finally:
+        include_content_ctx.reset(include_content_token)
         if record_metrics:
             record_metrics()
 
