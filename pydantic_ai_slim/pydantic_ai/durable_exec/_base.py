@@ -61,6 +61,7 @@ from ._capability_operation import (
     ModelRequestContextProjection,
     _ResolvedModelRequestContext,  # pyright: ignore[reportPrivateUsage]
     bind_arguments,
+    bind_declaration_body,
     call_declaration,
     capability_operation_result_type,
     collect_capability_operations,
@@ -326,7 +327,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_capability_operations = {}
         self._capability_declarations = {}
         backend = self.get_durable_operation_backend()
-        durability_ref = ref(self)
         for capability in leaf_capabilities(agent.root_capability):
             declarations = collect_capability_operations(capability)
             if not declarations:
@@ -402,51 +402,47 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 self._bound_capability_operations[key] = backend.bind(operation)
                 self._capability_declarations[key] = declaration
 
-                async def dispatch_for_run_context(
-                    ctx: RunContext[object],
-                    args: tuple[object, ...],
-                    kwargs: dict[str, object],
-                    _capability: AbstractCapability[Any] = capability,
-                    _operation_name: str = operation_name,
-                ) -> Any:
-                    durability = durability_ref()
-                    if durability is None:  # pragma: no cover
-                        raise RuntimeError('The durability capability bound to this agent is no longer available.')
-                    return await durability._invoke_capability_operation(
-                        _capability,
-                        _operation_name,
-                        ctx=ctx,
-                        args=args,
-                        kwargs=kwargs,
-                    )
-
-                bindings = capability._durable_operation_bindings
-                bindings.setdefault(agent)[operation_name] = dispatch_for_run_context
-
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         """Register dispatchers on `RunContext` for worker-side and per-run capability recovery."""
-        ctx._durable_operations = {}  # pyright: ignore[reportPrivateUsage]
+        # Mutated in place, never reassigned: the graph shares one mapping by reference into every
+        # `RunContext` it builds, so an operation called from a per-request hook resolves the same
+        # per-run dispatchers `before_run` does.
+        operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
+        if operations is None:
+            operations = ctx._durable_operations = {}  # pyright: ignore[reportPrivateUsage]
+        operations.clear()
         if ctx.agent is None:
             return
-        operations: dict[tuple[str, str], Callable[..., Awaitable[object]]] = {}
         run_capabilities = ctx._run_capabilities_by_id or {}  # pyright: ignore[reportPrivateUsage]
+        if unreachable := sorted({key[0] for key in self._bound_capability_operations} - run_capabilities.keys()):
+            # Without this the operations would dispatch nowhere and their methods would run inline,
+            # non-durably, with nothing said — precisely what a durable operation exists to prevent.
+            ids = ', '.join(repr(capability_id) for capability_id in unreachable)
+            raise UserError(
+                f'No capability with id {ids} is present in this run, but one was bound to the agent '
+                'and contributes durable operations. A `for_run` replacement has to keep the '
+                "capability's `id`: it identifies the capability across the run, and persisted "
+                'operation identity and worker-side recovery are built on it.'
+            )
         for capability_id, capability in run_capabilities.items():
             for bound_capability_id, operation_name in self._bound_capability_operations:
                 if capability_id != bound_capability_id:
                     continue
 
                 async def dispatch(
-                    *args: object,
+                    call_ctx: RunContext[object],
+                    args: tuple[object, ...],
+                    kwargs: dict[str, object],
                     _capability: AbstractCapability[Any] = capability,
                     _operation_name: str = operation_name,
-                    **kwargs: object,
                 ) -> object:
+                    # The caller's context, not the one this ran at run setup: a per-request hook
+                    # dispatches with the step's own model, usage and messages.
                     return await self._invoke_capability_operation(
-                        _capability, _operation_name, ctx=ctx, args=args, kwargs=kwargs
+                        _capability, _operation_name, ctx=call_ctx, args=args, kwargs=kwargs
                     )
 
                 operations[(capability_id, operation_name)] = dispatch
-        ctx._durable_operations = operations  # pyright: ignore[reportPrivateUsage]
 
     async def _invoke_capability_operation(
         self,
@@ -468,8 +464,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         key = (capability_id, operation)
         declaration = self._capability_declarations[key]
         if not self.in_durable_context:
-            bound = declaration.function.__get__(capability, type(capability))
-            return await bound(*args, **kwargs)
+            return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
         request_context = next(
             (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Awaitable, Callable
+from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
-from opentelemetry.trace import Span, Status, StatusCode
+from opentelemetry.trace import StatusCode
 from pydantic_core import ValidationError, to_json
 
 from pydantic_ai._instrumentation import (
@@ -20,6 +21,8 @@ from pydantic_ai._instrumentation import (
     get_instructions,
     has_stale_message_json,
     open_model_request_span,
+    record_exception as _record_exception,
+    record_uncaught_errors as _record_uncaught_errors,
     redact_binary_content,
     safe_to_json,
     serialize_any,
@@ -36,6 +39,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RunUsage
 
 from .abstract import (
     AbstractCapability,
@@ -55,30 +59,6 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
     from pydantic_ai.tools import AgentDepsT
-
-
-def _record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
-    """Record `error` on `span` as an `exception` event.
-
-    With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
-    only the exception type is kept: the message and stack trace of an exception raised around
-    a tool or an agent run can quote content the setting is meant to withhold -- a tool retry
-    or failure carries the text the model sees, an exception chained from one repeats that text
-    in its stack trace, and validation errors and user exceptions may echo the rejected
-    arguments. The type and `escaped` formatting match what `Span.record_exception` would have
-    produced.
-    """
-    if include_content:
-        span.record_exception(error, escaped=escaped)
-        return
-    error_type = type(error)
-    type_name = (
-        f'{error_type.__module__}.{error_type.__qualname__}'
-        if error_type.__module__ != 'builtins'
-        else error_type.__qualname__
-    )
-    # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
-    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -116,6 +96,7 @@ class Instrumentation(AbstractCapability[Any]):
     # these fields would race.
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
+    _starting_usage: RunUsage = field(default_factory=RunUsage, repr=False, init=False)
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
     _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
@@ -195,6 +176,11 @@ class Instrumentation(AbstractCapability[Any]):
         inst = replace(self)
         inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
         inst._new_message_index = len(ctx.messages)
+        # A run accumulates into the `RunUsage` it is handed, so a caller carrying one across a
+        # conversation (`usage=`, or a `Conversation`) hands this run a non-zero starting point.
+        # Copy it so the end-of-run span can report what *this* run added; see
+        # `_run_span_end_attributes`.
+        inst._starting_usage = copy(ctx.usage)
         return inst
 
     # ------------------------------------------------------------------
@@ -232,34 +218,22 @@ class Instrumentation(AbstractCapability[Any]):
             if rendered is not None:
                 span_attributes['gen_ai.agent.description'] = rendered
 
-        with settings.tracer.start_as_current_span(
-            names.get_agent_run_span_name(agent_name),
-            attributes=span_attributes,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span:
+        with (
+            settings.tracer.start_as_current_span(
+                names.get_agent_run_span_name(agent_name),
+                attributes=span_attributes,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span,
+            _record_uncaught_errors(span, include_content=settings.include_content),
+        ):
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
             token = _otel_attach(otel_ctx)
             result: AgentRunResult[Any] | None = None
             try:
-                try:
-                    result = await handler()
-                except Exception as e:
-                    # Stand in for what the two `..._on_exception=False` arguments turned off,
-                    # matching `use_span` exactly: it records only `Exception` (a `BaseException`
-                    # such as a cancellation is not an error), does not mark what it records as
-                    # escaped, and describes the status with the exception. That description
-                    # repeats the message, so it is withheld along with the event's.
-                    _record_exception(span, e, include_content=settings.include_content, escaped=False)
-                    span.set_status(
-                        Status(
-                            StatusCode.ERROR,
-                            description=f'{type(e).__name__}: {e}' if settings.include_content else None,
-                        )
-                    )
-                    raise
+                result = await handler()
 
                 if settings.include_content and span.is_recording():
                     span.set_attribute(
@@ -329,7 +303,11 @@ class Instrumentation(AbstractCapability[Any]):
         if metadata is not None:
             attrs['metadata'] = safe_to_json(serialize_any(redact_binary_content(metadata, settings))).decode()
 
-        usage_attrs = settings.aggregated_usage_attributes(ctx.usage)
+        # This run's own contribution, not the conversation's running total: `ctx.usage` is the
+        # object the caller passed in, accumulated into in place, so reporting it directly would
+        # make every run after the first include its predecessors' tokens and double-count anyone
+        # summing agent-run spans. The per-request `chat` spans are unaffected either way.
+        usage_attrs = settings.aggregated_usage_attributes(ctx.usage - self._starting_usage)
 
         return {
             **usage_attrs,
