@@ -455,12 +455,15 @@ def bind_declaration_body(
 
     The declaration was collected from the class the engine bound at construction, but a `for_run`
     replacement may be a specialized subclass, and its override is the implementation the run asked
-    for. The marker carries the undecorated target, so binding it doesn't re-enter dispatch.
+    for. A decorated override is reached through its marker, which carries the undecorated target so
+    binding it doesn't re-enter dispatch; an override of a `base_hook_durable_operation` hook carries
+    no marker of its own and is bound as it stands.
     """
     function = declaration.function
     member = getattr(type(capability), function.__name__, None)
-    if member is not None and (override := get_durable_operation_marker(member)) is not None:
-        function = override.function
+    if member is not None:
+        override = get_durable_operation_marker(member)
+        function = override.function if override is not None else member
     return function.__get__(capability, type(capability))
 
 

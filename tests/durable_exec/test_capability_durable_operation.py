@@ -6,7 +6,7 @@ import re
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
@@ -626,6 +626,23 @@ class PerRequestOperation(AbstractCapability[Any]):
         return ctx.run_step
 
 
+class DerivedContextOperation(AbstractCapability[Any]):
+    """Dispatches with a context it derived, rather than the one it was handed."""
+
+    id = 'derived_context_operation'
+
+    def __init__(self) -> None:
+        self.seen: list[dict[str, Any] | None] = []
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.record(replace(ctx, metadata={'operation': 'reserve'}))
+
+    @durable_operation('record')
+    async def record(self, ctx: RunContext[Any]) -> int:
+        self.seen.append(ctx.metadata)
+        return 1
+
+
 class WrapRunOperation(AbstractCapability[Any]):
     """Calls a durable operation from `wrap_run`, before it awaits the handler."""
 
@@ -663,6 +680,30 @@ class HoldsSetupContext(AbstractCapability[Any]):
     @durable_operation('read_deps')
     async def read_deps(self, ctx: RunContext[Any]) -> str:
         return str(ctx.deps)
+
+
+class BaseHookTier(AbstractCapability[Any]):
+    @base_hook_durable_operation('provision')
+    async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
+
+
+class BaseHookOverride(BaseHookTier):
+    """An override of a durable base hook, which carries no marker of its own."""
+
+    id = 'base_hook_override'
+
+    def __init__(self, bodies: list[str]) -> None:
+        self.bodies = bodies
+
+    async def provision(self, ctx: RunContext[Any]) -> str:
+        self.bodies.append('base')
+        return 'base'
+
+
+class BaseHookOverrideReplacement(BaseHookOverride):
+    async def provision(self, ctx: RunContext[Any]) -> str:
+        self.bodies.append('replacement')
+        return 'replacement'
 
 
 class SpecializedForRun(AbstractCapability[Any]):
@@ -837,6 +878,34 @@ async def test_per_request_hook_dispatches_on_the_run_instance_it_already_built(
     assert capability.replacements == snapshot(1)
 
 
+async def test_operation_receives_the_context_its_caller_passed() -> None:
+    """A derived context reaches the operation, and the identity the engine keys on.
+
+    The dispatcher forwards whatever context the call supplied rather than the one run setup
+    prepared, so a caller that narrows or annotates the context is not silently ignored. Engines
+    whose cache policy hashes the run context therefore key on the derived one -- deliberate, and
+    the reason this is a documented compatibility impact.
+    """
+    capability = DerivedContextOperation()
+    agent = Agent(
+        TestModel(),
+        name='derived_context_operation',
+        capabilities=[capability, RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    assert capability.seen == snapshot([{'operation': 'reserve'}])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    keyed = [
+        next((entry.metadata for entry in key if isinstance(entry, RunContext)), None)
+        for name, key in durability.calls
+        if '__capability__' in name
+    ]
+    assert keyed == snapshot([{'operation': 'reserve'}])
+
+
 async def test_wrap_run_operation_dispatches_before_the_handler_is_awaited() -> None:
     """`wrap_run` encloses the rest of the run, so dispatch has to exist before the chain is entered.
 
@@ -879,6 +948,33 @@ async def test_operation_dispatches_with_the_context_for_run_was_handed() -> Non
     assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
         ['holds_setup_context__capability__holds_setup_context.read_deps']
     )
+
+
+async def test_dispatch_runs_a_replacement_override_of_a_durable_base_hook() -> None:
+    """An override of a durable base hook is specialized per run like a decorated operation is.
+
+    Driven through the engine entry point rather than a run: an unmarked base-hook override has no
+    decorator to dispatch through, so a run reaches it directly and never consults the declaration.
+    The engine entry point is what a durability integration registers such an operation for, and the
+    body it binds has to be the one the run's capability implements.
+    """
+    bodies: list[str] = []
+    model = TestModel()
+    bound = BaseHookOverride(bodies)
+    agent = Agent(model, name='base_hook_override', capabilities=[bound, TransparentDurability()])
+    durability = TransparentDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext(deps=None, agent=agent, model=model, usage=RunUsage())
+
+    await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
+        BaseHookOverrideReplacement(bodies), 'provision', ctx=ctx, args=(ctx,), kwargs={}
+    )
+    # And the other direction: the capability the engine bound still contributes its own body.
+    await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
+        bound, 'provision', ctx=ctx, args=(ctx,), kwargs={}
+    )
+
+    assert bodies == snapshot(['replacement', 'base'])
 
 
 async def test_dispatch_runs_the_replacement_subclass_override() -> None:
