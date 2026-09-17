@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import json
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -10,11 +9,10 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
 import anyio
 from opentelemetry.trace import get_current_span
-from opentelemetry.util.types import AttributeValue
 from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import (
-    instruction_parts_of,
+    include_content_ctx,
     model_attributes,
     model_request_parameters_attributes,
 )
@@ -309,29 +307,15 @@ class FallbackModel(Model):
                             **model_attributes(model),
                             **model_request_parameters_attributes(
                                 model_request_parameters,
-                                # The settings aren't reachable from here, so mirror the redaction the
-                                # span was opened with rather than re-adding instruction content it
-                                # left out.
-                                include_content=_recorded_instruction_content(
-                                    attributes.get('model_request_parameters')
-                                ),
+                                # The settings aren't reachable from here, so the span carries its
+                                # own `include_content` in a context variable. This refresh
+                                # serializes the *selected* model's parameters, whose instruction
+                                # parts the outer request may not have had at all, so it cannot be
+                                # inferred from what is already recorded.
+                                include_content=include_content_ctx.get() is not False,
                             ),
                         }
                     )
-
-
-def _recorded_instruction_content(recorded_parameters: AttributeValue | None) -> bool:
-    """Whether the `model_request_parameters` already on the span kept its instruction content.
-
-    `True` when there is nothing to judge by, which leaves the default path unchanged.
-    """
-    if not isinstance(recorded_parameters, str):
-        return True  # pragma: no cover
-    try:
-        parts = instruction_parts_of(json.loads(recorded_parameters))
-    except ValueError:  # pragma: no cover
-        return True
-    return all('content' in part for part in parts)
 
 
 def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> ExceptionHandler:

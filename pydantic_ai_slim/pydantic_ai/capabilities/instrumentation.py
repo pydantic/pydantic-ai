@@ -229,9 +229,7 @@ class Instrumentation(AbstractCapability[Any]):
             if self._variable_instructions:
                 attrs['pydantic_ai.variable_instructions'] = True
 
-        # Run metadata is caller-supplied and arbitrary, so it follows `include_content` like the
-        # messages do rather than riding along as structure.
-        if metadata is not None and settings.include_content:
+        if metadata is not None:
             attrs['metadata'] = to_json(serialize_any(metadata)).decode()
 
         usage_attrs = (
