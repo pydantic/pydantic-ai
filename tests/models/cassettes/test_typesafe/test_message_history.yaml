@@ -65,10 +65,7 @@ interactions:
         response:
           instructions:
             goal: The final response which ends this conversation
-            instructions: |-
-              Does the latest message mention a fruit?
-
-              Does the latest message mention a fruit?
+            instructions: Does the latest message mention a fruit?
             question: response
           type: noul
       state:

@@ -1470,6 +1470,7 @@ def test_model_json_schema_with_capabilities():
                         'snowflake:openai-gpt-5.4',
                         'snowflake:openai-gpt-5.5',
                         'snowflake:snowflake-llama-3.3-70b',
+                        'typesafe:jev-latest',
                         'xai:grok-3',
                         'xai:grok-3-fast',
                         'xai:grok-3-fast-latest',

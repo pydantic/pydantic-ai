@@ -61,7 +61,9 @@ LatestTypeSafeModelNames = Literal['jev-latest']
 TypeSafeModelName = str | LatestTypeSafeModelNames
 """Possible TypeSafe model names."""
 
-_UNSUPPORTED_FIELD_HINT = 'Use `bool`, a `Literal` or `Enum` of strings, or a `float` bounded with `ge=0` and `le=1`.'
+_UNSUPPORTED_FIELD_HINT = (
+    'Use `bool`, a `Literal` or `Enum` of two or more strings, or a `float` bounded with `ge=0` and `le=1`.'
+)
 
 
 class TypeSafeModelSettings(ModelSettings, total=False):
@@ -147,8 +149,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         Args:
             model_name: The name of the TypeSafe model to use, such as `jev-latest`.
             provider: The provider to use for authentication and API access. Can be either the string
-                'typesafe' or an instance of `Provider[AsyncTypeSafeClient]`. If not provided, a new provider will
-                be created using the other parameters.
+                'typesafe' or an instance of `Provider[AsyncTypeSafeClient]`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Model-specific settings that will be used as defaults for this model.
         """
@@ -187,8 +188,11 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tool = _output_tool(model_request_parameters)
-        instructions, state = _map_messages(messages, output_tool.name)
-        questions = _questions(output_tool, instructions)
+        properties = _properties(output_tool)
+        system_prompts, state = _map_messages(messages, output_tool.name)
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        instructions = '\n\n'.join([*system_prompts, *(part.content for part in instruction_parts)]) or None
+        questions = _questions(properties, output_tool, instructions)
         settings = cast(TypeSafeModelSettings, model_settings or {})
 
         timeout = settings.get('timeout')
@@ -213,7 +217,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         args: dict[str, Any] = {}
         confidence: dict[str, float] = {}
         probabilities: dict[str, dict[str, float]] = {}
-        for name, prop in _properties(output_tool).items():
+        for name, prop in properties.items():
             answer = response.answers.get(name)
             if answer is None:
                 raise UnexpectedModelBehavior(f'TypeSafe returned no answer for output field {name!r}.')
@@ -265,15 +269,16 @@ def _properties(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
     return properties
 
 
-def _questions(output_tool: ToolDefinition, instructions: str | None) -> dict[str, Noul | Choice]:
+def _questions(
+    properties: dict[str, dict[str, Any]], output_tool: ToolDefinition, instructions: str | None
+) -> dict[str, Noul | Choice]:
     """One Jev question per output field."""
     questions: dict[str, Noul | Choice] = {}
-    properties = _properties(output_tool)
     if not properties:
         raise UserError('An `output_type` with no fields is not supported by this model; there is nothing to ask Jev.')
     for name, prop in properties.items():
         ask: dict[str, JSONContent] = {'question': prop.get('description') or name}
-        if output_tool.description:
+        if output_tool.description:  # pragma: no branch
             ask['goal'] = output_tool.description
         if instructions:
             ask['instructions'] = instructions
@@ -290,6 +295,8 @@ def _questions(output_tool: ToolDefinition, instructions: str | None) -> dict[st
                     f'got {sorted(criteria)}.'
                 )
             questions[name] = Choice(instructions=ask, criteria=criteria)
+        elif prop.get('typesafe_criteria'):
+            raise UserError(f'`typesafe_criteria` describes options, but output field {name!r} has none.')
         elif prop.get('type') == 'boolean':
             questions[name] = Noul(instructions=ask)
         elif prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1:
@@ -308,20 +315,18 @@ def _prompt_text(part: UserPromptPart) -> list[str]:
     return cast(list[str], items)
 
 
-def _map_messages(messages: list[ModelMessage], output_tool_name: str) -> tuple[str | None, dict[str, JSONContent]]:
-    """The instructions to judge by, and the state to judge: the latest user text, plus earlier turns' text."""
-    instructions: list[str] = []
+def _map_messages(messages: list[ModelMessage], output_tool_name: str) -> tuple[list[str], dict[str, JSONContent]]:
+    """The system prompts, and the state to judge: the latest user text, plus earlier turns' text."""
+    system_prompts: list[str] = []
     prompts: list[str] = []
     latest: list[str] = []
     for message in messages:
         if isinstance(message, ModelRequest):
-            if message.instructions:
-                instructions.append(message.instructions)
             prompts.extend(latest)
             latest = []
             for part in message.parts:
                 if isinstance(part, SystemPromptPart):
-                    instructions.append(part.content)
+                    system_prompts.append(part.content)
                 elif isinstance(part, UserPromptPart):
                     latest.extend(_prompt_text(part))
                 elif isinstance(part, RetryPromptPart):
@@ -333,9 +338,10 @@ def _map_messages(messages: list[ModelMessage], output_tool_name: str) -> tuple[
                     # The agent's own "Final result processed." return for an earlier answer is fine; nothing else is.
                     if not (isinstance(part, ToolReturnPart) and part.tool_name == output_tool_name):
                         raise UserError('Tool results are not supported by this model, which cannot call tools.')
-                elif isinstance(part, ToolAvailabilityDeltaPart):
+                elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                     raise _unsynthesized_tool_availability_delta_error()
-                elif isinstance(part, SpeechPart):
+                elif isinstance(part, SpeechPart):  # pragma: no cover
+                    # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
                     raise _unconverted_speech_part_error()
                 else:
                     assert_never(part)
@@ -349,4 +355,4 @@ def _map_messages(messages: list[ModelMessage], output_tool_name: str) -> tuple[
     state: dict[str, JSONContent] = {'prompt': '\n\n'.join(latest)}
     if prompts:
         state['previous_prompts'] = prompts
-    return '\n\n'.join(instructions) or None, state
+    return system_prompts, state

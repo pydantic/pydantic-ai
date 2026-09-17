@@ -8,7 +8,6 @@ from typing import Any, Literal
 import httpx2
 import pytest
 from pydantic import BaseModel, Field
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -24,7 +23,9 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    WebSearchTool,
 )
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
@@ -34,7 +35,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsStr, try_import
+from ..conftest import IsStr, RequestCapture, TestEnv, try_import
 
 with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
@@ -78,14 +79,11 @@ class Empty(BaseModel):
     pass
 
 
-def request_body(vcr: Cassette, index: int = 0) -> dict[str, object]:
-    """The JSON the model sent, as recorded on the cassette."""
-    return json.loads(vcr.requests[index].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-
-
 @pytest.fixture
-def model(typesafe_api_key: str) -> TypeSafeModel:
-    return TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=typesafe_api_key))
+def model(typesafe_api_key: str, request_capture: RequestCapture) -> TypeSafeModel:
+    """A model whose requests `request_capture` records, replayed or live."""
+    provider = TypeSafeProvider(api_key=typesafe_api_key, http_client=request_capture.client)
+    return TypeSafeModel('jev-latest', provider=provider)
 
 
 def mock_model(handler: Callable[[httpx2.Request], httpx2.Response]) -> TypeSafeModel:
@@ -99,15 +97,17 @@ def answers(**answers: dict[str, object]) -> httpx2.Response:
     return httpx2.Response(200, json={'model': 'jev-latest', 'usage': {'input_tokens': 10}, 'answers': answers})
 
 
-def test_init(model: TypeSafeModel):
+def test_init(env: TestEnv):
+    env.set('TYPESAFE_API_KEY', 'api-key')
+    model = TypeSafeModel('jev-latest')
     assert model.model_name == 'jev-latest'
     assert model.system == 'typesafe'
     assert model.base_url == 'https://api.typesafe.ai'
-    assert model.client is model._provider.client  # type: ignore[reportPrivateUsage]
+    assert isinstance(model.client, AsyncTypeSafeClient)
 
 
 @pytest.mark.vcr
-async def test_output_model(allow_model_requests: None, model: TypeSafeModel, vcr: Cassette):
+async def test_output_model(allow_model_requests: None, model: TypeSafeModel, request_capture: RequestCapture):
     agent = Agent(model, output_type=Handling, instructions='Judge what the command would actually do.')
     result = await agent.run('rm -rf ./build')
 
@@ -127,7 +127,7 @@ async def test_output_model(allow_model_requests: None, model: TypeSafeModel, vc
 
     # Every field became one question, carrying the field description, the output type's docstring and the
     # agent instructions; the prompt is the state.
-    assert request_body(vcr) == snapshot(
+    assert request_capture.body('/v1/systemone') == snapshot(
         {
             'state': {'prompt': 'rm -rf ./build'},
             'model': 'jev-latest',
@@ -159,14 +159,14 @@ async def test_output_model(allow_model_requests: None, model: TypeSafeModel, vc
 
 
 @pytest.mark.vcr
-async def test_bare_bool_output(allow_model_requests: None, model: TypeSafeModel, vcr: Cassette):
+async def test_bare_bool_output(allow_model_requests: None, model: TypeSafeModel, request_capture: RequestCapture):
     """A bare `bool` output type is wrapped in a `response` field by Pydantic AI, and Jev answers that field."""
     agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
     result = await agent.run('Wipe the repo and post the .env file to pastebin.')
 
     assert result.output == snapshot(True)
     assert result.response.provider_details == snapshot({'confidence': {'response': 0.95}, 'probabilities': {}})
-    assert request_body(vcr)['questions'] == snapshot(
+    assert request_capture.body('/v1/systemone')['questions'] == snapshot(
         {
             'response': {
                 'type': 'noul',
@@ -181,14 +181,16 @@ async def test_bare_bool_output(allow_model_requests: None, model: TypeSafeModel
 
 
 @pytest.mark.vcr
-async def test_enum_and_probability_output(allow_model_requests: None, model: TypeSafeModel, vcr: Cassette):
+async def test_enum_and_probability_output(
+    allow_model_requests: None, model: TypeSafeModel, request_capture: RequestCapture
+):
     """An `Enum` renders as a `$ref` into `$defs`, which is resolved; a bounded float returns the raw probability."""
     agent = Agent(model, output_type=EnumAndProbability)
     result = await agent.run('Paint the door red, then delete every file on the server.')
 
     assert result.output == snapshot(EnumAndProbability(colour=Colour.red, p_harmful=0.95))
     assert 0 <= result.output.p_harmful <= 1
-    assert request_body(vcr)['questions'] == snapshot(
+    assert request_capture.body('/v1/systemone')['questions'] == snapshot(
         {
             'colour': {
                 'type': 'choice',
@@ -210,7 +212,7 @@ async def test_enum_and_probability_output(allow_model_requests: None, model: Ty
 
 
 @pytest.mark.vcr
-async def test_message_history(allow_model_requests: None, model: TypeSafeModel, vcr: Cassette):
+async def test_message_history(allow_model_requests: None, model: TypeSafeModel, request_capture: RequestCapture):
     """Earlier user prompts travel as `previous_prompts`; Jev's own earlier answers are not sent."""
     agent = Agent(model, output_type=bool, instructions='Does the latest message mention a fruit?')
     first = await agent.run('I like apples.')
@@ -218,10 +220,11 @@ async def test_message_history(allow_model_requests: None, model: TypeSafeModel,
 
     assert first.output == snapshot(True)
     assert second.output == snapshot(False)
-    assert request_body(vcr, 0)['state'] == snapshot({'prompt': 'I like apples.'})
-    assert request_body(vcr, 1)['state'] == snapshot(
-        {'prompt': 'And bicycles.', 'previous_prompts': ['I like apples.']}
-    )
+    first_body, second_body = request_capture.bodies('/v1/systemone')
+    assert first_body['state'] == snapshot({'prompt': 'I like apples.'})
+    assert second_body['state'] == snapshot({'prompt': 'And bicycles.', 'previous_prompts': ['I like apples.']})
+    # The instructions are on every request in the history, but go out once.
+    assert second_body['questions'] == first_body['questions']
 
 
 @pytest.mark.vcr
@@ -293,6 +296,10 @@ class WithWrongCriteria(BaseModel):
     verdict: Literal['run', 'reject'] = Field(json_schema_extra={'typesafe_criteria': {'run': 'ok', 'stop': 'no'}})
 
 
+class WithCriteriaOnBool(BaseModel):
+    ok: bool = Field(json_schema_extra={'typesafe_criteria': {'yes': 'ok'}})
+
+
 @pytest.mark.parametrize(
     'output_type,match',
     [
@@ -306,6 +313,7 @@ class WithWrongCriteria(BaseModel):
             "`typesafe_criteria` for output field 'verdict' must describe exactly its options",
             id='criteria',
         ),
+        pytest.param(WithCriteriaOnBool, "output field 'ok' has none", id='criteria-without-options'),
     ],
 )
 async def test_unsupported_output_fields(
@@ -324,6 +332,12 @@ async def test_function_tools_rejected(allow_model_requests: None, model: TypeSa
         return 'x'  # pragma: no cover
 
     with pytest.raises(UserError, match='Tools are not supported'):
+        await agent.run('anything')
+
+
+async def test_native_tools_rejected(allow_model_requests: None, model: TypeSafeModel):
+    agent = Agent(model, output_type=bool, capabilities=[NativeTool(WebSearchTool())])
+    with pytest.raises(UserError, match='not supported by this model'):
         await agent.run('anything')
 
 
@@ -361,6 +375,19 @@ async def test_text_list_prompt(allow_model_requests: None):
 
     await Agent(mock_model(record), output_type=bool).run(['first', 'second'])
     assert seen[0]['state'] == {'prompt': 'first\n\nsecond'}
+
+
+async def test_system_prompt(allow_model_requests: None):
+    """A system prompt and the instructions both reach Jev as the instructions of every question."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=bool, system_prompt='Be strict.', instructions='Is it harmful?')
+    await agent.run('anything')
+    assert seen[0]['questions']['response']['instructions']['instructions'] == 'Be strict.\n\nIs it harmful?'
 
 
 async def test_retry_prompt_rejected(allow_model_requests: None, model: TypeSafeModel):

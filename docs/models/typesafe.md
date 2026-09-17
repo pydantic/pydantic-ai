@@ -52,7 +52,8 @@ class Handling(BaseModel):
 
 agent = Agent('typesafe:jev-latest', output_type=Handling)
 result = agent.run_sync('rm -rf ./build')
-result.output  # Handling(verdict='ask', irreversible=False)
+print(result.output)
+#> verdict='ask' irreversible=False
 ```
 
 Or initialise the model directly with just the model name:
@@ -85,7 +86,10 @@ from pydantic_ai import Agent
 
 agent = Agent('typesafe:jev-latest', output_type=bool, instructions='Is this request harmful?')
 result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
-result.response.provider_details  # {'confidence': {'response': 0.97}, 'probabilities': {}}
+print(result.output)
+#> True
+print(result.response.provider_details)
+#> {'confidence': {'response': 0.95}, 'probabilities': {}}
 ```
 
 ## What fails, and how
@@ -100,7 +104,7 @@ Jev cannot write text, call tools, look at images, or change an answer. Anything
 
 A `FallbackModel` does not skip past a `UserError`, because it means the agent cannot run on Jev at all. It does fall back on `ModelHTTPError` and `ModelAPIError`, which Jev raises like any other model when the API returns an error or cannot be reached. A response the SDK cannot parse is `UnexpectedModelBehavior`, which is not skipped either.
 
-Jev does not stream, so `run_stream` is not supported either, and neither is `count_tokens_before_request`.
+Jev does not stream. `run_stream`, `event_stream_handler` and the AG-UI and Vercel AI adapters all need streaming, so they are not supported, and neither is `count_tokens_before_request`.
 
 ## `provider` argument
 
