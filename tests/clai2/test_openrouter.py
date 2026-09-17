@@ -61,6 +61,8 @@ async def test_connect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome:
     async def discovery(connection: openrouter.Connection) -> list[str]:
         return ['my/model']
 
+    keys = iter(['down', 'enter'])
+    monkeypatch.setattr(openrouter, 'menu_key', lambda: next(keys))
     monkeypatch.setattr(openrouter, 'PromptSession', Prompt)
     monkeypatch.setattr(openrouter, 'discover', discovery)
 

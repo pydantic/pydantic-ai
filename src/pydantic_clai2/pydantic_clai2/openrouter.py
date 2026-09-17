@@ -9,11 +9,15 @@ from pydantic import BaseModel, Field, SecretStr, ValidationError
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.providers.openrouter import OpenRouterProvider
+from rich.console import Console
 from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
 
+from ._rendering import markdown_style
 from .command_context import CommandContext
 from .credential_store import load_codex_credentials, save_codex_credentials
 from .menu_worker import menu_key, run_worker
+from .openrouter_auth import OpenRouterAuth
 
 
 class Connection(BaseModel):
@@ -91,7 +95,7 @@ def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal owne
 async def connect(context: CommandContext, args: list[str]) -> str:
     """Prompt privately, discover models, then persist only after selection."""
     if args:
-        raise ValueError('Usage: /openrouter (API key is prompted privately)')
+        raise ValueError('Usage: /openrouter (choose browser login or enter an API key privately)')
     try:
         raw = await asyncio.to_thread(load_codex_credentials, account='openrouter')
         connection = Connection.model_validate_json(raw) if raw else None
@@ -117,6 +121,11 @@ async def connect(context: CommandContext, args: list[str]) -> str:
 
 async def prompt_connection() -> Connection | None:
     """Collect connection details without recording them in history."""
+    method = await run_worker(lambda: authentication_menu().run())
+    if method.cancelled or method.item is None:
+        return None
+    if method.item.value == 'browser':
+        return Connection(token=await OpenRouterAuth(console=Console()).login())
     prompt: PromptSession[str] = PromptSession()
     try:
         token = await prompt.prompt_async('OpenRouter API key (https://openrouter.ai/keys): ', is_password=True)
@@ -137,3 +146,25 @@ def connection_action() -> str | None:  # pragma: no cover -- real terminal.
         .run()
     )
     return result.item.value if not result.cancelled and result.item and isinstance(result.item.value, str) else None
+
+
+def authentication_menu() -> Menu:
+    """Choose browser authorization or the existing masked API-key prompt."""
+    return (
+        MenuBuilder('OpenRouter authentication')
+        .style(markdown_style())
+        .items(
+            [
+                MenuItem('Sign in with browser', value='browser'),
+                MenuItem('Enter API key', value='key'),
+            ]
+        )
+        .preview(
+            lambda item: (
+                'Authorize CLAI on openrouter.ai, or enter an existing API key. Credentials stay out of history.'
+            )
+        )
+        .footer_hint('Enter selects - Esc closes')
+        .key_source(menu_key)
+        .build()
+    )
