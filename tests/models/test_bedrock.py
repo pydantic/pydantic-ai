@@ -225,6 +225,23 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     )
 
 
+@pytest.mark.parametrize('model_name', ['us.openai.gpt-5.6-sol', 'us.openai.gpt-5.6-luna', 'us.openai.gpt-5.6-terra'])
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_gpt_5_6_converse(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    model_name: str,
+):
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    result = await Agent(model).run('Reply with exactly the word: OK')
+
+    assert result.output == snapshot('OK')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == model_name
+    assert response.finish_reason == 'stop'
+
+
 @pytest.mark.vcr()
 async def test_bedrock_model_usage_limit_exceeded(
     allow_model_requests: None,
