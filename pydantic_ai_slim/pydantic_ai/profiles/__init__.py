@@ -91,6 +91,25 @@ class ModelProfile(TypedDict, total=False):
     provider accepts audio in user messages.
     """
 
+    supports_image_input: bool
+    """Whether the model accepts images in user messages. Default: `True`.
+
+    Read by [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding], which describes in text
+    what the model cannot read. A model that accepts none is refused the file at request time either way.
+    """
+
+    supports_document_input: bool
+    """Whether the model accepts documents, such as PDFs, in user messages. Default: `True`.
+
+    Read by [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding], like `supports_image_input`.
+    """
+
+    supports_video_input: bool
+    """Whether the model accepts video in user messages. Default: `False`.
+
+    Read by [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding], like `supports_image_input`.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 
@@ -229,6 +248,9 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_json_object_output': False,
     'supports_image_output': False,
     'supports_audio_input': False,
+    'supports_image_input': True,
+    'supports_document_input': True,
+    'supports_video_input': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,

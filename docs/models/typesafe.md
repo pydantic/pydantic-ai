@@ -113,13 +113,42 @@ print(result.output)
 ```
 
 
+## Files
+
+Jev reads text only. To ask about a document, image or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
+
+```python
+from enum import Enum
+
+from pydantic_ai import Agent, DocumentUrl
+from pydantic_ai.capabilities import FileUnderstanding
+
+
+class DocumentSubject(str, Enum):
+    """What is this document about?"""
+
+    animals = 'animals'
+    vehicles = 'vehicles'
+    other = 'other'
+
+
+agent = Agent(
+    'typesafe:jev-latest',
+    output_type=DocumentSubject,
+    capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6-sol')],
+)
+result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
+print(result.output.value)
+#> animals
+```
+
 ## What Jev cannot do
 
 Jev does not write text, call tools, read files or stream. An agent that needs any of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be one structured type made of the field types above: no `str`, no union of output types, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 - No function tools, toolsets or native tools.
-- No image, audio, video or document in the prompt or the history.
+- No image, audio, video or document in the prompt or the history, unless [File Understanding](../capabilities/file-understanding.md) has described it first.
 - No streaming: `run_stream`, `event_stream_handler` and the AG-UI and Vercel AI adapters do not work with it.
 
 Jev does not revise an answer either. An output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] gets the same answer again, so a validator that keeps rejecting runs the agent out of retries.
