@@ -83,7 +83,7 @@ The field description is the question text; an `Enum` field without one uses the
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the example below.
 
-Jev's confidence for every field is on the response, so you can act on how sure it was, for example by asking a human below a threshold:
+Jev's confidence in each answer it gave is on the response, so you can act on how sure it was, for example by asking a human below a threshold. It is confidence in the answer, not the probability of yes: a `False` returned from a probability of 0.01 is a confident no, and reports 0.99. A `float` field asks for the probability itself, so that is the answer and there is no separate confidence for it.
 
 ```python
 from pydantic_ai import Agent

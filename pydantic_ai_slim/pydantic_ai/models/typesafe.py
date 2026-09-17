@@ -219,8 +219,15 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         for name, prop in properties.items():
             answer = response.answers.get(name)
             if isinstance(questions[name], Noul) and isinstance(answer, NoulAnswer):
-                args[name] = answer.noul if prop.get('type') == 'number' else answer.noul >= 0.5
-                confidence[name] = answer.noul
+                if prop.get('type') == 'number':
+                    # The probability is the answer, so there is no separate confidence to report: a field
+                    # that asks for the number would otherwise get it back twice under two names.
+                    args[name] = answer.noul
+                else:
+                    # `noul` is the probability of yes. Confidence in the answer given is how far it is from
+                    # the coin flip, so a no returned at 0.01 is a confident no, not an unsure one.
+                    args[name] = answer.noul >= 0.5
+                    confidence[name] = answer.noul if args[name] else 1 - answer.noul
             elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
                 args[name] = answer.choice
                 confidence[name] = answer.confidence

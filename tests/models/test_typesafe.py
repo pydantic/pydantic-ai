@@ -201,6 +201,11 @@ async def test_enum_and_probability_output(
 
     assert result.output == snapshot(EnumAndProbability(colour=Colour.red, p_harmful=0.96))
     assert 0 <= result.output.p_harmful <= 1
+    # A bounded float asks for the probability itself, so the probability is the answer and not also a
+    # confidence in it; only the pick-one field reports one.
+    assert result.response.provider_details == snapshot(
+        {'confidence': {'colour': 1.0}, 'probabilities': {'colour': {'blue': 0.0, 'red': 1.0}}}
+    )
     assert request_capture.body('/v1/systemone')['questions'] == snapshot(
         {
             'colour': {
@@ -227,6 +232,11 @@ async def test_message_history(
 
     assert first.output == snapshot(True)
     assert second.output == snapshot(False)
+    # Jev answered `noul` 0.99 to the first and 0.05 to the second: a confident yes and a confident no. What
+    # is reported is confidence in the answer given, not the probability of yes, so both read as ~0.95+ and a
+    # threshold means the same thing whichever way the answer went.
+    assert first.response.provider_details == snapshot({'confidence': {'response': 0.99}, 'probabilities': {}})
+    assert second.response.provider_details == snapshot({'confidence': {'response': 0.95}, 'probabilities': {}})
     first_body, second_body = request_capture.bodies('/v1/systemone')
     assert first_body['state'] == snapshot({'prompt': 'I like apples.'})
     assert second_body['state'] == snapshot(
