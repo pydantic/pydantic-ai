@@ -2,7 +2,7 @@
 
 [Jev](https://typesafe.ai) is not a language model. You give it a text and typed questions, and it answers each one with a confidence. It does not write text.
 
-[`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] lets an agent whose job is to decide something run on Jev like on any other model. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output. Change the model name and the same agent runs on a language model, so you can compare the two.
+[`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] lets an agent whose job is to decide something run on Jev like on any other model. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output, so a Pydantic model with several fields extracts several values in one request. Change the model name and the same agent runs on a language model, so you can compare the two.
 
 ## Install
 
@@ -81,6 +81,8 @@ Every field of the output type is one question, and all of them go out in a sing
 
 The field description is the question text; an `Enum` field without one uses the enum's class docstring. The output type's docstring and the agent's instructions are context, so put the framing there and the per-field wording in the descriptions. A docstring under an `Enum` member, as in the example above, describes that option. A `Literal` has nowhere to put descriptions, so Jev only sees its option names.
 
+A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the example below.
+
 Jev's confidence for every field is on the response, so you can act on how sure it was, for example by asking a human below a threshold:
 
 ```python
@@ -139,19 +141,16 @@ print(result.output.value)
 #> animals
 ```
 
-## What fails, and how
+## What Jev cannot do
 
-Jev cannot write text, call tools or look at files. Anything that needs one of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, so a wrong agent costs nothing:
+Jev does not write text, call tools, read files or stream. An agent that needs any of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
-- Output: text output, `str` in the output types, more than one output type, [`NativeOutput`][pydantic_ai.output.NativeOutput], [`PromptedOutput`][pydantic_ai.output.PromptedOutput], an output type with no fields, or a field that is not one of the types above.
-- Tools: function tools, toolsets and native tools.
-- Files: an image, audio, video or document in the prompt or the history, unless [File Understanding](../capabilities/file-understanding.md) has described it first. A prompt with no text and no history at all is refused too.
+- The `output_type` must be one structured type made of the field types above: no `str`, no union of output types, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
+- No function tools, toolsets or native tools.
+- No image, audio, video or document in the prompt or the history, unless [File Understanding](../capabilities/file-understanding.md) has described it first.
+- No streaming: `run_stream`, `event_stream_handler` and the AG-UI and Vercel AI adapters do not work with it.
 
-Jev cannot revise an answer either. An output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] sends the retry prompt along as history, with the original text and the rejected answer, and gets an answer to the same question again, so a validator that keeps rejecting runs the agent out of retries.
-
-A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does not skip past a `UserError`, because it means the agent cannot run on Jev at all. It does fall back on [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] and [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which Jev raises like any other model when the API returns an error or cannot be reached. A response the SDK cannot parse is [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which is not skipped either.
-
-Jev does not stream. `run_stream`, `event_stream_handler` and the AG-UI and Vercel AI adapters all need streaming, so they are not supported, and neither is [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request].
+Jev does not revise an answer either. An output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] gets the same answer again, so a validator that keeps rejecting runs the agent out of retries.
 
 ## `provider` argument
 

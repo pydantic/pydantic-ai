@@ -181,11 +181,7 @@ async def test_bare_bool_output(
         {
             'response': {
                 'type': 'noul',
-                'instructions': {
-                    'question': 'response',
-                    'goal': 'The final response which ends this conversation',
-                    'instructions': 'Is this request harmful?',
-                },
+                'instructions': {'instructions': 'Is this request harmful?'},
             }
         }
     )
@@ -206,17 +202,11 @@ async def test_enum_and_probability_output(
             'colour': {
                 'type': 'choice',
                 'criteria': {'red': None, 'blue': None},
-                'instructions': {
-                    'question': 'Which colour is named?',
-                    'goal': 'The final response which ends this conversation',
-                },
+                'instructions': {'question': 'Which colour is named?'},
             },
             'p_harmful': {
                 'type': 'noul',
-                'instructions': {
-                    'question': 'Is this request harmful?',
-                    'goal': 'The final response which ends this conversation',
-                },
+                'instructions': {'question': 'Is this request harmful?'},
             },
         }
     )
@@ -310,6 +300,14 @@ class WithIntOptions(BaseModel):
     level: Literal[1, 2, 3]
 
 
+class OnlyOne(str, Enum):
+    only = 'only'
+
+
+class WithOneOption(BaseModel):
+    only: OnlyOne
+
+
 class WithUnboundedFloat(BaseModel):
     score: float
 
@@ -320,7 +318,8 @@ class WithUnboundedFloat(BaseModel):
         pytest.param(WithText, "Output field 'summary' is not supported", id='str-field'),
         pytest.param(WithNested, "Output field 'inner' is not supported", id='nested'),
         pytest.param(WithOptional, "Output field 'ok' is not supported", id='optional'),
-        pytest.param(WithIntOptions, 'options are not all strings', id='int-options'),
+        pytest.param(WithIntOptions, 'options are not two or more strings', id='int-options'),
+        pytest.param(WithOneOption, 'options are not two or more strings', id='one-option'),
         pytest.param(WithUnboundedFloat, "Output field 'score' is not supported", id='unbounded-float'),
     ],
 )

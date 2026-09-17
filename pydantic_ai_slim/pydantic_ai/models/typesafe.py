@@ -8,6 +8,7 @@ from typing_extensions import assert_never
 
 from .. import _utils, usage
 from .._http import to_httpx2_timeout
+from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..messages import (
     CompactionPart,
@@ -113,7 +114,8 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
 
     The field description is the question. The output type's docstring and the agent's instructions go along
     as context. A docstring under an `Enum` member describes that option, see the [docs](../../models/typesafe.md);
-    without one Jev only sees its name.
+    without one Jev only sees its name. A bare `bool`, `Literal` or `float` output has no field to describe, so
+    there the agent's instructions are the question.
     Jev's confidence per field is in
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `confidence`,
     and the full distribution of each pick-one field under `probabilities`.
@@ -277,8 +279,14 @@ def _questions(
     if not properties:
         raise UserError('An `output_type` with no fields is not supported by this model; there is nothing to ask Jev.')
     for name, prop in properties.items():
-        ask: dict[str, JSONContent] = {'question': prop.get('description') or name}
-        if output_tool.description:
+        # Only what the user wrote goes to Jev. A bare `bool` output is wrapped in a field named `response`
+        # by Pydantic AI, and the output tool has a stock description; neither says anything about the question.
+        ask: dict[str, JSONContent] = {}
+        if description := prop.get('description'):
+            ask['question'] = description
+        elif name != output_tool.outer_typed_dict_key:
+            ask['question'] = name
+        if output_tool.description and output_tool.description != DEFAULT_OUTPUT_TOOL_DESCRIPTION:
             ask['goal'] = output_tool.description
         if instructions:
             ask['instructions'] = instructions
@@ -290,16 +298,16 @@ def _questions(
             options = {option['const']: option.get('description') for option in prop['anyOf']}
 
         if options is not None:
-            if not all(isinstance(option, str) for option in options):
+            if len(options) < 2 or not all(isinstance(option, str) for option in options):
                 raise UserError(
-                    f'Output field {name!r} is not supported by this model: its options are not all strings. '
+                    f'Output field {name!r} is not supported by this model: its options are not two or more strings. '
                     f'{_UNSUPPORTED_FIELD_HINT}'
                 )
-            questions[name] = Choice(instructions=ask, criteria=options)
+            questions[name] = Choice(instructions=ask or None, criteria=options)
         elif prop.get('type') == 'boolean':
-            questions[name] = Noul(instructions=ask)
+            questions[name] = Noul(instructions=ask or None)
         elif prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1:
-            questions[name] = Noul(instructions=ask)
+            questions[name] = Noul(instructions=ask or None)
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
