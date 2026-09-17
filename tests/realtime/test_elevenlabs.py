@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
     TextContent,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.realtime import RealtimeError
+from pydantic_ai.realtime import RealtimeError, RealtimeModelProfile
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CommitAudio,
@@ -275,6 +275,35 @@ def test_model_name_is_the_agent_id() -> None:
     assert model.base_url == 'https://api.elevenlabs.io'
     # Nothing about the LLM can be inferred from an agent id, so the profile pins the window as unknown.
     assert model.context_window is None
+
+
+def test_profile() -> None:
+    """The whole resolved profile, spelled out so a new default cannot be absorbed unnoticed.
+
+    Every fact describes the Agents platform, not the agent: server-side turn-taking (no manual
+    turns, no client interruption, no truncation), no seeding channel, 16 kHz audio both ways, and
+    an unknown context window because the LLM is chosen on the agent. No genai-prices pinning is
+    needed: the profile sets `context_window` explicitly, which skips the lookup.
+    """
+    assert _model(RestRecorder(agent_json())).profile == RealtimeModelProfile(
+        supports_image_input=False,
+        supports_manual_turn_control=False,
+        supports_interruption=False,
+        supports_output_truncation=False,
+        supports_text_output=True,  # the toggle-gated `text_only` override
+        supports_session_seeding=False,
+        supports_webrtc=False,
+        supports_seeding_images=False,
+        supports_seeding_audio=False,
+        supports_thinking=False,
+        supports_async_tool_calls=False,
+        supports_tool_return_schema=False,
+        emits_input_speech_events=False,
+        audio_input_sample_rate=16000,
+        audio_output_sample_rate=16000,
+        supported_native_tools=frozenset(),
+        context_window=None,
+    )
 
 
 def test_rejects_non_elevenlabs_provider() -> None:
