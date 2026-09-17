@@ -7,7 +7,7 @@ from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import cache
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
@@ -77,7 +77,8 @@ TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
 )  # fmt: skip
 
 
-class ContentPolicy(NamedTuple):
+@dataclass(frozen=True)
+class ContentPolicy:
     """One span's `include_content`, tagged with the span it was set for.
 
     The tag is what makes the variable safe to read. Restoring it is a plain `set` rather than a
@@ -389,7 +390,7 @@ def model_request_parameters_attributes(
     return {'model_request_parameters': safe_to_json(serialized).decode()}
 
 
-def _redact_model_request_parameters(serialized_parameters: Any) -> Any:
+def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
     """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
     Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
