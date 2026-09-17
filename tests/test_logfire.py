@@ -1,12 +1,16 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsList
-from pydantic import BaseModel, ValidationError
+
+# `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
+from opentelemetry.trace import StatusCode
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import (
@@ -24,11 +28,19 @@ from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelHTTPError,
+    ModelRetry,
+    ToolFailed,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -36,7 +48,13 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics
+from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
+
+with try_import():
+    # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
+    # `pydantic-ai-slim` / `pydantic-evals` install groups either.
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 try:
     import logfire
@@ -1044,7 +1062,6 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'allow_image_output': False,
                         'instruction_parts': [
                             {
-                                'content': 'Here are some instructions',
                                 'dynamic': False,
                                 'name': None,
                                 'id': 'agent',
@@ -4066,6 +4083,31 @@ def test_output_function_call_deferred_recorded_as_error(
     assert 'pydantic_ai.tool.deferral.name' not in span_attrs
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_a_settled_stream_keeps_its_traceparent_after_the_stream_is_gone(capfire: CaptureLogfire) -> None:
+    """The trace context has to be captured at completion, not read when `result` is accessed.
+
+    A settled [`AgentRunResult`][pydantic_ai.run.AgentRunResult] is for handing a run to code that
+    outlives the stream, and by then the agent run span has closed and there is no ambient context
+    left to read.
+    """
+    agent = Agent(TestModel(custom_output_text='streamed'), capabilities=[Instrumentation()])
+
+    async with agent.run_stream('Stream this') as streamed:
+        await streamed.get_output()
+        inside = streamed.result
+
+    outside = streamed.result
+
+    assert outside._traceparent(required=False) == inside._traceparent(required=False)  # pyright: ignore[reportPrivateUsage]
+    assert outside._traceparent(required=False) is not None  # pyright: ignore[reportPrivateUsage]
+
+    # And it survives the round-trip the serialized shape exists for.
+    adapter = TypeAdapter(AgentRunResult[str])
+    reloaded = adapter.validate_json(adapter.dump_json(outside))
+    assert reloaded._traceparent(required=False) == outside._traceparent(required=False)  # pyright: ignore[reportPrivateUsage]
+
+
 # Name, `exception.type` and `exception.escaped` of each event, in order. Tool spans record their own
 # exceptions as escaped; the run span stands in for the OTel SDK's `use_span`, which does not.
 _EXPECTED_EXCEPTION_EVENTS: dict[str, list[tuple[str, str, str]]] = {
@@ -4149,11 +4191,16 @@ def test_exception_events_honor_include_content(
 
     # The run span's status description repeats the exception message, and is not part of the
     # exported span dicts above, so it is checked separately.
-    descriptions = [span.status.description for span in capfire.exporter.exported_spans if span.status.description]
-    if include_content:
-        assert descriptions == ([] if failure == 'failed' else [IsStr(regex=r'\w+: [\s\S]+')])
-    else:
-        assert descriptions == []
+    errored = [span for span in capfire.exporter.exported_spans if span.status.status_code is StatusCode.ERROR]
+    assert [span.name for span in errored] == [name for name, _, _ in _EXPECTED_EXCEPTION_EVENTS[failure]]
+    # Only the run span carries a description: `use_span` set one, the tool spans never did.
+    assert [span.status.description for span in errored] == [
+        (IsStr(regex=r'\w+: [\s\S]+') if include_content else None) if name.startswith('invoke_agent') else None
+        for name, _, _ in _EXPECTED_EXCEPTION_EVENTS[failure]
+    ]
+    if include_content and failure == 'exception':
+        # Pinned exactly, because the promise is to reproduce the SDK's `f'{type(e).__name__}: {e}'`.
+        assert errored[-1].status.description == 'ValueError: exception-secret'
 
 
 class _Interrupted(BaseException):
@@ -4185,3 +4232,134 @@ def test_run_span_leaves_base_exceptions_unrecorded(capfire: CaptureLogfire) -> 
     assert [
         span['name'] for span in spans for event in span.get('events', []) if event['name'] == 'exception'
     ] == snapshot(['execute_tool my_tool'])
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_span_reports_the_runs_own_usage_not_the_conversations(capfire: CaptureLogfire) -> None:
+    """Carrying `usage=` across a conversation must not inflate each run's span.
+
+    `RunUsage` is accumulated into in place, so a run handed the previous run's object would
+    otherwise report the conversation's running total, and anything summing agent-run spans would
+    count the earlier turns again. The caller's own total is unaffected: that is what they asked
+    for by passing it.
+    """
+    agent = Agent(TestModel(custom_output_text='hi'), capabilities=[Instrumentation()])
+
+    first = agent.run_sync('one')
+    second = agent.run_sync('two', message_history=first.all_messages(), usage=first.usage)
+
+    reported = [
+        span['attributes']['gen_ai.aggregated_usage.input_tokens']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if 'gen_ai.aggregated_usage.input_tokens' in span['attributes']
+    ]
+    assert reported == snapshot([51, 52])
+    assert second.usage.input_tokens == snapshot(103)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_model_request_exception_events_honor_include_content(capfire: CaptureLogfire, include_content: bool) -> None:
+    """The model request span follows the same rule as the tool and agent run spans.
+
+    A provider error carries the response body in its message -- providers echo request content
+    into those, moderation and invalid-content responses in particular -- so the exception event
+    and the status description on the `chat` span have to follow the setting like the rest.
+    """
+
+    def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=400, model_name='fn', body='invalid content: prompt-secret')
+
+    agent = Agent(
+        FunctionModel(fail),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content))],
+    )
+
+    with pytest.raises(ModelHTTPError):
+        agent.run_sync('Hello')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    events = [
+        (span['name'], event['attributes'])
+        for span in spans
+        for event in span.get('events', [])
+        if event['name'] == 'exception'
+    ]
+    assert [(name, attributes['exception.type'], attributes['exception.escaped']) for name, attributes in events] == [
+        ('chat function:fail:', 'pydantic_ai.exceptions.ModelHTTPError', 'False'),
+        ('invoke_agent agent', 'pydantic_ai.exceptions.ModelHTTPError', 'False'),
+    ]
+    descriptions = [span.status.description for span in capfire.exporter.exported_spans if span.status.description]
+    if include_content:
+        assert all({'exception.message', 'exception.stacktrace'} <= set(attributes) for _, attributes in events)
+        assert 'secret' in events[0][1]['exception.message']
+        assert descriptions == [IsStr(regex=r'\w+: [\s\S]+')] * 2
+    else:
+        assert all(set(attributes) == {'exception.type', 'exception.escaped'} for _, attributes in events)
+        assert 'secret' not in str(spans)
+        assert descriptions == []
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_run_span_records_failures_from_its_own_finalization(capfire: CaptureLogfire) -> None:
+    """The run span's finalization is inside the scope `use_span` used to cover.
+
+    `record_exception=False` / `set_status_on_exception=False` switch the SDK's recording off for
+    the whole span, so the stand-in has to wrap the whole span body rather than just the run. With
+    warnings raised as errors the end-of-run mutation warning comes out of the `finally`, and the
+    span still has to end up ERROR with the exception recorded on it.
+    """
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('corrupt_history', {}, tool_call_id='call_1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(model=FunctionModel(model_function), capabilities=[Instrumentation()])
+
+    @agent.tool
+    async def corrupt_history(ctx: RunContext) -> str:
+        first_part = ctx.messages[0].parts[0]
+        assert isinstance(first_part, UserPromptPart)
+        first_part.content = 'mutated prompt'
+        return 'ok'
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', MessageHistoryMutatedWarning)
+        with pytest.raises(MessageHistoryMutatedWarning):
+            await agent.run('original prompt')
+
+    [run_span] = [
+        span
+        for span in capfire.exporter.exported_spans
+        # Logfire exports a pending span alongside the real one; only the latter carries the status.
+        if span.name.startswith('invoke_agent') and (span.attributes or {}).get('logfire.span_type') != 'pending_span'
+    ]
+    assert run_span.status.status_code is StatusCode.ERROR
+    assert [event.name for event in run_span.events] == ['exception']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_exception_recording_skipped_when_span_is_not_recording() -> None:
+    """`use_span` left a non-recording span's exception alone, and so does the stand-in.
+
+    The SDK formats the traceback before `add_event` discards it, so recording on a sampled-out
+    span would surface a `__str__` failure in place of the error that actually happened.
+    """
+
+    class Unformattable(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError('formatting blew up')
+
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise Unformattable
+
+    agent = Agent(
+        FunctionModel(boom),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=TracerProvider(sampler=ALWAYS_OFF)))
+        ],
+    )
+    with pytest.raises(Unformattable):
+        agent.run_sync('hello')

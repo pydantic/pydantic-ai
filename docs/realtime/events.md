@@ -7,6 +7,12 @@ high-level [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
 [Audio, images, and transcripts](audio.md) are derived from this same stream, so most applications
 iterate the session for control flow and leave media to the views.
 
+If nothing is iterating the session, the session keeps the most recent 512 part delta events
+(audio, transcript, and text) and the most recent 512 structural events for a late `async for`;
+older ones are discarded. Discarding a part's start discards the rest of that part with it, so a late
+iterator never receives a delta it cannot attach to a part. A failure parked for the consumer is
+never discarded.
+
 ## Event reference
 
 | Event | Meaning |
