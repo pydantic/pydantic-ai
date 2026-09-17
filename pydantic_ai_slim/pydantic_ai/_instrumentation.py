@@ -6,7 +6,7 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from urllib.parse import urlparse
 
 from opentelemetry._logs import LogRecord
@@ -122,7 +122,7 @@ def model_request_parameters_attributes(
     return {'model_request_parameters': to_json(serialized).decode()}
 
 
-def _redact_model_request_parameters(serialized_parameters: Any) -> Any:
+def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
     """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
     Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
@@ -245,7 +245,8 @@ def set_error_status(span: Span, error: BaseException, *, include_content: bool)
     )
 
 
-class ContentPolicy(NamedTuple):
+@dataclass(frozen=True)
+class ContentPolicy:
     """One span's `include_content`, tagged with the span it was set for.
 
     The tag is what makes the variable safe to read. Restoring it is a plain `set` rather than a
