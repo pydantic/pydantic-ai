@@ -46,7 +46,8 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # activities — `available_tool_names` then reads the snapshot serialized at dispatch time (see
 # the property override below), or falls back to `discovered_tool_names` without one.
 # `realtime_session` is a live session object that cannot cross the boundary, and its contract
-# already makes `None` mean "not available here".
+# already makes `None` mean "not available here". `_run_resolved_toolsets` is the same: an activity
+# may run in another process, so it resolves its own dynamic toolset instead of reusing the run's.
 _NONE_UNLESS_ATTACHED = (
     'agent',
     'root_capability',
@@ -55,6 +56,7 @@ _NONE_UNLESS_ATTACHED = (
     'realtime_session',
     '_durable_operations',
     '_run_capabilities_by_id',
+    '_run_resolved_toolsets',
 )
 
 # Defaulted rather than guarded when a payload doesn't carry it. Unlike the guarded fields, the

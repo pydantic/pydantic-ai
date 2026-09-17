@@ -3119,3 +3119,56 @@ def test_apply_walks_combined_and_wrapper_toolsets():
     combined.apply(visited.append)
     assert inner1 in visited
     assert inner2 in visited
+
+
+async def test_get_tool_for_tool_def_lists_tools_by_default():
+    """The default rebuild lists the toolset's tools, which is always correct."""
+    listings = 0
+
+    async def echo(text: str) -> str:
+        return text
+
+    class CountingToolset(FunctionToolset):
+        async def get_tools(self, ctx: RunContext) -> dict[str, ToolsetTool]:
+            nonlocal listings
+            listings += 1
+            return await super().get_tools(ctx)
+
+    toolset = CountingToolset([echo])
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tool_def = (await toolset.get_tools(ctx))['echo'].tool_def
+
+    tool = await toolset.get_tool_for_tool_def(tool_def, ctx)
+    assert tool.tool_def.name == 'echo'
+    assert listings == 2
+
+    with pytest.raises(KeyError):
+        await toolset.get_tool_for_tool_def(ToolDefinition(name='missing'), ctx)
+
+
+async def test_dynamic_toolset_delegates_get_tool_for_tool_def():
+    """`DynamicToolset` hands the rebuild to whatever its factory resolved, so an overriding inner
+    toolset keeps its own behavior when it's reached through a dynamic one."""
+
+    async def echo(text: str) -> str:
+        return text
+
+    rebuilt: list[str] = []
+
+    class RebuildingToolset(FunctionToolset):
+        async def get_tool_for_tool_def(self, tool_def: ToolDefinition, ctx: RunContext) -> ToolsetTool:
+            rebuilt.append(tool_def.name)
+            return self.tool_for_tool_def(tool_def, ctx=ctx)
+
+    inner = RebuildingToolset([echo])
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tool_def = (await inner.get_tools(ctx))['echo'].tool_def
+
+    dynamic = DynamicToolset(lambda _: inner, id='dynamic', per_run_step=False)
+    # Unresolved, it holds no tools to rebuild from.
+    with pytest.raises(KeyError):
+        await dynamic.get_tool_for_tool_def(tool_def, ctx)
+
+    resolved = await dynamic.for_run(ctx)
+    assert (await resolved.get_tool_for_tool_def(tool_def, ctx)).tool_def.name == 'echo'
+    assert rebuilt == ['echo']
