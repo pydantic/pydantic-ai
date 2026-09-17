@@ -14,6 +14,8 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -315,6 +317,19 @@ def _prompt_text(part: UserPromptPart) -> list[str]:
     return cast(list[str], items)
 
 
+def _tool_history_error() -> UserError:
+    return UserError('Tool calls in the message history are not supported by this model, which cannot call tools.')
+
+
+def _reject_tool_calls(message: ModelResponse, output_tool_name: str) -> None:
+    """Earlier answers are not context for Jev, but a tool exchange means this history needs a model with tools."""
+    for part in message.parts:
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart) or (
+            isinstance(part, ToolCallPart) and part.tool_name != output_tool_name
+        ):
+            raise _tool_history_error()
+
+
 def _map_messages(messages: list[ModelMessage], output_tool_name: str) -> tuple[list[str], dict[str, JSONContent]]:
     """The system prompts, and the state to judge: the latest user text, plus earlier turns' text."""
     system_prompts: list[str] = []
@@ -337,7 +352,7 @@ def _map_messages(messages: list[ModelMessage], output_tool_name: str) -> tuple[
                 elif isinstance(part, ToolReturnPart | ToolSearchReturnPart | LoadCapabilityReturnPart):
                     # The agent's own "Final result processed." return for an earlier answer is fine; nothing else is.
                     if not (isinstance(part, ToolReturnPart) and part.tool_name == output_tool_name):
-                        raise UserError('Tool results are not supported by this model, which cannot call tools.')
+                        raise _tool_history_error()
                 elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                     raise _unsynthesized_tool_availability_delta_error()
                 elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -346,7 +361,7 @@ def _map_messages(messages: list[ModelMessage], output_tool_name: str) -> tuple[
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
-            pass  # Earlier answers are not context for Jev; the questions are about the user's text.
+            _reject_tool_calls(message, output_tool_name)
         else:
             assert_never(message)
 

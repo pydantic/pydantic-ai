@@ -1127,11 +1127,11 @@ navigation:
               - page: "test"
                 path: "api/models/test.md"
                 slug: "api/models/test"
+                aliases:
+                  - "models/test"
               - page: "typesafe"
                 path: "api/models/typesafe.md"
                 slug: "api/models/typesafe"
-                aliases:
-                  - "models/test"
               - page: "zai"
                 path: "api/models/zai.md"
                 slug: "api/models/zai"

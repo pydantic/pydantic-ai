@@ -18,8 +18,11 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     NativeOutput,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PromptedOutput,
     RetryPromptPart,
+    SystemPromptPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -341,16 +344,37 @@ async def test_native_tools_rejected(allow_model_requests: None, model: TypeSafe
         await agent.run('anything')
 
 
-async def test_tool_result_in_history_rejected(allow_model_requests: None, model: TypeSafeModel):
-    """A history from another model that called a function tool cannot be continued on Jev."""
+@pytest.mark.parametrize(
+    'history',
+    [
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart('What is the weather?')]),
+                ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_1')]),
+                ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1')]),
+            ],
+            id='function-tool',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart('What is the weather?')]),
+                ModelResponse(
+                    parts=[
+                        NativeToolCallPart('web_search', {'query': 'weather'}, tool_call_id='call_1'),
+                        NativeToolReturnPart('web_search', 'Rainy', tool_call_id='call_1'),
+                        ToolCallPart('final_result', {'response': True}, tool_call_id='call_2'),
+                    ]
+                ),
+                ModelRequest(parts=[ToolReturnPart('final_result', 'Final result processed.', tool_call_id='call_2')]),
+            ],
+            id='native-tool',
+        ),
+    ],
+)
+async def test_tool_history_rejected(allow_model_requests: None, model: TypeSafeModel, history: list[ModelMessage]):
+    """A history from another model that called tools cannot be continued on Jev."""
     agent = Agent(model, output_type=bool)
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('What is the weather?')]),
-        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_1')]),
-        ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1')]),
-    ]
-
-    with pytest.raises(UserError, match='Tool results are not supported'):
+    with pytest.raises(UserError, match='Tool calls in the message history are not supported'):
         await agent.run('Is it raining?', message_history=history)
 
 
@@ -386,21 +410,45 @@ async def test_system_prompt(allow_model_requests: None):
         return answers(response={'type': 'noul', 'noul': 0.9})
 
     agent = Agent(mock_model(record), output_type=bool, system_prompt='Be strict.', instructions='Is it harmful?')
-    await agent.run('anything')
+    first = await agent.run('anything')
     assert seen[0]['questions']['response']['instructions']['instructions'] == 'Be strict.\n\nIs it harmful?'
 
+    # A system prompt later in the history is an instruction too, not part of the judged text.
+    history = [*first.all_messages(), ModelRequest(parts=[SystemPromptPart('Now be lenient.')])]
+    await agent.run('again', message_history=history)
+    assert seen[1]['state'] == {'prompt': 'again', 'previous_prompts': ['anything']}
+    assert seen[1]['questions']['response']['instructions']['instructions'] == snapshot(
+        'Be strict.\n\nNow be lenient.\n\nIs it harmful?'
+    )
 
-async def test_retry_prompt_rejected(allow_model_requests: None, model: TypeSafeModel):
-    """Jev cannot revise an answer, so a retry prompt from an output validator is refused instead of re-asked."""
+
+@pytest.mark.parametrize(
+    'part,match',
+    [
+        # Jev cannot revise an answer, so a retry prompt from an output validator is refused instead of re-asked.
+        pytest.param(
+            RetryPromptPart('Try again.', tool_name='final_result', tool_call_id='call_1'),
+            'cannot revise an answer',
+            id='retry',
+        ),
+        # A tool result on its own; the agent drops these before the request, a direct caller gets the refusal.
+        pytest.param(
+            ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_2'),
+            'Tool calls in the message history',
+            id='tool-result',
+        ),
+    ],
+)
+async def test_direct_request_rejected(allow_model_requests: None, model: TypeSafeModel, part: Any, match: str):
     output_tool = ToolDefinition(
         name='final_result', parameters_json_schema={'type': 'object', 'properties': {'ok': {'type': 'boolean'}}}
     )
     messages = [
         ModelRequest(parts=[UserPromptPart('anything')]),
         ModelResponse(parts=[ToolCallPart('final_result', {'ok': True}, tool_call_id='call_1')]),
-        ModelRequest(parts=[RetryPromptPart('Try again.', tool_name='final_result', tool_call_id='call_1')]),
+        ModelRequest(parts=[part]),
     ]
-    with pytest.raises(UserError, match='cannot revise an answer'):
+    with pytest.raises(UserError, match=match):
         await model_request(
             model,
             messages,

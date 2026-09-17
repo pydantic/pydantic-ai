@@ -6,7 +6,7 @@
 
 ## Install
 
-To use `TypeSafeModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `typesafe` optional group:
+To use `TypeSafeModel`, install `pydantic-ai-slim` (or `pydantic-ai`) with the `typesafe` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[typesafe]"
@@ -99,7 +99,7 @@ Jev cannot write text, call tools, look at images, or change an answer. Anything
 - Output: text output, `str` in the output types, more than one output type, `NativeOutput`, `PromptedOutput`, an output type with no fields, or a field that is not one of the types above.
 - Tools: function tools, toolsets and native tools.
 - Prompt: images, audio, video, documents, or no text at all.
-- History: tool calls and tool results from another model, including deferred tool results. Earlier user prompts are sent as `previous_prompts`; earlier answers, from Jev or another model, are not.
+- History: tool calls and tool results from another model, native tools included, and deferred tool results. Earlier user prompts are sent as `previous_prompts`; earlier answers, from Jev or another model, are not.
 - Retries: an output validator that raises `ModelRetry`, or an answer Pydantic rejects. Jev cannot revise, so the run stops after the first request.
 
 A `FallbackModel` does not skip past a `UserError`, because it means the agent cannot run on Jev at all. It does fall back on `ModelHTTPError` and `ModelAPIError`, which Jev raises like any other model when the API returns an error or cannot be reached. A response the SDK cannot parse is `UnexpectedModelBehavior`, which is not skipped either.
