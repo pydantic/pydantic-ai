@@ -239,10 +239,6 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
-        run_ctx._run_capabilities_by_id = {  # pyright: ignore[reportPrivateUsage]
-            capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
-        }
-        run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
         with set_current_run_context(run_ctx):
             await run_capability.before_run(run_ctx)
             current_ctx = contextvars.copy_context()
@@ -264,6 +260,22 @@ async def _run_lifecycle_hooks(  # noqa: C901
             # it's only reached if a `wrap_run` implementation absorbed the cancellation.
             await asyncio.Future[AgentRunResult[Any]]()
         return build_result()
+
+    # Before `wrap_run`, not inside the handler it wraps: a `wrap_run` implementation may call a
+    # durable operation before it awaits the handler, and one that short-circuits never awaits it at
+    # all, so dispatch has to be installed by the time the chain is entered.
+    run_capabilities_by_id = {
+        capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
+    }
+    # Mutated in place where the run already shares one mapping by reference with every `RunContext`
+    # it builds (see `GraphAgentDeps.run_capabilities_by_id`); a realtime session has no graph to
+    # share one, so it gets this mapping directly.
+    if (existing := run_ctx._run_capabilities_by_id) is None:  # pyright: ignore[reportPrivateUsage]
+        run_ctx._run_capabilities_by_id = run_capabilities_by_id  # pyright: ignore[reportPrivateUsage]
+    else:
+        existing.clear()
+        existing.update(run_capabilities_by_id)
+    run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
     _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
@@ -1658,12 +1670,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer = NoOpTracer()
             instrumentation_cap = None
 
+        # Allocated here rather than with the graph deps below, so the context `for_run` receives
+        # shares the very mappings the run fills at setup. A capability that holds on to that
+        # context and later passes it to a durable operation then dispatches like any other caller,
+        # instead of silently running the operation inline.
+        durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] = {}
+        run_capabilities_by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
+
         # Build initial RunContext for for_run lifecycle hooks. Includes every
         # field that's already known here — `tool_manager` and `validation_context`
         # are populated later by `build_run_context` once the run is iterating.
         initial_ctx = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
+            _durable_operations=durable_operations,
+            _run_capabilities_by_id=run_capabilities_by_id,
             model=model_used,
             _model_id=model_id,
             usage=usage,
@@ -1862,6 +1883,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
+            durable_operations=durable_operations,
+            run_capabilities_by_id=run_capabilities_by_id,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             display_banner=display_banner,
