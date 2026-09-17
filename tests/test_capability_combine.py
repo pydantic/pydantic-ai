@@ -26,7 +26,6 @@ from pydantic_ai.capabilities import (
     MCP,
     Capability,
     CapabilityOrdering,
-    FileUnderstanding,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -125,10 +124,6 @@ def _check_image_generation(merged: ImageGeneration) -> None:
     assert merged.quality == 'high'
 
 
-def _check_file_understanding(merged: FileUnderstanding) -> None:
-    assert merged.instructions == 'One sentence.', 'a scalar takes the later value'
-
-
 def _check_instrumentation(merged: Instrumentation) -> None:
     assert merged.settings is not None
     assert merged.settings.include_content is False, 'a scalar takes the later value'
@@ -178,14 +173,6 @@ COMBINE_POLICY: dict[str, Policy] = {
             ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4', quality='high'),
         ),
         _check_image_generation,
-    ),
-    'FileUnderstanding': Combines(
-        'an agent describes files one way',
-        lambda: (
-            FileUnderstanding(fallback_model='openai:gpt-5.6-sol'),
-            FileUnderstanding(fallback_model='openai:gpt-5.6-sol', instructions='One sentence.'),
-        ),
-        _check_file_understanding,
     ),
     'Instrumentation': Combines(
         'an agent is instrumented one way',

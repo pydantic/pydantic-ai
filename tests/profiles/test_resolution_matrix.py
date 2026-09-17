@@ -526,7 +526,6 @@ def test_google_gemini_3_pro():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
-            'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'google_supports_tool_combination': True,
@@ -553,7 +552,6 @@ def test_google_gemini_2_5_flash():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
-            'supports_video_input': True,
             'supports_thinking': True,
             'google_supports_strict_tool_definition': True,
         }
@@ -574,7 +572,6 @@ def test_google_gemini_2_5_flash_image():
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_image_output': True,
             'supports_tools': False,
-            'supports_video_input': True,
             'supports_thinking': True,
         }
     )
@@ -598,7 +595,6 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'google_supports_minimal_thinking_level': False,
             'google_supports_server_side_tool_invocations': True,
             'google_supports_strict_tool_definition': True,
-            'supports_video_input': True,
             'google_supports_thinking_level': True,
             'google_supports_tool_combination': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
@@ -650,9 +646,7 @@ def test_mistral_small_latest():
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
 def test_cohere_command_r_plus():
     profile = CohereProvider.model_profile('command-r-plus')
-    assert _normalize(profile) == snapshot(
-        {'supports_image_input': False, 'supports_document_input': False, 'supports_inline_system_prompts': True}
-    )
+    assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
 
 
 def test_deepseek_provider_deepseek_chat():
@@ -832,7 +826,6 @@ def test_bedrock_amazon_nova_pro():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_video_input': True,
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_prompt_caching': True,
@@ -848,24 +841,7 @@ def test_bedrock_amazon_nova_2_lite():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_video_input': True,
             'supported_native_tools': frozenset({CodeExecutionTool}),
-            'bedrock_supports_tool_choice': True,
-            'bedrock_supports_prompt_caching': True,
-            'bedrock_top_k_variant': 'nova',
-        }
-    )
-
-
-@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
-def test_bedrock_amazon_nova_micro():
-    """Nova Micro is the text-only model in the family, so it is the one Nova that reads no video."""
-    profile = BedrockProvider.model_profile('us.amazon.nova-micro-v1:0')
-    assert _normalize(profile) == snapshot(
-        {
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_video_input': False,
-            'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_top_k_variant': 'nova',
@@ -878,20 +854,14 @@ def test_bedrock_amazon_titan():
     """Titan models — basic Amazon profile, no Nova-specific overrides."""
     profile = BedrockProvider.model_profile('amazon.titan-text-express-v1')
     assert _normalize(profile) == snapshot(
-        {
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_video_input': False,
-            'supported_native_tools': frozenset(),
-        }
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supported_native_tools': frozenset()}
     )
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_cohere_command():
     profile = BedrockProvider.model_profile('cohere.command-r-plus-v1:0')
-    assert _normalize(profile) == snapshot(
-        {'supports_image_input': False, 'supports_document_input': False, 'supported_native_tools': frozenset()}
-    )
+    assert _normalize(profile) == snapshot({'supported_native_tools': frozenset()})
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
@@ -1089,7 +1059,6 @@ def test_openrouter_google_gemini_3_pro():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
-            'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'google_supports_tool_combination': True,
@@ -1138,7 +1107,6 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_minimal_thinking_level': False,
             'google_supports_server_side_tool_invocations': True,
             'google_supports_strict_tool_definition': True,
-            'supports_video_input': True,
             'google_supports_thinking_level': True,
             'google_supports_tool_combination': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
@@ -1274,7 +1242,6 @@ def test_github_copilot_google_gemini_3_pro():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_tool_return_schema': True,
-            'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'google_supports_tool_combination': True,
@@ -1555,8 +1522,6 @@ def test_azure_cohere_prefix():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_image_input': False,
-            'supports_document_input': False,
             'openai_chat_supports_document_input': False,
         }
     )
@@ -1590,7 +1555,6 @@ def test_groq_moonshotai_kimi():
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': False,
             'supports_json_schema_output': True,
-            'supports_document_input': False,
             'supports_json_object_output': True,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
@@ -1605,7 +1569,6 @@ def test_groq_meta_llama4_maverick():
     assert _normalize(profile) == snapshot(
         {
             'supports_thinking': True,
-            'supports_document_input': False,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': False,
@@ -1622,7 +1585,6 @@ def test_groq_meta_llama3_no_overlay():
     assert _normalize(profile) == snapshot(
         {
             'groq_supports_reasoning_disable': False,
-            'supports_document_input': False,
             'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
@@ -1638,7 +1600,6 @@ def test_groq_deepseek():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
-            'supports_document_input': False,
             'groq_supports_graded_reasoning_effort': False,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
@@ -1662,7 +1623,6 @@ def test_groq_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'supports_inline_system_prompts': True,
-            'supports_document_input': False,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
         }
@@ -2132,7 +2092,6 @@ def test_vercel_vertex_gemini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
-            'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'google_supports_tool_combination': True,
@@ -2176,7 +2135,6 @@ def test_vercel_groq_gpt_oss():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_document_input': False,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,

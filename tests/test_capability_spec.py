@@ -24,7 +24,6 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     Capability,
-    FileUnderstanding,
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
@@ -94,7 +93,6 @@ def test_capability_types() -> None:
         {
             'NativeTool': NativeTool,
             'RaiseContentFilterError': RaiseContentFilterError,
-            'FileUnderstanding': FileUnderstanding,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'Instrumentation': Instrumentation,
@@ -1807,18 +1805,6 @@ def test_model_json_schema_with_capabilities():
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
-                'short_spec_FileUnderstanding': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'FileUnderstanding': {
-                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}],
-                            'title': 'Fileunderstanding',
-                        }
-                    },
-                    'required': ['FileUnderstanding'],
-                    'title': 'short_spec_FileUnderstanding',
-                    'type': 'object',
-                },
                 'short_spec_NativeTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1860,13 +1846,6 @@ def test_model_json_schema_with_capabilities():
                     },
                     'required': ['IncludeToolReturnSchemas'],
                     'title': 'spec_IncludeToolReturnSchemas',
-                    'type': 'object',
-                },
-                'spec_FileUnderstanding': {
-                    'additionalProperties': False,
-                    'properties': {'FileUnderstanding': {'$ref': '#/$defs/spec_params_FileUnderstanding'}},
-                    'required': ['FileUnderstanding'],
-                    'title': 'spec_FileUnderstanding',
                     'type': 'object',
                 },
                 'short_spec_SetToolMetadata': {
@@ -1970,22 +1949,6 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'WebSearch': {'$ref': '#/$defs/spec_params_WebSearch'}},
                     'required': ['WebSearch'],
                     'title': 'spec_WebSearch',
-                    'type': 'object',
-                },
-                'spec_params_FileUnderstanding': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'fallback_model': {
-                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}],
-                            'title': 'Fallback Model',
-                        },
-                        'instructions': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Instructions'},
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
-                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
-                    },
-                    'required': ['fallback_model'],
-                    'title': 'spec_params_FileUnderstanding',
                     'type': 'object',
                 },
                 'spec_XSearch': {
@@ -2215,8 +2178,6 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
                                 {'const': 'RaiseContentFilterError', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_RaiseContentFilterError'},
-                                {'$ref': '#/$defs/short_spec_FileUnderstanding'},
-                                {'$ref': '#/$defs/spec_FileUnderstanding'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
@@ -2442,8 +2403,6 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/short_spec_NativeTool'},
                             {'const': 'RaiseContentFilterError', 'type': 'string'},
                             {'$ref': '#/$defs/spec_RaiseContentFilterError'},
-                            {'$ref': '#/$defs/short_spec_FileUnderstanding'},
-                            {'$ref': '#/$defs/spec_FileUnderstanding'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},

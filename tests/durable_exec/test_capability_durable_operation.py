@@ -17,7 +17,6 @@ from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import (
     AbstractCapability,
-    FileUnderstanding,
     ProcessEventStream,
     ResolveModelId,
     WrapperCapability,
@@ -41,23 +40,14 @@ from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import (
-    CapabilityEvent,
-    DocumentUrl,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    UserPromptPart,
-)
+from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
     StreamedResponse,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
@@ -2025,34 +2015,3 @@ async def test_prefect_capability_operation_cache_identity_includes_context_and_
         ('tenant-b', 'test'),
         ('tenant-b', 'alternative'),
     ]
-
-
-async def test_file_understanding_describes_through_the_engine() -> None:
-    """`FileUnderstanding` asks another model to describe a file, so that call is a durable operation."""
-    seen: list[list[ModelMessage]] = []
-
-    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen.append(messages)
-        return ModelResponse(parts=[TextPart('ok')])
-
-    def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('A field guide.')])
-
-    text_only = FunctionModel(capture, profile=ModelProfile(supports_document_input=False))
-    agent = Agent(
-        text_only,
-        name='file_understanding_run',
-        capabilities=[FileUnderstanding(fallback_model=FunctionModel(describe)), RecordingDurability()],
-    )
-
-    await agent.run([DocumentUrl('https://example.com/guide.pdf')])
-
-    durability = RecordingDurability.from_agent(agent)
-    assert durability is not None
-    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
-        ['file_understanding_run__capability__file_understanding.describe']
-    )
-    part = seen[-1][-1].parts[-1]
-    assert isinstance(part, UserPromptPart)
-    [content] = part.content
-    assert isinstance(content, str) and 'A field guide.' in content

@@ -792,15 +792,6 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
         return ModelResponse(parts=[])
     elif isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and isinstance(m.content[0], DocumentUrl):
-            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: the describing model
-            return ModelResponse(parts=[TextPart('A field guide to the animals of the Serengeti.')])
-        if isinstance(m.content, list) and isinstance(m.content[0], str) and m.content[0].startswith('-----BEGIN FILE'):
-            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: Jev judges the description
-            wants_bool = info.output_tools[0].parameters_json_schema['properties']['response'].get('type') == 'boolean'
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'response': True if wants_bool else 'animals'})]
-            )
         if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
         assert isinstance(m.content, str)

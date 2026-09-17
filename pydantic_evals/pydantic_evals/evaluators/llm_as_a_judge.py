@@ -261,7 +261,7 @@ def _make_section(content: Any, tag: str) -> list[str | UserContent]:
 
 def _build_prompt(
     output: Any,
-    rubric: str | None,
+    rubric: str,
     inputs: Any | None = None,
     expected_output: Any | None = None,
 ) -> str | Sequence[str | UserContent]:
@@ -282,8 +282,7 @@ def _build_prompt(
     if expected_output is not None:
         sections.extend(_make_section(expected_output, 'ExpectedOutput'))
 
-    if rubric is not None:
-        sections.extend(_make_section(rubric, 'Rubric'))
+    sections.extend(_make_section(rubric, 'Rubric'))
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections)  # type: ignore[arg-type]
     return sections

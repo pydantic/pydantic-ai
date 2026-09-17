@@ -300,7 +300,7 @@ class Confidence(Evaluator):
 
 
 @dataclass
-class Status(Evaluator):
+class Classifier(Evaluator):
     def evaluate(self, ctx: EvaluatorContext) -> str:
         if 'error' in ctx.output.lower():
             return 'error'  # Label

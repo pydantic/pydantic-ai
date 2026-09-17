@@ -2,16 +2,13 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
@@ -19,10 +16,9 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext, llm_as_a_judge
+    from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
         DEFAULT_EVALUATORS,
-        Classifier,
         Contains,
         Equals,
         EqualsExpected,
@@ -583,164 +579,3 @@ def test_g_eval_model_instance_serialized_as_string():
     # A string model name is already serializable and passes through unchanged.
     evaluator = GEval(criteria='coherence', evaluation_steps=['step'], model='openai:gpt-5.2')
     assert evaluator.build_serialization_arguments()['model'] == 'openai:gpt-5.2'
-
-
-class Tone(str, Enum):
-    polite = 'polite'
-    curt = 'curt'
-    """Correct but gives the customer nothing extra."""
-
-
-class Reply(BaseModel):
-    """Triage a support reply."""
-
-    polite: bool = Field(description='Is the reply polite?')
-    tone: Literal['polite', 'curt']
-
-
-def answering(args: dict[str, Any], confidence: dict[str, float] | None = None) -> FunctionModel:
-    """A model that answers the output tool with `args` and reports `confidence` the way Jev does."""
-
-    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        [output_tool] = info.output_tools
-        return ModelResponse(
-            parts=[ToolCallPart(output_tool.name, args)],
-            provider_details={'confidence': confidence} if confidence else None,
-        )
-
-    return FunctionModel(answer)
-
-
-async def test_classifier():
-    """The answer is the evaluation: a `bool` asserts, a label labels, and a model gives one per field."""
-    ctx = MockContext(output='30 days.', inputs='Can I get a refund?', expected_output='Yes, within 30 days.')
-
-    assert await Classifier('Is the reply polite?', model=answering({'response': True})).evaluate(ctx) is True
-    assert await Classifier('Is the reply polite?', model=answering({'response': False})).evaluate(ctx) is False
-
-    evaluator = Classifier('How does it treat the customer?', output_type=Tone, model=answering({'response': 'curt'}))
-    assert await evaluator.evaluate(ctx) == 'curt'
-
-    evaluator = Classifier(output_type=Reply, model=answering({'polite': True, 'tone': 'curt'}))
-    assert await evaluator.evaluate(ctx) == snapshot({'polite': True, 'tone': 'curt'})
-
-
-async def test_classifier_confidence_is_the_reason():
-    """A confidence the model reports, as Jev does, is attached to the answer it belongs to."""
-    ctx = MockContext(output='30 days.')
-
-    model = answering({'response': True}, confidence={'response': 0.93})
-    assert await Classifier('Is the reply polite?', model=model).evaluate(ctx) == snapshot(
-        EvaluationReason(value=True, reason='confidence 0.93')
-    )
-
-    model = answering({'polite': True, 'tone': 'curt'}, confidence={'polite': 0.93})
-    assert await Classifier(output_type=Reply, model=model).evaluate(ctx) == snapshot(
-        {'polite': EvaluationReason(value=True, reason='confidence 0.93'), 'tone': 'curt'}
-    )
-
-
-async def test_classifier_prompt():
-    """The case goes to the model in the same tagged sections `LLMJudge` uses, without a rubric."""
-    prompts: list[Any] = []
-
-    def record(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        part = messages[-1].parts[-1]
-        assert isinstance(part, UserPromptPart)
-        prompts.append(part.content)
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': True})])
-
-    ctx = MockContext(output='30 days.', inputs='Can I get a refund?', expected_output='Yes, within 30 days.')
-    model = FunctionModel(record)
-    await Classifier('Is the reply polite?', model=model).evaluate(ctx)
-    await Classifier('Is the reply polite?', model=model, include_input=True).evaluate(ctx)
-    await Classifier('Is the reply polite?', model=model, include_expected_output=True).evaluate(ctx)
-    await Classifier('Is the reply polite?', model=model, include_input=True, include_expected_output=True).evaluate(
-        ctx
-    )
-    assert prompts == snapshot(
-        [
-            """\
-<Output>
-30 days.
-</Output>\
-""",
-            """\
-<Input>
-Can I get a refund?
-</Input>
-<Output>
-30 days.
-</Output>\
-""",
-            """\
-<Output>
-30 days.
-</Output>
-<ExpectedOutput>
-Yes, within 30 days.
-</ExpectedOutput>\
-""",
-            """\
-<Input>
-Can I get a refund?
-</Input>
-<Output>
-30 days.
-</Output>
-<ExpectedOutput>
-Yes, within 30 days.
-</ExpectedOutput>\
-""",
-        ]
-    )
-
-
-async def test_classifier_default_model_and_settings(mocker: MockerFixture):
-    """Without a `model` the default judge model answers; `model_settings` reach it."""
-    seen: list[ModelSettings | None] = []
-
-    def record(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen.append(info.model_settings)
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': True})])
-
-    mocker.patch.object(llm_as_a_judge, '_default_model', FunctionModel(record))
-    evaluator = Classifier('Is the reply polite?', model_settings={'temperature': 0.0})
-    assert await evaluator.evaluate(MockContext(output='30 days.')) is True
-    assert seen == snapshot([{'temperature': 0.0}])
-
-
-def test_classifier_needs_a_question():
-    with pytest.raises(ValueError, match='`Classifier` needs `instructions` to ask a question'):
-        Classifier()
-    with pytest.raises(ValueError, match='`Classifier` needs `instructions` to ask a question'):
-        Classifier(output_type=Tone)
-    # A model's field descriptions are its questions.
-    Classifier(output_type=Reply)
-
-
-def test_classifier_evaluation_name():
-    assert Classifier('q').get_default_evaluation_name() == 'Classifier'
-    assert Classifier('q', evaluation_name='polite').get_default_evaluation_name() == 'polite'
-
-
-def test_classifier_serialization():
-    """A yes/no question round-trips through a dataset file; a type is written by name."""
-    assert Classifier in DEFAULT_EVALUATORS
-    assert Classifier('Is the reply polite?').as_spec().model_dump() == snapshot(
-        {'name': 'Classifier', 'arguments': ('Is the reply polite?',)}
-    )
-    model = TestModel()
-    evaluator = Classifier('How does it treat the customer?', output_type=Tone, model=model)
-    assert evaluator.as_spec().model_dump() == snapshot(
-        {
-            'name': 'Classifier',
-            'arguments': {
-                'instructions': 'How does it treat the customer?',
-                'output_type': 'Tone',
-                'model': 'test:test',
-            },
-        }
-    )
-    evaluator = Classifier('How does it treat the customer?', output_type=Literal['polite', 'curt'])
-    assert evaluator.build_serialization_arguments()['output_type'] == "typing.Literal['polite', 'curt']"
