@@ -14,11 +14,13 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import (
     AbstractCapability,
     ProcessEventStream,
     ResolveModelId,
     WrapperCapability,
+    WrapRunHandler,
     durable_operation,
 )
 from pydantic_ai.durable_exec import DurabilityEngineSpec
@@ -624,6 +626,76 @@ class PerRequestOperation(AbstractCapability[Any]):
         return ctx.run_step
 
 
+class WrapRunOperation(AbstractCapability[Any]):
+    """Calls a durable operation from `wrap_run`, before it awaits the handler."""
+
+    id = 'wrap_run_operation'
+
+    async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        await self.reserve(ctx)
+        return await handler()
+
+    @durable_operation('reserve')
+    async def reserve(self, ctx: RunContext[Any]) -> int:
+        return ctx.run_step
+
+
+class HoldsSetupContext(AbstractCapability[Any]):
+    """Keeps the context `for_run` was handed and dispatches with it from a later hook."""
+
+    id = 'holds_setup_context'
+
+    def __init__(self) -> None:
+        self.setup_ctx: RunContext[Any] | None = None
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        replacement = HoldsSetupContext()
+        replacement.setup_ctx = ctx
+        return replacement
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        assert self.setup_ctx is not None
+        await self.read_deps(self.setup_ctx)
+        return request_context
+
+    @durable_operation('read_deps')
+    async def read_deps(self, ctx: RunContext[Any]) -> str:
+        return str(ctx.deps)
+
+
+class SpecializedForRun(AbstractCapability[Any]):
+    """Replaced for the run by a subclass that overrides the operation, unless kept as-is."""
+
+    id = 'specialized_for_run'
+
+    def __init__(self, bodies: list[str], *, specialize: bool = True) -> None:
+        self.bodies = bodies
+        self.specialize = specialize
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return SpecializedForRunReplacement(self.bodies) if self.specialize else self
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        await self.describe(ctx)
+        return request_context
+
+    @durable_operation('describe')
+    async def describe(self, ctx: RunContext[Any]) -> str:
+        self.bodies.append('base')
+        return 'base'
+
+
+class SpecializedForRunReplacement(SpecializedForRun):
+    @durable_operation('describe')
+    async def describe(self, ctx: RunContext[Any]) -> str:
+        self.bodies.append('replacement')
+        return 'replacement'
+
+
 class ResolvesInForRun(AbstractCapability[Any]):
     """Calls its own durable operation from `for_run`, before the run has any dispatchers."""
 
@@ -763,6 +835,87 @@ async def test_per_request_hook_dispatches_on_the_run_instance_it_already_built(
     await agent.run('test')
 
     assert capability.replacements == snapshot(1)
+
+
+async def test_wrap_run_operation_dispatches_before_the_handler_is_awaited() -> None:
+    """`wrap_run` encloses the rest of the run, so dispatch has to exist before the chain is entered.
+
+    A wrapper that journals a reservation before awaiting its handler would otherwise perform that
+    side effect in workflow code, where recovery can repeat it — and a wrapper that short-circuits
+    never awaits the handler at all.
+    """
+    agent = Agent(
+        TestModel(),
+        name='wrap_run_operation',
+        capabilities=[WrapRunOperation(), RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['wrap_run_operation__capability__wrap_run_operation.reserve']
+    )
+
+
+async def test_operation_dispatches_with_the_context_for_run_was_handed() -> None:
+    """The setup context shares the run's mappings, so a capability may keep it and dispatch with it.
+
+    `for_run` receives a context built before the graph exists; it has to be the same mapping the run
+    fills at setup, or an operation called with it later silently runs inline.
+    """
+    agent = Agent(
+        TestModel(),
+        name='holds_setup_context',
+        deps_type=str,
+        capabilities=[HoldsSetupContext(), RecordingDurability()],
+    )
+
+    await agent.run('test', deps='tenant')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['holds_setup_context__capability__holds_setup_context.read_deps']
+    )
+
+
+async def test_dispatch_runs_the_replacement_subclass_override() -> None:
+    """A specialized `for_run` replacement contributes the body the run executes.
+
+    The declaration is collected from the class bound at construction, so dispatching it verbatim
+    would run the base implementation on the replacement instance — losing the specialization, and
+    reaching for attributes the replacement may not carry.
+    """
+    bodies: list[str] = []
+    agent = Agent(
+        TestModel(),
+        name='specialized_for_run',
+        capabilities=[SpecializedForRun(bodies), TransparentDurability()],
+    )
+
+    await agent.run('test')
+
+    assert bodies == snapshot(['replacement'])
+
+
+async def test_dispatch_runs_the_declared_body_when_the_run_keeps_the_instance() -> None:
+    """The other direction: with no specialized replacement, the declared body is what runs.
+
+    Without this the test above would pass just as well against an implementation that always ran
+    the capability's own method and never consulted the declaration at all.
+    """
+    bodies: list[str] = []
+    agent = Agent(
+        TestModel(),
+        name='unspecialized_for_run',
+        capabilities=[SpecializedForRun(bodies, specialize=False), TransparentDurability()],
+    )
+
+    await agent.run('test')
+
+    assert bodies == snapshot(['base'])
 
 
 async def test_operation_called_from_for_run_runs_directly() -> None:

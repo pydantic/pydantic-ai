@@ -448,6 +448,22 @@ def bind_arguments(
     return cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
 
 
+def bind_declaration_body(
+    declaration: CapabilityMethodDeclaration, capability: AbstractCapability[Any]
+) -> Callable[..., Awaitable[Any]]:
+    """Bind the operation body the run's capability actually implements.
+
+    The declaration was collected from the class the engine bound at construction, but a `for_run`
+    replacement may be a specialized subclass, and its override is the implementation the run asked
+    for. The marker carries the undecorated target, so binding it doesn't re-enter dispatch.
+    """
+    function = declaration.function
+    member = getattr(type(capability), function.__name__, None)
+    if member is not None and (override := get_durable_operation_marker(member)) is not None:
+        function = override.function
+    return function.__get__(capability, type(capability))
+
+
 async def call_declaration(
     declaration: CapabilityMethodDeclaration,
     capability: AbstractCapability[Any],
@@ -455,7 +471,7 @@ async def call_declaration(
     params: CapabilityOperationParams,
     model_request_context: ModelRequestContext | None = None,
 ) -> Any:
-    bound = declaration.function.__get__(capability, type(capability))
+    bound = bind_declaration_body(declaration, capability)
     # The operation body runs as the capability, so name it on the context the way the hook chain
     # does: a context that crossed a durable boundary was rebuilt without the emitting capability,
     # and `RunContext.emit` resolves a `CapabilityEvent`'s owner through it.

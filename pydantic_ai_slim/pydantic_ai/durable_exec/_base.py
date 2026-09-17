@@ -61,6 +61,7 @@ from ._capability_operation import (
     ModelRequestContextProjection,
     _ResolvedModelRequestContext,  # pyright: ignore[reportPrivateUsage]
     bind_arguments,
+    bind_declaration_body,
     call_declaration,
     capability_operation_result_type,
     collect_capability_operations,
@@ -463,8 +464,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         key = (capability_id, operation)
         declaration = self._capability_declarations[key]
         if not self.in_durable_context:
-            bound = declaration.function.__get__(capability, type(capability))
-            return await bound(*args, **kwargs)
+            return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
         request_context = next(
             (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
