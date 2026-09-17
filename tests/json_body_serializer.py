@@ -71,6 +71,7 @@ FILTERED_HEADERS = {
     'via',
     'set-cookie',
     'api-key',
+    'xi-api-key',
 }
 ALLOWED_HEADER_PREFIXES = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
@@ -166,6 +167,19 @@ def scrub_xml_credentials(
         headers['content-length'] = [str(len(body.encode('utf-8')))]
 
 
+def _scrub_keys(value: Any, keys: tuple[str, ...], replacement: str) -> None:  # pragma: lax no cover
+    """Recursively replace the string values of `keys` anywhere in a parsed JSON body."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in keys and isinstance(item, str) and item:
+                value[key] = replacement
+            else:
+                _scrub_keys(item, keys, replacement)
+    elif isinstance(value, list):
+        for item in value:
+            _scrub_keys(item, keys, replacement)
+
+
 def _store_json_body(
     kind: str, data: dict[str, Any], body: str, headers: dict[str, list[str]]
 ) -> None:  # pragma: lax no cover
@@ -191,6 +205,14 @@ def _store_json_body(
         data['parsed_body']['refresh_token'] = 'scrubbed'
     if 'safety_identifier' in data['parsed_body'] and data['parsed_body']['safety_identifier'] is not None:
         data['parsed_body']['safety_identifier'] = 'scrubbed'
+    if isinstance(data['parsed_body'], dict) and isinstance(signed_url := data['parsed_body'].get('signed_url'), str):
+        # ElevenLabs `GET /v1/convai/conversation/get-signed-url` bodies carry a short-lived
+        # conversation token in the URL's query string.
+        data['parsed_body']['signed_url'] = re.sub(r'(conversation_signature|token)=[^&]+', r'\1=scrubbed', signed_url)
+    if isinstance(data['parsed_body'], dict):
+        # ElevenLabs `GET /v1/convai/agents/{id}` bodies carry the workspace owner's identity in
+        # `access_info`.
+        _scrub_keys(data['parsed_body'], ('creator_email', 'creator_name'), 'scrubbed')
     del data['body']
     # Update content-length to match the body that will be produced during deserialize.
     # This is necessary because decompression changes the body size, and botocore

@@ -1,0 +1,314 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    type: conversation_initiation_client_data
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Reply in a few words.
+- kind: message
+  direction: received
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_9701m2de76qjehh9yfssv0n591p7
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: /P/3/wwA+v/4/+r/9/8JAAgAJQAaAA4A/f/u/wwAEwAD
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: 9v/l//b/DQD6/+r/+v8EAP3/AgAdABgAAQABAAwAEAD8
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: EQBrAOP/3P8rAOP/x//r/77/xv9NAAcA2/9uADQAlP/U
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: FwAdAOH/CQADAPH/8v8SAAYA4P8VACgA+/8kAB4A2f/j
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: 8/8VABkA9/8TACMADwAMACEAEwD2/xUA+P/c/wUAGAAD
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AgAEAP7//P/7//z//P/7////AAABAAYAAgD//wUAAgAE
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: BQD9//j/AAAJABMABADz//P/+f8PABcABwDo/+L/9f8K
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AgD6//n/AwD//wAAAAAAAAAAAgAHAAEA9f///wAAAwAJ
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: ///4//z/+v8DAAEABAADAP//AAAAAAEAAQD+//r/AgAG
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: dwAvAJH/+f9HAMf/9P9pAPX/lP89AFsAj/+w/3oARQCP
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: 5PXU3bHeyeiQ9l8IbxcOIcIilgmB4ULaWfUWBojrS9oo
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: tCIEDuXgqNsKBCIaAvkW1qDpFhVmGkT+DPZnC5EXvQe/
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: cvHA9WjqCuQ/7ar9YwEo+QD3GQEcEFUS5gpHCLkRgB3W
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: iQJSAeP+c/5i/2z/2f3h/DL+h/9Q//38C/yZ/c3/5v/m
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: OP7L/y8AV/9j/y8AogGWAf//6P6s/xoBRgDN/in/1QB8
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: Uf+1APcBegIXAhoBJQCH/yz/Nf+l//n/JwBEAD8AIADm
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: FviE/2IH7QqeDKUQJxUsE1ILnARTBLIELwBn+bH52QDk
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: laFBrXq4F7spyPftIBVeIogTNAdrC/MXaxvwHMUphkCu
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: D/9TArH//voF/DQCbQTB/0n4P/Uu96z5Yvq1+rb8gf27
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: 5QQW5dPxWBaoEV/cIbDauLngb/b17i3eJdBnwOW3Fc1j
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: yvEa8Urw4/frACMDWQH/Ax4QcRZKFV8VLCVCNeUrHw7f
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: iP+6+ef7OP+b/PH33vZs99X0gvHJ9Bz9iv9I9qHomeBD
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: PP18/bv9yP3N/Rj+uP51/xYArQASAW4BvAEhAtUClwNc
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: BgARABcAGgAbABIACQAEAAAA+//7//v/+//7//3/AgAL
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: uP9GANf/Lf+c/xkAsf9d/+r/XAAIAIn/0v8WAMP/m/+z
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: XAOSBzcDLv9fAE0GbAuiDsAVNxxKG9QUERZvHO0doxd/
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: +wPg6AsJvA0q+2HxcAOnE7/0y/MmA6wPxv/Y7ZcBBgw8
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: zhDRC1oGKQhNEXYZphplFgwSNg5vCOgASPlJ8onsRubt
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: Zf8L/cT6zffj/BP8jPfKAHkBIv2n80n58vqm+sb70PmH
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: cgHdAScA3fzAAk//agDmAEkA6P/V/wsDwgBRA8D7bvwY
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: 1POJ9yoBIwQe//n9ngQWBgD7jO/X8Cv7jQRvAOzt8+Mo
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: QP1i+xr93P5y//UAEQK/AdwCegQtBFsDmwS7BM0B3f8l
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: +v/3//f/+v/6//b/9//5//r//f/6//j/+f/7////AQAB
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: CAAHAAUAAwAAAP7//v/9//z/+f/5//n/+//9////AQAC
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAP///v/+////AQABAAAA//8AAAAA//////7///8A
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAEAAAAAAAAAAAAAAP////8AAAAA////////AAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: //////////8AAAAAAAABAAEAAAABAAEAAAAAAAAAAQAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  data:
+    user_audio_chunk: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  data:
+    user_transcription_event:
+      user_transcript: Hello, my name is Marcelo.
+      event_id: 11
+    type: user_transcript
+- kind: message
+  direction: received
+  data:
+    audio_event:
+      audio_base_64: /v8BAAEA/v8AAP/////+//7//f/9//z//v////3//v/+
+      event_id: 11
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  data:
+    audio_event:
+      audio_base_64: /v///wAA/////////v////7/AAD//////v////7//P/8
+      event_id: 11
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  data:
+    agent_response_event:
+      agent_response: Hello Marcelo. How can I help?
+      event_id: 11
+      response_id: ade180bb-1662-4a99-b1de-2793c0b483cc
+      in_response_to_ids:
+      - 22de3089-5632-4916-bc46-37e90663ddae
+      response_type: text
+      attachments: []
+    type: agent_response

@@ -43,7 +43,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini', 'xai']
+ProviderName = Literal['openai', 'gemini', 'xai', 'elevenlabs']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -75,6 +75,7 @@ _SECRET_ENV_VARS = (
     'GEMINI_API_KEY',
     'GOOGLE_API_KEY',
     'XAI_API_KEY',
+    'ELEVENLABS_API_KEY',
 )
 
 
@@ -222,6 +223,17 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
         return {**frame, 'delta': _truncate_b64_audio(frame['delta'])}
     if frame.get('type') == 'input_audio_buffer.append' and isinstance(frame.get('audio'), str):
         return {**frame, 'audio': _truncate_b64_audio(frame['audio'])}
+    # ElevenLabs outbound microphone chunk (the one client message without a `type` field).
+    if isinstance(frame.get('user_audio_chunk'), str):
+        return {**frame, 'user_audio_chunk': _truncate_b64_audio(frame['user_audio_chunk'])}
+    # ElevenLabs inbound audio: truncate the payload and drop the per-character TTS timing block,
+    # which is hundreds of numbers per frame that the session never reads.
+    if frame.get('type') == 'audio' and isinstance(audio_event := frame.get('audio_event'), dict):
+        audio_event = cast('dict[str, Any]', audio_event)
+        payload = audio_event.get('audio_base_64')
+        if isinstance(payload, str):  # pragma: no branch
+            audio_event = {key: value for key, value in audio_event.items() if key != 'alignment'}
+            return {**frame, 'audio_event': {**audio_event, 'audio_base_64': _truncate_b64_audio(payload)}}
 
     def _walk(value: Any) -> Any:
         if isinstance(value, dict):
@@ -422,6 +434,11 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import xai as rt_xai
 
         return rt_xai.websockets, 'connect'
+    if provider == 'elevenlabs':
+        # ElevenLabs speaks its own agent protocol over the `websockets` library directly.
+        from pydantic_ai.realtime import elevenlabs as rt_elevenlabs
+
+        return rt_elevenlabs.websockets, 'connect'
     from google.genai import live
 
     return live, 'ws_connect'

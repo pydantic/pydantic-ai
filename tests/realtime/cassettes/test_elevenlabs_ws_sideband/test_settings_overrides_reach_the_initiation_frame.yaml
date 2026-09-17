@@ -1,0 +1,85 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    type: conversation_initiation_client_data
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Answer in two or three words.
+          llm: gemini-2.5-flash
+        first_message: Welcome to the demo.
+        language: en
+      tts:
+        voice_id: EXAVITQu4vr4xnSDxMaL
+        stability: 0.5
+        speed: 1.0
+- kind: message
+  direction: received
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_8901m2de7b3ve5w8r5dn5gafkxt9
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: received
+  data:
+    audio_event:
+      audio_base_64: BQAKAAcABAACAAEAAQACAAIAAQABAAEAAgAEAAQABAAE
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  data:
+    agent_response_event:
+      agent_response: Welcome to the demo.
+      event_id: 1
+      response_id: e5eab9b6-f5fe-419a-9f48-61d19f102693
+      in_response_to_ids: []
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: sent
+  data:
+    type: user_message
+    text: Say hi.
+- kind: message
+  direction: received
+  data:
+    interruption_event:
+      event_id: 2
+    type: interruption
+- kind: message
+  direction: received
+  data:
+    agent_response_correction_event:
+      original_agent_response: Welcome to the demo.
+      corrected_agent_response: '...'
+      event_id: 1
+      response_id: e5eab9b6-f5fe-419a-9f48-61d19f102693
+    type: agent_response_correction
+- kind: message
+  direction: received
+  data:
+    audio_event:
+      audio_base_64: AwAGAAcAAgD9//v//f8AAP///v/+//7//v/+/////v/+
+      event_id: 2
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  data:
+    agent_response_event:
+      agent_response: Hello there.
+      event_id: 2
+      response_id: d47969a7-9328-4ee8-a64e-a6662d89a939
+      in_response_to_ids:
+      - 40ed37c3-007f-4cc2-a646-d719c74bf2f6
+      response_type: text
+      attachments: []
+    type: agent_response
