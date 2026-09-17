@@ -1263,6 +1263,9 @@ class RealtimeSession:
         """
         if self._conversation_id is None:
             self._conversation_id = str(uuid7())
+            # The session span was opened before this id existed, so hand it over: the messages
+            # recorded from here on carry it, and the span has to agree for the two to correlate.
+            self._session_instrumentation.set_conversation_id(self._conversation_id)
         return Conversation(
             messages=self.all_messages(),
             usage=copy(self.usage),
