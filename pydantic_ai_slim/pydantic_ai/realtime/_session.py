@@ -2789,7 +2789,7 @@ class RealtimeSession:
             selected = self._pending_messages.pop_priority(priority)
             for pending in selected:
                 request = await self._send_text(_pending_message_text(pending), respond=True)
-                await self._queue.put(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=(request,)))
+                self._queue_put(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=(request,)))
             if priority == 'asap':
                 self._asap_drain_deferred = False
 
