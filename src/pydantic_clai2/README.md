@@ -356,6 +356,10 @@ requests, tools, and capability hooks when configured on the supplied agent.
 
 See `THIRD_PARTY_NOTICES.md` for attribution.
 
+## vllm connection
+
+Open `/model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+
 ## openrouter connection
 
 Open `/model`, choose `openrouter`, then paste an API key from https://openrouter.ai/keys in the masked prompt, then select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. This flow uses API-key authentication, not browser OAuth.

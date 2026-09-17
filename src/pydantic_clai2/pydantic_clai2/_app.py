@@ -14,7 +14,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from rich.console import Console
 
-from . import openrouter, theme
+from . import openrouter, theme, vllm
 from ._branding import print_banner
 from ._completion_adapter import COMPLETION_STYLE, PromptCompleter
 from ._rendering import StreamRenderer
@@ -79,6 +79,8 @@ async def chat(
     async def resolve_model(name: str) -> Model | str:
         if name.startswith('openrouter:'):
             return await asyncio.to_thread(openrouter.model, name)
+        if name.startswith('vllm:'):
+            return await asyncio.to_thread(vllm.model, name)
         return auth.model(name) if name.startswith('openai-codex:') else name
 
     session.resolve_model = resolve_model
