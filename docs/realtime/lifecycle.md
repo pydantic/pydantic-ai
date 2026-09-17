@@ -121,11 +121,16 @@ connection drops, so a long call can briefly drop mid-turn.
 
 ## Ending a call
 
-A model-controlled hang-up is a [tool that closes the session](tools.md#ending-the-session-from-a-tool).
+Leaving the `async with` block closes the session. To hang up from elsewhere — a watchdog, a stop
+button, or [a tool](tools.md#ending-the-session-from-a-tool) — await
+[`close()`][pydantic_ai.realtime.RealtimeSession.close] from any task. The teardown runs to
+completion even if that task is cancelled while it waits, and both a concurrent `close()` and the
+`async with` exit wait for the same teardown, so the session is fully closed by the time the block
+is left. While the session is being iterated the loop ends, leaving the `async with` block does not
+raise, and [`session.result`][pydantic_ai.realtime.RealtimeSession.result] is settled.
+
 For external policy such as an idle timeout or maximum call duration, run a watchdog task that calls
-[`close()`][pydantic_ai.realtime.RealtimeSession.close]. Closing from another task is safe while the
-session is being iterated: the loop ends, leaving the `async with` block does not raise, and
-[`session.result`][pydantic_ai.realtime.RealtimeSession.result] is settled.
+`close()`:
 
 ```python
 import asyncio
