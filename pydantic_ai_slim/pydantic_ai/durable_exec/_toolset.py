@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 DurableConfig: TypeAlias = Mapping[str, Any]
 ToolConfig: TypeAlias = DurableConfig | Literal[False]
-Lifecycle: TypeAlias = Literal['enter-outside-durable', 'enter-always', 'enter-never']
+Lifecycle: TypeAlias = Literal['enter-outside-durable', 'enter-always', 'enter-never', 'enter-in-durable-unit']
 Instructions: TypeAlias = str | InstructionPart | Sequence[str | InstructionPart] | None
 
 
@@ -107,28 +107,34 @@ class DynamicToolsResult:
     instructions: Instructions
 
 
-class RunResolvedToolset(Generic[AgentDepsT]):
-    """A dynamic toolset resolved once for the run, entered lazily inside a durable unit.
+class RunHeldToolset(Generic[AgentDepsT]):
+    """A toolset held entered for one durable run, entered lazily inside a durable unit.
 
-    Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is
-    entered — so the durable container resolves it once per run, the way a non-durable run does, and
-    the first durable unit that needs it enters it, where the engine's own retry policy covers a
-    failed connection. The entered toolset is then held for the rest of the run instead of being torn
-    down and rebuilt in every unit, which is what lets a toolset's own caching (such as
-    [`MCPToolset.cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools]) survive between units.
+    Each durable unit used to enter (and, for a dynamic toolset, build) its own toolset and tear it
+    down again, so anything the toolset cached — such as
+    [`MCPToolset.cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] — was discarded before the
+    next unit could use it, and an MCP server saw a fresh session per unit. The run holds one
+    instead: the first durable unit that needs it enters it, where the engine's own retry policy
+    covers a failed connection, and the run exits it at the end. That is the lifecycle a non-durable
+    run gives a toolset.
 
-    The factory itself is arbitrary user code, and it now runs in the durable container rather than
-    in a unit, so I/O inside it is not checkpointed and re-runs when the container replays. Like the
-    capability factories that have always run there, it has to be deterministic given the run's
-    dependencies and leave its I/O to the units — which is what the engine docs tell users.
+    A toolset attached to the agent is the same object in the container and in the unit, so the run
+    holds that toolset itself. A [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] built with
+    `per_run_step=False` is resolved once by the run, which then holds what it resolved: resolving is
+    not connecting — an `MCPToolset` opens nothing until it is entered — but the factory is arbitrary
+    user code that runs in the durable container rather than in a unit, so I/O inside it is not
+    checkpointed and re-runs when the container replays. Like the capability factories that have
+    always run there, it has to be deterministic given the run's dependencies and leave its I/O to
+    the units — which is what the engine docs tell users.
 
     Only used where the durable unit runs in the same process as the container. Engines that
-    serialize the run context across the boundary never see one and resolve per unit as before.
+    serialize the run context across the boundary never see one and each unit enters its own, as
+    they always have.
     """
 
     def __init__(self, id: str, toolset: AbstractToolset[AgentDepsT]):
         self.id = id
-        """The dynamic toolset's `id`, which a durable unit looks it up by."""
+        """The toolset `id` a durable unit looks it up by."""
         self.toolset = toolset
         self._entered = False
 
@@ -139,7 +145,7 @@ class RunResolvedToolset(Generic[AgentDepsT]):
         return anyio.Lock()
 
     async def entered(self) -> AbstractToolset[AgentDepsT]:
-        """Return the resolved toolset, entering it the first time it's needed."""
+        """Return the toolset the run holds, entering it the first time a unit needs it."""
         async with self._lock:
             if not self._entered:
                 await self.toolset.__aenter__()
@@ -161,31 +167,31 @@ class RunResolvedToolset(Generic[AgentDepsT]):
                 await self.toolset.__aexit__(*args)
 
 
-def _run_resolved_toolset(
+def _run_held_toolset(
     toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
-) -> RunResolvedToolset[AgentDepsT] | None:
-    """The toolset this run already resolved, if it's reachable from this durable unit.
+) -> RunHeldToolset[AgentDepsT] | None:
+    """The toolset this run holds for this one, if it's reachable from this durable unit.
 
     The run context holds them without their dependencies type, which is the run's own.
     """
-    resolved = ctx._run_resolved_toolsets  # pyright: ignore[reportPrivateUsage]
-    if resolved is None or toolset.id is None:
+    held = ctx._run_held_toolsets  # pyright: ignore[reportPrivateUsage]
+    if held is None or toolset.id is None:
         return None
-    return cast('RunResolvedToolset[AgentDepsT] | None', resolved.get(toolset.id))
+    return cast('RunHeldToolset[AgentDepsT] | None', held.get(toolset.id))
 
 
 @asynccontextmanager
-async def _toolset_for_unit(
+async def toolset_for_unit(
     toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> AsyncGenerator[AbstractToolset[AgentDepsT]]:
-    """Yield the resolved toolset to run one durable unit against.
+    """Yield the toolset to run one durable unit against.
 
-    Reuses the toolset the run resolved when the unit can reach it, and otherwise resolves and
-    enters a fresh one for this unit alone — the only option when the unit may run in another
-    process, and what every unit did before run-resolved toolsets existed.
+    Reuses the toolset the run holds entered when the unit can reach it, and otherwise resolves and
+    enters one for this unit alone — the only option when the unit may run in another process, and
+    what every unit did before run-held toolsets existed.
     """
-    if (resolved := _run_resolved_toolset(toolset, ctx)) is not None:
-        yield await resolved.entered()
+    if (held := _run_held_toolset(toolset, ctx)) is not None:
+        yield await held.entered()
         return
     run_toolset = await toolset.for_run(ctx)
     async with run_toolset:
@@ -198,7 +204,7 @@ async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContex
     Falls back to resolving the toolset for this unit alone when the run's own resolved toolset
     isn't reachable, so replay/recovery in a fresh process stays deterministic.
     """
-    async with _toolset_for_unit(toolset, ctx) as run_toolset:
+    async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tools = await run_toolset.get_tools(ctx)
         instructions = await run_toolset.get_instructions(ctx)
@@ -259,7 +265,7 @@ async def call_dynamic_tool(
     The args were only parsed (not validated) on the workflow/flow side, where the real tool
     isn't available; validation happens here against the resolved tool's own validator.
     """
-    async with _toolset_for_unit(toolset, ctx) as run_toolset:
+    async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
         args = tool.args_validator.validate_python(tool_args, context=validation_context(ctx))
@@ -276,7 +282,7 @@ async def validate_dynamic_tool_args(
     validation_context: ValidationContextResolver = live_validation_context,
 ) -> None:
     """Resolve a dynamic toolset and validate arguments against its real tool."""
-    async with _toolset_for_unit(toolset, ctx) as run_toolset:
+    async with toolset_for_unit(toolset, ctx) as run_toolset:
         run_toolset = await run_toolset.for_run_step(ctx)
         tool = await _dynamic_tool(toolset, run_toolset, name, tool_def, ctx)
         await validate_tool_args(tool, tool_args, ctx, validation_context=validation_context)
@@ -593,6 +599,7 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         super().__init__(wrapped)
         self._in_durable_context = in_durable_context
         self._lifecycle = lifecycle
+        self._run_held: RunHeldToolset[AgentDepsT] | None = None
         self.durable_registrations = durable_registrations or []
         """Opaque engine handles that must be registered with the engine (e.g. Temporal activities)."""
         self.durable_config = durable_config
@@ -617,21 +624,41 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
     ) -> AbstractToolset[AgentDepsT]:
         return self
 
+    def _enters_wrapped(self) -> bool:
+        """Whether this wrapper is the one that enters the wrapped toolset around the run.
+
+        `enter-in-durable-unit` hands that to the run's units, but only inside the durable context:
+        outside it there are no units, so the wrapper enters it as `enter-outside-durable` does.
+        """
+        if self._lifecycle == 'enter-always':
+            return True
+        if self._lifecycle == 'enter-never':
+            return False
+        return not self._in_durable_context()
+
+    def _ctx_for_unit(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """Attach the toolset the run holds so a durable unit that can reach it reuses it."""
+        if (held := self._run_held) is None:
+            return ctx
+        existing = ctx._run_held_toolsets or {}  # pyright: ignore[reportPrivateUsage]
+        return replace(ctx, _run_held_toolsets={**existing, held.id: held})
+
     async def __aenter__(self) -> Self:
-        should_enter = self._lifecycle == 'enter-always' or (
-            self._lifecycle == 'enter-outside-durable' and not self._in_durable_context()
-        )
-        if should_enter:
+        if self._enters_wrapped():
             await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        should_exit = self._lifecycle == 'enter-always' or (
-            self._lifecycle == 'enter-outside-durable' and not self._in_durable_context()
-        )
-        if should_exit:
-            return await self.wrapped.__aexit__(*args)
-        return None
+        try:
+            if self._enters_wrapped():
+                return await self.wrapped.__aexit__(*args)
+            return None
+        finally:
+            # Whichever unit entered the toolset the run holds left it entered for the rest of the
+            # run, so the run is what closes it, passing on how the run ended. Its result is
+            # ignored: a toolset's teardown doesn't get to suppress the run's exception.
+            if (held := self._run_held) is not None:
+                await held.aclose(*args)
 
 
 class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
@@ -714,7 +741,6 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         self._validate_args_operation = validate_args_operation
         self._resolve_validation_config = resolve_validation_config or resolve_tool_config
         self._run_instructions: Instructions = None
-        self._run_resolved: RunResolvedToolset[AgentDepsT] | None = None
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         if not self._in_durable_context():
@@ -723,12 +749,12 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # (The wrapped `DynamicToolset` only resolves in `for_run`; delegating the
             # individual methods to the unresolved factory would silently yield no tools.)
             return await self.wrapped.for_run(ctx)
-        # Per-run copy isolates `_run_instructions` and `_run_resolved` from the process-shared
+        # Per-run copy isolates `_run_instructions` and `_run_held` from the process-shared
         # instance. The shallow copy shares the engine-registered operations; this is only state
         # isolation.
         run_copy = copy.copy(self)
         run_copy._run_instructions = None
-        run_copy._run_resolved = None
+        run_copy._run_held = None
         if not self._dynamic_toolset.per_run_step and (toolset_id := self._dynamic_toolset.id) is not None:
             # `per_run_step=False` is the factory's own statement that one resolution covers the
             # run, so resolve it here like a non-durable run does, leaving entry to the first
@@ -736,7 +762,7 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             # it must be deterministic and leave its I/O to the units. A `per_run_step=True`
             # factory is re-evaluated per unit as before: its `for_run_step` swaps the inner
             # toolset in place, which parallel tool-call units must not share.
-            run_copy._run_resolved = RunResolvedToolset(toolset_id, await self._dynamic_toolset.for_run(ctx))
+            run_copy._run_held = RunHeldToolset(toolset_id, await self._dynamic_toolset.for_run(ctx))
         return run_copy
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
@@ -745,23 +771,6 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         # was resolved once in `for_run`. (Outside the durable context this wrapper isn't in the
         # run's tree at all — `for_run` above replaced it with the resolved toolset.)
         return self
-
-    def _ctx_for_unit(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-        """Attach the run's resolved toolset so a durable unit that can reach it reuses it."""
-        if (resolved := self._run_resolved) is None:
-            return ctx
-        existing = ctx._run_resolved_toolsets or {}  # pyright: ignore[reportPrivateUsage]
-        return replace(ctx, _run_resolved_toolsets={**existing, resolved.id: resolved})
-
-    async def __aexit__(self, *args: Any) -> bool | None:
-        try:
-            return await super().__aexit__(*args)
-        finally:
-            # Whichever unit entered the run's toolset left it entered for the rest of the run,
-            # so the run is what closes it, passing on how the run ended. Its result is ignored:
-            # a toolset's teardown doesn't get to suppress the run's exception.
-            if (resolved := self._run_resolved) is not None:
-                await resolved.aclose(*args)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         result = await self._get_tools_operation(self._ctx_for_unit(ctx))
@@ -847,13 +856,30 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        if (
+            self._lifecycle != 'enter-in-durable-unit'
+            or not self._in_durable_context()
+            or (toolset_id := self.id) is None
+        ):
+            return await super().for_run(ctx)
+        # Per-run copy isolates `_run_held` from the process-shared instance; the shallow copy
+        # shares the engine-registered operations, so this is only state isolation.
+        run_copy = copy.copy(self)
+        # One server session covers the run, the way it does outside a durable container, so the
+        # server is connected to once instead of once per unit and `cache_tools` survives between
+        # units. Entry is refcounted by the toolset itself, so concurrent runs sharing this
+        # process-wide toolset share its session, and it stays open until the last of them ends.
+        run_copy._run_held = RunHeldToolset(toolset_id, self.wrapped)
+        return run_copy
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if not self._in_durable_context() or self._get_tools_operation is None:
             return await self.wrapped.get_tools(ctx)
         cache_key = self.id or ''
         if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
             return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in cached.items()}
-        tool_defs = await self._get_tools_operation(ctx)
+        tool_defs = await self._get_tools_operation(self._ctx_for_unit(ctx))
         if self._mcp_toolset.cache_tools:
             ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
         return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}
@@ -866,7 +892,7 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         # Always route through the durable unit: deciding based on locally-cached state (e.g.
         # instructions a warm in-process MCP server already holds) would make the durable
         # schedule depend on process warmth and diverge on replay/recovery (#5884).
-        return await self._get_instructions_operation(ctx)
+        return await self._get_instructions_operation(self._ctx_for_unit(ctx))
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
@@ -876,4 +902,4 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         config = self._resolve_tool_config(tool, name)
         if config is False:
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
-        return await self._call_tool_operation(name, tool_args, ctx=ctx, tool=tool, config=config)
+        return await self._call_tool_operation(name, tool_args, ctx=self._ctx_for_unit(ctx), tool=tool, config=config)

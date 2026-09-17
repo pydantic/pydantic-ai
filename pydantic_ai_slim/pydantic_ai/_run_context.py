@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from ._cancel import RunCancellation
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
-    from .durable_exec._toolset import RunResolvedToolset
+    from .durable_exec._toolset import RunHeldToolset
     from .models import AbstractModel
     from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
@@ -273,14 +273,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
     """Per-run capability instances used for durable recovery, for internal use only."""
 
-    _run_resolved_toolsets: dict[str, RunResolvedToolset[Any]] | None = field(default=None, repr=False)
+    _run_held_toolsets: dict[str, RunHeldToolset[Any]] | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
-    Per-run resolved dynamic toolsets, keyed by toolset `id`, attached by the durable-execution
-    dynamic toolset wrapper so its durable units can reuse the toolset the run already resolved
-    instead of resolving a fresh one each time. Holds live objects, so it only survives where the
-    durable unit runs in the same process as the durable container; engines that serialize the run
-    context across the boundary (Temporal) leave it `None` and the units fall back to resolving
+    Toolsets the run holds entered, keyed by toolset `id`, attached by the durable-execution toolset
+    wrappers so their durable units reuse the toolset (and the MCP server session) the run already
+    holds instead of entering a fresh one each time. Holds live objects, so it only survives where
+    the durable unit runs in the same process as the durable container; engines that serialize the
+    run context across the boundary (Temporal) leave it `None` and the units fall back to entering
     their own, which is what they have always done.
     """
 

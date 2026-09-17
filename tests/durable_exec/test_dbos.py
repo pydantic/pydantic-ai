@@ -4658,3 +4658,38 @@ async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
+
+
+@pytest.mark.parametrize('deprecated_agent', [False, True])
+async def test_dbos_mcp_server_keeps_one_session_per_workflow(dbos: DBOS, deprecated_agent: bool) -> None:
+    """A statically attached `MCPToolset` connects once per workflow, not once per step (#8458).
+
+    The first step that needs the server connects it — inside a step, where DBOS retries a failed
+    connection — and the workflow holds the session for the steps that follow, so `cache_tools`
+    serves the later discovery steps and the `tools/list` the MCP SDK issues before a call finds a
+    warm session. Both APIs get it: the deprecated `DBOSAgent` builds its own MCP steps, and until
+    it is removed a `DBOSAgent` user should not be paying for a session per step.
+
+    Not a VCR test: an in-process server is what makes the round trips countable server-side, which
+    is what attributes the MCP SDK's own pre-call listing correctly.
+    """
+    from .counting_mcp import counting_mcp_server, two_echo_calls_model
+
+    server, counts = counting_mcp_server()
+    toolset = MCPToolset(server, id=f'session_mcp_{deprecated_agent}')
+    agent = Agent(
+        two_echo_calls_model(),
+        name=f'dbos_mcp_session_{deprecated_agent}',
+        toolsets=[toolset],
+        capabilities=[] if deprecated_agent else [DBOSDurability()],
+    )
+    durable_agent = DBOSAgent(agent) if deprecated_agent else agent  # pyright: ignore[reportDeprecated]
+
+    @DBOS.workflow(name=f'mcp_session_workflow_{deprecated_agent}')
+    async def run_workflow() -> str:
+        return (await durable_agent.run('go')).output
+
+    assert await run_workflow() == 'done'
+    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    # The workflow closed the session it held; nothing keeps the server connected between runs.
+    assert not toolset.is_running
