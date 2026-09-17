@@ -21,6 +21,12 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
+_DurableOperationDispatch = Callable[
+    ['RunContext[Any]', tuple[Any, ...], dict[str, Any]],
+    Awaitable[Any],
+]
+"""Dispatches one durable capability operation on behalf of the calling `RunContext`."""
+
 if TYPE_CHECKING:
     from ._cancel import RunCancellation
     from .agent import Agent
@@ -255,8 +261,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     )
     """Legacy `hooks.on.event` replacements, shared across the run."""
 
-    _durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None = field(default=None, repr=False)
-    """Per-run durable capability operation dispatchers, for internal use only."""
+    _durable_operations: dict[tuple[str, str], _DurableOperationDispatch] | None = field(default=None, repr=False)
+    """Per-run durable capability operation dispatchers, for internal use only.
+
+    Keyed by `(capability id, operation name)`, shared by reference with every other `RunContext`
+    this run and populated in place at run setup, so an operation called from a per-request hook
+    dispatches durably like one called from `before_run`.
+    """
 
     _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
     """Per-run capability instances used for durable recovery, for internal use only."""
