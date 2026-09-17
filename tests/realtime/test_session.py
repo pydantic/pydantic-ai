@@ -317,6 +317,13 @@ class FakeRealtimeConnection(RealtimeConnection):
             self._release.set()
 
 
+# Seconds to wait on something that should finish promptly. These guards assert that a view ends or a
+# task completes *at all* — a real hang still fails, just later — so the bound only has to outlast a
+# loaded CI runner. One second did not: the 3.14 all-extras cell timed out on a session teardown that
+# passes ten times out of ten locally.
+_LIVENESS_TIMEOUT = 5
+
+
 class BlockingRealtimeConnection(FakeRealtimeConnection):
     """Replay fixed events, then remain open until the session closes."""
 
@@ -2995,9 +3002,9 @@ async def test_tool_error_ends_views_when_the_stream_was_never_iterated() -> Non
     )
     with pytest.raises(ValueError, match='tool exploded'):
         async with session:
-            assert await asyncio.wait_for(_collect(session.stream_audio()), timeout=1) == []
+            assert await asyncio.wait_for(_collect(session.stream_audio()), timeout=_LIVENESS_TIMEOUT) == []
             # A view subscribed after the failure also ends immediately.
-            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
+            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=_LIVENESS_TIMEOUT) == []
 
 
 async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
@@ -3020,7 +3027,7 @@ async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
         tool_manager=make_tool_manager(runner),
     )
     await session.__aenter__()
-    await asyncio.wait_for(pump_cancelled.wait(), timeout=1)
+    await asyncio.wait_for(pump_cancelled.wait(), timeout=_LIVENESS_TIMEOUT)
     assert session._pump_task is not None and not session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(ValueError, match='tool exploded'):
@@ -3038,7 +3045,7 @@ async def test_tool_retry_exhaustion_ends_views_when_the_stream_was_never_iterat
     )
     with pytest.raises(UnexpectedModelBehavior, match='retry budget exhausted'):
         async with session:
-            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
+            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=_LIVENESS_TIMEOUT) == []
 
 
 async def test_tool_error_leaves_views_open_for_an_iterating_consumer() -> None:
@@ -3156,12 +3163,12 @@ async def test_pending_message_error_is_delivered_once_to_every_consumer_shape(
 
     if event_task is not None:
         with pytest.raises(UsageLimitExceeded, match='request_limit of 0'):
-            await asyncio.wait_for(event_task, timeout=1)
+            await asyncio.wait_for(event_task, timeout=_LIVENESS_TIMEOUT)
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(anext(transcripts), timeout=0.05)
         await session.close()
     else:
-        assert await asyncio.wait_for(_collect(transcripts), timeout=1) == []
+        assert await asyncio.wait_for(_collect(transcripts), timeout=_LIVENESS_TIMEOUT) == []
         with pytest.raises(UsageLimitExceeded, match='request_limit of 0'):
             await session.close()
         await session.close()
@@ -3200,7 +3207,7 @@ async def test_failed_taps_only_agent_session_has_no_result() -> None:
             usage_limits=UsageLimits(request_limit=0),
         ).session() as session:
             session.enqueue('too expensive')
-            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=1) == []
+            assert await asyncio.wait_for(_collect(session.stream_transcripts()), timeout=_LIVENESS_TIMEOUT) == []
 
     assert session is not None
     assert session.result is None
@@ -3239,7 +3246,7 @@ async def test_upstream_error_does_not_wait_for_running_tool() -> None:
 
     session = RealtimeSession(_ExplodingAfterTool(), runner)
     with pytest.raises(RuntimeError, match='connection dropped'):
-        await asyncio.wait_for(collect_events(session), timeout=1)
+        await asyncio.wait_for(collect_events(session), timeout=_LIVENESS_TIMEOUT)
 
     assert started.is_set()
     assert tool_task is not None and tool_task.done() and tool_task.cancelled()
@@ -3522,7 +3529,7 @@ async def test_realtime_barrier_exception_releases_following_tool() -> None:
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
         events = session.__aiter__()
         await anext(events)
-        await asyncio.wait_for(after_started.wait(), timeout=1)
+        await asyncio.wait_for(after_started.wait(), timeout=_LIVENESS_TIMEOUT)
         with pytest.raises(RuntimeError, match='barrier failed'):
             await aiter_to_list(events)
 
@@ -6545,7 +6552,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
             await event_task
         await session.close()
     else:
-        assert await asyncio.wait_for(_collect(transcripts), timeout=1) == []
+        assert await asyncio.wait_for(_collect(transcripts), timeout=_LIVENESS_TIMEOUT) == []
         with pytest.raises(RuntimeError, match='drain send failed'):
             await session.close()
     await session.close()
