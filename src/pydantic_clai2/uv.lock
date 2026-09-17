@@ -927,14 +927,14 @@ requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.0" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
-    { name = "pydantic-ai-slim", specifier = ">=2.40.0" },
-    { name = "pydantic-ai-slim", marker = "extra == 'aws-lambda'", specifier = ">=2.40.0" },
-    { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=2.40.0" },
-    { name = "pydantic-ai-slim", extras = ["cli"], marker = "extra == 'cli'", specifier = ">=2.40.0" },
+    { name = "pydantic-ai-slim", specifier = ">=2.44.0" },
+    { name = "pydantic-ai-slim", marker = "extra == 'aws-lambda'", specifier = ">=2.44.0" },
+    { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", specifier = ">=2.44.0" },
+    { name = "pydantic-ai-slim", extras = ["cli"], marker = "extra == 'cli'", specifier = ">=2.44.0" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'" },
-    { name = "pydantic-ai-slim", extras = ["duckduckgo"], marker = "extra == 'code-mode'", specifier = ">=2.40.0" },
-    { name = "pydantic-ai-slim", extras = ["duckduckgo"], marker = "extra == 'codemode'", specifier = ">=2.40.0" },
-    { name = "pydantic-ai-slim", extras = ["duckduckgo", "web-fetch"], marker = "extra == 'researcher'", specifier = ">=2.40.0" },
+    { name = "pydantic-ai-slim", extras = ["duckduckgo"], marker = "extra == 'code-mode'", specifier = ">=2.44.0" },
+    { name = "pydantic-ai-slim", extras = ["duckduckgo"], marker = "extra == 'codemode'", specifier = ">=2.44.0" },
+    { name = "pydantic-ai-slim", extras = ["duckduckgo", "web-fetch"], marker = "extra == 'researcher'", specifier = ">=2.44.0" },
     { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'stackone'", specifier = ">=2.18.0" },
     { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'logfire'", specifier = ">=2.18.0" },
     { name = "pydantic-ai-slim", extras = ["temporal"], marker = "extra == 'temporal'" },
@@ -975,7 +975,7 @@ lint = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "2.43.0"
+version = "2.44.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -987,9 +987,9 @@ dependencies = [
     { name = "pydantic-graph" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/09/6672706de85503112ad76820d6e8444742f08610e5be868f75f0a37ea19a/pydantic_ai_slim-2.43.0.tar.gz", hash = "sha256:72c123024b8ecc1c6358a34dc9b88e5e7902232b16cb05a82f7a457861a891dc", size = 1464836, upload-time = "2026-09-12T01:05:38.532Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/dc/563e7157b940f0274b0687e523f46f9d3ea4936e472c66c8c17b7856eb2e/pydantic_ai_slim-2.44.0.tar.gz", hash = "sha256:88be3150dc6c89383e4dd596414dda3479c2773ee6e9e40789596d82fc34a783", size = 1519519, upload-time = "2026-09-17T04:11:32.578Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/c0/8631a038946d3782de9370ba1581d6780f276ca462b94d3e9c1d8d9e1f85/pydantic_ai_slim-2.43.0-py3-none-any.whl", hash = "sha256:b7843c2b8a8499beeb7dc82b143951bb47765256fa21732f1d4dcbfd7b84eacc", size = 1726087, upload-time = "2026-09-12T01:05:30.754Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/69/1acef0ae723f28ec0554cfad06fac1004b6d75ef2540ef29ff8e46688d58/pydantic_ai_slim-2.44.0-py3-none-any.whl", hash = "sha256:67063d1b2900e92dc558079fa3854e0141ed6f81ec5fb7d9c4d1b3b86bd0c9b6", size = 1800583, upload-time = "2026-09-17T04:11:23.706Z" },
 ]
 
 [package.optional-dependencies]
@@ -1150,7 +1150,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-version = "2.43.0"
+version = "2.44.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1158,9 +1158,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/21/c9/cf80cd8d7b114ab6eeb87bfb786bb9a761aa51e91025e3e3bf419c2b1a9b/pydantic_graph-2.43.0.tar.gz", hash = "sha256:31ce4900f99c1c5eab7daeed07ec6f2b4545517562fe0394c5d5385a0a1528f0", size = 45189, upload-time = "2026-09-12T01:05:40.903Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/3d/22cecd0197d171cdf09e47de5e8ab906ce8b7632f282433046340564cf03/pydantic_graph-2.44.0.tar.gz", hash = "sha256:e6d62aa8579b83815b9adcb3dbff210647951ef4fa5f6526b24ee9d168d385bb", size = 45191, upload-time = "2026-09-17T04:11:35.238Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/f9/5d7979da026d09ca320b844e5080ef393770a7efbe14acf5e8eb92a67fdb/pydantic_graph-2.43.0-py3-none-any.whl", hash = "sha256:70ce81b2aa69440d30e5a0aa9082f13fff45b5bf4e44f06a63551e90b65f41a4", size = 52700, upload-time = "2026-09-12T01:05:34.374Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/21/699faf6b87b785e15a7ebe163052ac74606a19d5275211e28bf725e17e22/pydantic_graph-2.44.0-py3-none-any.whl", hash = "sha256:7a7aec1399d8dfc09f0485c4f9749c568bc451ed517ee1f3e903c3d216ea17e5", size = 52698, upload-time = "2026-09-17T04:11:27.685Z" },
 ]
 
 [[package]]
