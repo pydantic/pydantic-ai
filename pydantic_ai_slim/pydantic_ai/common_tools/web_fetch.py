@@ -121,7 +121,7 @@ class WebFetchLocalTool:
                 blocked_domains=self.blocked_domains,
                 max_bytes=self.max_download_bytes,
             )
-        except (ValueError, httpx2.HTTPStatusError, httpx2.RequestError) as e:
+        except (ValueError, httpx2.HTTPStatusError, httpx2.RequestError, httpx2.InvalidURL) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e
 
         media_type = response.headers.get('content-type', '')

@@ -345,6 +345,23 @@ class TestWebFetchLocalTool:
         with pytest.raises(ModelRetry, match='Failed to fetch'):
             await tool('not-a-url')
 
+    async def test_httpx_invalid_url_raises_model_retry(self):
+        """httpx2.InvalidURL is neither ValueError nor RequestError, so it must be caught explicitly.
+
+        A hostname httpx2's IDNA parser rejects is enough. This is a unit test of the catch
+        clause: a VCR test cannot produce this exception from a real model.
+        """
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            side_effect=httpx2.InvalidURL("Invalid IDNA hostname: 'ｅxample.com'"),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(ModelRetry, match='Failed to fetch') as exc_info:
+                await tool('https://ｅxample.com/')
+
+        assert isinstance(exc_info.value.__cause__, httpx2.InvalidURL)
+
     async def test_allowed_domains_permits(self):
         """Allowed domain passes validation and is forwarded to safe_download."""
         mock_response = _html_response('<html><body>ok</body></html>')
