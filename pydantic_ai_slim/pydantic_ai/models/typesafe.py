@@ -48,6 +48,8 @@ try:
         JSONContent,
         Noul,
         NoulAnswer,
+        Score,
+        ScoreAnswer,
         TypeSafeAPIConnectionError,
         TypeSafeAPIError,
         TypeSafeAPIResponseValidationError,
@@ -67,7 +69,8 @@ TypeSafeModelName = str | LatestTypeSafeModelNames
 """Possible TypeSafe model names."""
 
 _UNSUPPORTED_FIELD_HINT = (
-    'Use `bool`, a `Literal` or `Enum` of two or more strings, or a `float` bounded with `ge=0` and `le=1`.'
+    'Use `bool`, a `Literal` or `Enum` of two or more strings, an `IntEnum` whose members are 0 upwards with a '
+    'docstring each, or a `float` bounded with `ge=0` and `le=1`.'
 )
 
 
@@ -111,6 +114,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     | `bool` | yes or no | `True` when Jev's probability is at least 0.5 |
     | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
     | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
+    | `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the level Jev thought most likely |
 
     The field description is the question. The output type's docstring and the agent's instructions go along
     as context. A docstring under an `Enum` member describes that option, see the [docs](../../models/typesafe.md);
@@ -118,7 +122,8 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     there the agent's instructions are the question.
     Jev's confidence per field is in
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `confidence`,
-    and the full distribution of each pick-one field under `probabilities`.
+    the full distribution of each pick-one and rubric field under `probabilities`, and each rubric field's
+    expected score, which falls between the levels, under `scores`.
 
     The latest user prompt is the text Jev judges. Everything before it in the message history, from any model,
     goes along as `history`: user prompts, answers, tool calls and their results, and retry prompts.
@@ -216,6 +221,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         args: dict[str, Any] = {}
         confidence: dict[str, float] = {}
         probabilities: dict[str, dict[str, float]] = {}
+        scores: dict[str, float] = {}
         for name, prop in properties.items():
             answer = response.answers.get(name)
             if isinstance(questions[name], Noul) and isinstance(answer, NoulAnswer):
@@ -232,6 +238,14 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                 args[name] = answer.choice
                 confidence[name] = answer.confidence
                 probabilities[name] = answer.probabilities
+            elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
+                # `score` is the expectation across the rubric and falls between levels; the answer has to be
+                # one of them, so it is the level Jev thought most likely, as a pick-one returns its choice.
+                levels = answer.probabilities
+                args[name] = max(levels, key=lambda level: levels[level])
+                confidence[name] = answer.confidence
+                probabilities[name] = {str(level): p for level, p in levels.items()}
+                scores[name] = answer.score
             else:
                 raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
 
@@ -243,7 +257,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             model_name=response.model,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
-            provider_details={'confidence': confidence, 'probabilities': probabilities},
+            provider_details={'confidence': confidence, 'probabilities': probabilities, 'scores': scores},
             finish_reason='tool_call',
         )
 
@@ -280,9 +294,9 @@ def _properties(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
 
 def _questions(
     properties: dict[str, dict[str, Any]], output_tool: ToolDefinition, instructions: str | None
-) -> dict[str, Noul | Choice]:
+) -> dict[str, Noul | Choice | Score]:
     """One Jev question per output field."""
-    questions: dict[str, Noul | Choice] = {}
+    questions: dict[str, Noul | Choice | Score] = {}
     if not properties:
         raise UserError('An `output_type` with no fields is not supported by this model; there is nothing to ask Jev.')
     for name, prop in properties.items():
@@ -298,19 +312,23 @@ def _questions(
         if instructions:
             ask['instructions'] = instructions
 
-        options: dict[str, str | None] | None = None
+        options: dict[Any, str | None] | None = None
         if 'enum' in prop:
             options = dict.fromkeys(prop['enum'])
         elif 'anyOf' in prop and all('const' in option for option in prop['anyOf']):
             options = {option['const']: option.get('description') for option in prop['anyOf']}
 
         if options is not None:
-            if len(options) < 2 or not all(isinstance(option, str) for option in options):
+            # `bool` is an `int` in Python but never a rubric level, and it is handled as a yes/no below.
+            if options and all(isinstance(option, int) and not isinstance(option, bool) for option in options):
+                questions[name] = _score_question(name, cast('dict[int, str | None]', options), ask)
+            elif len(options) < 2 or not all(isinstance(option, str) for option in options):
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: its options are not two or more strings. '
                     f'{_UNSUPPORTED_FIELD_HINT}'
                 )
-            questions[name] = Choice(instructions=ask or None, criteria=options)
+            else:
+                questions[name] = Choice(instructions=ask or None, criteria=cast('dict[str, str | None]', options))
         elif prop.get('type') == 'boolean':
             questions[name] = Noul(instructions=ask or None)
         elif prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1:
@@ -318,6 +336,28 @@ def _questions(
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
+
+
+def _score_question(name: str, options: dict[int, str | None], ask: dict[str, JSONContent]) -> Score:
+    """A rubric question from an `IntEnum` or `Literal` of whole numbers, one description per level.
+
+    Jev scores against an ordered rubric that starts at zero, so the levels have to be exactly that, and
+    every one of them needs saying what it means: a rubric whose levels are unexplained is not a rubric.
+    """
+    levels = list(options)
+    if levels != list(range(len(levels))) or len(levels) < 2:
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: a rubric must be the whole numbers from 0 '
+            f'upwards, in order, and there must be at least two of them. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    criteria = [options[level] for level in levels]
+    if not all(criteria):
+        missing = ', '.join(str(level) for level in levels if not options[level])
+        raise UserError(
+            f'Output field {name!r} is a rubric, so every level needs to say what it means, and {missing} does not. '
+            f'Give each member of the `IntEnum` a docstring describing that score.'
+        )
+    return Score(instructions=ask or None, criteria=cast('list[JSONContent]', criteria))
 
 
 def _prompt_text(part: UserPromptPart) -> str:

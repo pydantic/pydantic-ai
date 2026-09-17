@@ -78,6 +78,7 @@ Every field of the output type is one question, and all of them go out in a sing
 | `bool` | yes or no | `True` when Jev's probability is at least 0.5 |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
 | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
+| `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the level Jev thought most likely |
 
 The field description is the question text; an `Enum` field without one uses the enum's class docstring. The output type's docstring and the agent's instructions are context, so put the framing there and the per-field wording in the descriptions. A docstring under an `Enum` member, as in the example above, describes that option. A `Literal` has nowhere to put descriptions, so Jev only sees its option names.
 
@@ -95,8 +96,49 @@ result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
 print(result.output)
 #> True
 print(result.response.provider_details)
-#> {'confidence': {'response': 0.95}, 'probabilities': {}}
+#> {'confidence': {'response': 0.95}, 'probabilities': {}, 'scores': {}}
 ```
+
+## Scoring against a rubric
+
+Jev's third primitive scores a text against an ordered rubric. An `IntEnum` whose members are `0`, `1`, `2`, … is that rubric, and the docstring under each member says what that score means, so the levels are written where they are declared:
+
+```python
+from enum import IntEnum
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class Clarity(IntEnum):
+    """How clearly does the text explain itself?"""
+
+    unclear = 0
+    """Leaves a reader who did not already know none the wiser."""
+    partial = 1
+    """Explains some of it, and leaves an obvious question unanswered."""
+    clear = 2
+    """A reader who did not already know could act on it."""
+
+
+class Review(BaseModel):
+    """Grade a piece of writing."""
+
+    clarity: Clarity
+
+
+agent = Agent('typesafe:jev-latest', output_type=Review)
+result = agent.run_sync('Jevantic gives Python programs typed, probabilistic decisions from Jev.')
+print(result.output)
+#> clarity=<Clarity.unclear: 0>
+print(result.response.provider_details['scores'])
+#> {'clarity': 0.16}
+```
+
+The answer is the level Jev thought most likely, so it is always one of yours. `provider_details['scores']` keeps the expected score across the rubric, which falls between the levels — `0.16` here, not `0` — and is the number to average over a dataset. `probabilities` holds the whole distribution, keyed by level.
+
+Every level needs a docstring: a rubric whose levels are unexplained is not a rubric, so one without them is a [`UserError`][pydantic_ai.exceptions.UserError]. The levels must also start at `0` and run upwards without gaps, which is the shape Jev scores against.
 
 ## Judging a conversation
 
