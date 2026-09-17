@@ -28,6 +28,7 @@ from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.conversation import Conversation
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -4363,3 +4364,28 @@ def test_exception_recording_skipped_when_span_is_not_recording() -> None:
     )
     with pytest.raises(Unformattable):
         agent.run_sync('hello')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_span_reports_the_runs_own_usage_when_a_conversation_carries_the_total(
+    capfire: CaptureLogfire,
+) -> None:
+    """`conversation=` is the other way a run is handed a non-zero starting usage.
+
+    A `Conversation` carries the running total so `UsageLimits` can budget the whole conversation,
+    which means the second run starts from the first run's tokens exactly as `usage=` does. The
+    span has to report what this run added either way, or a conversation's spend stops being the
+    sum of its runs.
+    """
+    agent = Agent(TestModel(custom_output_text='hi'), capabilities=[Instrumentation()])
+
+    first = agent.run_sync('one', conversation=Conversation())
+    second = agent.run_sync('two', conversation=first.conversation)
+
+    reported = [
+        span['attributes']['gen_ai.aggregated_usage.input_tokens']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if 'gen_ai.aggregated_usage.input_tokens' in span['attributes']
+    ]
+    assert reported == snapshot([51, 52])
+    assert second.conversation.usage.input_tokens == snapshot(103)
