@@ -7,7 +7,7 @@ from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import cache
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
@@ -76,17 +76,44 @@ TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 )  # fmt: skip
 
-include_content_ctx: ContextVar[bool | None] = ContextVar('include_content', default=None)
+
+class ContentPolicy(NamedTuple):
+    """One span's `include_content`, tagged with the span it was set for.
+
+    The tag is what makes the variable safe to read. Restoring it is a plain `set` rather than a
+    `reset` (an interrupted streamed run finalizes the context manager in a different `Context`,
+    where `reset` raises), and a `set` lands only in the `Context` that runs it, so the `Context`
+    that opened the request can be left holding a finished request's value. Naming the span means a
+    reader can only honour a policy set for the span in front of it, and anything else fails closed.
+    """
+
+    span_id: int
+    include_content: bool
+
+
+include_content_ctx: ContextVar[ContentPolicy | None] = ContextVar('include_content', default=None)
 """Carries the open `chat` span's `include_content` to code that updates that span without holding
 the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
 model answered. Set by `open_model_request_span` for the span's lifetime, so a refresh redacts the
 instruction content of the model it picked the way the span was opened, rather than guessing from
-what is already recorded. `None` means no instrumented request is open.
+what is already recorded. Read it through `span_include_content`, never directly. `None` means no
+instrumented request is open.
 
 A context variable for the same reason as `time_to_first_chunk_ctx`: `ModelRequestContext` is public
 and holds only the inputs to `Model.request[_stream]`, and `FallbackModel` reaches the span through
 `get_current_span()` anyway, so it is already relying on the ambient context.
 """
+
+
+def span_include_content(span: Span) -> bool:
+    """Whether `span` was opened with content capture, defaulting to `False` when nothing says so.
+
+    Fails closed on every answer but "this span's own request wanted content": no request open, or a
+    policy belonging to a different span, both mean nothing vouches for exporting content here.
+    """
+    policy = include_content_ctx.get()
+    return policy is not None and policy.span_id == span.get_span_context().span_id and policy.include_content
+
 
 time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
 """Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
@@ -633,7 +660,6 @@ def open_model_request_span(
 
     record_metrics: Callable[[], None] | None = None
     previous_include_content = include_content_ctx.get()
-    include_content_ctx.set(settings.include_content)
     try:
         with (
             settings.tracer.start_as_current_span(
@@ -645,6 +671,9 @@ def open_model_request_span(
             ) as span,
             record_uncaught_errors(span, include_content=settings.include_content),
         ):
+            # Set inside the `with`, because the policy names the span it speaks for.
+            include_content_ctx.set(ContentPolicy(span.get_span_context().span_id, settings.include_content))
+
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
