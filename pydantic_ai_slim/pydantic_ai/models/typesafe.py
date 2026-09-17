@@ -361,7 +361,9 @@ def _response_entries(message: ModelResponse) -> list[JSONContent]:
             )
         elif isinstance(part, SpeechPart):  # pragma: no cover
             raise _unconverted_speech_part_error()
-        elif not isinstance(part, ThinkingPart):
+        elif isinstance(part, ThinkingPart):
+            pass  # The model's own reasoning, not part of the conversation.
+        else:
             assert_never(part)
     return entries
 

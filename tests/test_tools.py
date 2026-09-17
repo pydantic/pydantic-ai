@@ -5213,6 +5213,11 @@ def test_enum_member_docstrings_describe_options():
         """Needs attention today."""
         unknown = 'unknown'
 
+        def label(self) -> str:
+            return self.value.title()  # pragma: no cover
+
+        """A string that follows no member describes nothing."""
+
     Undocumented = Enum('Undocumented', {'a': 'a', 'b': 'b'})  # no source to read, so a plain enum
 
     agent = Agent(FunctionModel(get_json_schema))

@@ -185,7 +185,8 @@ pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
 # `typesafe-sdk>=0.6.0` (the first release on `httpx2`, which `pydantic-ai-slim[typesafe]` needs) was
-# published on 2026-09-15, inside the 7-day window above. Drop this once it has aged out, on 2026-09-22.
+# published on 2026-09-15, inside the 7-day window above.
+# TODO(adtyavrdhn): Remove after 2026-09-22.
 typesafe-sdk = false
 logfire = false
 logfire-api = false

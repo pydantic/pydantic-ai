@@ -21,6 +21,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
+from .durable_operation import durable_operation
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -48,16 +49,19 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         'typesafe:jev-latest',
         output_type=bool,
         instructions='Is this document about animals?',
-        capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6')],
+        capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6-sol')],
     )
     result = agent.run_sync([DocumentUrl('https://example.com/whatever.pdf')])
     ```
 
     Each file is described once per capability instance; the description is reused across steps and runs.
+
+    Audio is left as it is: [`supports_audio_input`][pydantic_ai.profiles.ModelProfile.supports_audio_input]
+    is about realtime speech history and is not set per model, so it cannot say which models read audio files.
     """
 
     fallback_model: Model | KnownModelName | str
-    """The model that describes the files, with its provider: `'openai:gpt-5.6'`, or a `Model`."""
+    """The model that describes the files, with its provider: `'openai:gpt-5.6-sol'`, or a `Model`."""
 
     instructions: str | None = None
     """What to write about each file. The default asks for a description someone who cannot see the file could answer questions from."""
@@ -110,6 +114,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             description = self._descriptions[key] = await self._describe(item)
         return format_inlined_text_file(description, media_type=item.media_type, identifier=item.identifier)
 
+    @durable_operation(name='describe')
     async def _describe(self, item: ImageUrl | DocumentUrl | VideoUrl | BinaryContent) -> str:
         from pydantic_ai.agent import Agent
 

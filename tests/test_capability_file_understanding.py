@@ -97,18 +97,37 @@ async def test_supported_files_are_sent_as_they_are():
 
     describer = Describer()
     image = ImageUrl('https://example.com/cat.png')
-    # Images are accepted by default, video is not.
+    document = DocumentUrl('https://example.com/cat.pdf')
+    # Images and documents are accepted by default, video is not.
     agent = Agent(FunctionModel(capture), capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(['Two', 'texts'])]),
         ModelResponse(parts=[TextPart('ok')]),
     ]
-    await agent.run([image, VideoUrl('https://example.com/cat.mp4')], message_history=history)
+    await agent.run([image, document, VideoUrl('https://example.com/cat.mp4')], message_history=history)
 
     prompt = last_prompt(seen)
     assert prompt[0] is image
-    assert isinstance(prompt[1], str) and 'type="video/mp4"' in prompt[1]
+    assert prompt[1] is document
+    assert isinstance(prompt[2], str) and 'type="video/mp4"' in prompt[2]
     assert describer.calls == 1
+
+
+async def test_video_is_sent_when_the_profile_accepts_it():
+    seen: list[list[ModelMessage]] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    describer = Describer()
+    video = VideoUrl('https://example.com/cat.mp4')
+    model = FunctionModel(capture, profile=ModelProfile(supports_video_input=True))
+    agent = Agent(model, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    await agent.run([video])
+
+    assert last_prompt(seen) == [video]
+    assert describer.calls == 0
 
 
 async def test_custom_instructions_reach_the_describer():

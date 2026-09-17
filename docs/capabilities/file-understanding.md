@@ -10,7 +10,7 @@ agent = Agent(
     'typesafe:jev-latest',
     output_type=bool,
     instructions='Is this document about animals?',
-    capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6')],
+    capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6-sol')],
 )
 result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
 print(result.output)

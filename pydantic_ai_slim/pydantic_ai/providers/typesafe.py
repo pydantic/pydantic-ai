@@ -71,6 +71,7 @@ class TypeSafeProvider(Provider[AsyncTypeSafeClient]):
             assert base_url is None, 'Cannot provide both `typesafe_client` and `base_url`'
             assert http_client is None, 'Cannot provide both `typesafe_client` and `http_client`'
             self._client = typesafe_client
+            # The SDK exposes neither its base URL nor its HTTP client publicly.
             self._base_url = typesafe_client._config.base_url  # pyright: ignore[reportPrivateUsage]
             return
 

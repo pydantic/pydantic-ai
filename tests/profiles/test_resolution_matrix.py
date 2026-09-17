@@ -864,7 +864,7 @@ def test_bedrock_amazon_titan():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_video_input': True,
+            'supports_video_input': False,
             'supported_native_tools': frozenset(),
         }
     )

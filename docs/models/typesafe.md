@@ -101,7 +101,7 @@ The latest user prompt is the text Jev judges. Everything before it in the messa
 ```python
 from pydantic_ai import Agent
 
-assistant = Agent('openai:gpt-5.6')
+assistant = Agent('openai:gpt-5.6-sol')
 conversation = assistant.run_sync('hello')
 
 judge = Agent('typesafe:jev-latest', output_type=bool, instructions='Was the assistant polite?')
@@ -132,7 +132,7 @@ class DocumentSubject(str, Enum):
 agent = Agent(
     'typesafe:jev-latest',
     output_type=DocumentSubject,
-    capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6')],
+    capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6-sol')],
 )
 result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
 print(result.output.value)

@@ -5,4 +5,6 @@ from . import InlineDefsJsonSchemaTransformer, ModelProfile
 
 def amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model."""
-    return ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer, supports_video_input=True)
+    return ModelProfile(
+        json_schema_transformer=InlineDefsJsonSchemaTransformer, supports_video_input='nova' in model_name
+    )

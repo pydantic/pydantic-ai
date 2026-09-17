@@ -1134,7 +1134,6 @@ def estimate_string_tokens(text: str) -> int:
     return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))
 
 
-@functools.cache
 def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
     """The docstring under each member of an `Enum`, by member name.
 
@@ -1155,8 +1154,8 @@ def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
             isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
         ):
             continue
-        targets = previous.targets if isinstance(previous, ast.Assign) else [getattr(previous, 'target', None)]
-        for target in targets:
-            if isinstance(target, ast.Name):
-                docstrings[target.id] = inspect.cleandoc(node.value.value)
+        if not isinstance(previous, ast.Assign):
+            continue
+        for name in [target.id for target in previous.targets if isinstance(target, ast.Name)]:
+            docstrings[name] = inspect.cleandoc(node.value.value)
     return docstrings
