@@ -3139,8 +3139,9 @@ async def test_get_tool_for_tool_def_lists_tools_by_default():
     tool_def = (await toolset.get_tools(ctx))['echo'].tool_def
 
     tool = await toolset.get_tool_for_tool_def(tool_def, ctx)
-    assert tool.tool_def.name == 'echo'
     assert listings == 2
+    # The rebuilt tool has to be callable, not merely named right: it carries the function to run.
+    assert await toolset.call_tool('echo', {'text': 'hi'}, ctx, tool) == 'hi'
 
     with pytest.raises(KeyError):
         await toolset.get_tool_for_tool_def(ToolDefinition(name='missing'), ctx)
@@ -3170,5 +3171,6 @@ async def test_dynamic_toolset_delegates_get_tool_for_tool_def():
         await dynamic.get_tool_for_tool_def(tool_def, ctx)
 
     resolved = await dynamic.for_run(ctx)
-    assert (await resolved.get_tool_for_tool_def(tool_def, ctx)).tool_def.name == 'echo'
+    tool = await resolved.get_tool_for_tool_def(tool_def, ctx)
     assert rebuilt == ['echo']
+    assert await resolved.call_tool('echo', {'text': 'hi'}, ctx, tool) == 'hi'
