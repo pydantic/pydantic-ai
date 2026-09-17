@@ -148,12 +148,17 @@ class RunResolvedToolset(Generic[AgentDepsT]):
                 self._entered = True
             return self.toolset
 
-    async def aclose(self) -> None:
-        """Exit the toolset at the end of the run, if any unit entered it."""
+    async def aclose(self, *args: Any) -> None:
+        """Exit the toolset at the end of the run, if any unit entered it.
+
+        Takes the run's own `__aexit__` arguments: the units that used the toolset each returned
+        long ago, so how the run ended is the only thing that can tell a toolset whether to roll
+        back or commit what it did.
+        """
         async with self._lock:
             if self._entered:
                 self._entered = False
-                await self.toolset.__aexit__(None, None, None)
+                await self.toolset.__aexit__(*args)
 
 
 def _run_resolved_toolset(
@@ -753,9 +758,10 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
             return await super().__aexit__(*args)
         finally:
             # Whichever unit entered the run's toolset left it entered for the rest of the run,
-            # so the run is what closes it.
+            # so the run is what closes it, passing on how the run ended. Its result is ignored:
+            # a toolset's teardown doesn't get to suppress the run's exception.
             if (resolved := self._run_resolved) is not None:
-                await resolved.aclose()
+                await resolved.aclose(*args)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         result = await self._get_tools_operation(self._ctx_for_unit(ctx))

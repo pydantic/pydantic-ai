@@ -1621,18 +1621,18 @@ async def test_run_resolved_toolset_closes_only_what_a_unit_entered() -> None:
             return await super().__aexit__(*args)
 
     never_entered = RunResolvedToolset('dynamic', RecordingToolset())
-    await never_entered.aclose()
+    await never_entered.aclose(None, None, None)
     assert exits == 0
 
     entered = RunResolvedToolset('dynamic', RecordingToolset())
     toolset = await entered.entered()
     # Entering again is the second unit reusing what the first one opened, not a second session.
     assert await entered.entered() is toolset
-    await entered.aclose()
+    await entered.aclose(None, None, None)
     assert exits == 1
 
     # Closing twice is not an error: the run holds the only reference and closes once.
-    await entered.aclose()
+    await entered.aclose(None, None, None)
     assert exits == 1
 
 
@@ -1672,3 +1672,36 @@ async def test_parallel_tool_call_units_share_one_session() -> None:
     assert result.output == 'done'
     assert resolutions == snapshot(1)
     assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+
+
+async def test_closing_the_wrapper_passes_on_how_it_was_exited() -> None:
+    """Closing the run's toolset forwards the wrapper's own `__aexit__` arguments.
+
+    The units that used the toolset each returned long ago, so how the wrapper was exited is the
+    only thing left that can tell a toolset whether to roll back or commit what it did. (An agent
+    run exits its toolsets cleanly even when the run raises — a directly attached `MCPToolset` sees
+    the same `None` — so this is the context-manager contract, not the run's error path.)
+    """
+    exits: list[type[BaseException] | None] = []
+
+    class RecordingToolset(FunctionToolset[None]):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            exits.append(args[0] if args else None)
+            return await super().__aexit__(*args)
+
+    async def echo(text: str) -> str: ...  # pragma: no cover
+
+    durability = JournalDurability(name='agent')
+    durable = durability._build_dynamic_toolset(  # pyright: ignore[reportPrivateUsage]
+        DynamicToolset(lambda _: RecordingToolset([echo]), id='dynamic', per_run_step=False)
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    run_toolset = await durable.for_run(ctx)
+    async with run_toolset:
+        # Discovery is what enters the resolved toolset, so there is something left to close.
+        await run_toolset.get_tools(ctx)
+        assert exits == []
+        error = RuntimeError('run blew up')
+        assert await run_toolset.__aexit__(type(error), error, error.__traceback__) is None
+
+    assert exits == snapshot([RuntimeError])
