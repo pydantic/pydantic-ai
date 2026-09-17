@@ -112,6 +112,39 @@ def test_record_outside_any_run_only_touches_the_target() -> None:
     assert usage == RunUsage(requests=1)
 
 
+def test_watch_tracks_records_into_one_object_only() -> None:
+    """`watch` follows the object, so a record into a different run's usage is not mirrored."""
+    watched = RunUsage()
+    other = RunUsage()
+
+    with _usage_attribution.watch(watched) as mirror:
+        _usage_attribution.record_usage(watched, RequestUsage(input_tokens=5))
+        _usage_attribution.record_usage(other, RequestUsage(input_tokens=9))
+
+    assert mirror == RunUsage(input_tokens=5)
+
+
+def test_concurrent_watchers_on_equal_valued_usage_stay_separate() -> None:
+    """Two watchers whose usage holds the same numbers are still distinct watchers.
+
+    `RunUsage` compares by value, so two runs that have not recorded anything yet are equal. Held
+    by value, one watcher's exit would drop the other's entry — leaving that run's records
+    unmirrored and its own exit to fail on an entry that is already gone.
+    """
+    first = RunUsage()
+    second = RunUsage()
+    assert first == second and first is not second
+
+    with _usage_attribution.watch(first) as first_mirror:
+        with _usage_attribution.watch(second) as second_mirror:
+            pass
+        # The inner watcher's exit must not have taken this one with it.
+        _usage_attribution.record_usage(first, RequestUsage(input_tokens=4))
+
+    assert first_mirror == RunUsage(input_tokens=4)
+    assert second_mirror == RunUsage()
+
+
 def test_accumulators_do_not_leak_to_siblings() -> None:
     """A sibling's accumulator is not on this context's stack, which is the whole point."""
     first = RunUsage()
