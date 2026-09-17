@@ -480,16 +480,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError('Durable capability operations require a non-realtime `Model` on `RunContext`.')
         model_id = ctx.model_id if ctx.model_id is not None else self._find_model_id(cast('Model[Any]', model))
         usage_before = copy.copy(ctx.usage)
-        # Whatever is recorded into `ctx.usage` the ordinary way — by a nested agent run started
-        # from this operation, or by a sibling sharing the object — already reaches the spans
-        # containing this run, so it has to come off the delta below rather than be counted twice.
-        with _usage_attribution.watch(ctx.usage) as recorded:
-            result = cast(
-                CapabilityOperationResult[Any],
-                await self._bound_capability_operations[key](
-                    CapabilityOperationParams(run_context=ctx, arguments=arguments, model_id=model_id)
-                ),
-            )
+        result = cast(
+            CapabilityOperationResult[Any],
+            await self._bound_capability_operations[key](
+                CapabilityOperationParams(run_context=ctx, arguments=arguments, model_id=model_id)
+            ),
+        )
         if declaration.model_request_parameter is not None:
             projection = cast(ModelRequestContextProjection, result.value)
             inbound = cast(ModelRequestContextProjection, arguments[declaration.model_request_parameter])
@@ -501,17 +497,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             value: Any = _ResolvedModelRequestContext(projection=projection, model=resolved_model)
         else:
             value = result.value
-        applied = ctx.usage - usage_before
-        if not applied.has_values():
+        if not (ctx.usage - usage_before).has_values():
             # Recorded, not incremented: the operation accumulated this delta across the durable
             # boundary, where the activity's context can't reach the spans open back here.
             _usage_attribution.record_usage(ctx.usage, result.usage_delta)
-        else:
-            # Executed in process, so it added to `ctx.usage` itself. Only the part nothing
-            # recorded is missing from the spans containing this run; crediting `applied` whole
-            # would count a nested or concurrent run's usage twice, once through its own records
-            # and once here.
-            _usage_attribution.credit_applied(applied - recorded)
         return value
 
     def _capability_operation_parameter_transport(
