@@ -165,7 +165,8 @@ parameter's description only when the local schema declares one.
 | Native tools | Unsupported | Server-side tools live on the agent, outside the session |
 | Usage | Limited parameter support | Context tokens only, and only with `context_usage` in the agent's `client_events` (off by default); no output tokens or credits on the socket, cost appears post-hoc on the conversations API |
 | Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable; pin it via `profile={'context_window': ...}`, or read the live value from `ElevenLabsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage` |
-| State-restoring reconnect | Unsupported | Conversations cannot be resumed; `reconnect` raises |
+| Session duration | Limited parameter support | Capped by the agent's `max_duration_seconds` (600 s by default, up to 7,200 s, set on the agent, not per conversation); the conversation ends at the cap |
+| State-restoring reconnect | Unsupported | Conversations cannot be resumed, at the cap or after a drop; `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
 [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
