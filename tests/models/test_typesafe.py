@@ -383,6 +383,21 @@ class WithUndescribedLevels(BaseModel):
     level: Literal[0, 1, 2]
 
 
+class OutOfOrder(IntEnum):
+    """Declared out of level order; the numbers are what count."""
+
+    clear = 2
+    """Top of the rubric."""
+    unclear = 0
+    """Bottom of the rubric."""
+    partial = 1
+    """The middle."""
+
+
+class WithOutOfOrderRubric(BaseModel):
+    level: OutOfOrder
+
+
 class OnlyOne(str, Enum):
     only = 'only'
 
@@ -417,6 +432,39 @@ async def test_unsupported_output_fields(
 ):
     agent = Agent(typesafe_model, output_type=output_type)
     with pytest.raises(UserError, match=match):
+        await agent.run('anything')
+
+
+async def test_rubric_levels_are_read_in_level_order(allow_model_requests: None):
+    """A rubric's levels carry their own numbers, so the order they are declared in says nothing."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            level={'type': 'score', 'score': 2.0, 'confidence': 0.9, 'legend': {}, 'probabilities': {'2': 1.0}}
+        )
+
+    result = await Agent(mock_model(record), output_type=WithOutOfOrderRubric).run('anything')
+    assert result.output.level is OutOfOrder.clear
+    assert seen[0]['questions']['level']['criteria'] == snapshot(
+        ['Bottom of the rubric.', 'The middle.', 'Top of the rubric.']
+    )
+
+
+async def test_unencodable_extra_body_is_a_user_error(allow_model_requests: None):
+    """The SDK refusing to send what it was given is the caller's to fix, not a model failure."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the request should never be sent')
+
+    agent = Agent(
+        mock_model(unreachable),
+        output_type=bool,
+        instructions='Is this fine?',
+        model_settings={'extra_body': {'nope': object()}},
+    )
+    with pytest.raises(UserError, match='TypeSafe could not send this request'):
         await agent.run('anything')
 
 

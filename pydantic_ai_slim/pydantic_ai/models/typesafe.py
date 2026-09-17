@@ -53,6 +53,7 @@ try:
         TypeSafeAPIConnectionError,
         TypeSafeAPIError,
         TypeSafeAPIResponseValidationError,
+        TypeSafeError,
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -62,8 +63,10 @@ except ImportError as _import_error:
 
 __all__ = ('TypeSafeModel', 'TypeSafeModelName', 'TypeSafeModelSettings', 'LatestTypeSafeModelNames')
 
-LatestTypeSafeModelNames = Literal['jev-latest']
-"""Latest TypeSafe model names."""
+LatestTypeSafeModelNames = Literal['jev-latest', 'jev-preview']
+"""TypeSafe aliases, which move when a release ships. `jev-preview` runs ahead of `jev-latest` when there is a
+preview build. A versioned id such as `jev-1.13.0` is accepted too, and is what to use once a confidence
+threshold has been tuned against one. https://docs.typesafe.ai/models"""
 
 TypeSafeModelName = str | LatestTypeSafeModelNames
 """Possible TypeSafe model names."""
@@ -218,6 +221,10 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             ) from e
         except TypeSafeAPIConnectionError as e:
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+        except TypeSafeError as e:
+            # What is left is the SDK refusing to send what it was given, such as an `extra_body` that will
+            # not encode as JSON. That is the caller's to fix, not the model's.
+            raise UserError(f'TypeSafe could not send this request: {e}') from e
 
         args: dict[str, Any] = {}
         confidence: dict[str, float] = {}
@@ -360,7 +367,7 @@ def _score_question(name: str, options: dict[int, str | None], ask: dict[str, JS
     Jev scores against an ordered rubric that starts at zero, so the levels have to be exactly that, and
     every one of them needs saying what it means: a rubric whose levels are unexplained is not a rubric.
     """
-    levels = list(options)
+    levels = sorted(options)
     if levels != list(range(len(levels))) or len(levels) < 2:
         raise UserError(
             f'Output field {name!r} is not supported by this model: a rubric must be the whole numbers from 0 '

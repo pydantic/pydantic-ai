@@ -69,6 +69,16 @@ agent = Agent(model, output_type=bool)
 ...
 ```
 
+## Model names
+
+`jev-latest` and `jev-preview` are aliases that move when TypeSafe ship a release; `jev-preview` runs ahead when there is a preview build. A versioned id is accepted too, whether or not it is listed:
+
+```python {test="skip"}
+Agent('typesafe:jev-1.13.0', output_type=Ticket)
+```
+
+[`ModelResponse.model_name`][pydantic_ai.messages.ModelResponse.model_name] always reports the versioned id that answered, so a run logged against `jev-latest` still records which model produced it.
+
 ## What Jev can answer
 
 Every field of the output type is one question, and all of them go out in a single request:

@@ -658,6 +658,7 @@ KnownModelName = TypeAliasType(
         'snowflake:openai-gpt-5.5',
         'snowflake:snowflake-llama-3.3-70b',
         'typesafe:jev-latest',
+        'typesafe:jev-preview',
         'xai:grok-3',
         'xai:grok-3-fast',
         'xai:grok-3-fast-latest',
