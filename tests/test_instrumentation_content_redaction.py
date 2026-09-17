@@ -322,4 +322,11 @@ async def test_no_content_reaches_telemetry_when_request_parameters_cannot_be_se
     )
     await agent.run(SECRETS['user_prompt'])
 
+    # Nothing within the fallback can be redacted, so the whole attribute has to be gone -- which is
+    # also what proves the run took the fallback rather than serializing cleanly.
+    exported_parameters = [
+        span for span in exporter.get_finished_spans() if 'model_request_parameters' in (span.attributes or {})
+    ]
+    assert bool(exported_parameters) is include_content
+
     check(exporter, include_content, {'user_prompt', 'instructions'})
