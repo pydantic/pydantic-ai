@@ -364,9 +364,17 @@ def model_request_parameters_attributes(
         # drops the attribute entirely for anyone who wants them gone too.
         for part in instruction_parts_of(serialized):
             part.pop('content', None)
-        if isinstance(serialized, dict) and serialized.get('prompted_output_template') is not None:
-            cast('dict[str, Any]', serialized)['prompted_output_template'] = None
+        _blank_prompted_output_template(serialized)
     return {'model_request_parameters': safe_to_json(serialized).decode()}
+
+
+def _blank_prompted_output_template(serialized_parameters: Any) -> None:
+    """Blank the prompted-output template, which is prompt text the user wrote."""
+    if not isinstance(serialized_parameters, dict):
+        return  # pragma: no cover
+    parameters = cast('dict[str, Any]', serialized_parameters)
+    if parameters.get('prompted_output_template') is not None:
+        parameters['prompted_output_template'] = None
 
 
 def instruction_parts_of(serialized_parameters: Any) -> list[dict[str, Any]]:
