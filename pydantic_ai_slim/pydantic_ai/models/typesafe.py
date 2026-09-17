@@ -303,10 +303,13 @@ def _questions(
         # Only what the user wrote goes to Jev. A bare `bool` output is wrapped in a field named `response`
         # by Pydantic AI, and the output tool has a stock description; neither says anything about the question.
         ask: dict[str, JSONContent] = {}
+        # A field's name says what is being asked about, which is not the same as asking something, so it
+        # goes under `field` and leaves `question` for a question. The wrapper field Pydantic AI puts around
+        # a bare output is named `response` and says nothing about anything, so it is not sent at all.
+        if name != output_tool.outer_typed_dict_key:
+            ask['field'] = name
         if description := prop.get('description'):
             ask['question'] = description
-        elif name != output_tool.outer_typed_dict_key:
-            ask['question'] = name
         if output_tool.description and output_tool.description != DEFAULT_OUTPUT_TOOL_DESCRIPTION:
             ask['goal'] = output_tool.description
         if instructions:

@@ -171,6 +171,7 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
                         'run': 'Reads, builds, tests or edits inside the project. Reversible.',
                     },
                     'instructions': {
+                        'field': 'verdict',
                         'question': 'How to handle this command.',
                         'goal': "Decide how a coding agent's shell command should be handled before it runs.",
                         'instructions': 'Judge what the command would actually do.',
@@ -179,6 +180,7 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
                 'irreversible': {
                     'type': 'noul',
                     'instructions': {
+                        'field': 'irreversible',
                         'question': 'Would running this destroy data or leak secrets?',
                         'goal': "Decide how a coding agent's shell command should be handled before it runs.",
                         'instructions': 'Judge what the command would actually do.',
@@ -231,11 +233,11 @@ async def test_enum_and_probability_output(
             'colour': {
                 'type': 'choice',
                 'criteria': {'red': None, 'blue': None},
-                'instructions': {'question': 'Which colour is named?'},
+                'instructions': {'field': 'colour', 'question': 'Which colour is named?'},
             },
             'p_harmful': {
                 'type': 'noul',
-                'instructions': {'question': 'Is this request harmful?'},
+                'instructions': {'field': 'p_harmful', 'question': 'Is this request harmful?'},
             },
         }
     )
@@ -271,6 +273,7 @@ async def test_rubric_output(
                     'A reader who did not already know could act on it.',
                 ],
                 'instructions': {
+                    'field': 'clarity',
                     'question': 'How clearly does the text explain itself?',
                     'goal': 'Grade a piece of writing.',
                 },
