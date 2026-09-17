@@ -1484,7 +1484,7 @@ class RealtimeSession:
         if (turn := self._user_turns.get(None)) is not None and turn.speech_ended:
             for event in self._finalize_user():
                 self._publish_taps(event)
-                await self._queue.put(event)
+                self._queue_put(event)
         user_turn_was_active = self._user_turn_active
         if not user_turn_was_active:
             # Audio starting is the earliest sign of a user turn, and the only one on a provider that
