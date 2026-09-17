@@ -178,6 +178,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Guardrails](guardrails.md) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
 | [Prompt Injection Defender](prompt-injection-defender.md) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
 | [Spend Limits](spend.md) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
+| [Ask User](ask-user.md) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
 | [Tool approval](/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Handle Deferred Tool Calls](/ai/capabilities/handle-deferred-tool-calls/) | Core | Resolve approval-deferred tool calls programmatically |
 | [System Reminders](system-reminders.md) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
