@@ -75,11 +75,19 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   (`agent.run(capabilities=...)`), so "active for the next prompt" is the
   natural unit; nothing rebuilds the agent.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `_app.py` lists what CLAI ships enabled (`coder`). The loader treats them
-  like drop-ins with the lowest precedence: a store declaration with the same
-  id replaces one, `disable` persists an override, `remove` resets it. Do not
-  special-case `Coder` anywhere else; the agent from `create_agent()` has no
-  coding tools of its own.
+  `_app.py` lists what CLAI ships enabled (`coder`, `repo_context`). The loader
+  treats them like drop-ins with the lowest precedence: a store declaration
+  with the same id replaces one, `disable` persists an override, `remove`
+  resets it. Do not special-case `Coder` anywhere else; the agent from
+  `create_agent()` has no coding tools of its own. `coder` is declared with
+  `repo_context: false` because `repo_context` binds harness `RepoContext`
+  itself; keep it that way or `AGENTS.md` reaches the model twice.
+- **Project declarations rank just above built-ins and start off.**
+  `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
+  takes them as `project=`, every one `enabled=False`, because a repository
+  must not run code as the user on launch. `/plugins enable` is the approval
+  and persists the approved declaration in the store. Precedence is store,
+  drop-in folder, project, built-in. CLAI never writes the project file.
 - **A load failure leaves the session as it was.** Import or `activate` errors
   are reported and the plugin stays unloaded; partial registrations from a
   failed `activate` are discarded with the host.
@@ -163,6 +171,8 @@ the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
 | `commands.py` | `Command`, the registry, completion |
 | `config.py` | `Settings`, `PluginSettings` |
 | `settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
+| `project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
+| `repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
 | `theme.py` | brand palette, colour roles, `sgr()` |
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.

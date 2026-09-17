@@ -82,7 +82,8 @@ an awaitable string.
 
 Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to
 `~/.config/pydantic-clai2/config.db`. Use `--database PATH` to select another database.
-There is no automatic repository config loading. Conversation messages and CLAI's
+A repository can add its own layer with a `.clai/settings.json` file, found by
+walking up from the launch directory to the git root. Conversation messages and CLAI's
 Codex tokens are not written to the settings database. Plugin settings are arbitrary
 JSON stored in plaintext in this database, including secrets if you put them there.
 Pass secret references or use plugin-owned credential storage instead of embedding keys.

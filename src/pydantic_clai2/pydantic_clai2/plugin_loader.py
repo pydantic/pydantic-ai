@@ -41,6 +41,7 @@ class PluginEntry(Generic[DepsT]):
     declaration: PluginSettings
     path: Path | None
     builtin: bool = False
+    project: bool = False
     host: PluginHost[DepsT] | None = None
     error: str | None = None
 
@@ -50,10 +51,17 @@ class PluginEntry(Generic[DepsT]):
         return self.declaration.id
 
     @property
+    def shipped(self) -> bool:
+        """Declared by CLAI or the project file, so `add` replaces it and `remove` restores it."""
+        return self.builtin or self.project
+
+    @property
     def source(self) -> str:
         """The file path for drop-in plugins, otherwise the import string."""
         if self.path is not None:
             return str(self.path)
+        if self.project:
+            return f'{self.declaration.factory} (project)'
         return f'{self.declaration.factory} (built-in)' if self.builtin else self.declaration.factory
 
     @property
@@ -77,13 +85,15 @@ class PluginLoader(Generic[DepsT]):
         commands: Commands,
         session_start: Callable[[], SessionStart],
         builtin: Sequence[PluginSettings] = (),
+        project: Sequence[PluginSettings] = (),
     ) -> None:
-        """`builtin` declarations ship with CLAI and are on unless the store says otherwise."""
+        """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both."""
         self._store = store
         self._console = console
         self._commands = commands
         self._session_start = session_start
         self._builtin = {declaration.id: declaration for declaration in builtin}
+        self._project = {declaration.id: declaration for declaration in project}
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, PluginHost[DepsT]] = {}
 
@@ -98,8 +108,9 @@ class PluginLoader(Generic[DepsT]):
         declared = {declaration.id: declaration for declaration in self._store.plugins()}
         for name in folder.keys() - declared.keys():
             declared[name] = PluginSettings(id=name, factory=name, path=str(folder[name]))
-        for name in self._builtin.keys() - declared.keys():
-            declared[name] = self._builtin[name]
+        for shipped in (self._project, self._builtin):
+            for name in shipped.keys() - declared.keys():
+                declared[name] = shipped[name]
         refreshed: dict[str, PluginEntry[DepsT]] = {}
         for name in sorted(declared):
             previous = self._entries.get(name)
@@ -107,7 +118,8 @@ class PluginLoader(Generic[DepsT]):
             refreshed[name] = PluginEntry(
                 declaration=declared[name],
                 path=Path(path) if path is not None else None,
-                builtin=declared[name].model_copy(update={'enabled': True}) == self._builtin.get(name),
+                builtin=_same_plugin(declared[name], self._builtin.get(name)),
+                project=_same_plugin(declared[name], self._project.get(name)),
                 host=previous.host if previous else None,
                 error=previous.error if previous else None,
             )
@@ -228,17 +240,20 @@ class PluginLoader(Generic[DepsT]):
         self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}))
 
     async def remove(self, name: str) -> str:
-        """Unload the plugin and forget its saved declaration."""
+        """Unload the plugin and forget its saved declaration; a shipped declaration comes back as declared."""
         entry = self._entry(name)
         await self.unload(name)
-        if entry.path is not None:
+        if entry.path is not None and not entry.shipped:
             self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}))
             return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
         self._store.delete_plugin(name)
-        if name in self._builtin:
+        shipped = self._project.get(name) or self._builtin.get(name)
+        if shipped is None:
+            return f'Removed {name}.'
+        if shipped.enabled:
             await self.load(name)
-            return f'{name} is built in; restored its defaults. Use /plugins disable {name} to turn it off.'
-        return f'Removed {name}.'
+        origin = 'declared by the project' if name in self._project else 'built in'
+        return f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.'
 
     async def reload(self, name: str) -> None:
         """Unload, re-import the module, and load again."""
@@ -256,13 +271,15 @@ class PluginLoader(Generic[DepsT]):
         action, *rest = args
         if action == 'add':
             existing = next((entry for entry in self.entries() if rest and entry.name == rest[0]), None)
-            if existing is not None and not existing.builtin:
+            if existing is not None and not existing.shipped:
                 raise ValueError(f'Plugin {rest[0]} already exists; remove its declaration before replacing it.')
             if existing is not None:
                 await self.unload(rest[0])
             plugins_command(self._store, args)
             await self.load(rest[0])
-            return f'Replaced built-in {rest[0]}.' if existing is not None else f'Added and loaded {rest[0]}.'
+            if existing is None:
+                return f'Added and loaded {rest[0]}.'
+            return f'Replaced {"project" if existing.project else "built-in"} {rest[0]}.'
         if len(rest) != 1:
             raise ValueError(
                 'Usage: /plugins [list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID]'
@@ -287,6 +304,13 @@ class PluginLoader(Generic[DepsT]):
         module_name = entry.declaration.factory.partition(':')[0]
         module = importlib.import_module(module_name)
         return importlib.reload(module) if fresh else module
+
+
+def _same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> bool:
+    """Whether `declaration` is `shipped` itself, or the store's enabled or disabled copy of it."""
+    if shipped is None:
+        return False
+    return declaration.model_copy(update={'enabled': True}) == shipped.model_copy(update={'enabled': True})
 
 
 def _import_file(name: str, path: Path) -> ModuleType:

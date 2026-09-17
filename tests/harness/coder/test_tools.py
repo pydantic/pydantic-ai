@@ -38,6 +38,15 @@ class TestCoder:
         assert 'replacements' in tools['edit_file'].parameters_json_schema['properties']
         assert tools['shell'].parameters_json_schema['properties']['mode']['enum'] == ['foreground', 'background']
 
+    @pytest.mark.parametrize('repo_context', [True, False])
+    async def test_repo_context_is_optional(self, tmp_path: Path, repo_context: bool) -> None:
+        (tmp_path / 'AGENTS.md').write_text('Always answer in haiku.\n')
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[Coder(tmp_path, repo_context=repo_context)]).run('Inspect instructions')
+        assert model.last_model_request_parameters is not None
+        instructions = model.last_model_request_parameters.instruction_parts or []
+        assert any('Always answer in haiku.' in part.content for part in instructions) is repo_context
+
     async def test_read_write(self, tmp_path: Path) -> None:
         assert 'hash:' not in await call(tmp_path, 'write_file', {'path': 'test.txt', 'content': 'one\ntwo\n'})
         output = await call(tmp_path, 'read_file', {'path': 'test.txt', 'offset': 1, 'limit': 1})

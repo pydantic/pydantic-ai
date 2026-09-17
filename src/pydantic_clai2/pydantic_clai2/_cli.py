@@ -10,6 +10,7 @@ from pydantic_ai.usage import UsageLimits
 from ._app import DEFAULT_PLUGINS, chat, create_agent
 from .commands import config_command, plugins_command
 from .config import resolve_settings
+from .project_settings import load_project_settings
 from .settings_store import SettingsStore
 
 
@@ -28,7 +29,8 @@ def run() -> None:
             handler = config_command if args.command == 'config' else plugins_command
             print(handler(store, args.arguments))
             return
-        overrides = store.overrides()
+        project = load_project_settings(Path.cwd())
+        overrides = store.overrides() | project.overrides
         if model := args.model or os.getenv('CLAI_MODEL'):
             overrides['model'] = model
         if args.request_limit is not None:
@@ -42,6 +44,7 @@ def run() -> None:
                 settings=settings,
                 store=store,
                 builtin_plugins=DEFAULT_PLUGINS,
+                project=project,
             )
         )
     except (ValueError, TypeError, ImportError, AttributeError) as exc:

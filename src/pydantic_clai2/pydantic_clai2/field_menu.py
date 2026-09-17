@@ -10,6 +10,7 @@ from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder  # pyright: ign
 from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.textinput import TextInput, TextInputResult  # pyright: ignore[reportMissingTypeStubs]
 
+from . import theme
 from ._rendering import markdown_style
 from .menu_worker import menu_key
 
@@ -33,6 +34,8 @@ class FieldRow:
     description: str
     default: str
     choices: tuple[str, ...] = ()
+    note: str = ''
+    """Where the value comes from when not from the user; shown muted after the value."""
 
 
 class FieldSource(Protocol):
@@ -86,7 +89,14 @@ class FieldMenu:
 
     def items(self) -> list[MenuItem]:
         """One row per field with its current value."""
-        return [MenuItem(f'{row.key:<24} {self._source.current(row)}', value=row.key) for row in self.rows]
+        return [
+            MenuItem(
+                f'{row.key:<24} {self._source.current(row)}',
+                value=row.key,
+                description=f'{theme.sgr(theme.MUTED)}{row.note}' if row.note else '',
+            )
+            for row in self.rows
+        ]
 
     def details(self, item: MenuItem) -> str:
         """The right-hand panel: current value, default, choices, description."""
@@ -100,6 +110,8 @@ class FieldMenu:
             f'current  {current}' + (' (default)' if current == row.default else ''),
             f'default  {row.default}',
         ]
+        if row.note:
+            lines.append(f'origin   {row.note}')
         if row.choices and len(row.choices) <= 8:
             lines.append(f'choices  {", ".join(row.choices)}')
         elif row.choices:

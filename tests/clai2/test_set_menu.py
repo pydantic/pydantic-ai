@@ -9,6 +9,7 @@ from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStu
 from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
 
 from pydantic_clai2.field_menu import FieldMenu, run_flow
+from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.set_menu import SettingsSource, open_settings_menu
 
 
@@ -109,3 +110,16 @@ async def test_open_menu_runs_in_a_thread(tmp_path: Path) -> None:
     assert await open_settings_menu(context, run=lambda menu: [menu.apply(menu.rows[1], '  ')]) == (
         'Reset run.request_limit. Applied.'
     )
+
+
+def test_project_overrides_are_marked_on_the_row(tmp_path: Path) -> None:
+    context, _ = make_context(tmp_path)
+    context.project = ProjectSettings(path=tmp_path / '.clai' / 'settings.json', overrides={'display.thinking': False})
+    menu = FieldMenu(SettingsSource(context))
+    items = {item.value: item for item in menu.items()}
+    assert items['display.thinking'].description.endswith('project')
+    assert items['display.thinking'].description.startswith('\x1b[')
+    assert items['model'].description == ''
+    assert 'origin   project' in menu.details(items['display.thinking'])
+    assert 'origin' not in menu.details(items['model'])
+    assert context.reset_setting('display.thinking').endswith('sets it again at next start.')

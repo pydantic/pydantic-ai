@@ -8,6 +8,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
+from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.plugin_loader import PluginError, PluginLoader
@@ -50,7 +51,13 @@ def activate(host: PluginHost) -> None:
 
 
 class Harness:
-    def __init__(self, tmp_path: Path, *, builtin: tuple[PluginSettings, ...] = ()) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        *,
+        builtin: tuple[PluginSettings, ...] = (),
+        project: tuple[PluginSettings, ...] = (),
+    ) -> None:
         self.store = SettingsStore(tmp_path / 'config.db')
         self.store.plugins_dir.mkdir(exist_ok=True)
         self.output = io.StringIO()
@@ -62,6 +69,7 @@ class Harness:
             commands=self.commands,
             session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=self.store.load()),
             builtin=builtin,
+            project=project,
         )
 
     def write(
@@ -315,3 +323,90 @@ async def test_add_replaces_a_builtin_and_remove_restores_it(tmp_path: Path) -> 
     assert await harness.loader.command(replace) == 'Replaced built-in hello.'
     with pytest.raises(ValueError, match='already exists'):
         await harness.loader.command(replace)
+
+
+PROJECT = (
+    PluginSettings(
+        id='hello', factory='pydantic_ai.capabilities:Capability', enabled=False, settings={'instructions': 'Project.'}
+    ),
+)
+"""As `load_project_settings` hands them over: declared by the repository, off until the user approves."""
+
+
+async def test_project_declarations_sit_above_builtins_and_below_the_store(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, builtin=BUILTIN, project=PROJECT)
+    await harness.loader.load_all()
+    hello = harness.loader.entries()[0]
+    assert hello.project and not hello.builtin and hello.declaration.settings == {'instructions': 'Project.'}
+    assert hello.source == 'pydantic_ai.capabilities:Capability (project)'
+    assert hello.state == 'disabled', 'repository code does not run until the user approves it'
+    assert harness.loader.capabilities() == [] and harness.store.plugins() == []
+
+    assert await harness.loader.command(['enable', 'hello']) == 'Enabled hello.'
+    assert len(harness.loader.capabilities()) == 1
+    fresh = Harness(tmp_path, builtin=BUILTIN, project=PROJECT)
+    await fresh.loader.load_all()
+    entry = fresh.loader.entries()[0]
+    assert entry.project and entry.state == 'enabled, loaded', 'approval is remembered in the user store'
+
+    message = await fresh.loader.command(['remove', 'hello'])
+    assert (
+        message == 'hello is declared by the project; restored its defaults. Use /plugins disable hello to turn it off.'
+    )
+    assert fresh.loader.entries()[0].state == 'disabled' and fresh.store.plugins() == []
+
+    replace = ['add', 'hello', 'pydantic_ai.capabilities:Capability', '{"instructions": "Mine."}']
+    assert await fresh.loader.command(replace) == 'Replaced project hello.'
+    assert not fresh.loader.entries()[0].project and fresh.store.plugins()[0].settings == {'instructions': 'Mine.'}
+    with pytest.raises(ValueError, match='already exists'):
+        await fresh.loader.command(replace)
+
+
+async def test_remove_restores_a_project_plugin_that_names_a_file(tmp_path: Path) -> None:
+    path = tmp_path / 'repo' / 'filed.py'
+    path.parent.mkdir()
+    path.write_text(
+        'from pydantic_clai2.plugins import PluginHost\ndef activate(host: PluginHost) -> None:\n    pass\n'
+    )
+    project = (PluginSettings(id='filed', factory='filed', path=str(path), enabled=False),)
+    harness = Harness(tmp_path, project=project)
+    await harness.loader.load_all()
+    assert harness.loader.entries()[0].project and harness.loader.entries()[0].path == path
+    assert await harness.loader.command(['enable', 'filed']) == 'Enabled filed.'
+
+    message = await harness.loader.command(['remove', 'filed'])
+    assert message.startswith('filed is declared by the project; restored its defaults.')
+    assert harness.store.plugins() == [] and harness.loader.entries()[0].state == 'disabled'
+
+
+async def test_repo_context_builtin_loads_the_workspace_instructions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    (workspace / 'AGENTS.md').write_text('Answer in haiku.\n')
+    monkeypatch.chdir(workspace)
+    repo_context = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'repo_context')
+    harness = Harness(tmp_path, builtin=(repo_context,))
+    await harness.loader.load_all()
+    entry = harness.loader.entries()[0]
+    assert entry.builtin and entry.state == 'enabled, loaded'
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run('hi')
+    assert model.last_model_request_parameters is not None
+    parts = model.last_model_request_parameters.instruction_parts or []
+    assert sum('Answer in haiku.' in part.content for part in parts) == 1
+    assert model.last_model_request_parameters.function_tools == []
+
+    assert await harness.loader.command(['disable', 'repo_context']) == 'Disabled repo_context.'
+    assert harness.loader.capabilities() == []
+
+    knobs = ['add', 'repo_context', 'pydantic_clai2.repo_context', '{"inventory_tool": true, "walk_up": true}']
+    assert await harness.loader.command(knobs) == 'Replaced built-in repo_context.'
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run('hi')
+    assert model.last_model_request_parameters is not None
+    assert [tool.name for tool in model.last_model_request_parameters.function_tools] == ['inventory_agent_context']
+    assert (await harness.loader.command(['remove', 'repo_context'])).startswith('repo_context is built in')
+    with pytest.raises(PluginError, match='extra_forbidden'):
+        await harness.loader.command(['add', 'repo_context', 'pydantic_clai2.repo_context', '{"filenames": []}'])

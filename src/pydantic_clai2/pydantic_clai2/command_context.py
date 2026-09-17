@@ -1,7 +1,7 @@
 """Conversation-local settings and actions behind `/set`."""
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from pydantic import JsonValue, TypeAdapter
@@ -10,6 +10,7 @@ from pydantic_ai.settings import ModelSettings
 from .commands import Command
 from .config import SETTING_FIELDS, Settings
 from .model_settings import model_settings_from_json
+from .project_settings import ProjectSettings
 from .settings_store import SettingsStore
 
 
@@ -30,6 +31,12 @@ class CommandContext:
     store: SettingsStore
     clear_history: Callable[[], None]
     apply_setting: Callable[[str, Settings], None]
+    project: ProjectSettings = field(default_factory=ProjectSettings)
+    """Read-only here: `/set` writes the user store, and the project file wins again at next start."""
+
+    def from_project(self, key: str) -> bool:
+        """Whether the project file sets `key`, so a saved value only lasts for this session."""
+        return key in self.project.overrides
 
     def set_setting(self, args: list[str]) -> str:
         """Validate, persist, and apply a preference to the current conversation."""
@@ -68,6 +75,8 @@ class CommandContext:
         self.settings = settings
         self.apply_setting(key, settings)
 
-    @staticmethod
-    def _when(key: str) -> str:
-        return 'Applies at next startup.' if key == 'display.splash' else 'Applied.'
+    def _when(self, key: str) -> str:
+        when = 'Applies at next startup.' if key == 'display.splash' else 'Applied.'
+        if self.from_project(key):
+            when += ' The project file sets it again at next start.'
+        return when

@@ -58,6 +58,8 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
    `FILE_TOOL_NAMES` is `read_file`, `write_file`, `edit_file`, `list_files`, and `grep`.
 4. [`Shell`](shell.md)`(cwd=workspace, denied_commands=[], allow_interactive=True, default_timeout=270, denied_env_patterns=LLM_API_KEY_ENV_PATTERNS, tools=['shell'])`.
 5. [`RepoContext`](repo-context.md)`(workspace_dir=workspace, expose_inventory_tool=False)` for repository instructions and structure.
+   Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
+   instruction files are not loaded twice.
 6. [`ClearToolResults`](compaction.md)`(max_fraction=0.7)` and [`WarnNearLimits`](compaction.md)`(max_context_fraction=0.9)`.
 7. A private [`ToolOutputLimits`](tool-output-limits.md) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool.

@@ -75,6 +75,8 @@ class Coder(CombinedCapability[AgentDepsT]):
 
     Commands are unrestricted and can outlive runs. Use an OS sandbox for
     untrusted work. Additional instructions supplement the default guidance.
+    `repo_context=False` leaves out the bundled `RepoContext`, for hosts that
+    bind their own and would otherwise load the instruction files twice.
     """
 
     def __init__(
@@ -83,26 +85,29 @@ class Coder(CombinedCapability[AgentDepsT]):
         *,
         instructions: str | None = None,
         unrestricted_filesystem: bool = False,
+        repo_context: bool = True,
     ) -> None:
         root = Path(workspace).resolve()
-        super().__init__(
-            [
-                _RepairToolArguments[AgentDepsT](),
-                Capability[AgentDepsT](instructions=INSTRUCTIONS + ('\n' + instructions if instructions else '')),
-                _file_system(root, unrestricted=unrestricted_filesystem),
-                Shell[AgentDepsT](
-                    cwd=root,
-                    denied_commands=[],
-                    default_timeout=MAX_FOREGROUND_WAIT,
-                    allow_interactive=True,
-                    denied_env_patterns=LLM_API_KEY_ENV_PATTERNS,
-                    tools=['shell'],
-                ),
-                RepoContext[AgentDepsT](workspace_dir=root, expose_inventory_tool=False),
-                ClearToolResults[AgentDepsT](max_fraction=0.7),
-                WarnNearLimits[AgentDepsT](max_context_fraction=0.9),
-                _BoundToolOutputs[AgentDepsT](
-                    id=None, bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))]
-                ),
-            ]
-        )
+        capabilities: list[AbstractCapability[AgentDepsT]] = [
+            _RepairToolArguments[AgentDepsT](),
+            Capability[AgentDepsT](instructions=INSTRUCTIONS + ('\n' + instructions if instructions else '')),
+            _file_system(root, unrestricted=unrestricted_filesystem),
+            Shell[AgentDepsT](
+                cwd=root,
+                denied_commands=[],
+                default_timeout=MAX_FOREGROUND_WAIT,
+                allow_interactive=True,
+                denied_env_patterns=LLM_API_KEY_ENV_PATTERNS,
+                tools=['shell'],
+            ),
+        ]
+        if repo_context:
+            capabilities.append(RepoContext[AgentDepsT](workspace_dir=root, expose_inventory_tool=False))
+        capabilities += [
+            ClearToolResults[AgentDepsT](max_fraction=0.7),
+            WarnNearLimits[AgentDepsT](max_context_fraction=0.9),
+            _BoundToolOutputs[AgentDepsT](
+                id=None, bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))]
+            ),
+        ]
+        super().__init__(capabilities)

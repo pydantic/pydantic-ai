@@ -88,9 +88,16 @@ optional JSON supplies constructor keyword arguments:
 The coding tools are themselves the built-in plugin named coder, shown by
 /plugins list as pydantic_ai_harness.coder:Coder (built-in). Do not add a
 second Coder under another name. To change its options, declare coder again
-with the same name and different JSON; that replaces the built-in. To run
-without coding tools, /plugins disable coder. /plugins remove coder resets the
-built-in to its defaults rather than removing it. Outside a session,
+with the same name and different JSON; that replaces the built-in. Keep
+"repo_context": false in that JSON: the second built-in, repo_context
+(pydantic_clai2.repo_context), already reads AGENTS.md or CLAUDE.md from the
+launch directory, and Coder's bundled RepoContext would load it again. To run
+without coding tools, /plugins disable coder; to stop reading the instruction
+file, /plugins disable repo_context. /plugins remove coder resets the
+built-in to its defaults rather than removing it. A repository's
+.clai/settings.json can declare plugins too; they show as (project), rank
+just above the built-ins, and start off until the user runs /plugins enable
+NAME, so repository code never runs without that approval. Outside a session,
 clai2 plugins add NAME module[:attr] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.

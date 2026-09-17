@@ -66,19 +66,48 @@ which can retain globals removed from source; initialize plugin state explicitly
 
 Plugins are trusted code running as you. Only install what you trust.
 
-## The built-in plugin
+## The built-in plugins
 
-The coding tools are a plugin too. `/plugins list` shows `coder`, backed by
-`pydantic_ai_harness.coder:Coder`, marked `(built-in)` and enabled unless you
-say otherwise. `/plugins disable coder` gives you a chat-only CLAI (a
-writing or research setup with `ExaSearch` instead, say); `/plugins enable
-coder` brings the tools back; `/plugins remove coder` cannot forget a built-in,
-so it resets it to its defaults. To run `Coder` with different options, add your
-own declaration under the same name and it takes the built-in's place:
+The coding tools are a plugin too, and so is reading the repository's
+instruction file. `/plugins list` shows both, marked `(built-in)` and enabled
+unless you say otherwise:
+
+| Id | Backed by | Settings | Does |
+|---|---|---|---|
+| `coder` | `pydantic_ai_harness.coder:Coder` | `{"unrestricted_filesystem": true, "repo_context": false}` | the file and shell tools |
+| `repo_context` | `pydantic_clai2.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
+
+`/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
+with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
+`/plugins remove coder` cannot forget a built-in, so it resets it to its
+defaults. `/plugins disable repo_context` stops the instruction file from being
+read. To run a built-in with different options, add your own declaration under
+the same name and it takes the built-in's place:
 
 ```text
-/plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": false}'
+/plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": false, "repo_context": false}'
+/plugins add repo_context pydantic_clai2.repo_context '{"walk_up": true}'
 ```
+
+Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
+`RepoContext`, and with the `repo_context` plugin also on, the instruction file
+would reach the model twice.
+
+`repo_context` wraps harness `RepoContext` with the launch directory as the
+workspace and its default filenames. Its settings:
+
+| Key | Default | Does |
+|---|---|---|
+| `walk_up` | `false` | also load instruction files from every directory between the workspace and your home directory |
+| `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
+| `nested_traversal` | `false` | when the agent reads or lists a directory, tell it about that directory's instruction file |
+| `nested_inject` | `"pointer"` | what nested traversal adds: `"pointer"` (one line naming the file) or `"contents"` |
+
+A repository can declare plugins too, in `.clai/settings.json`; they show as
+`(project)` and rank just above the built-ins. They start off, because a
+repository must not run code as you just because you opened it: CLAI names the
+ones waiting at startup, and `/plugins enable NAME` approves one. See
+[Project settings](README.md#project-settings).
 
 ## Managing plugins
 
@@ -110,7 +139,7 @@ CLAI does the same thing:
 |---|---|
 | `/plugins list` | show every plugin and whether it is on |
 | `/plugins add NAME module[:attr] [JSON]` | save it and load it now |
-| `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in to its defaults |
+| `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts |
 | `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
 

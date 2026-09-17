@@ -32,7 +32,13 @@ class SettingsSource:
             else:
                 choices = ()
             rows.append(
-                FieldRow(key=key, description=info.description or '', default=shown(info.default), choices=choices)
+                FieldRow(
+                    key=key,
+                    description=info.description or '',
+                    default=shown(info.default),
+                    choices=choices,
+                    note='project' if self._context.from_project(key) else '',
+                )
             )
         return rows
 
