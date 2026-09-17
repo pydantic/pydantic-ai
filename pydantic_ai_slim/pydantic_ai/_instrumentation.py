@@ -400,7 +400,7 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     """
     try:
         return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
-    except Exception:  # pragma: no cover
+    except Exception:
         # A tool definition carrying something unserializable must not take the span down with it.
         return serialize_any(model_request_parameters)
 
