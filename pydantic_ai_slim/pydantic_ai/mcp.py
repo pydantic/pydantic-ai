@@ -1680,24 +1680,31 @@ def _build_transport(
     url = str(client)
     # FastMCP's HTTP transports accept `httpx_client_factory`; adapt `http_client` to that shape.
     factory = _make_httpx_client_factory(http_client) if http_client is not None else None
+    # This is the boundary where the two-family union meets a transport annotated against the one
+    # family its own generation is built on, and it's where the values stop being ours: pyright only
+    # ever sees one generation installed, so it can't check a pass-through the other generation's
+    # user will make. Casting only the two HTTPX-typed arguments keeps `headers` and `verify`,
+    # which mean the same thing to both, checked as before.
+    transport_auth = cast('Any', auth)
+    transport_factory = cast('Any', factory)
     if infer_transport_type_from_url(url) == 'sse':
         return SSETransport(
             url=url,
             headers=headers,
-            auth=auth,
+            auth=transport_auth,
             verify=verify,
             # SSE keeps its own read timeout for the long-lived event stream.
             sse_read_timeout=read_timeout if read_timeout is not None else 5 * 60,
-            httpx_client_factory=factory,
+            httpx_client_factory=transport_factory,
         )
     # `sse_read_timeout` is deprecated on StreamableHttpTransport; the read timeout for the
     # long-lived session is configured via the FastMCP `Client(timeout=...)` instead.
     return StreamableHttpTransport(
         url=url,
         headers=headers,
-        auth=auth,
+        auth=transport_auth,
         verify=verify,
-        httpx_client_factory=factory,
+        httpx_client_factory=transport_factory,
     )
 
 
