@@ -35,7 +35,12 @@ _active: ContextVar[tuple[RunUsage, ...]] = ContextVar['tuple[RunUsage, ...]'](
 # Mirrors keyed by the object recorded into, not by the recording task: a run sharing its usage with
 # a concurrent delegate sees that delegate's records land on the same object from another task, and
 # a caller asking "what was recorded into this object" means all of it. See `watch`.
-_mirrors: list[tuple[RunUsage, RunUsage]] = []
+#
+# Keyed by `id(mirror)` rather than held in a list, because `RunUsage` compares by value: two runs
+# watching usage that happens to hold the same numbers — two that have not recorded anything yet,
+# say — would otherwise be indistinguishable to `list.remove`, which would drop whichever entry it
+# found first and leave the other watcher to fail on the way out.
+_mirrors: dict[int, tuple[RunUsage, RunUsage]] = {}
 
 
 @contextmanager
@@ -57,16 +62,16 @@ def watch(target: RunUsage) -> Generator[RunUsage]:
     difference from the object's own delta the part nothing recorded — a direct mutation.
     """
     mirror = RunUsage()
-    entry = (target, mirror)
-    _mirrors.append(entry)
+    key = id(mirror)
+    _mirrors[key] = (target, mirror)
     try:
         yield mirror
     finally:
-        _mirrors.remove(entry)
+        del _mirrors[key]
 
 
 def _mirror(usage: RunUsage, recorded: RunUsage | RequestUsage) -> None:
-    for target, mirror in _mirrors:
+    for target, mirror in list(_mirrors.values()):
         if target is usage:
             mirror.incr(recorded)
 
