@@ -75,13 +75,14 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular [combined capability](capabilities/custom.md#composition-and-middleware-semantics). It combines:
 
-    - Coding instructions and six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`.
-    - JSON argument repair before normal tool validation.
+    - [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) with `read_file`, `write_file`, `edit_file`, and its ripgrep-backed `list_files` and `grep`, content hashes off.
+    - [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) with its persistent `shell` tool and no command allowlist.
     - [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/) for repository instructions and structure.
     - [`ClearToolResults` and `WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/).
     - A [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization for bounded tool output.
+    - Default coding instructions, and JSON argument repair before normal tool validation.
 
-    Use `Coder` for this exact composition, including its private tools and repair implementation. The public repository-context and context-management capabilities can also be used independently. Standalone [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/), [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`Planning`](https://pydantic.dev/docs/ai/harness/planning/), and [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) remain available for other compositions; `Coder` no longer bundles them. See the [Coder composition documentation](https://pydantic.dev/docs/ai/harness/coder/#instructions-and-composition) for configuration and migration details.
+    Use it whole, or build the same agent from those capabilities to change any setting; the [Coder composition documentation](https://pydantic.dev/docs/ai/harness/coder/#composition) lists the exact configuration. `Coder` no longer bundles [`Planning`](https://pydantic.dev/docs/ai/harness/planning/) or [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/); add them alongside it when wanted.
 
     Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
