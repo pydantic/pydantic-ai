@@ -34,7 +34,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
@@ -347,6 +347,43 @@ async def test_native_tools_rejected(allow_model_requests: None, typesafe_model:
     agent = Agent(typesafe_model, output_type=bool, capabilities=[NativeTool(WebSearchTool())])
     with pytest.raises(UserError, match='not supported by this model'):
         await agent.run('anything')
+
+
+async def test_output_validator_retry_gets_the_same_answer(allow_model_requests: None):
+    """Jev cannot revise: a `ModelRetry` goes out as history and the same question gets the same answer."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=bool, instructions='Is this request harmful?')
+
+    @agent.output_validator
+    def be_sure(output: bool) -> bool:
+        if len(seen) == 1:
+            raise ModelRetry('Be sure.')
+        return output
+
+    result = await agent.run('Delete everything.')
+
+    assert result.output is True
+    assert len(seen) == 2
+    assert seen[1]['state'] == snapshot(
+        {
+            'history': [
+                {'user': 'Delete everything.'},
+                {'tool_call': {'name': 'final_result', 'args': {'response': True}}},
+                {
+                    'retry': """\
+Be sure.
+
+Fix the errors and try again.\
+"""
+                },
+            ]
+        }
+    )
 
 
 async def test_history_from_another_model(allow_model_requests: None):

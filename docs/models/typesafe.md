@@ -147,7 +147,7 @@ Jev cannot write text, call tools or look at files. Anything that needs one of t
 - Tools: function tools, toolsets and native tools.
 - Files: an image, audio, video or document in the prompt or the history, unless [File Understanding](../capabilities/file-understanding.md) has described it first. A prompt with no text and no history at all is refused too.
 
-Jev cannot revise an answer either. An output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] sends the retry prompt along as history and gets an answer to the same question again, so a validator that keeps rejecting runs the agent out of retries.
+Jev cannot revise an answer either. An output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] sends the retry prompt along as history, with the original text and the rejected answer, and gets an answer to the same question again, so a validator that keeps rejecting runs the agent out of retries.
 
 A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does not skip past a `UserError`, because it means the agent cannot run on Jev at all. It does fall back on [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] and [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which Jev raises like any other model when the API returns an error or cannot be reached. A response the SDK cannot parse is [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which is not skipped either.
 
