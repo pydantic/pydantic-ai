@@ -733,6 +733,9 @@ class RealtimeSession:
         # In-flight user request being assembled from input-transcript events.
         self._user_turn_active = False
         self._anonymous_user_turns_ended = 0
+        # An id-less final can precede its matching speech-end frame, so remember it until audio or a
+        # transcription event begins the next turn instead of letting that trailing frame open a blank one.
+        self._anonymous_user_turn_finalized = False
         # Insertion order is provider item order. `None` is the single anonymous turn used by
         # providers that do not identify input transcript items.
         self._user_turns: dict[str | None, _UserTurn] = {}
@@ -2066,6 +2069,9 @@ class RealtimeSession:
                 events.extend(self._finalize_user(item_id=item_id))
             return events
 
+        # Consecutive id-less finals can be separate turns with no speech frames between them, so the
+        # transcript itself must consume the closed-turn marker rather than being discarded as a duplicate.
+        self._anonymous_user_turn_finalized = False
         events: list[RealtimeEvent] = []
         if None not in self._user_turns:
             self._user_turn_active = True
@@ -2132,6 +2138,7 @@ class RealtimeSession:
                     audio=BinaryContent(data=_pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
                 )
         if item_id is None:
+            self._anonymous_user_turn_finalized = True
             self._record_user_request(None, self._new_request([part]))
             self._user_turns.pop(None)
         else:
@@ -2167,6 +2174,9 @@ class RealtimeSession:
         """
         anchor = self._history[-1] if self._history else None
         if item_id is None:
+            # Audio or a speech-start frame unambiguously opens the next anonymous turn, so later
+            # transcript and speech-end frames must no longer be treated as stragglers for the last one.
+            self._anonymous_user_turn_finalized = False
             anchors = self._pending_anonymous_user_turn_anchors
             if len(anchors) > self._anonymous_user_turns_ended:
                 # An anonymous turn is still open — local audio reserved its place already — so a
@@ -2241,7 +2251,10 @@ class RealtimeSession:
 
     def _finalize_failed_user_item(self, item_id: str | None) -> list[RealtimeEvent]:
         """Finalize a user item whose transcription failed without retaining unreliable partial text."""
-        if item_id is not None:
+        if item_id is None:
+            # As with a transcript, an id-less failure can be the first event for the next turn.
+            self._anonymous_user_turn_finalized = False
+        else:
             # Same guard as `_handle_input_transcript`: once an item is closed, a stray duplicate or
             # late error event must not re-open it and record a second (blank) user turn.
             if item_id in self._finalized_user_item_ids:
@@ -2268,6 +2281,7 @@ class RealtimeSession:
         self._user_turn_anchors.clear()
         self._pending_anonymous_user_turn_anchors.clear()
         self._anonymous_user_turns_ended = 0
+        self._anonymous_user_turn_finalized = False
         self._pending_user_turn_anchors.clear()
         # Drop any input-audio segments whose transcript never arrived, so they can't leak across a
         # long-lived session (finalized items already popped their own segment above).
@@ -2429,6 +2443,10 @@ class RealtimeSession:
         self._record_user_speech_span()
         events = self._finalize_untranscribed_user()
         if self._input_transcription_enabled:
+            if event.item_id is None and self._anonymous_user_turn_finalized:
+                # The transcript already closed this anonymous turn. This speech-end frame is its
+                # boundary, not a new content-less turn; the next turn will clear the marker itself.
+                return [*events, event]
             if event.item_id is not None and event.item_id in self._finalized_user_item_ids:
                 return [*events, event]
             if event.item_id not in self._user_turns:

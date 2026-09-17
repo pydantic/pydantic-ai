@@ -2429,6 +2429,24 @@ async def test_repeated_speech_end_for_finalized_item_does_not_duplicate_user_tu
     )
 
 
+async def test_speech_end_after_finalized_anonymous_transcript_does_not_duplicate_user_turn() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(),
+            InputTranscript(text='hello there', is_final=True),
+            RealtimeInputSpeechEndEvent(),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    await collect_events(session)
+
+    assert session.all_messages() == snapshot(
+        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello there')], timestamp=IsDatetime())]
+    )
+
+
 async def test_later_transcript_waits_for_earlier_speech_end_placeholder() -> None:
     conn = FakeRealtimeConnection(
         [
