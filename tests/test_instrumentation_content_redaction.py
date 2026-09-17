@@ -23,6 +23,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, span_include_content
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.fallback import FallbackModel
@@ -323,3 +324,32 @@ async def test_no_content_reaches_telemetry_when_request_parameters_cannot_be_se
     assert bool(exported_parameters) is include_content
 
     check(exporter, include_content, {'user_prompt', 'instructions'})
+
+
+def test_a_content_policy_from_another_span_is_not_trusted() -> None:
+    """Only the span a policy names may be refreshed with content.
+
+    The variable is restored with a plain `set`, which lands only in the `Context` that runs it, so
+    an interrupted streamed run finalizing elsewhere can leave the opening `Context` holding the
+    finished request's value. Tagging the policy with its span is what stops the next span reading
+    that as permission. Driving this through an agent run cannot show it: the run's own request sets
+    the policy for its span before the refresh reads it, in the same `Context`, so the guard is
+    checked here where it is expressed.
+    """
+    settings, _ = redacted_setup(include_content=False)
+    with settings.tracer.start_as_current_span('chat') as span:
+        own_span_id = span.get_span_context().span_id
+
+        # What a cross-context finalization leaves behind: capture enabled, but for another span.
+        include_content_ctx.set(ContentPolicy(span_id=own_span_id ^ 1, include_content=True))
+        assert span_include_content(span) is False
+
+        # This span's own policy is honoured, in both directions.
+        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=True))
+        assert span_include_content(span) is True
+        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=False))
+        assert span_include_content(span) is False
+
+        # No request open at all.
+        include_content_ctx.set(None)
+        assert span_include_content(span) is False
