@@ -43,8 +43,8 @@ async def pick_first(request: AskUserRequest) -> AskUserResponse:
 agent = Agent('anthropic:claude-fable-5', capabilities=[AskUser(answerer=pick_first)])
 ```
 
-`pick_first` stands in for a real UI; a terminal menu or a web form implements the same
-protocol.
+`pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic-clai2/)
+ships a terminal menu built on the same protocol; a web form would be another.
 
 ## Writing an answerer
 

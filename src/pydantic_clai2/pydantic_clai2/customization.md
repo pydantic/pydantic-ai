@@ -102,6 +102,14 @@ clai2 plugins add NAME module[:attr] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 
+The second built-in is ask_user (pydantic_clai2.ask_user_menu:activate): the
+harness AskUser capability with a full-screen terminal menu as its answerer, so
+the model can ask the user multiple-choice questions mid-run through
+ask_user_question. /plugins disable ask_user removes the tool. To answer the
+questions somewhere other than the terminal, declare ask_user again with a
+module whose activate(host) calls host.add(AskUser(answerer=...)) with your own
+async answerer; see PLUGINS.md.
+
 Plugins are trusted Python executed as the user. Drop-ins execute at startup,
 not in a sandbox. Do not install code or change executable startup configuration
 without the user's intent. Keep secrets out of plugin JSON: it is plaintext in
@@ -286,8 +294,8 @@ unrestricted Coder. A launcher gets no built-in plugins unless it passes them.
 Choose one source of coding tools, never both: either keep Coder() in
 capabilities as above, or drop it from capabilities and call chat(agent,
 deps=None, builtin_plugins=DEFAULT_PLUGINS) with DEFAULT_PLUGINS from
-pydantic_clai2, which supplies the stock coder plugin and lets /plugins manage
-it. Passing both loads two sets of coding tools. A fully custom protocol belongs in a Pydantic AI Model and
+pydantic_clai2, which supplies the stock coder and ask_user plugins and lets
+/plugins manage them. Passing both loads two sets of coding tools. A fully custom protocol belongs in a Pydantic AI Model and
 Provider implementation, not a terminal plugin. See
 https://pydantic.dev/docs/ai/models/overview/ and inspect installed core abstract
 classes for required methods. Supply that Model instance to Agent as above.

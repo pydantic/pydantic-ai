@@ -1,6 +1,7 @@
 """Everything a plugin can register, recorded on one host per plugin."""
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Generic, Literal, Never, Protocol, TypeVar, get_args, overload
 
@@ -142,6 +143,15 @@ HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd
 HostEventT = TypeVar('HostEventT', bound=HostEvent)
 HostHandler = Callable[[HostEventT], Awaitable[None]]
 Renderer = Callable[[EventT], RenderableType | None]
+FullScreen = Callable[[], AbstractAsyncContextManager[None]]
+"""Enter it to own the whole terminal for a widget while the agent runs; see `PluginHost.full_screen`."""
+
+
+@asynccontextmanager
+async def bare_screen() -> AsyncGenerator[None]:
+    """The `FullScreen` of a host with no shell around it: nothing is streaming, so nothing to pause."""
+    yield
+
 
 HostHookName = Literal['session_start', 'session_end', 'turn_start', 'turn_end']
 CoreHookName = Literal[
@@ -197,6 +207,7 @@ class PluginHost(Generic[DepsT]):
         name: str,
         console: Console,
         settings: dict[str, JsonValue],
+        full_screen: FullScreen = bare_screen,
         conversation: Conversation | None = None,
         status: Status | None = None,
     ) -> None:
@@ -207,6 +218,13 @@ class PluginHost(Generic[DepsT]):
         """
         self.name = name
         self.console = console
+        self.full_screen = full_screen
+        """Own the whole terminal for a widget mid-run.
+
+        `async with host.full_screen():` flushes streamed output and pauses the status row until
+        the block exits, so a full-screen menu opened from inside a tool call draws on a settled
+        screen. Between turns it is a no-op.
+        """
         self.conversation: Conversation = conversation if conversation is not None else Transcript()
         self.status = status if status is not None else Status()
         self.commands = Commands()

@@ -21,6 +21,7 @@ from .config import PluginSettings
 from .plugins import (
     Conversation,
     DepsT,
+    FullScreen,
     HostEvent,
     PluginHost,
     Renderer,
@@ -28,6 +29,7 @@ from .plugins import (
     SessionEndReason,
     SessionStart,
     TurnStart,
+    bare_screen,
 )
 from .settings_store import SettingsStore
 from .status import Status
@@ -99,15 +101,18 @@ class PluginLoader(Generic[DepsT]):
         project: Sequence[PluginSettings] = (),
         conversation: Conversation | None = None,
         status: Status | None = None,
+        full_screen: FullScreen = bare_screen,
     ) -> None:
         """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
 
+        `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation` and `status` are handed to every host; see `PluginHost` for the defaults.
         """
         self._store = store
         self._console = console
         self._commands = commands
         self._session_start = session_start
+        self._full_screen = full_screen
         self._conversation = conversation
         self._status = status
         self._builtin = {declaration.id: declaration for declaration in builtin}
@@ -199,6 +204,7 @@ class PluginLoader(Generic[DepsT]):
             name=name,
             console=self._console,
             settings=entry.declaration.settings,
+            full_screen=self._full_screen,
             conversation=self._conversation,
             status=self._status,
         )

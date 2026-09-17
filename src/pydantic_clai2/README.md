@@ -2,7 +2,9 @@
 
 A separately installable terminal client for Pydantic AI. The coding tools,
 `Coder(unrestricted_filesystem=True)`, are the built-in `coder` plugin: on by
-default, `/plugins disable coder` for a chat-only shell. The built-in
+default, `/plugins disable coder` for a chat-only shell. The model can also ask
+you multiple-choice questions mid-run through the built-in `ask_user` plugin;
+see [Questions from the model](#questions-from-the-model). The built-in
 `repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 Context management is the built-in `compaction` plugin,
@@ -481,6 +483,23 @@ next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, di
 reload, and remove. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has the full list of hooks, events, and rules.
+
+## Questions from the model
+
+When the task is ambiguous, the model can call `ask_user_question` instead of
+guessing. Each question opens a full-screen menu: options as rows, the question
+and the highlighted option's description alongside, `question 2 of 3` in the
+title when there are several. Enter picks one; on multi-select questions Space
+toggles and Enter confirms (with nothing toggled, Enter picks the highlighted
+option); Esc or Ctrl-C declines, which the model is told so it can make a
+stated choice and carry on. Your picks are printed to the
+transcript afterwards.
+
+The menu is the built-in `ask_user` plugin around the harness's
+[`AskUser`](../docs/ask-user.md) capability. The capability only knows an
+`Answerer`; the terminal menu is one, and [PLUGINS.md](PLUGINS.md#ask_user-questions-answered-from-the-terminal)
+shows how to put a different one, a web form for instance, in its place.
+`/plugins disable ask_user` removes the tool.
 
 ## Telemetry and references
 

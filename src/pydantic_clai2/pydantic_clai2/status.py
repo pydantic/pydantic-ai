@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import math
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Self
@@ -76,6 +77,12 @@ class Status:
         return [('', head), (theme.WARNING if self.context_alert else '', figure), ('', tail)]
 
 
+def _interrupted() -> bool:
+    """Whether the current task was itself cancelled while it waited on the animation task."""
+    current = asyncio.current_task()
+    return current is not None and current.cancelling() > 0
+
+
 class StatusLine:
     """Reserve the last row while a run owns the terminal; restore it on exit."""
 
@@ -88,21 +95,42 @@ class StatusLine:
 
     async def __aenter__(self) -> Self:
         """Reserve a row only on an interactive terminal."""
-        if self.console.is_terminal and not self.console.is_dumb_terminal:
-            self.console.show_cursor(False)
-            self._draw(0)
-            self._task = asyncio.create_task(self._animate())
+        self._reserve()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
         """Restore scrolling on success, failure, and cancellation."""
-        if self._task is not None:
-            self._task.cancel()
+        await self._release()
+
+    @contextlib.asynccontextmanager
+    async def paused(self) -> AsyncGenerator[None]:
+        """Give the whole screen to something else, then reserve the row again."""
+        await self._release()
+        try:
+            yield
+        finally:
+            self._reserve()
+
+    def _reserve(self) -> None:
+        if self.console.is_terminal and not self.console.is_dumb_terminal:
+            self.console.show_cursor(False)
+            self._draw(0)
+            self._task = asyncio.create_task(self._animate())
+
+    async def _release(self) -> None:
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
             try:
                 with contextlib.suppress(asyncio.CancelledError):
-                    await self._task
+                    await task
+                if _interrupted():
+                    # The CancelledError was ours, not the animation's: Ctrl-C must still abort.
+                    raise asyncio.CancelledError
             finally:
-                self.console.file.write(f'\x1b7\x1b[r\x1b[{self._height};1H\x1b[2K\x1b8')
+                # Forget the height so the next reserve sets the scroll region again.
+                height, self._height = self._height, 0
+                self.console.file.write(f'\x1b7\x1b[r\x1b[{height};1H\x1b[2K\x1b8')
                 self.console.show_cursor(True)
                 self.console.file.flush()
 
