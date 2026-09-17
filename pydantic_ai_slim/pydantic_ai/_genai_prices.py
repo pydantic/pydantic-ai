@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from genai_prices import calc_price
+from genai_prices import Usage as GenaiPricesUsage, calc_price
 from genai_prices.data_snapshot import get_snapshot
 
 from ._warnings import CostCalculationFailedWarning
@@ -83,6 +83,33 @@ def lookup_context_window(
     return None
 
 
+# `details` keys carrying a billing meter that is not a token count, mapped to the `genai-prices` usage
+# key that prices it. `genai-prices` reads its keys as *attributes*, so a meter that only lives in
+# `details` is invisible to it: a model priced per second rather than per token then prices as a
+# confident zero rather than going unpriced, which reads as "this was free" to `cost_limit` and to the
+# missing-price warning. Add a mapping here when a provider starts reporting another such meter.
+_USAGE_DETAIL_PRICE_KEYS = {'billable_audio_seconds': 'audio_seconds'}
+
+
+def _priceable_usage(usage: RequestUsage | RunUsage) -> RequestUsage | RunUsage | GenaiPricesUsage:
+    """Promote non-token billing meters out of `details` so `genai-prices` can see them.
+
+    Returns the usage unchanged when there is nothing to promote, so pricing for the token-billed
+    models that are the overwhelming majority goes through exactly the path it always did.
+    """
+    promoted = {
+        price_key: value
+        for detail_key, price_key in _USAGE_DETAIL_PRICE_KEYS.items()
+        if (value := usage.details.get(detail_key)) is not None
+    }
+    if not promoted:
+        return usage
+    priceable = GenaiPricesUsage.from_raw(usage)
+    for price_key, value in promoted.items():
+        setattr(priceable, price_key, value)
+    return priceable
+
+
 def calculate_price_for_usage(
     usage: RequestUsage | RunUsage,
     *,
@@ -96,10 +123,11 @@ def calculate_price_for_usage(
     Tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
     Only `ModelResponse.cost()` wants this behaviour; everything internal goes through `best_effort_price`.
     """
+    priceable = _priceable_usage(usage)
     if provider_api_url:
         try:
             return calc_price(
-                usage,
+                priceable,
                 model_name,
                 provider_api_url=provider_api_url,
                 genai_request_timestamp=genai_request_timestamp,
@@ -109,7 +137,7 @@ def calculate_price_for_usage(
             pass
 
     return calc_price(
-        usage,
+        priceable,
         model_name,
         provider_id=provider_name,
         genai_request_timestamp=genai_request_timestamp,

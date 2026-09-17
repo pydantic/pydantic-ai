@@ -1281,6 +1281,38 @@ def test_calculate_price_for_usage_api_url_falls_back_to_provider_name():
     assert price.total_price == snapshot(Decimal('0.0025'))
 
 
+def test_calculate_price_for_usage_prices_a_duration_billed_model():
+    """A model billed per second of audio is priced from its duration meter, not silently as free.
+
+    `genai-prices` reads its usage keys as attributes, so a meter reported only in `details` is
+    invisible to it. `grok-voice-latest` has no token prices at all — it bills `audio_hours` — so
+    without the promotion its token counts price to a confident `Decimal('0')`, which is
+    indistinguishable from a genuinely free response to `cost_limit` and to the missing-price warning.
+    """
+    usage = RequestUsage(
+        input_tokens=5,
+        output_tokens=42,
+        details={'audio_tokens': 39, 'billable_audio_seconds': 3600},
+    )
+    price = calculate_price_for_usage(usage, model_name='grok-voice-latest', provider_name='x-ai')
+    assert price.total_price == snapshot(Decimal('4.8'))
+
+
+def test_calculate_price_for_usage_ignores_an_absent_duration_meter():
+    """Usage without a duration meter is passed through untouched, so token pricing is unaffected."""
+    usage = RequestUsage(input_tokens=1000, details={'audio_tokens': 39})
+    price = calculate_price_for_usage(usage, model_name='gpt-4o', provider_name='openai')
+    assert price.total_price == snapshot(Decimal('0.0025'))
+
+
+def test_best_effort_price_duration_billed_run_usage():
+    """`RunUsage` accumulates the meter across turns, so a session prices its whole duration."""
+    usage = RunUsage(input_tokens=10, output_tokens=20, details={'billable_audio_seconds': 1800})
+    price = best_effort_price(usage, model_name='grok-voice-latest', provider_name='x-ai')
+    assert price is not None
+    assert price.total_price == snapshot(Decimal('2.4'))
+
+
 def test_best_effort_price_known_model():
     price = best_effort_price(RequestUsage(input_tokens=1000), model_name='gpt-4o', provider_name='openai')
     assert price is not None
