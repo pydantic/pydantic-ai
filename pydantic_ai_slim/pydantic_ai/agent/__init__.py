@@ -971,10 +971,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             all_capabilities.extend(capabilities)
 
         effective_model = model or validated_spec.model
-        if effective_model is None:
-            raise exceptions.UserError(
-                '`model` must be provided either in the spec or as a keyword argument to `from_spec()`.'
-            )
 
         agent = Agent(
             model=effective_model,

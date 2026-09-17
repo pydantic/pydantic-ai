@@ -10,7 +10,7 @@ from dirty_equals import IsJson, IsList
 
 # `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
 from opentelemetry.trace import StatusCode
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import (
@@ -40,6 +40,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -4080,6 +4081,31 @@ def test_output_function_call_deferred_recorded_as_error(
     # not the deferral-attribute path that `wrap_tool_execute` uses.
     assert span_attrs.get('logfire.level_num', 0) >= 17  # error level
     assert 'pydantic_ai.tool.deferral.name' not in span_attrs
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_a_settled_stream_keeps_its_traceparent_after_the_stream_is_gone(capfire: CaptureLogfire) -> None:
+    """The trace context has to be captured at completion, not read when `result` is accessed.
+
+    A settled [`AgentRunResult`][pydantic_ai.run.AgentRunResult] is for handing a run to code that
+    outlives the stream, and by then the agent run span has closed and there is no ambient context
+    left to read.
+    """
+    agent = Agent(TestModel(custom_output_text='streamed'), capabilities=[Instrumentation()])
+
+    async with agent.run_stream('Stream this') as streamed:
+        await streamed.get_output()
+        inside = streamed.result
+
+    outside = streamed.result
+
+    assert outside._traceparent(required=False) == inside._traceparent(required=False)  # pyright: ignore[reportPrivateUsage]
+    assert outside._traceparent(required=False) is not None  # pyright: ignore[reportPrivateUsage]
+
+    # And it survives the round-trip the serialized shape exists for.
+    adapter = TypeAdapter(AgentRunResult[str])
+    reloaded = adapter.validate_json(adapter.dump_json(outside))
+    assert reloaded._traceparent(required=False) == outside._traceparent(required=False)  # pyright: ignore[reportPrivateUsage]
 
 
 # Name, `exception.type` and `exception.escaped` of each event, in order. Tool spans record their own
