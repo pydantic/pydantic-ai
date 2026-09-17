@@ -14,6 +14,10 @@ def typesafe_model_profile(model_name: str) -> ModelProfile | None:
     the model refuses itself.
     """
     return ModelProfile(
+        # `jev-1.13` takes 64k tokens for the state and the questions together, and 32k for the state plus
+        # the longest question; only the combined budget has a field.
+        # https://docs.typesafe.ai/model-jaggedness/jev-1.13
+        context_window=64_000,
         supports_tools=True,
         supports_inline_system_prompts=True,
         supports_tool_return_schema=False,

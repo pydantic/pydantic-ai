@@ -88,6 +88,8 @@ Confidence in each answer is on the response, so you can act on how sure the mod
 
 For a pick-one or a rubric field it is Jev's own number, computed from how its probabilities are spread. Jev reports none for a yes/no, because there the probability *is* the answer before we round it: what is lost in the rounding is how sure the answer is, so that field's confidence is how far the probability sits from the coin flip, doubled onto the same scale. A `False` answered from a probability of 0.01 is a confident no and reports 0.98; one answered from 0.45 reports 0.10.
 
+Pick the threshold from what the answer is used for rather than once for the whole system: acting automatically deserves a higher bar than flagging something for review, and the right numbers depend on your data, so calibrate against labelled examples of your own. Note that `jev-latest` moves when TypeSafe ship a release, which can shift the numbers under you — once you have tuned a threshold, pin the version it was tuned against (`typesafe:jev-1.13.0`) and move deliberately.
+
 A `float` field has no entry at all. It keeps the probability as its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement, and repeating it under `confidence` would invite a threshold that filters out the low-risk customers rather than the uncertain ones. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give.
 
 A `float` is still a yes/no question underneath, so `0.5` means Jev is undecided, not that the answer is middling. When you want a magnitude, use a rubric.
@@ -102,6 +104,30 @@ print(result.output)
 print(result.response.provider_details)
 #> {'confidence': {'response': 0.95}, 'probabilities': {}, 'scores': {}}
 ```
+
+## Ask one thing per field
+
+TypeSafe call this "probably the most important concept" in their guide, and it is the one habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible number with low confidence, and you find out later.
+
+So instead of one field asking `'Is this a good pitch?'`, ask three and combine them in code:
+
+```python
+from pydantic import BaseModel, Field
+
+
+class Pitch(BaseModel):
+    """Assess a startup pitch."""
+
+    large_market: bool = Field(description='Does this address a market worth more than $1B a year?')
+    technically_feasible: bool = Field(description='Could a small team build this with current technology?')
+    differentiated: bool = Field(description='Does this do something competitors do not already do?')
+
+    @property
+    def promising(self) -> bool:
+        return sum([self.large_market, self.technically_feasible, self.differentiated]) >= 2
+```
+
+Extra fields are close to free: every field goes out in the same request, and Jev answers them in parallel branches over one shared copy of the text, so a field you only need on some inputs costs tokens rather than time.
 
 ## Scoring against a rubric
 
@@ -177,7 +203,7 @@ For a single question an agent's `instructions` do the same job, and Jev answers
 
 ## Judging a conversation
 
-The latest user prompt is the text Jev judges. Everything before it in the message history goes along as context: user prompts, answers, tool calls and their results, from whichever model produced them. That makes Jev a cheap judge of another agent's run:
+The latest user prompt is the text Jev judges. Everything before it in the message history goes along beside it as `history`: user prompts, answers, tool calls and their results, from whichever model produced them. That makes Jev a cheap judge of another agent's run:
 
 ```python
 from pydantic_ai import Agent
@@ -191,6 +217,30 @@ print(result.output)
 #> True
 ```
 
+
+The whole history goes, so trim it to what the question is about — `message_history=conversation.all_messages()[-4:]`, or a [history processor](../message-history.md#processing-message-history). Accuracy falls as the state grows with detail the question does not need, and `jev-1.13` takes 64k tokens for the state and questions together, with 32k for the state plus the longest question.
+
+!!! warning "A judged agent's system prompt becomes part of the question"
+    A [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] anywhere in the history is treated as an instruction to Jev, because that is what makes `Agent(system_prompt=...)` work across turns. When the history is another agent's, its system prompt is folded into what Jev is *asked* rather than into what Jev judges — so `'You are a pirate'` ends up in front of `'Was the assistant polite?'`. Give the judge its question through `instructions=`, which is never read from the history, and strip system prompts from a conversation you did not write:
+
+    ```python {test="skip" lint="skip"}
+    history = [
+        message
+        for message in conversation.all_messages()
+        if not any(part.part_kind == 'system-prompt' for part in getattr(message, 'parts', []))
+    ]
+    ```
+
+## What Jev answers badly
+
+Everything below returns an answer rather than an error, which is what makes it worth knowing. TypeSafe publish these per model version, on their [jaggedness page for `jev-1.13`](https://docs.typesafe.ai/model-jaggedness/jev-1.13), and revise them as models change.
+
+- **Arithmetic, counting and dates.** Jev is not a calculator, does not count reliably, and reads dates as text rather than as ordered quantities. Compute these in Python and ask Jev about the result.
+- **Several judgements in one question.** See [above](#ask-one-thing-per-field).
+- **Indirection.** A question about a property of a property, or one needing several hops, costs accuracy.
+- **Context it does not need.** Accuracy falls as the state grows with detail unrelated to the question, so filter before you send rather than after.
+- **Adversarial text.** Jev treats the state as data, not as hostile: text written to steer the answer — an injected instruction, a misleading framing, an argument for its own classification — can move it. TypeSafe say they expect to improve this. A guard built on Jev belongs alongside deterministic checks, not instead of them, and is worth testing against your own adversarial inputs.
+- **Option order.** The order of a `Literal`'s options or an `Enum`'s members is part of what Jev sees, and reordering them can move the answer. If a classification matters, test it with the options in more than one order.
 
 ## What Jev cannot do
 
