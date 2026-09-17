@@ -155,6 +155,52 @@ def test_is_mcp_sdk_v2_reads_the_installed_distribution_version(
     assert _mcp_compat.is_mcp_sdk_v2() is expected
 
 
+# A fastmcp 4 install has no legacy `httpx` in it — its client extra requires `httpx2`, as does the
+# MCP SDK v2 under it — so `pydantic_ai.mcp` may not import one. Legacy `httpx` is installed here
+# (the `retries` extra pulls it in), so the subprocess makes it unimportable to stand in for the
+# install a user actually gets; the same stand-in `tests/test_httpx2_sdk_readiness.py` uses for the
+# provider modules, spelled out here because only this file runs in the FastMCP 4 CI job.
+_HTTPX_FREE_MCP = """
+import sys
+
+
+class BlockHttpx:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'httpx' or fullname.startswith('httpx.'):
+            raise ImportError('httpx is not installed')
+
+
+sys.meta_path.insert(0, BlockHttpx())
+
+import httpx2
+
+from pydantic_ai.mcp import MCPToolset
+
+client = httpx2.AsyncClient()
+toolset = MCPToolset(
+    'https://example.com/mcp',
+    auth=httpx2.BasicAuth('user', 'pass'),
+    http_client=client,
+)
+assert toolset.client.transport.httpx_client_factory() is client
+
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), (
+    'the MCP toolset imported httpx'
+)
+"""
+
+
+@pytest.mark.skipif(not MCP_SDK_V2, reason='fastmcp 3 is itself built on legacy httpx')
+def test_mcp_runs_without_legacy_httpx() -> None:
+    result = subprocess.run(
+        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_MCP],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
+
+
 MCP_FIELD_READS = [
     ('Annotations', 'last_modified'),
     ('AudioContent', 'mime_type'),

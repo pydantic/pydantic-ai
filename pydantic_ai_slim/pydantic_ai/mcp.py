@@ -20,6 +20,11 @@ from typing_extensions import Self, TypedDict, assert_never
 
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
+# Which HTTPX the HTTP kwargs below belong to is the installed fastmcp's to decide: fastmcp 3 is
+# built on legacy `httpx`, fastmcp 4 — like the MCP SDK v2 under it — on `httpx2`, and the `[mcp]`
+# extra admits both. We never inspect an `auth` or `http_client`, only hand it to fastmcp, so these
+# unions type them without importing a family that the other generation's installs don't ship.
+from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -45,10 +50,6 @@ except ImportError as _import_error:
         '`pip install "pydantic-ai-slim[mcp]"` pulls `fastmcp-slim[client]`, '
         'or install the full `fastmcp` package directly.'
     ) from _import_error
-
-# Below the guard on purpose: the fastmcp client requires `httpx`, so without the extra the error
-# above is what users should see, not `ModuleNotFoundError: httpx`.
-import httpx
 
 # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
 # SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has,
@@ -894,10 +895,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         read_timeout: float | None = _UNSET,
         roots: RootsList | RootsHandler[Any] | None = None,
         # HTTP-specific (only used when constructing a default transport from a URL)
-        auth: httpx.Auth | Literal['oauth'] | str | None = None,
+        auth: HTTPAuth | Literal['oauth'] | str | None = None,
         verify: ssl.SSLContext | bool | str | None = None,
         headers: dict[str, str] | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
     ):
         """Build a new `MCPToolset`.
 
@@ -949,14 +950,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             read_timeout: Maximum time in seconds to wait for new messages on the long-lived
                 connection. Defaults to 5 minutes.
             roots: Filesystem roots advertised to the server.
-            auth: HTTP authentication for HTTP transports — an `httpx.Auth`, the literal string
-                `'oauth'` to enable FastMCP's OAuth flow, or a bearer-token string.
+            auth: HTTP authentication for HTTP transports — an `httpx2.Auth` (a legacy `httpx.Auth`
+                when the installed fastmcp is 3), the literal string `'oauth'` to enable FastMCP's
+                OAuth flow, or a bearer-token string.
             verify: SSL verification mode for HTTP transports — an `ssl.SSLContext`, a CA bundle
                 path string, or a bool.
             headers: Extra HTTP headers for HTTP transports. Mutually exclusive with `http_client`.
-            http_client: A pre-configured `httpx.AsyncClient` to use for HTTP transports — useful
-                for self-signed certificates or custom connection pooling. Mutually exclusive with
-                `headers`.
+            http_client: A pre-configured `httpx2.AsyncClient` (a legacy `httpx.AsyncClient` when
+                the installed fastmcp is 3) to use for HTTP transports — useful for self-signed
+                certificates or custom connection pooling. Mutually exclusive with `headers`.
 
         Raises:
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that
@@ -1654,8 +1656,8 @@ def _build_transport(
     client: MCPToolsetClient,
     *,
     headers: dict[str, str] | None,
-    http_client: httpx.AsyncClient | None,
-    auth: httpx.Auth | Literal['oauth'] | str | None,
+    http_client: AsyncHTTPClient | None,
+    auth: HTTPAuth | Literal['oauth'] | str | None,
     verify: ssl.SSLContext | bool | str | None,
     read_timeout: float | None,
 ) -> MCPToolsetClient:
@@ -1700,18 +1702,18 @@ def _build_transport(
 
 
 def _make_httpx_client_factory(
-    http_client: httpx.AsyncClient,
-) -> Callable[..., httpx.AsyncClient]:
+    http_client: AsyncHTTPClient,
+) -> Callable[..., AsyncHTTPClient]:
     """Return an `httpx_client_factory` that always returns the user-supplied `http_client`."""
 
     def factory(
         headers: dict[str, str] | None = None,
-        timeout: httpx.Timeout | None = None,
-        auth: httpx.Auth | None = None,
+        timeout: HTTPTimeout | None = None,
+        auth: HTTPAuth | None = None,
         # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`,
         # which the mcp SDK's `McpHttpClientFactory` protocol doesn't declare.
         follow_redirects: bool = True,
-    ) -> httpx.AsyncClient:
+    ) -> AsyncHTTPClient:
         return http_client
 
     return factory
