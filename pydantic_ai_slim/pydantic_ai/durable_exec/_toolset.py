@@ -110,13 +110,17 @@ class DynamicToolsResult:
 class RunResolvedToolset(Generic[AgentDepsT]):
     """A dynamic toolset resolved once for the run, entered lazily inside a durable unit.
 
-    Resolving a dynamic toolset performs no I/O — the factory builds the toolset object, it does
-    not connect — so the durable container can do it once per run, the way a non-durable run does.
-    Entering it does perform I/O, so that is deferred to the first durable unit that needs the
-    toolset, where the engine's own retry policy covers a failed connection. The entered toolset is
-    then held for the rest of the run instead of being torn down and rebuilt in every unit, which
-    is what lets a toolset's own caching (such as
+    Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is
+    entered — so the durable container resolves it once per run, the way a non-durable run does, and
+    the first durable unit that needs it enters it, where the engine's own retry policy covers a
+    failed connection. The entered toolset is then held for the rest of the run instead of being torn
+    down and rebuilt in every unit, which is what lets a toolset's own caching (such as
     [`MCPToolset.cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools]) survive between units.
+
+    The factory itself is arbitrary user code, and it now runs in the durable container rather than
+    in a unit, so I/O inside it is not checkpointed and re-runs when the container replays. Like the
+    capability factories that have always run there, it has to be deterministic given the run's
+    dependencies and leave its I/O to the units — which is what the engine docs tell users.
 
     Only used where the durable unit runs in the same process as the container. Engines that
     serialize the run context across the boundary never see one and resolve per unit as before.
@@ -722,10 +726,11 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
         run_copy._run_resolved = None
         if not self._dynamic_toolset.per_run_step and (toolset_id := self._dynamic_toolset.id) is not None:
             # `per_run_step=False` is the factory's own statement that one resolution covers the
-            # run, so resolve it here like a non-durable run does. Resolving performs no I/O, and
-            # entering is left to the first durable unit that needs the toolset. A
-            # `per_run_step=True` factory is re-evaluated per unit as before: its `for_run_step`
-            # swaps the inner toolset in place, which parallel tool-call units must not share.
+            # run, so resolve it here like a non-durable run does, leaving entry to the first
+            # durable unit that needs the toolset. This runs the factory in container code, where
+            # it must be deterministic and leave its I/O to the units. A `per_run_step=True`
+            # factory is re-evaluated per unit as before: its `for_run_step` swaps the inner
+            # toolset in place, which parallel tool-call units must not share.
             run_copy._run_resolved = RunResolvedToolset(toolset_id, await self._dynamic_toolset.for_run(ctx))
         return run_copy
 

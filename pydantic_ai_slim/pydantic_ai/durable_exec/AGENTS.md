@@ -54,7 +54,8 @@ that serializes it (or dispatches the unit elsewhere) sees none and the unit res
 every unit did before. When a unit does reach one, it enters that toolset on first use and leaves it
 entered for the run, which the durable container closes: that is the deliberate exception to the
 rule below, and it is what lets a resolved `MCPToolset` hold one session per run instead of one per
-unit. Connecting still happens inside a unit, so the engine retries it.
+unit. Connecting still happens inside a unit, so the engine retries it, but the factory itself now runs in
+container code: it carries the same determinism requirement as every other factory that runs there.
 
 Assume a durable unit may execute more than once if the process fails after the side effect but
 before its checkpoint commits. Document the engine's guarantees and require idempotency or expose
