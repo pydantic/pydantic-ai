@@ -96,15 +96,18 @@ class StatusLine:
             return
         # Leave one column unused so the footer cannot trigger autowrap.
         text = ''.join(char if char.isascii() and char.isprintable() else '?' for char in self.status.text())
-        prefix = ''
+        prefix = '\x1b7'
         if height != self._height:
-            prefix = f'\x1b[1;{height - 1}r'
+            # After a prompt the cursor is usually on the last row. Index down and back up first,
+            # so the cursor is inside the region before the margins exclude that row; a linefeed
+            # from outside the region makes terminals either overwrite the footer or scroll it away.
+            prefix = f'\x1bD\x1b[1A\x1b7\x1b[1;{height - 1}r'
             self._height = height
         text = text[: max(0, width - 1)]
         highlight = frame % (len(text) + 12) - 6
         shades = tuple(theme.sgr(color) for color in (theme.SUGAR, theme.LIGHT_PURPLE, theme.LITHIUM, theme.PURPLE))
         painted = ''.join(shades[min(abs(index - highlight) // 2, 3)] + char for index, char in enumerate(text))
-        self.console.file.write(f'\x1b7{prefix}\x1b[{height};1H\x1b[2K{painted}\x1b[0m\x1b8')
+        self.console.file.write(f'{prefix}\x1b[{height};1H\x1b[2K{painted}\x1b[0m\x1b8')
         self.console.file.flush()
 
     async def _animate(self) -> None:

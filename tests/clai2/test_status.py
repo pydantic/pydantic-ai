@@ -70,6 +70,30 @@ async def test_shimmer_without_spinner(monkeypatch: pytest.MonkeyPatch, truecolo
     assert '\n' not in output.getvalue()
 
 
+async def test_row_reserved_before_margins_and_again_on_resize(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = io.StringIO()
+    original_sleep = asyncio.sleep
+
+    async def tick(delay: float) -> None:
+        await original_sleep(0)
+
+    monkeypatch.setattr('pydantic_clai2.status.asyncio.sleep', tick)
+    console = Console(file=output, force_terminal=True, width=40, height=24)
+    async with StatusLine(console, Status()):
+        for _ in range(3):
+            await original_sleep(0)
+        first = output.getvalue()
+        # Index down then up puts the cursor inside the region before the margins are set.
+        assert first.count('\x1bD\x1b[1A\x1b7\x1b[1;23r') == 1
+        assert first.count('\x1b[24;1H') >= 2
+        console.height = 30
+        for _ in range(3):
+            await original_sleep(0)
+    resized = output.getvalue()[len(first) :]
+    assert resized.count('\x1bD\x1b[1A\x1b7\x1b[1;29r') == 1
+    assert resized.count('\x1b[30;1H') >= 1
+
+
 async def test_tiny_terminal() -> None:
     async with StatusLine(Console(file=io.StringIO(), force_terminal=True, height=2), Status()):
         await asyncio.sleep(0)
@@ -110,7 +134,7 @@ async def test_cancellation_restores_scroll_region() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert output.getvalue().startswith('\x1b[?25l\x1b7\x1b[1;23r')
+    assert output.getvalue().startswith('\x1b[?25l\x1bD\x1b[1A\x1b7\x1b[1;23r\x1b[24;1H\x1b[2K')
     assert '\x1b[23;1H' not in output.getvalue()
     assert '\n' not in output.getvalue()
     assert '\x1b[r' in output.getvalue()
