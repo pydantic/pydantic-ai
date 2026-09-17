@@ -29,6 +29,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.output import PromptedOutput
+from pydantic_ai.tools import Tool
 
 from .conftest import try_import
 
@@ -291,3 +292,34 @@ async def test_no_content_reaches_telemetry_through_a_fallback_refresh(include_c
     await agent.run(SECRETS['user_prompt'])
 
     check(exporter, include_content, {'user_prompt', 'prompted_output_template'})
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_when_request_parameters_cannot_be_serialized(
+    include_content: bool,
+) -> None:
+    """A tool carrying arbitrary metadata, which no schema can serialize.
+
+    `model_request_parameters` then falls back to the request's string representation, which holds
+    the instructions as prose rather than in a field, so there is nothing to redact within it. The
+    whole attribute has to be withheld instead -- the fallback is a supported shape, since tool
+    `metadata` takes any object, not a malformed request.
+    """
+    settings, exporter = redacted_setup(include_content)
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    def lookup(query: str) -> str:  # pragma: no cover
+        """The tool is never called; its definition alone defeats serialization."""
+        return 'unused'
+
+    agent = Agent(
+        FunctionModel(respond),
+        instructions=SECRETS['instructions'],
+        tools=[Tool(lookup, metadata={'unserializable': object()})],
+        capabilities=[Instrumentation(settings=settings)],
+    )
+    await agent.run(SECRETS['user_prompt'])
+
+    check(exporter, include_content, {'user_prompt', 'instructions'})

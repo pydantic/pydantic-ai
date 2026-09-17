@@ -381,9 +381,9 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> Any:
     parameters = cast('dict[str, Any]', serialized_parameters)
     parts = parameters.get('instruction_parts')
     if isinstance(parts, list):
-        for part in cast('list[Any]', parts):
-            if isinstance(part, dict):
-                cast('dict[str, Any]', part).pop('content', None)
+        # Each part is `InstructionPart` dumped through its own schema, so a mapping with `content`.
+        for part in cast('list[dict[str, Any]]', parts):
+            part.pop('content', None)
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
     return parameters
