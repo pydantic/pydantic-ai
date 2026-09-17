@@ -438,9 +438,8 @@ class _ContextUsagePayload(BaseModel):
 class _ContextUsageEvent(BaseModel):
     model_config = ConfigDict(extra='allow')
 
-    # Verified live: the payload arrives under `context_usage_event`; the top-level form is
-    # tolerated defensively.
-    context_usage_event: _ContextUsagePayload | None = None
+    # Verified live: the payload arrives under `context_usage_event`.
+    context_usage_event: _ContextUsagePayload
 
 
 class _ClientErrorPayload(BaseModel):
@@ -455,9 +454,8 @@ class _ClientErrorEvent(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     # The AsyncAPI docs wrap the payload as `{"type": "client_error", "error_event": {...}}`; never
-    # observed live (non-permitted overrides reject with a post-handshake 1008 close instead), so
-    # a bare top-level payload is tolerated as a fallback for whatever the server does send.
-    error_event: _ClientErrorPayload | None = None
+    # observed live (non-permitted overrides reject with a post-handshake 1008 close instead).
+    error_event: _ClientErrorPayload
 
 
 # --- Preflight helpers ---------------------------------------------------------------------------
@@ -1246,6 +1244,7 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
     ) -> None:
         self._ws = ws
         self._conversation_id = conversation_id
+        self._context_limit_tokens: int | None = None
         self._text_output = text_output
         # The names this run advertised (its function tools after `tool_choice`). The hosted agent's
         # tools are configured in the dashboard, not per conversation, so `tool_choice` can only be
@@ -1276,6 +1275,17 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
     def conversation_id(self) -> str | None:
         """The server-assigned conversation id, e.g. for post-hoc cost lookup via the conversations API."""
         return self._conversation_id
+
+    @property
+    def context_limit_tokens(self) -> int | None:
+        """The context window of the LLM behind the agent, as last reported by a `context_usage` event.
+
+        `None` until the agent reports one, which requires `context_usage` in its
+        `conversation.client_events` list. It is a property of the conversation, not of a response,
+        so it is kept here rather than summed into the session's usage; pass
+        `profile={'context_window': ...}` to pin a value up front.
+        """
+        return self._context_limit_tokens
 
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the ElevenLabs Agents conversation.
@@ -1421,22 +1431,20 @@ class ElevenLabsRealtimeConnection(RealtimeConnection):
                 args = to_json(call.parameters or {}).decode()
             return [ToolCall(tool_call_id=call.tool_call_id, tool_name=call.tool_name, args=args)]
         if event_type == 'context_usage':
-            event = _ContextUsageEvent.model_validate(data)
-            usage = event.context_usage_event or _ContextUsagePayload.model_validate(data)
-            details = {'context_limit_tokens': usage.context_limit_tokens} if usage.context_limit_tokens else {}
+            usage = _ContextUsageEvent.model_validate(data).context_usage_event
+            if usage.context_limit_tokens is not None:
+                # The limit is a property of the conversation, not a per-response count: the
+                # session sums every numeric `details` entry across turns, so it is exposed on the
+                # connection instead of riding on the usage.
+                self._context_limit_tokens = usage.context_limit_tokens
             # ElevenLabs reports LLM context consumption only: no output tokens and no credits reach
             # the WebSocket. Conversation cost appears post-hoc on `GET /v1/convai/conversations/{id}`.
             # Gated behind `client_events` (off by default); verified cadence: once per user turn,
             # *after* the `agent_response` turn boundary, so it cannot be attributed to a specific
             # model response and accumulates into the run total only.
-            return [
-                SessionUsage(
-                    usage=RequestUsage(input_tokens=usage.context_tokens or 0, details=details),
-                    response_scoped=False,
-                )
-            ]
+            return [SessionUsage(usage=RequestUsage(input_tokens=usage.context_tokens or 0), response_scoped=False)]
         if event_type == 'client_error':
-            error = _ClientErrorEvent.model_validate(data).error_event or _ClientErrorPayload.model_validate(data)
+            error = _ClientErrorEvent.model_validate(data).error_event
             message = error.message or error.error_name or 'unknown error'
             return [RealtimeSessionErrorEvent(message=f'{_PROVIDER_LABEL} error: {message}', recoverable=True)]
         return self._map_turn_event(event_type, data)

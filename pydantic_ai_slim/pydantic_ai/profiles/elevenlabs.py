@@ -41,8 +41,9 @@ def elevenlabs_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_thinking': False,
         # The LLM behind a hosted agent is configured on the agent (and overridable per conversation
         # via `elevenlabs_llm`), so no context window can be inferred from the agent id and the
-        # genai-prices lookup is skipped. The live `context_limit_tokens` arrives in usage details
-        # when the agent reports `context_usage`; pass `profile={'context_window': ...}` to pin one.
+        # genai-prices lookup is skipped. Pass `profile={'context_window': ...}` to pin one; the live
+        # value is `ElevenLabsRealtimeConnection.context_limit_tokens` once the agent reports
+        # `context_usage`.
         'context_window': None,
         # `vad_score` events exist but there is no speech start/stop pair.
         'emits_input_speech_events': False,

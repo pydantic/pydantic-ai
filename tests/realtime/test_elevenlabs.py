@@ -1806,6 +1806,7 @@ async def test_rejected_fire_and_forget_tool_call_sends_nothing() -> None:
 async def test_context_usage_maps_to_session_usage_and_leaves_model_name_unset() -> None:
     connection, _ = _connection()
     assert connection.model_name is None
+    assert connection.context_limit_tokens is None
     frame = {
         'type': 'context_usage',
         'context_usage_event': {'model': 'gpt-5.2', 'context_tokens': 321, 'context_limit_tokens': 128000},
@@ -1814,7 +1815,10 @@ async def test_context_usage_maps_to_session_usage_and_leaves_model_name_unset()
     [usage_event] = events
     assert isinstance(usage_event, SessionUsage)
     assert usage_event.usage.input_tokens == 321
-    assert usage_event.usage.details == {'context_limit_tokens': 128000}
+    # The context window is a property of the conversation, not a per-turn count: `RunUsage` sums
+    # every numeric `details` entry across turns, so it lives on the connection instead.
+    assert usage_event.usage.details == {}
+    assert connection.context_limit_tokens == 128000
     # Verified live: `context_usage` arrives once per user turn, *after* the turn boundary, so it
     # cannot be attributed to a specific model response and stays run-level.
     assert usage_event.response_scoped is False
@@ -1826,6 +1830,8 @@ async def test_context_usage_maps_to_session_usage_and_leaves_model_name_unset()
     assert isinstance(bare_usage, SessionUsage)
     assert bare_usage.usage.input_tokens == 400
     assert bare_usage.usage.details == {}
+    # A report without the limit keeps the last one rather than clearing it.
+    assert connection.context_limit_tokens == 128000
 
 
 async def test_ping_is_answered_with_pong_and_yields_nothing() -> None:
@@ -1835,13 +1841,20 @@ async def test_ping_is_answered_with_pong_and_yields_nothing() -> None:
 
 
 async def test_client_error_maps_to_recoverable_session_error() -> None:
-    # The AsyncAPI docs wrap the payload as `error_event`; a bare top-level payload is tolerated as
-    # a fallback (the frame was never observed live: rejections arrive as WebSocket closes).
+    # The AsyncAPI docs wrap the payload as `error_event` (the frame was never observed live:
+    # rejections arrive as WebSocket closes). Without the wrapper it is a malformed frame like any
+    # other, reported as a recoverable parse error rather than guessed at.
     events, _ = await _events([{'type': 'client_error', 'error_event': {'message': 'tool timeout', 'code': 1008}}])
     assert events == [RealtimeSessionErrorEvent(message='ElevenLabs Agents error: tool timeout', recoverable=True)]
 
-    events, _ = await _events([{'type': 'client_error', 'error_name': 'tool_error'}])
+    events, _ = await _events([{'type': 'client_error', 'error_event': {'error_name': 'tool_error'}}])
     assert events == [RealtimeSessionErrorEvent(message='ElevenLabs Agents error: tool_error', recoverable=True)]
+
+    events, _ = await _events([{'type': 'client_error', 'error_name': 'tool_error'}])
+    [error] = events
+    assert isinstance(error, RealtimeSessionErrorEvent)
+    assert error.recoverable is True
+    assert error.message.startswith('Failed to parse ElevenLabs Agents event:')
 
 
 async def test_unknown_and_informational_events_are_ignored() -> None:

@@ -164,7 +164,7 @@ parameter's description only when the local schema declares one.
 | Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model=None` raises |
 | Native tools | Unsupported | Server-side tools live on the agent, outside the session |
 | Usage | Limited parameter support | Context tokens only, and only with `context_usage` in the agent's `client_events` (off by default); no output tokens or credits on the socket, cost appears post-hoc on the conversations API |
-| Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable; pin it via `profile={'context_window': ...}` or read the live `context_limit_tokens` from usage details |
+| Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable; pin it via `profile={'context_window': ...}`, or read the live value from `ElevenLabsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage` |
 | State-restoring reconnect | Unsupported | Conversations cannot be resumed; `reconnect` raises |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
@@ -208,6 +208,8 @@ Telephony (`ulaw_8000`) agents are not supported.
 - Usage reports LLM context consumption only (as `input_tokens`), and only when `context_usage` is
   in the agent's `conversation.client_events` list (it is not by default). Reports arrive after
   each turn completes and accumulate into the run total without attaching to a specific response.
+  The same report names the LLM's context window; it is not summed into usage but kept on
+  [`ElevenLabsRealtimeConnection.context_limit_tokens`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeConnection.context_limit_tokens].
   Look up conversation cost post-hoc via the ElevenLabs conversations API: every finalized
   [`ModelResponse`][pydantic_ai.messages.ModelResponse] carries the server-assigned id in
   `provider_details['conversation_id']`, so it survives into persisted history, and a consumer

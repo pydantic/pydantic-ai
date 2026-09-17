@@ -90,9 +90,10 @@ async def test_tool_round_and_followup_turn(
     Covers, against real frames: the preflight tool comparison passing against the
     server-normalized stored schema (default `elevenlabs_tool_sync='error'`), the prompt-override
     initiation frame, `client_tool_call`/`client_tool_result`, streamed audio with the
-    `agent_response` turn boundary, and `context_usage` accumulating into run-level usage (which is
-    why the test runs a second turn: usage trails the turn boundary, so turn 1's report is consumed
-    while turn 2 streams).
+    `agent_response` turn boundary, and a `context_usage` report landing in run-level usage (which
+    is why the test runs a second turn: usage trails the turn boundary, so turn 1's report is
+    consumed while turn 2 streams). The recording holds one report, so accumulation across turns is
+    not covered here.
     """
     provider, cassette = elevenlabs_ws_cassette
     model = ElevenLabsRealtimeModel(AGENT_ID, provider=provider)
@@ -181,10 +182,12 @@ async def test_tool_round_and_followup_turn(
 
     # ElevenLabs reports LLM context consumption only (no output tokens or credits reach the
     # socket), once per turn *after* the turn boundary, so it accumulates into the run total
-    # without attaching to a specific response.
-    assert session.usage.input_tokens > 0
-    assert session.usage.details.get('context_limit_tokens', 0) > 0
+    # without attaching to a specific response. The recording holds a single `context_usage`
+    # frame (436 context tokens); the reported context limit stays off the usage, see
+    # `ElevenLabsRealtimeConnection.context_limit_tokens`.
+    assert session.usage.input_tokens == 436
     assert session.usage.output_tokens == 0
+    assert session.usage.details == {}
 
 
 async def test_text_in_audio_out_turn(elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette]) -> None:
