@@ -45,15 +45,15 @@ interactions:
     parsed_body:
       answers:
         irreversible:
-          noul: 0.57
+          noul: 0.55
           type: noul
         verdict:
           choice: ask
-          confidence: 0.57
+          confidence: 0.55
           probabilities:
-            ask: 0.71
-            reject: 0.06
-            run: 0.23
+            ask: 0.69
+            reject: 0.14
+            run: 0.17
           type: choice
       model: jev-1.13.0
       usage:

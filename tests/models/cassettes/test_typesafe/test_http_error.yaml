@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '202'
+      - '101'
       content-type:
       - application/json
       host:
@@ -18,9 +18,6 @@ interactions:
       model: jev-latest
       questions:
         response:
-          instructions:
-            goal: The final response which ends this conversation
-            question: response
           type: noul
       state:
         prompt: anything

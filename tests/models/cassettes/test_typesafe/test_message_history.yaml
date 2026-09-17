@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '268'
+      - '185'
       content-type:
       - application/json
       host:
@@ -19,9 +19,7 @@ interactions:
       questions:
         response:
           instructions:
-            goal: The final response which ends this conversation
             instructions: Does the latest message mention a fruit?
-            question: response
           type: noul
       state:
         prompt: I like apples.
@@ -35,11 +33,11 @@ interactions:
     parsed_body:
       answers:
         response:
-          noul: 0.86
+          noul: 0.99
           type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 312
+        input_tokens: 290
         output_tokens: 20
     status:
       code: 200
@@ -53,7 +51,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '351'
+      - '375'
       content-type:
       - application/json
       host:
@@ -64,13 +62,18 @@ interactions:
       questions:
         response:
           instructions:
-            goal: The final response which ends this conversation
             instructions: Does the latest message mention a fruit?
-            question: response
           type: noul
       state:
-        previous_prompts:
-        - I like apples.
+        history:
+        - user: I like apples.
+        - tool_call:
+            args:
+              response: true
+            name: final_result
+        - tool_return:
+            content: Final result processed.
+            name: final_result
         prompt: And bicycles.
     uri: https://api.typesafe.ai/v1/systemone
   response:
@@ -82,11 +85,11 @@ interactions:
     parsed_body:
       answers:
         response:
-          noul: 0.04
+          noul: 0.05
           type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 335
+        input_tokens: 367
         output_tokens: 20
     status:
       code: 200

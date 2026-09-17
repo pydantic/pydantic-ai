@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '457'
+      - '336'
       content-type:
       - application/json
       host:
@@ -19,15 +19,13 @@ interactions:
       questions:
         colour:
           criteria:
-            blue: blue
-            red: red
+            blue: null
+            red: null
           instructions:
-            goal: The final response which ends this conversation
             question: Which colour is named?
           type: choice
         p_harmful:
           instructions:
-            goal: The final response which ends this conversation
             question: Is this request harmful?
           type: noul
       state:
@@ -49,11 +47,11 @@ interactions:
             red: 1.0
           type: choice
         p_harmful:
-          noul: 0.95
+          noul: 0.96
           type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 376
+        input_tokens: 330
         output_tokens: 51
     status:
       code: 200
