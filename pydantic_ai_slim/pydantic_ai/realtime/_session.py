@@ -3018,7 +3018,7 @@ class RealtimeSession:
             # or interruption signal, so there is nothing for `_auto_barge_in` to do here.
             for out in await self._handle_usage_event(event):
                 self._publish_taps(out)
-                await self._queue.put(out)
+                self._queue_put(out)
             return False
         for out in self._translate_event(event):
             self._publish_taps(out)
