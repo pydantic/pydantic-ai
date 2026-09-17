@@ -2736,7 +2736,7 @@ async def test_tool_completion_delivered_while_upstream_idle() -> None:
         assert isinstance(await anext(events), PartEndEvent)
         assert isinstance(await anext(events), FunctionToolCallEvent)
         # Without multiplexing this would hang forever waiting on the idle connection.
-        completed = await asyncio.wait_for(anext(events), timeout=1.0)
+        completed = await asyncio.wait_for(anext(events), timeout=_LIVENESS_TIMEOUT)
         assert isinstance(completed, FunctionToolResultEvent)
         assert completed.part.content == 'ready'
 
@@ -8063,7 +8063,7 @@ async def test_agent_realtime_session_capability_recovers_tool_error_for_taps_on
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, capabilities=[RecoverToolError()]).session() as session:
         audio = asyncio.create_task(_collect(session.stream_audio()))
-        with anyio.fail_after(1):
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
             while not conn.sent:
                 await asyncio.sleep(0)
 
