@@ -84,9 +84,13 @@ The field description is the question text; an `Enum` field without one uses the
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the example below.
 
-Jev's confidence in each answer it gave is on the response, so you can act on how sure it was, for example by asking a human below a threshold. It is confidence in the answer, not the probability of a yes: a `False` answered from a probability of 0.01 is a confident no, and reports 0.99, so one threshold reads the same way whichever way the answer went.
+Confidence in each answer is on the response, so you can act on how sure the model was, for example by asking a human below a threshold. It runs 0 to 1, where 0 is undecided, and means the same thing for every field, so one threshold reads the same way across an output type.
 
-A `float` field has no entry. Jev answers every yes/no question with a probability; a `bool` field turns that into a yes or a no, and the confidence is what was lost in the rounding. A `float` field keeps the probability as the answer, so nothing was lost and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement, and repeating it under `confidence` would invite a threshold that filters out the low-risk customers rather than the uncertain ones. If you want the same "how far from undecided" reading for a `float`, it is `abs(value - 0.5) * 2`.
+For a pick-one or a rubric field it is Jev's own number, computed from how its probabilities are spread. Jev reports none for a yes/no, because there the probability *is* the answer before we round it: what is lost in the rounding is how sure the answer is, so that field's confidence is how far the probability sits from the coin flip, doubled onto the same scale. A `False` answered from a probability of 0.01 is a confident no and reports 0.98; one answered from 0.45 reports 0.10.
+
+A `float` field has no entry at all. It keeps the probability as its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement, and repeating it under `confidence` would invite a threshold that filters out the low-risk customers rather than the uncertain ones. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give.
+
+A `float` is still a yes/no question underneath, so `0.5` means Jev is undecided, not that the answer is middling. When you want a magnitude, use a rubric.
 
 ```python
 from pydantic_ai import Agent
@@ -136,7 +140,7 @@ print(result.response.provider_details['scores'])
 #> {'clarity': 0.16}
 ```
 
-The answer is the level Jev thought most likely, so it is always one of yours. `provider_details['scores']` keeps the expected score across the rubric, which falls between the levels — `0.16` here, not `0` — and is the number to average over a dataset. `probabilities` holds the whole distribution, keyed by level.
+The answer is the expected score rounded to the nearest level, which is what TypeSafe's own docs do when code needs one outcome, so it is always one of yours. `provider_details['scores']` keeps the unrounded position along the rubric — `0.16` here, not `0` — which is what to rank or threshold on; TypeSafe warn it is weakly calibrated, so don't read the gap between two levels as a precise magnitude. `probabilities` holds the whole distribution, keyed by level.
 
 Every level needs a docstring: a rubric whose levels are unexplained is not a rubric, so one without them is a [`UserError`][pydantic_ai.exceptions.UserError]. The levels must also start at `0` and run upwards without gaps, which is the shape Jev scores against.
 

@@ -114,19 +114,20 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     | `bool` | yes or no | `True` when Jev's probability is at least 0.5 |
     | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
     | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
-    | `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the level Jev thought most likely |
+    | `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the score rounded to a level |
 
     The field description is the question. The output type's docstring and the agent's instructions go along
     as context. A docstring under an `Enum` member describes that option, see the [docs](../../models/typesafe.md);
     without one Jev only sees its name. A bare `bool`, `Literal` or `float` output has no field to describe, so
     there the agent's instructions are the question.
-    Jev's confidence per field is in
+    Confidence per field, from 0 for undecided to 1, is in
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `confidence`,
     the full distribution of each pick-one and rubric field under `probabilities`, and each rubric field's
-    expected score, which falls between the levels, under `scores`.
+    unrounded position along its levels under `scores`.
 
-    The latest user prompt is the text Jev judges. Everything before it in the message history, from any model,
-    goes along as `history`: user prompts, answers, tool calls and their results, and retry prompts.
+    The latest user prompt is the text Jev judges, and is the whole state on its own. Everything before it in
+    the message history, from any model, goes along beside it as `history`: user prompts, answers, tool calls
+    and their results, and retry prompts.
 
     Anything Jev cannot do is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request
     is sent: text output, other field types, tools, files in the prompt or history, and streaming.
@@ -230,21 +231,23 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                     # that asks for the number would otherwise get it back twice under two names.
                     args[name] = answer.noul
                 else:
-                    # `noul` is the probability of yes. Confidence in the answer given is how far it is from
-                    # the coin flip, so a no returned at 0.01 is a confident no, not an unsure one.
+                    # Jev reports no confidence for a yes/no: `noul` is the probability of yes, and what is
+                    # lost in rounding it to an answer is how sure that answer is. That is the distance from
+                    # the coin flip, doubled so it runs 0 to 1 like the confidence Jev reports for the other
+                    # two kinds of question — a no returned at 0.01 is a confident no, and reports 0.98.
                     args[name] = answer.noul >= 0.5
-                    confidence[name] = answer.noul if args[name] else 1 - answer.noul
+                    confidence[name] = abs(answer.noul - 0.5) * 2
             elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
                 args[name] = answer.choice
                 confidence[name] = answer.confidence
                 probabilities[name] = answer.probabilities
             elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
-                # `score` is the expectation across the rubric and falls between levels; the answer has to be
-                # one of them, so it is the level Jev thought most likely, as a pick-one returns its choice.
-                levels = answer.probabilities
-                args[name] = max(levels, key=lambda level: levels[level])
+                # `score` is a position along the rubric and falls between levels. The answer has to be one
+                # of them, and TypeSafe's way to get one is to "round it to the nearest level"; the mode
+                # would throw away the ordering that makes a rubric a rubric.
+                args[name] = round(answer.score)
                 confidence[name] = answer.confidence
-                probabilities[name] = {str(level): p for level, p in levels.items()}
+                probabilities[name] = {str(level): p for level, p in answer.probabilities.items()}
                 scores[name] = answer.score
             else:
                 raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
@@ -313,7 +316,9 @@ def _questions(
         if output_tool.description and output_tool.description != DEFAULT_OUTPUT_TOOL_DESCRIPTION:
             ask['goal'] = output_tool.description
         if instructions:
-            ask['instructions'] = instructions
+            # With no field to describe, a bare output's whole question is what the agent was instructed to
+            # ask, so it goes where a question goes. Alongside fields of its own it is shared framing.
+            ask['question' if 'question' not in ask and 'field' not in ask else 'instructions'] = instructions
 
         options: dict[Any, str | None] | None = None
         if 'enum' in prop:
@@ -434,8 +439,13 @@ def _response_entries(message: ModelResponse) -> list[JSONContent]:
     return entries
 
 
-def _map_messages(messages: list[ModelMessage]) -> tuple[list[str], dict[str, JSONContent]]:
-    """The system prompts, and the state to judge: the latest user text as `prompt`, everything before as `history`."""
+def _map_messages(messages: list[ModelMessage]) -> tuple[list[str], JSONContent]:
+    """The system prompts, and the state to judge.
+
+    The latest user text on its own is the whole state, as the text TypeSafe's own examples pass. With a
+    conversation behind it there are two parts to keep apart, so they get named: the text under judgement
+    and the `history` before it.
+    """
     system_prompts: list[str] = []
     history: list[JSONContent] = []
     prompt_parts: list[str] = []
@@ -450,11 +460,12 @@ def _map_messages(messages: list[ModelMessage]) -> tuple[list[str], dict[str, JS
         else:
             assert_never(message)
 
-    state: dict[str, JSONContent] = {}
-    if history:
-        state['history'] = history
-    if prompt := '\n\n'.join(prompt_parts):
-        state['prompt'] = prompt
-    if not state:
+    text = '\n\n'.join(prompt_parts)
+    if not (text or history):
         raise UserError('A request without user text is not supported by this model; Jev needs text to judge.')
+    if not history:
+        return system_prompts, text
+    state: dict[str, JSONContent] = {'history': history}
+    if text:
+        state['text'] = text
     return system_prompts, state

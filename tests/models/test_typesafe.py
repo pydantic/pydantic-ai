@@ -150,7 +150,7 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
     assert result.response.usage == snapshot(RequestUsage(input_tokens=474, output_tokens=58))
     assert result.response.provider_details == snapshot(
         {
-            'confidence': {'verdict': 0.55, 'irreversible': 0.55},
+            'confidence': {'verdict': 0.55, 'irreversible': 0.10000000000000009},
             'probabilities': {'verdict': {'run': 0.17, 'ask': 0.69, 'reject': 0.14}},
             'scores': {},
         }
@@ -160,7 +160,7 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
     # agent instructions; the enum member docstrings describe the options; the prompt is the state.
     assert request_capture.body('/v1/systemone') == snapshot(
         {
-            'state': {'prompt': 'rm -rf ./build'},
+            'state': 'rm -rf ./build',
             'model': 'jev-latest',
             'questions': {
                 'verdict': {
@@ -201,13 +201,13 @@ async def test_bare_bool_output(
 
     assert result.output == snapshot(True)
     assert result.response.provider_details == snapshot(
-        {'confidence': {'response': 0.96}, 'probabilities': {}, 'scores': {}}
+        {'confidence': {'response': 0.9199999999999999}, 'probabilities': {}, 'scores': {}}
     )
     assert request_capture.body('/v1/systemone')['questions'] == snapshot(
         {
             'response': {
                 'type': 'noul',
-                'instructions': {'instructions': 'Is this request harmful?'},
+                'instructions': {'question': 'Is this request harmful?'},
             }
         }
     )
@@ -297,13 +297,13 @@ async def test_message_history(
     # is reported is confidence in the answer given, not the probability of yes, so both read as ~0.95+ and a
     # threshold means the same thing whichever way the answer went.
     assert first.response.provider_details == snapshot(
-        {'confidence': {'response': 0.99}, 'probabilities': {}, 'scores': {}}
+        {'confidence': {'response': 0.98}, 'probabilities': {}, 'scores': {}}
     )
     assert second.response.provider_details == snapshot(
-        {'confidence': {'response': 0.95}, 'probabilities': {}, 'scores': {}}
+        {'confidence': {'response': 0.9}, 'probabilities': {}, 'scores': {}}
     )
     first_body, second_body = request_capture.bodies('/v1/systemone')
-    assert first_body['state'] == snapshot({'prompt': 'I like apples.'})
+    assert first_body['state'] == snapshot('I like apples.')
     assert second_body['state'] == snapshot(
         {
             'history': [
@@ -311,7 +311,7 @@ async def test_message_history(
                 {'tool_call': {'name': 'final_result', 'args': {'response': True}}},
                 {'tool_return': {'name': 'final_result', 'content': 'Final result processed.'}},
             ],
-            'prompt': 'And bicycles.',
+            'text': 'And bicycles.',
         }
     )
     # The instructions are on every request in the history, but go out once.
@@ -521,7 +521,7 @@ Fix the errors and try again.\
                 {'assistant': 'It is raining.'},
                 {'summary': 'Weather was discussed.'},
             ],
-            'prompt': 'Did the assistant answer?',
+            'text': 'Did the assistant answer?',
         }
     )
 
@@ -556,7 +556,8 @@ async def test_text_list_prompt(allow_model_requests: None):
         return answers(response={'type': 'noul', 'noul': 0.9})
 
     await Agent(mock_model(record), output_type=bool, instructions='Is this fine?').run(['first', 'second'])
-    assert seen[0]['state'] == {'prompt': 'first\n\nsecond'}
+    # With nothing but the latest text, the state is that text, as TypeSafe's own examples pass it.
+    assert seen[0]['state'] == 'first\n\nsecond'
 
 
 async def test_system_prompt(allow_model_requests: None):
@@ -569,13 +570,14 @@ async def test_system_prompt(allow_model_requests: None):
 
     agent = Agent(mock_model(record), output_type=bool, system_prompt='Be strict.', instructions='Is it harmful?')
     first = await agent.run('anything')
-    assert seen[0]['questions']['response']['instructions']['instructions'] == 'Be strict.\n\nIs it harmful?'
+    # A bare output has no field to describe, so what the agent was told to ask is the question.
+    assert seen[0]['questions']['response']['instructions']['question'] == 'Be strict.\n\nIs it harmful?'
 
     # A system prompt later in the history is an instruction too, not part of the judged text.
     history = [*first.all_messages(), ModelRequest(parts=[SystemPromptPart('Now be lenient.')])]
     await agent.run('again', message_history=history)
-    assert seen[1]['state']['prompt'] == 'again'
-    assert seen[1]['questions']['response']['instructions']['instructions'] == snapshot(
+    assert seen[1]['state']['text'] == 'again'
+    assert seen[1]['questions']['response']['instructions']['question'] == snapshot(
         'Be strict.\n\nNow be lenient.\n\nIs it harmful?'
     )
 
