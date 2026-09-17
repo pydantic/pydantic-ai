@@ -76,7 +76,7 @@ from pydantic_ai.durable_exec._toolset import (
 )
 from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import PartStartEvent, RetryPromptPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -212,6 +212,18 @@ async def test_durability_forces_sequential_tools_inside_durable_context() -> No
         return cast(AgentRunResult[Any], object())
 
     await bound.wrap_run(ctx, handler=handler)
+
+
+async def test_durability_stream_without_handler_is_passthrough() -> None:
+    durability = JournalDurability()
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterable[AgentStreamEvent]:
+        yield PartStartEvent(index=0, part=TextPart('hello'))
+
+    events = [event async for event in durability.wrap_run_event_stream(ctx, stream=stream())]
+
+    assert events == [PartStartEvent(index=0, part=TextPart('hello'))]
 
 
 def test_prepare_run_context_without_agent() -> None:

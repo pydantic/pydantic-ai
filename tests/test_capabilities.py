@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import anyio
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import _agent_graph
 from pydantic_ai._run_context import RunContext
@@ -57,6 +57,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -532,6 +533,57 @@ class _NoopCap(AbstractCapability):
 
 
 @dataclass
+class _InactiveErrorHookCap(_NoopCap):
+    id: str | None = 'inactive'
+    defer_loading: bool = True
+
+    async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+        return await super().on_run_error(ctx, error=error)
+
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        error: ValidationError | ModelRetry,
+    ) -> dict[str, Any]:
+        return await super().on_tool_validate_error(ctx, call=call, tool_def=tool_def, args=args, error=error)
+
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        return await super().on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=error)
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        output_context: OutputContext,
+        output: str | dict[str, Any],
+        error: ValidationError | ModelRetry,
+    ) -> Any:
+        return await super().on_output_validate_error(ctx, output_context=output_context, output=output, error=error)
+
+    async def on_output_process_error(
+        self,
+        ctx: RunContext[Any],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        error: Exception,
+    ) -> Any:
+        return await super().on_output_process_error(ctx, output_context=output_context, output=output, error=error)
+
+
+@dataclass
 class _NodeModelHookCap(AbstractCapability[Any]):
     log: list[str] = field(default_factory=lambda: [])
 
@@ -595,6 +647,159 @@ async def test_default_node_and_model_hooks_remain_directly_callable() -> None:
     with pytest.raises(RuntimeError, match='provider failure') as model_exc_info:
         await _NoopCap().on_model_request_error(ctx, request_context=request_context, error=error)
     assert model_exc_info.value is error
+
+
+async def test_default_lifecycle_hooks_remain_directly_callable() -> None:
+    ctx = _build_run_context()
+    call = ToolCallPart('tool', {}, tool_call_id='call')
+    tool_def = ToolDefinition(name='tool')
+    output_context = _output_context()
+    capability = _NoopCap()
+
+    async def run_handler() -> AgentRunResult[str]:
+        return AgentRunResult(output='run')
+
+    async def validate_tool(args: str | dict[str, Any]) -> dict[str, Any]:
+        return args if isinstance(args, dict) else {}
+
+    async def execute_tool(args: dict[str, Any]) -> str:
+        return str(args)
+
+    async def validate_output(output: str | dict[str, Any]) -> str | dict[str, Any]:
+        return output
+
+    async def process_output(output: Any) -> Any:
+        return output
+
+    assert (await capability.wrap_run(ctx, handler=run_handler)).output == 'run'
+
+    run_error = RuntimeError('run')
+    with pytest.raises(RuntimeError) as run_exc_info:
+        await capability.on_run_error(ctx, error=run_error)
+    assert run_exc_info.value is run_error
+
+    async def event_stream() -> AsyncIterator[AgentStreamEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='event'))
+
+    assert len([event async for event in capability.wrap_run_event_stream(ctx, stream=event_stream())]) == 1
+    assert await capability.wrap_tool_validate(ctx, call=call, tool_def=tool_def, args={}, handler=validate_tool) == {}
+    assert await capability.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args={}, handler=execute_tool) == '{}'
+    assert (
+        await capability.wrap_output_validate(ctx, output_context=output_context, output='raw', handler=validate_output)
+        == 'raw'
+    )
+    assert (
+        await capability.wrap_output_process(
+            ctx, output_context=output_context, output='parsed', handler=process_output
+        )
+        == 'parsed'
+    )
+    assert await capability.handle_deferred_tool_calls(ctx, requests=DeferredToolRequests(calls=[call])) is None
+
+    validate_error = ModelRetry('validate')
+    with pytest.raises(ModelRetry) as validate_exc_info:
+        await capability.on_tool_validate_error(ctx, call=call, tool_def=tool_def, args={}, error=validate_error)
+    assert validate_exc_info.value is validate_error
+
+    execute_error = RuntimeError('execute')
+    with pytest.raises(RuntimeError) as execute_exc_info:
+        await capability.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args={}, error=execute_error)
+    assert execute_exc_info.value is execute_error
+
+    output_validate_error = ModelRetry('output validate')
+    with pytest.raises(ModelRetry) as output_validate_exc_info:
+        await capability.on_output_validate_error(
+            ctx, output_context=output_context, output='raw', error=output_validate_error
+        )
+    assert output_validate_exc_info.value is output_validate_error
+
+    output_process_error = RuntimeError('output process')
+    with pytest.raises(RuntimeError) as output_process_exc_info:
+        await capability.on_output_process_error(
+            ctx, output_context=output_context, output='parsed', error=output_process_error
+        )
+    assert output_process_exc_info.value is output_process_error
+
+    hooks = Hooks()
+    assert (await hooks.wrap_run(ctx, handler=run_handler)).output == 'run'
+    assert await hooks.wrap_tool_validate(ctx, call=call, tool_def=tool_def, args={}, handler=validate_tool) == {}
+    assert await hooks.wrap_tool_execute(ctx, call=call, tool_def=tool_def, args={}, handler=execute_tool) == '{}'
+    assert (
+        await hooks.wrap_output_validate(ctx, output_context=output_context, output='raw', handler=validate_output)
+        == 'raw'
+    )
+    assert (
+        await hooks.wrap_output_process(ctx, output_context=output_context, output='parsed', handler=process_output)
+        == 'parsed'
+    )
+    with pytest.raises(RuntimeError) as hooks_exc_info:
+        await hooks.on_output_process_error(
+            ctx, output_context=output_context, output='parsed', error=output_process_error
+        )
+    assert hooks_exc_info.value is output_process_error
+
+    wrapper = WrapperCapability(wrapped=_NoopCap())
+    assert await wrapper.wrap_tool_validate(ctx, call=call, tool_def=tool_def, args={}, handler=validate_tool) == {}
+    assert (
+        await wrapper.wrap_output_validate(ctx, output_context=output_context, output='raw', handler=validate_output)
+        == 'raw'
+    )
+    assert (
+        await wrapper.wrap_output_process(ctx, output_context=output_context, output='parsed', handler=process_output)
+        == 'parsed'
+    )
+
+
+async def test_combined_capability_skips_inactive_implemented_reverse_hooks() -> None:
+    capability = _InactiveErrorHookCap()
+    combined = CombinedCapability([capability])
+    ctx = _build_run_context()
+    call = ToolCallPart('tool', {}, tool_call_id='call')
+    tool_def = ToolDefinition(name='tool')
+    output_context = _output_context()
+
+    run_error = RuntimeError('run')
+    with pytest.raises(RuntimeError) as run_exc_info:
+        await combined.on_run_error(ctx, error=run_error)
+    assert run_exc_info.value is run_error
+    with pytest.raises(RuntimeError):
+        await capability.on_run_error(ctx, error=run_error)
+
+    validate_error = ModelRetry('validate')
+    with pytest.raises(ModelRetry) as validate_exc_info:
+        await combined.on_tool_validate_error(ctx, call=call, tool_def=tool_def, args={}, error=validate_error)
+    assert validate_exc_info.value is validate_error
+    with pytest.raises(ModelRetry):
+        await capability.on_tool_validate_error(ctx, call=call, tool_def=tool_def, args={}, error=validate_error)
+
+    execute_error = RuntimeError('execute')
+    with pytest.raises(RuntimeError) as execute_exc_info:
+        await combined.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args={}, error=execute_error)
+    assert execute_exc_info.value is execute_error
+    with pytest.raises(RuntimeError):
+        await capability.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args={}, error=execute_error)
+
+    output_validate_error = ModelRetry('output validate')
+    with pytest.raises(ModelRetry) as output_validate_exc_info:
+        await combined.on_output_validate_error(
+            ctx, output_context=output_context, output='raw', error=output_validate_error
+        )
+    assert output_validate_exc_info.value is output_validate_error
+    with pytest.raises(ModelRetry):
+        await capability.on_output_validate_error(
+            ctx, output_context=output_context, output='raw', error=output_validate_error
+        )
+
+    output_process_error = RuntimeError('output process')
+    with pytest.raises(RuntimeError) as output_process_exc_info:
+        await combined.on_output_process_error(
+            ctx, output_context=output_context, output='parsed', error=output_process_error
+        )
+    assert output_process_exc_info.value is output_process_error
+    with pytest.raises(RuntimeError):
+        await capability.on_output_process_error(
+            ctx, output_context=output_context, output='parsed', error=output_process_error
+        )
 
 
 async def test_inherited_noop_capability_hooks_are_absent_from_traceback() -> None:

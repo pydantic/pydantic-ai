@@ -412,6 +412,16 @@ Agent.instrument_all(instrumentation_settings)
 
 This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
 
+### Exception capture and telemetry content
+
+Exception-local capture, traceback retention, and OpenTelemetry content recording are separate concerns:
+
+- An error reporter such as Sentry may format local variables from every traceback frame. Set Sentry's `include_local_variables=False` to disable that formatting. This is the immediate workaround when exception capture is using substantial memory.
+- Pydantic AI preserves normal Python tracebacks so application debugging remains intact. A live traceback can still keep objects reachable until the exception is released; bounded representations reduce formatting work but do not clear traceback frames or mutate your run state.
+- [`InstrumentationSettings.include_content`][pydantic_ai.models.instrumented.InstrumentationSettings] controls message and tool content recorded on OpenTelemetry spans. It does not disable exception-local capture, and disabling it does not release objects retained by a live traceback.
+
+For example, configure Sentry independently of Pydantic AI instrumentation with `sentry_sdk.init(include_local_variables=False)`.
+
 ### Excluding model request parameters
 
 By default, each model request span carries a `model_request_parameters` attribute that serializes the full [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], including the output configuration and every tool definition. Tools that carry large output schemas (some MCP toolsets, for example) can make this attribute big enough to strain span export and inflate memory use. Set `include_model_request_parameters=False` to omit it entirely:
