@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import json_repair
@@ -53,16 +54,20 @@ class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
         return None
 
 
+MAX_READ_CHARS = 60000
+"""Characters of complete lines per `read_file`, kept under `MAX_OUTPUT_CHARS` so the output cap never cuts a read."""
+
+MAX_OUTPUT_CHARS = 64000
+"""Characters kept from any tool result."""
+
+
 def _file_system(workspace: Path, *, unrestricted: bool) -> FileSystem[AgentDepsT]:
+    file_system = FileSystem[AgentDepsT](
+        root_dir=workspace, content_hashes=False, max_read_chars=MAX_READ_CHARS, tools=FILE_TOOL_NAMES
+    )
     if unrestricted:
-        return FileSystem[AgentDepsT](
-            root_dir=workspace.anchor,
-            cwd=workspace,
-            protected_patterns=[],
-            content_hashes=False,
-            tools=FILE_TOOL_NAMES,
-        )
-    return FileSystem[AgentDepsT](root_dir=workspace, content_hashes=False, tools=FILE_TOOL_NAMES)
+        return replace(file_system, root_dir=workspace.anchor, cwd=workspace, protected_patterns=[])
+    return file_system
 
 
 class Coder(CombinedCapability[AgentDepsT]):
@@ -96,6 +101,8 @@ class Coder(CombinedCapability[AgentDepsT]):
                 RepoContext[AgentDepsT](workspace_dir=root, expose_inventory_tool=False),
                 ClearToolResults[AgentDepsT](max_fraction=0.7),
                 WarnNearLimits[AgentDepsT](max_context_fraction=0.9),
-                _BoundToolOutputs[AgentDepsT](id=None, bands=[Band(over=64000, action=Truncate(max_chars=64000))]),
+                _BoundToolOutputs[AgentDepsT](
+                    id=None, bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))]
+                ),
             ]
         )

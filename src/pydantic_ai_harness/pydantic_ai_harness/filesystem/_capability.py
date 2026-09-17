@@ -59,6 +59,16 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     max_read_lines: int = 2000
     """Maximum number of lines returned by a single `read_file` call."""
 
+    max_read_chars: int | None = None
+    """Maximum characters in a single `read_file` result, header and hint included.
+
+    The window ends on the last complete line that fits, and the continuation
+    hint names the first line not shown, so a caller paging by `offset` cannot
+    skip content. Set this at or below any downstream tool-output cap; a cap
+    applied after the fact cuts mid-line and drops or strands the hint. `None`
+    leaves only `max_read_lines` in force.
+    """
+
     max_list_results: int = 1000
     """Maximum number of entries returned by `list_directory`."""
 
@@ -97,6 +107,8 @@ class FileSystem(AbstractCapability[AgentDepsT]):
             'max_search_results': self.max_search_results,
             'max_find_results': self.max_find_results,
         }
+        if self.max_read_chars is not None:
+            values['max_read_chars'] = self.max_read_chars
         for name, value in values.items():
             if not isinstance(value, int) or value <= 0:
                 raise ValueError(f'{name} must be a positive integer, got {value!r}')
@@ -109,6 +121,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
             denied_patterns=self.denied_patterns,
             protected_patterns=self.protected_patterns,
             max_read_lines=self.max_read_lines,
+            max_read_chars=self.max_read_chars,
             max_list_results=self.max_list_results,
             max_search_results=self.max_search_results,
             max_find_results=self.max_find_results,

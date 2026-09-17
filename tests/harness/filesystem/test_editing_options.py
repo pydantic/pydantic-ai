@@ -1,4 +1,4 @@
-"""`FileSystem` options added for single-writer coding agents: `cwd`, `content_hashes`, and batch edits."""
+"""`FileSystem` options added for single-writer coding agents: `cwd`, `content_hashes`, `max_read_chars`, and batch edits."""
 
 import os
 from pathlib import Path
@@ -119,6 +119,46 @@ class TestReplacements:
         assert (await toolset(tmp_path).edit_file('f.txt', 'one', 'two')).startswith('Edited f.txt.')
         assert (tmp_path / 'f.txt').read_text() == 'two'
         assert Replacement(old_text='a', new_text='b').new_text == 'b'
+
+
+class TestMaxReadChars:
+    async def test_window_ends_on_a_complete_line(self, tmp_path: Path) -> None:
+        (tmp_path / 'wide.txt').write_text(''.join(f'line {i} ' + 'x' * 40 + '\n' for i in range(10)))
+        output = await call(tmp_path, 'read_file', {'path': 'wide.txt'}, max_read_chars=400)
+        body = output.splitlines()[1:]
+        assert body[:-1] == [f'{i + 1:>6}\tline {i} ' + 'x' * 40 for i in range(2)]
+        assert body[-1] == '... (8 more lines. Use offset=2 to continue reading.)'
+        assert 'line 2' in await call(tmp_path, 'read_file', {'path': 'wide.txt', 'offset': 2}, max_read_chars=400)
+
+    async def test_limit_still_applies_within_the_budget(self, tmp_path: Path) -> None:
+        (tmp_path / 'short.txt').write_text('a\nb\nc\n')
+        output = await call(tmp_path, 'read_file', {'path': 'short.txt', 'limit': 2}, max_read_chars=400)
+        assert output.endswith('... (1 more lines. Use offset=2 to continue reading.)\n')
+
+    async def test_oversized_line_is_named_and_skippable(self, tmp_path: Path) -> None:
+        (tmp_path / 'minified.js').write_text('short\n' + 'y' * 500 + '\nafter\n')
+        output = await call(tmp_path, 'read_file', {'path': 'minified.js', 'offset': 1}, max_read_chars=400)
+        assert output.splitlines()[1:] == [
+            '... (Line 2 is 501 characters and does not fit the read window. '
+            'Use offset=2 to skip it, or a shell byte range to inspect it.)'
+        ]
+        assert 'after' in await call(tmp_path, 'read_file', {'path': 'minified.js', 'offset': 2}, max_read_chars=400)
+
+    async def test_bounds_the_whole_result(self, tmp_path: Path) -> None:
+        (tmp_path / 'wide.txt').write_text(''.join(f'line {i} ' + 'x' * 40 + '\n' for i in range(100)))
+        for offset in (0, 1, 2, 3):
+            output = await call(tmp_path, 'read_file', {'path': 'wide.txt', 'offset': offset}, max_read_chars=400)
+            assert len(output) <= 400 and output.endswith('to continue reading.)\n')
+
+    async def test_long_path_label_is_abbreviated(self, tmp_path: Path) -> None:
+        (tmp_path / 'wide.txt').write_text('a\nb\n')
+        path = './' * 300 + 'wide.txt'
+        output = await call(tmp_path, 'read_file', {'path': path}, max_read_chars=400)
+        assert len(output) <= 400 and output.startswith('[...') and output.endswith('     2\tb\n')
+
+    def test_must_be_positive(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match='max_read_chars'):
+            FileSystem[None](root_dir=tmp_path, max_read_chars=0)
 
 
 class TestCwd:

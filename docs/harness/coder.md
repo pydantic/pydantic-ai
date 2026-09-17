@@ -54,7 +54,7 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
 
 1. A private hook that repairs malformed JSON tool arguments before normal validation (see below).
 2. A `Capability` carrying the default instructions, plus any `instructions=` you pass.
-3. [`FileSystem`](filesystem.md)`(root_dir=workspace, content_hashes=False, tools=FILE_TOOL_NAMES)`, where
+3. [`FileSystem`](filesystem.md)`(root_dir=workspace, content_hashes=False, max_read_chars=60000, tools=FILE_TOOL_NAMES)`, where
    `FILE_TOOL_NAMES` is `read_file`, `write_file`, `edit_file`, `list_files`, and `grep`.
 4. [`Shell`](shell.md)`(cwd=workspace, denied_commands=[], allow_interactive=True, default_timeout=270, denied_env_patterns=LLM_API_KEY_ENV_PATTERNS, tools=['shell'])`.
 5. [`RepoContext`](repo-context.md)`(workspace_dir=workspace, expose_inventory_tool=False)` for repository instructions and structure.
@@ -70,16 +70,16 @@ or allowlist commands.
 
 | Tool | Behavior |
 | --- | --- |
-| `read_file(path, offset=0, limit=None)` | Zero-based line offset, one-based displayed line numbers, up to 2,000 lines. No hash header. |
+| `read_file(path, offset=0, limit=None)` | Zero-based line offset, one-based displayed line numbers, up to 2,000 lines or 60,000 characters of complete lines; the continuation hint names the exact next offset, and a line too long for the window is named and skippable. No hash header. |
 | `write_file(path, content)` | Create a file in an existing directory, or replace one. No `expected_hash`. |
 | `edit_file(path, old_text, new_text)` or `edit_file(path, replacements=[...])` | Exact replacements, each matching once; a batch is checked in memory and written only if every replacement matches. |
 | `list_files(path='.', glob=None)` | `rg --files`, sorted by path, respecting ignore files and skipping hidden files. |
 | `grep(pattern, ...)` | Ripgrep search with `path`, `glob`, `file_type`, `ignore_case`, `literal`, and `context` (0 to 20). |
 | `shell(command, mode='foreground', timeout=270)` | Unrestricted commands rooted at the workspace that outlive the run. |
 
-Results are bounded by `FileSystem`'s caps (2,000 lines per `read_file`, 1,000 lines or files per search or listing) and Coder's 64,000-character
+Results are bounded by `FileSystem`'s caps (2,000 lines or 60,000 characters per `read_file`, 1,000 lines or files per search or listing) and Coder's 64,000-character
 tool-output limit; a truncation marker means more output was omitted, so narrow the search rather than
-assuming it was complete. Use `shell` for `mkdir`, `find`, process inspection, and `kill`. File writes
+assuming it was complete. A `read_file` window stays under the output limit, so paging by `offset` never skips lines. Use `shell` for `mkdir`, `find`, process inspection, and `kill`. File writes
 keep the standalone filesystem's protected-path rules (`.git`, `.env`, keys, and secrets); shell can bypass
 these rules. Coder does not include planning, delegation, or the run-scoped `run_command` family.
 
