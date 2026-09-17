@@ -242,6 +242,24 @@ CASES = [
         present={'generationConfig.thinkingConfig.thinking_level': 'LOW'},
         match_body=True,
     ),
+    WireCase(
+        id='google-gemini-31-flash-lite-image-low-snaps-down',
+        provider='google',
+        model_name='gemini-3.1-flash-lite-image',
+        thinking='low',
+        # Documented levels are `minimal, high` only (#8022): `low` snaps down to `minimal`.
+        present={'generationConfig.thinkingConfig.thinking_level': 'MINIMAL'},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-31-flash-lite-image-medium-snaps-up',
+        provider='google',
+        model_name='gemini-3.1-flash-lite-image',
+        thinking='medium',
+        # `medium` snaps up to `high`, the higher of the model's two documented levels.
+        present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
+        match_body=True,
+    ),
     # Mistral: adjustable-reasoning models take the binary `reasoning_effort` ('high'/'none');
     # always-on magistral must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
     WireCase(

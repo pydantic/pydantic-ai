@@ -123,10 +123,17 @@ with try_import() as imports_successful:
         UserMessage,
     )
     from ag_ui.encoder import EventEncoder
+    from starlette.exceptions import HTTPException
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, ag_ui as ag_ui_package
+    from pydantic_ai.ui import (
+        DEFAULT_ALLOWED_CONTENT_TYPES,
+        SSE_CONTENT_TYPE,
+        OnCompleteFunc,
+        StateDeps,
+        ag_ui as ag_ui_package,
+    )
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
@@ -2374,6 +2381,31 @@ def test_dump_load_roundtrip_basic() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:
+    """AG-UI does not trust a client round-trip with framework or provider response state."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello')],
+            metadata={'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}},
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Hi!')],
+            provider_details={
+                'input_transformations': [
+                    {'path': 'messages.1.content.0', 'reason': 'prefix_binding_mismatch', 'type': 'thinking_dropped'}
+                ]
+            },
+        ),
+    ]
+
+    request, response = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original))
+
+    assert isinstance(request, ModelRequest)
+    assert request.metadata is None
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is None
+
+
 @requires_ag_ui('0.1.11')
 def test_dump_load_roundtrip_thinking() -> None:
     """Test full round-trip for thinking parts with all metadata."""
@@ -4372,7 +4404,7 @@ async def test_builtin_tool_return_non_string_content_passthrough() -> None:
 async def test_builtin_tool_return_non_string_scalar_content_passthrough() -> None:
     """A non-string, non-mapping/sequence `content` (a scalar) passes through untouched.
 
-    Only mappings/sequences can nest multimodal items, so the discriminator is skipped for a scalar and
+    Only mappings/sequences can nest multimodal items, so a scalar skips the union entirely and
     the value is returned as-is rather than coerced.
     """
     tool_msg = ToolMessage.model_construct(
@@ -5750,7 +5782,7 @@ def test_dump_load_roundtrip_tool_return_multimodal(
 
     `ag_ui.core.ToolMessage.content` is a plain `str`, but it already carries JSON for structured returns,
     so the full content — files serialized as base64/URL dicts included — is written inline and rehydrated
-    on load via the `ToolReturnContent` discriminator. No sidecar `ActivityMessage` and no `preserve_file_data`
+    on load through the `ToolReturnContent` union. No sidecar `ActivityMessage` and no `preserve_file_data`
     flag are involved: inline content round-trips verbatim through any frontend, whereas a custom sidecar
     only round-trips if the frontend echoes it back. A file nested in a mapping (unreachable by
     `BaseToolReturnPart.files`) round-trips too.
@@ -5813,8 +5845,8 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     """A string return that happens to be a valid JSON *scalar* must not change type on the round-trip.
 
     `ToolMessage.content` is text-only on the AG-UI wire, so a string return is dumped verbatim. Re-parsing it
-    through the discriminator would turn `'123'` into `123`, `'true'` into `True`, etc. The rehydrator only runs the
-    discriminator on a parsed mapping/sequence (where nested multimodal items can live), leaving scalars as strings.
+    through the union would turn `'123'` into `123`, `'true'` into `True`, etc. The rehydrator only re-runs the
+    union on a parsed mapping/sequence (where nested multimodal items can live), leaving scalars as strings.
     A container-shaped string (`'[1, 2]'`) is wire-indistinguishable from a real list return, so it does rehydrate —
     that ambiguity is inherent to the text-only wire and only the scalar coercion is recoverable.
     """
@@ -8734,3 +8766,33 @@ async def test_tool_availability_delta_stream_matches_dumped_activity_message() 
     # The literal is a frontend-facing wire contract: deriving both sides from the shared constant
     # would let a rename drift silently.
     assert activity.activity_type == 'pydantic_ai_tool_availability_delta'
+
+
+async def test_dispatch_request_rejects_cross_origin_forgeable_content_type() -> None:
+    """A `text/plain` body — postable cross-origin with no preflight — never reaches the agent.
+
+    The endpoint is mounted in the caller's own application, so this is defense in depth rather than
+    that application's whole CSRF story; see the UI adapter trust model. It is pinned per adapter
+    because the control living on one surface and not another is exactly how it went missing before.
+    """
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain;charset=UTF-8')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await AGUIAdapter.dispatch_request(starlette_request, agent=agent)
+
+    assert exc_info.value.status_code == 415
+
+
+def test_allowed_content_types_visible_in_ag_ui_adapter_signatures():
+    from_request_parameters = inspect.signature(AGUIAdapter.from_request).parameters
+
+    assert 'allowed_content_types' in from_request_parameters
+    assert from_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES

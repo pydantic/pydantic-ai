@@ -230,6 +230,8 @@ passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `ses
 chunks carry no sample-rate metadata.
 
 ```python {test="skip"}
+import anyio
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     PartDeltaEvent,
@@ -252,23 +254,26 @@ async def main(microphone_chunk: bytes):
         await session.send_audio(microphone_chunk)
         await session.commit_audio()
         await session.create_response()
-        # Input transcription can finish after the model's response.
+        # Input transcription can finish after the model exchange. Give it a
+        # bounded grace period so a missing transcript cannot hang the session.
         turn_complete = user_turn_complete = False
-        async for event in session:
-            match event:
-                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
-                    ...  # play audio out
-                case PartEndEvent(part=SpeechPart(speaker='user', transcript=t)):
-                    if t is not None:
-                        print('user said:', t)
-                    user_turn_complete = True
-                case RealtimeTurnCompleteEvent():
-                    turn_complete = True
-                case RealtimeSessionErrorEvent(message=message, recoverable=True):
-                    # The connection remains usable, but this turn may not complete.
-                    raise RuntimeError(message)
-            if turn_complete and user_turn_complete:
-                break
+        with anyio.move_on_after(None) as transcript_wait:
+            async for event in session:
+                match event:
+                    case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
+                        ...  # play audio out
+                    case PartEndEvent(part=SpeechPart(speaker='user', transcript=t)):
+                        if t is not None:
+                            print('user said:', t)
+                        user_turn_complete = True
+                    case RealtimeTurnCompleteEvent():
+                        turn_complete = True
+                        transcript_wait.deadline = anyio.current_time() + 1
+                    case RealtimeSessionErrorEvent(message=message, recoverable=True):
+                        # The connection remains usable, but this turn may not complete.
+                        raise RuntimeError(message)
+                if turn_complete and user_turn_complete:
+                    break
 
     # A session builds ordinary ModelMessage history: hand it off to a text agent.
     notes = Agent('openai:gpt-5.2', instructions='Summarize.')
@@ -317,7 +322,8 @@ Key facts for building realtime agents:
   the session running. To end the call from a tool, await `ctx.realtime_session.close()` for a clean
   hang-up (the tool does not resume, its call is recorded as interrupted, and a concurrent
   `send_audio()` async iterable returns cleanly at its next chunk), or call `ctx.cancel()` to make
-  the session context raise `RunCancelled`.
+  the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely: cancelling the watchdog does
+  not interrupt teardown, and the session context waits for teardown before exiting.
 - **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
   offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
   resolved instructions and tools are baked in and the API key stays on the server — then attach a
@@ -342,7 +348,7 @@ Load only the most relevant reference first. Read additional references only if 
 | Work with multimodal input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Coordinate multiple agents or build graph workflows | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md#coordinate-multiple-agents) |
-| Call the model directly, expose A2A, use durable execution, embeddings, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
+| Call the model directly, expose A2A, use durable execution, embeddings, image generation, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 | Compare abstractions, output modes, decorators, or model-string patterns | [Architecture and Decision Guide](./references/ARCHITECTURE.md) |
 | Follow an older link into `COMMON-TASKS.md` | [Task Reference Map](./references/COMMON-TASKS.md) |
 
@@ -393,6 +399,6 @@ Load exactly one of these unless the task clearly spans multiple families:
 | Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
 | Multimodal input, message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
-| Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
+| Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, image generation, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 
 Use [Task Reference Map](./references/COMMON-TASKS.md) only for compatibility with older links or when you need a pointer from an old section name to the new file.

@@ -55,6 +55,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     Capability,
+    ImageGeneration,
     ProcessHistory,
 )
 from pydantic_ai.exceptions import (
@@ -66,12 +67,14 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
+from pydantic_ai.images import ImageGenerator, TestImageGenerationModel
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import ImageGenerationTool
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -81,6 +84,7 @@ from pydantic_ai.realtime import (
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
 
 from ..._inline_snapshot import snapshot
@@ -3040,6 +3044,34 @@ async def test_loaded_capability_tool_without_a_reveal_marker_answers_inside_an_
     # The registry itself still doesn't cross — only the ids it resolves to.
     with pytest.raises(UserError, match="'capabilities' is not available"):
         _ = reconstructed.capabilities
+
+
+async def test_image_generation_prepare_function_reads_the_model_inside_an_activity():
+    """`ImageGeneration`'s per-request notice reads `ctx.model`, which is guarded inside an activity.
+
+    A `DynamicCapability` re-resolves the capability's toolset activity-side, so its prepare
+    function runs against a rehydrated context that deliberately left the live model behind. The
+    native-vs-direct routing the notice describes was already decided in the workflow process, so
+    the read has to degrade to "say nothing" rather than raise out of `get_tools`.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+    with pytest.raises(UserError, match="'model' is not available"):
+        _ = reconstructed.model
+
+    capability = ImageGeneration(
+        native=ImageGenerationTool(),
+        local=ImageGenerator(TestImageGenerationModel()),
+        dimensions=(1280, 720),
+    )
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+
+    prepared = toolset.prepare_func(reconstructed, [])
+    assert inspect.isawaitable(prepared)
+    assert await prepared == []
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
