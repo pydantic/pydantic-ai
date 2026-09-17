@@ -128,10 +128,8 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:cohere.command-r-plus-v1:0',
         'gateway/bedrock:cohere.command-r-v1:0',
         'gateway/bedrock:cohere.command-text-v14',
-        # GPT-5.6 Converse support has not been verified through Gateway.
-        'gateway/bedrock:global.openai.gpt-5.6-luna',
-        'gateway/bedrock:global.openai.gpt-5.6-sol',
-        'gateway/bedrock:global.openai.gpt-5.6-terra',
+        # Gateway rejects the geographic GPT-5.6 IDs with "The provided model identifier is invalid."
+        # The global IDs succeed through the same route.
         'gateway/bedrock:in.openai.gpt-5.6-luna',
         'gateway/bedrock:in.openai.gpt-5.6-terra',
         'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
