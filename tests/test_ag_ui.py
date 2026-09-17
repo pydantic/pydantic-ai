@@ -123,10 +123,17 @@ with try_import() as imports_successful:
         UserMessage,
     )
     from ag_ui.encoder import EventEncoder
+    from starlette.exceptions import HTTPException
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps, ag_ui as ag_ui_package
+    from pydantic_ai.ui import (
+        DEFAULT_ALLOWED_CONTENT_TYPES,
+        SSE_CONTENT_TYPE,
+        OnCompleteFunc,
+        StateDeps,
+        ag_ui as ag_ui_package,
+    )
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
@@ -8759,3 +8766,33 @@ async def test_tool_availability_delta_stream_matches_dumped_activity_message() 
     # The literal is a frontend-facing wire contract: deriving both sides from the shared constant
     # would let a rename drift silently.
     assert activity.activity_type == 'pydantic_ai_tool_availability_delta'
+
+
+async def test_dispatch_request_rejects_cross_origin_forgeable_content_type() -> None:
+    """A `text/plain` body — postable cross-origin with no preflight — never reaches the agent.
+
+    The endpoint is mounted in the caller's own application, so this is defense in depth rather than
+    that application's whole CSRF story; see the UI adapter trust model. It is pinned per adapter
+    because the control living on one surface and not another is exactly how it went missing before.
+    """
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain;charset=UTF-8')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await AGUIAdapter.dispatch_request(starlette_request, agent=agent)
+
+    assert exc_info.value.status_code == 415
+
+
+def test_allowed_content_types_visible_in_ag_ui_adapter_signatures():
+    from_request_parameters = inspect.signature(AGUIAdapter.from_request).parameters
+
+    assert 'allowed_content_types' in from_request_parameters
+    assert from_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES

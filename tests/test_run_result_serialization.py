@@ -276,6 +276,33 @@ async def test_streamed_result_can_be_stored_and_replayed_as_history() -> None:
     assert continued.all_messages()[: len(loaded.all_messages())] == loaded.all_messages()
 
 
+async def test_settling_a_cancelled_stream_is_refused() -> None:
+    """Cancelling completes the stream without producing an output, so there is nothing to settle."""
+    agent = Agent(TestModel(custom_output_text='a much longer streamed response'), instructions='Be helpful.')
+
+    async with agent.run_stream('Stream this') as streamed:
+        await anext(streamed.stream_text(delta=True))
+        await streamed.cancel()
+
+        assert streamed.is_complete
+        with pytest.raises(UserError, match='cancelled before it produced an output'):
+            streamed.result
+
+        # The partial history is still there; only the settled result is refused.
+        assert streamed.all_messages()
+
+
+async def test_cancelling_after_the_output_arrived_still_settles() -> None:
+    """A stream consumed to the end has its output cached, so a later cancel changes nothing."""
+    agent = Agent(TestModel(custom_output_text='settled'), instructions='Be helpful.')
+
+    async with agent.run_stream('Stream this') as streamed:
+        await streamed.get_output()
+        await streamed.cancel()
+
+        assert streamed.result.output == 'settled'
+
+
 def test_streamed_result_hands_back_a_run_result_it_already_holds() -> None:
     """`run_stream` yields a pre-built result when a `wrap_run` capability short-circuits the run."""
     held = Agent(TestModel(custom_output_text='short-circuited')).run_sync('Go')
@@ -294,9 +321,38 @@ def test_serialization_honors_the_callers_filters() -> None:
     assert set(adapter.dump_python(result, include={'output', 'usage'})) == {'output', 'usage'}
     assert 'messages' not in StringResultEnvelope(result=result).model_dump(exclude={'result': {'messages'}})['result']
 
-    # A spec reaching into a key rather than dropping it whole is Pydantic's to apply.
-    assert 'messages' in adapter.dump_python(result, exclude={'messages': {0}})
     assert 'messages' not in adapter.dump_python(result, exclude={'messages': True})
+
+    # A spec reaching *into* a key is dropped by Pydantic before the serializer is handed its
+    # mapping, so it has to be applied here too.
+    assert len(adapter.dump_python(result, exclude={'messages': {0}})['messages']) == len(result.all_messages()) - 1
+    assert len(adapter.dump_python(result, include={'messages': {0}})['messages']) == 1
+
+
+def test_a_nested_spec_it_cannot_apply_leaves_the_value_whole() -> None:
+    """Filtering the container bounds what a nested spec can reach: one level, mapping or sequence."""
+    result = Agent(TestModel(custom_output_text='filtered')).run_sync('Filter this')
+    adapter = TypeAdapter(AgentRunResult[str])
+    whole = adapter.dump_python(result)
+
+    # Deeper than one level.
+    deep = adapter.dump_python(result, exclude={'messages': {'__all__': {'parts'}}})
+    assert len(deep['messages']) == len(whole['messages'])
+
+    # Aimed at a key whose value is neither a mapping nor a sequence.
+    assert adapter.dump_python(result, exclude={'usage': {'requests'}})['usage'] == whole['usage']
+
+
+def test_serialization_honors_a_redaction_inside_metadata() -> None:
+    """A nested `exclude` must not dump in full the value it was asked to redact."""
+    result = Agent(TestModel(custom_output_text='filtered')).run_sync(
+        'Filter this', metadata={'api_key': 'secret', 'tenant': 'acme'}
+    )
+    adapter = TypeAdapter(AgentRunResult[str])
+
+    assert adapter.dump_python(result, exclude={'metadata': {'api_key'}})['metadata'] == {'tenant': 'acme'}
+    assert b'secret' not in adapter.dump_json(result, exclude={'metadata': {'api_key'}})
+    assert adapter.dump_python(result)['metadata'] == {'api_key': 'secret', 'tenant': 'acme'}
 
 
 def test_a_filtered_out_output_is_left_out_rather_than_failing_the_dump() -> None:

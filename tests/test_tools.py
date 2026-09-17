@@ -1800,6 +1800,65 @@ def test_invalid_deferred_tool_approval_does_not_execute(approval: object):
     assert not executed
 
 
+def _return_unchanged(tool_def: ToolDefinition) -> ToolDefinition:
+    return tool_def
+
+
+def _return_replaced(tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, description='tweaked')
+
+
+@pytest.mark.parametrize(
+    'transform',
+    [
+        pytest.param(_return_unchanged, id='unchanged'),
+        pytest.param(_return_replaced, id='replace'),
+    ],
+)
+@pytest.mark.parametrize('hook', ['prepare', 'prepare_tools'])
+def test_prepare_preserves_approval_requirement(
+    hook: Literal['prepare', 'prepare_tools'], transform: Callable[[ToolDefinition], ToolDefinition]
+):
+    """A `prepare` hook that modifies the definition it was given keeps `requires_approval=True` in force.
+
+    Both documented idioms (returning the definition as-is, and copying it with `dataclasses.replace`)
+    carry `kind='unapproved'` through, so the run still pauses for approval. Building a brand-new
+    `ToolDefinition` instead would reset `kind` to its default, which
+    [the docs](../docs/tools-advanced.md#tool-prepare) warn against.
+    """
+    executed = False
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('Done!')])  # pragma: no cover
+
+    def prepare(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+        return transform(tool_def)
+
+    def prepare_tools(ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [transform(tool_def) for tool_def in tool_defs]
+
+    capabilities: list[PrepareTools[object]] = [PrepareTools(prepare_tools)] if hook == 'prepare_tools' else []
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[str, DeferredToolRequests],
+        capabilities=capabilities,
+    )
+
+    @agent.tool_plain(requires_approval=True, prepare=prepare if hook == 'prepare' else None)
+    def my_tool() -> str:  # pragma: no cover
+        nonlocal executed
+        executed = True
+        return 'executed'
+
+    result = agent.run_sync('Run the tool')
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')])
+    )
+    assert not executed
+
+
 @pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
 def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy):
     """Not a VCR test: pins internal resume validation and message-history shape via `FunctionModel`,
