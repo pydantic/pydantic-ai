@@ -1704,6 +1704,12 @@ class RealtimeSession:
         """
         self._ensure_not_closed()
         self._start_pump()
+        # Only the closed check is re-taken here, not `_ensure_can_send`: a frame already waiting on
+        # the lock when a background failure ends receiving is one already underway, not the "next
+        # outbound method" that contract speaks of, and it costs a single frame nobody reads on a
+        # session that is ending anyway. Re-taking the full guard under the lock would also raise that
+        # parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither of
+        # which is a caller that asked to send.
         async with self._send_lock:
             try:
                 for content in contents:
