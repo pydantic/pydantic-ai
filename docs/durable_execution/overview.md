@@ -7,6 +7,9 @@ to integrate another engine without importing Pydantic AI internals.
 
 Pydantic AI allows you to build durable agents that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. Durable agents have full support for [streaming](../agent.md#streaming-all-events) and [MCP](../mcp/client.md), with the added benefit of fault tolerance.
 
+!!! note "Durability is not storage"
+    A durable engine keeps one run alive across crashes and restarts. It does not store your chat threads: saving a conversation and picking it up later is a different problem with a much lighter answer, laid out in [Storage](../storage.md).
+
 Pydantic AI officially supports five durable execution solutions, co-maintained by the Pydantic and vendor teams:
 
 - [Temporal](./temporal.md)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -569,12 +570,13 @@ class TestWebFetchLocalTool:
         assert isinstance(result, dict)
         assert result['title'] == 'İstanbul'
 
-    async def test_html_conversion_runs_in_worker_thread(self):
-        """Parsing and converting HTML runs through the sync-function executor, not on the event loop.
+    async def test_html_decoding_and_conversion_run_in_worker_thread(self):
+        """Decoding the body and converting the HTML run through the sync-function executor, not on the event loop.
 
-        Conversion cost scales with the server-controlled body, so it must not stall every other
-        coroutine in the process. `using_thread_executor` makes the offload observable: the
-        conversion is the only sync work the tool submits.
+        Both costs scale with the server-controlled body, and the charset the server picks can make
+        decoding far worse than linear, so neither may stall every other coroutine in the process.
+        `using_thread_executor` makes the offload observable: the decode and the conversion are the
+        only sync work the tool submits.
         """
 
         class RecordingExecutor(ThreadPoolExecutor):
@@ -602,8 +604,7 @@ class TestWebFetchLocalTool:
 
         assert isinstance(result, dict)
         assert result['title'] == 'Threaded'
-        assert len(executor.submitted) == 1
-        assert executor.submitted[0].result() == ('Threaded', 'Threaded\n\nContent')
+        assert [future.result() for future in executor.submitted] == [html, ('Threaded', 'Threaded\n\nContent')]
 
     async def test_fetch_html_repeated_unclosed_title_tags(self):
         """A body made of `<title` fragments with no closing `>` converts in seconds, not minutes.
@@ -656,20 +657,59 @@ class TestWebFetchLocalTool:
             with pytest.raises(ModelRetry, match='nested too deeply'):
                 await tool('https://example.com')
 
-    async def test_undecodable_charset_raises_model_retry(self):
+    @pytest.mark.parametrize('charset', ['idna', 'rot_13', 'base64_codec'])
+    async def test_undecodable_charset_raises_model_retry(self, charset: str):
         """A charset the server picks that can't decode a document is reported as a failed fetch.
 
-        `idna` is a registered codec that rejects the replacement error handler `httpx2` decodes
-        with; an unknown label, by contrast, falls back to UTF-8 and never gets here.
+        `idna` is a registered codec that rejects the replacement error handler; `rot_13` and
+        `base64_codec` are registered codecs that aren't text encodings at all. An unknown label,
+        by contrast, falls back to UTF-8 and never gets here.
         """
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download',
             new_callable=AsyncMock,
-            return_value=_html_response('<p>Content</p>', content_type='text/html; charset=idna'),
+            return_value=_html_response('<p>Content</p>', content_type=f'text/html; charset={charset}'),
         ):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
             with pytest.raises(ModelRetry, match='Failed to decode'):
                 await tool('https://example.com')
+
+    async def test_declared_charset_is_honored(self):
+        """The body is decoded with the charset the server declares, with undecodable bytes replaced."""
+        response = httpx2.Response(
+            200,
+            headers={'content-type': 'text/plain; charset=latin-1'},
+            content='caf\xe9'.encode('latin-1'),
+        )
+        with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=response):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['content'] == 'caf\xe9'
+
+    async def test_fetch_json_nested_too_deeply_returns_raw_text(self, monkeypatch: pytest.MonkeyPatch):
+        """A JSON document nested deeper than the recursion limit is returned as-is, like one that doesn't parse.
+
+        The depth at which `json.loads` gives up differs between interpreters, and past it some
+        overflow the stack instead of raising, so the parser is stood in for rather than fed a
+        real document.
+        """
+
+        def loads(text: str) -> Any:
+            raise RecursionError('maximum recursion depth exceeded')
+
+        monkeypatch.setattr(json, 'loads', loads)
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response('[[[[]]]]', content_type='application/json'),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['content'] == '[[[[]]]]'
 
 
 _CONVERTER_PARITY_CASES = [
