@@ -116,33 +116,34 @@ def model_request_parameters_attributes(
 ) -> dict[str, AttributeValue]:
     serialized = serialize_any(model_request_parameters)
     if not include_content:
-        # Two fields here are prompt text the user wrote, which is the "proprietary prompts" half of
-        # what the setting withholds: the instructions (whose dynamic parts can be built from deps)
-        # and the prompted-output template. Tool and output *schemas* stay: request structure rather
-        # than message content, and `include_model_request_parameters=False` drops the attribute.
-        for part in instruction_parts_of(serialized):
-            part.pop('content', None)
-        _blank_prompted_output_template(serialized)
+        serialized = _redact_model_request_parameters(serialized)
+        if serialized is None:
+            return {}
     return {'model_request_parameters': to_json(serialized).decode()}
 
 
-def _blank_prompted_output_template(serialized_parameters: Any) -> None:
-    """Blank the prompted-output template, which is prompt text the user wrote."""
+def _redact_model_request_parameters(serialized_parameters: Any) -> Any:
+    """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
+
+    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
+    the prompted-output template. Instruction parts keep their origin and ids. Tool and output
+    *schemas* stay -- request structure rather than message content.
+
+    `serialize_any` infers a shape, which for a value it cannot walk -- a tool whose `metadata` holds
+    an arbitrary object, say -- is the request's string representation, instructions and all. There
+    is nothing to redact in a string, so that is reported as unredactable rather than exported.
+    """
     if not isinstance(serialized_parameters, dict):
-        return  # pragma: no cover
+        return None
     parameters = cast('dict[str, Any]', serialized_parameters)
+    parts = parameters.get('instruction_parts')
+    if isinstance(parts, list):
+        for part in cast('list[Any]', parts):
+            if isinstance(part, dict):
+                cast('dict[str, Any]', part).pop('content', None)
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
-
-
-def instruction_parts_of(serialized_parameters: Any) -> list[dict[str, Any]]:
-    """The serialized `instruction_parts`, or nothing when the shape isn't what we expect."""
-    if not isinstance(serialized_parameters, dict):
-        return []  # pragma: no cover
-    parts = cast('Any', serialized_parameters).get('instruction_parts')
-    if not isinstance(parts, list):
-        return []
-    return [part for part in cast('list[Any]', parts) if isinstance(part, dict)]
+    return parameters
 
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:
@@ -312,7 +313,10 @@ def open_model_request_span(
                 attributes[f'gen_ai.request.{key}'] = value
 
     record_metrics: Callable[[], None] | None = None
-    include_content_token = include_content_ctx.set(settings.include_content)
+    previous_include_content = include_content_ctx.get()
+    # Restored with `set` rather than `reset`: this generator can be finalized in a different
+    # `Context` when a streamed run is interrupted, where `ContextVar.reset` raises.
+    include_content_ctx.set(settings.include_content)
     try:
         with settings.tracer.start_as_current_span(
             span_name,
@@ -392,7 +396,7 @@ def open_model_request_span(
                 set_error_status(span, e, include_content=settings.include_content)
                 raise
     finally:
-        include_content_ctx.reset(include_content_token)
+        include_content_ctx.set(previous_include_content)
         if record_metrics:
             record_metrics()
 

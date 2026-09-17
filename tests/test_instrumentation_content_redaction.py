@@ -10,6 +10,7 @@ This module does. Each content channel gets a distinct sentinel, every run happe
 capture off, and the exported spans are scanned exhaustively -- names, attributes, event
 attributes, and status descriptions, from the raw `ReadableSpan`s rather than a dict view that
 omits the status and truncates stack traces. A channel that leaks names itself in the failure.
+
 Run metadata is deliberately not a channel here. It comes from the agent definition rather than
 from a user, and is expected to appear on spans; content in there is the caller's own doing.
 """
@@ -29,7 +30,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.output import PromptedOutput
 
-from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 with try_import() as otel_sdk_installed:
@@ -83,20 +83,34 @@ def leaked_channels(spans: Sequence[ReadableSpan]) -> set[str]:
     return {channel for channel, secret in SECRETS.items() if secret in exported}
 
 
-def redacted_setup() -> tuple[InstrumentationSettings, InMemorySpanExporter]:
+def redacted_setup(include_content: bool = False) -> tuple[InstrumentationSettings, InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    return InstrumentationSettings(include_content=False, tracer_provider=provider), exporter
+    return InstrumentationSettings(include_content=include_content, tracer_provider=provider), exporter
+
+
+def check(exporter: InMemorySpanExporter, include_content: bool, drives: set[str]) -> None:
+    """Assert the run exported something, and that it leaked exactly what it should.
+
+    `drives` is the set of channels the scenario actually pushes content through. With capture on it
+    is the positive control -- every one of them has to appear, or the scenario is not exercising the
+    channel it claims and its redacted run proves nothing. With capture off, nothing may appear.
+    """
+    spans = exporter.get_finished_spans()
+    assert spans, 'no spans exported: the scenario proves nothing about redaction'
+    leaked = leaked_channels(spans)
+    assert leaked == (drives if include_content else set())
 
 
 class Output(BaseModel):
     answer: str
 
 
-async def test_no_content_reaches_telemetry_on_a_successful_run() -> None:
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_on_a_successful_run(include_content: bool) -> None:
     """Prompts, instructions, history, tool arguments and results, and the final output."""
-    settings, exporter = redacted_setup()
+    settings, exporter = redacted_setup(include_content)
 
     requests = 0
 
@@ -128,21 +142,49 @@ async def test_no_content_reaches_telemetry_on_a_successful_run() -> None:
     def lookup(query: str) -> str:
         return SECRETS['tool_return']
 
-    history = [
-        ModelRequest(parts=[UserPromptPart(content=SECRETS['message_history'])]),
-        ModelResponse(parts=[TextPart('earlier reply')]),
-    ]
-    result = await agent.run(SECRETS['user_prompt'], message_history=history)
+    result = await agent.run(SECRETS['user_prompt'])
     assert result.output.answer == SECRETS['final_output']
     # The tool has to have run, or the argument and return sentinels prove nothing.
     assert requests == 2
 
-    assert leaked_channels(exporter.get_finished_spans()) == snapshot(set())
+    check(
+        exporter,
+        include_content,
+        {
+            'user_prompt',
+            'instructions',
+            'dynamic_instructions',
+            'system_prompt',
+            'tool_args',
+            'tool_return',
+            'model_text',
+            'final_output',
+        },
+    )
 
 
-async def test_no_content_reaches_telemetry_when_a_tool_retries_to_exhaustion() -> None:
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_message_history(include_content: bool) -> None:
+    """Messages the caller carried in from an earlier run."""
+    settings, exporter = redacted_setup(include_content)
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)])
+    history = [
+        ModelRequest(parts=[UserPromptPart(content=SECRETS['message_history'])]),
+        ModelResponse(parts=[TextPart('earlier reply')]),
+    ]
+    await agent.run(SECRETS['user_prompt'], message_history=history)
+
+    check(exporter, include_content, {'user_prompt', 'message_history', 'model_text'})
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_when_a_tool_retries_to_exhaustion(include_content: bool) -> None:
     """The retry prompt, and the error chained from it that ends the run."""
-    settings, exporter = redacted_setup()
+    settings, exporter = redacted_setup(include_content)
 
     def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('flaky', {'value': SECRETS['tool_args']})])
@@ -156,17 +198,18 @@ async def test_no_content_reaches_telemetry_when_a_tool_retries_to_exhaustion() 
     with pytest.raises(UnexpectedModelBehavior):
         await agent.run(SECRETS['user_prompt'])
 
-    assert leaked_channels(exporter.get_finished_spans()) == snapshot(set())
+    check(exporter, include_content, {'user_prompt', 'tool_args', 'tool_retry'})
 
 
-async def test_no_content_reaches_telemetry_when_a_tool_raises() -> None:
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_when_a_tool_raises(include_content: bool) -> None:
     """A plain exception from tool code."""
-    settings, exporter = redacted_setup()
+    settings, exporter = redacted_setup(include_content)
 
-    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+    def call_tools(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('raising_tool', {})])
 
-    agent = Agent(FunctionModel(call_tool), capabilities=[Instrumentation(settings=settings)])
+    agent = Agent(FunctionModel(call_tools), capabilities=[Instrumentation(settings=settings)])
 
     @agent.tool_plain
     def raising_tool() -> str:
@@ -175,12 +218,13 @@ async def test_no_content_reaches_telemetry_when_a_tool_raises() -> None:
     with pytest.raises(ValueError):
         await agent.run(SECRETS['user_prompt'])
 
-    assert leaked_channels(exporter.get_finished_spans()) == snapshot(set())
+    check(exporter, include_content, {'user_prompt', 'tool_exception'})
 
 
-async def test_no_content_reaches_telemetry_when_an_output_validator_retries() -> None:
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_when_an_output_validator_retries(include_content: bool) -> None:
     """A retry raised outside a tool call, which is the GHSA-3gh4-cghq-f8v4 shape."""
-    settings, exporter = redacted_setup()
+    settings, exporter = redacted_setup(include_content)
 
     def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
@@ -194,12 +238,13 @@ async def test_no_content_reaches_telemetry_when_an_output_validator_retries() -
     with pytest.raises(UnexpectedModelBehavior):
         await agent.run(SECRETS['user_prompt'])
 
-    assert leaked_channels(exporter.get_finished_spans()) == snapshot(set())
+    check(exporter, include_content, {'user_prompt', 'model_text', 'output_validator_retry'})
 
 
-async def test_no_content_reaches_telemetry_when_the_provider_errors() -> None:
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_when_the_provider_errors(include_content: bool) -> None:
     """A provider's error body, which travels in the exception message."""
-    settings, exporter = redacted_setup()
+    settings, exporter = redacted_setup(include_content)
 
     def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         raise ModelHTTPError(status_code=400, model_name='fn', body=SECRETS['provider_error_body'])
@@ -209,10 +254,11 @@ async def test_no_content_reaches_telemetry_when_the_provider_errors() -> None:
     with pytest.raises(ModelHTTPError):
         await agent.run(SECRETS['user_prompt'])
 
-    assert leaked_channels(exporter.get_finished_spans()) == snapshot(set())
+    check(exporter, include_content, {'user_prompt', 'provider_error_body'})
 
 
-async def test_no_content_reaches_telemetry_through_a_fallback_refresh() -> None:
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_through_a_fallback_refresh(include_content: bool) -> None:
     """`FallbackModel` refreshes `model_request_parameters` once it knows which model answered.
 
     The refresh serializes the *selected* model's parameters, so it can add instruction parts the
@@ -220,7 +266,7 @@ async def test_no_content_reaches_telemetry_through_a_fallback_refresh() -> None
     which is why the span's `include_content` travels in a context variable: inferring it from what
     is already recorded reads an absent `instruction_parts` list as "content was included".
     """
-    settings, exporter = redacted_setup()
+    settings, exporter = redacted_setup(include_content)
 
     def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         raise ModelHTTPError(status_code=500, model_name='first', body='unavailable')
@@ -237,4 +283,4 @@ async def test_no_content_reaches_telemetry_through_a_fallback_refresh() -> None
     )
     await agent.run(SECRETS['user_prompt'])
 
-    assert leaked_channels(exporter.get_finished_spans()) == snapshot(set())
+    check(exporter, include_content, {'user_prompt', 'prompted_output_template'})

@@ -312,7 +312,9 @@ class FallbackModel(Model):
                                 # serializes the *selected* model's parameters, whose instruction
                                 # parts the outer request may not have had at all, so it cannot be
                                 # inferred from what is already recorded.
-                                include_content=include_content_ctx.get() is not False,
+                                # Fails closed: `None` means no instrumented request is in context, so
+                                # there is nothing to prove content was wanted.
+                                include_content=include_content_ctx.get() is True,
                             ),
                         }
                     )
