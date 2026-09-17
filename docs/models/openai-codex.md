@@ -48,6 +48,23 @@ async def main():
 
 Passing `credentials` keeps them in memory only, so the next process has to log in again. To log in once, persist them as described below.
 
+After the redirect, the browser shows a plain "You can close this tab." page. To show your own, pass `success_html` and `error_html` (the latter is used when the user denies access or the provider reports another authorization error):
+
+```python {title="codex_login_pages.py" test="skip - opens a browser and requires user login"}
+import webbrowser
+
+from pydantic_ai.providers.openai_codex import OpenAICodexOAuthFlow
+
+
+async def main():
+    flow = OpenAICodexOAuthFlow()
+    webbrowser.open(flow.authorization_url())
+    credentials = await flow.exchange_code_from_callback(
+        success_html='<!doctype html><h1>Signed in to My App</h1><p>You can close this tab.</p>',
+        error_html='<!doctype html><h1>Login failed</h1><p>Close this tab and try again from My App.</p>',
+    )
+```
+
 ## Persisting credentials
 
 The provider refreshes expired tokens automatically, and refresh tokens are single-use, so the stored copy has to keep up. Give the provider an [`OpenAICodexCredentialSource`][pydantic_ai.providers.openai_codex.OpenAICodexCredentialSource] and it calls `load()` on first use and `save()` after every refresh. Run the login flow only when the store is empty:

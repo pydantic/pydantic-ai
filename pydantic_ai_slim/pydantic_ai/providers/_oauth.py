@@ -29,6 +29,9 @@ _FLOW_BOUND_PARAMS = frozenset({'client_id', 'redirect_uri', 'state', 'code_chal
 _CALLBACK_READ_TIMEOUT = 5.0
 """Seconds a callback connection may stall before it is dropped, so it cannot block the real redirect."""
 
+_DEFAULT_CALLBACK_HTML = '<!doctype html><title>Login complete</title><p>You can close this tab.</p>'
+"""The page shown in the browser after the callback when the caller doesn't supply their own."""
+
 
 class OAuthFlow(ABC, Generic[CredentialsT]):
     """Authorization-code + PKCE context for a provider's public OAuth client.
@@ -72,7 +75,9 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
         """Exchange an authorization code for provider credentials (call this in your redirect handler)."""
         ...
 
-    async def exchange_code_from_callback(self) -> CredentialsT:
+    async def exchange_code_from_callback(
+        self, *, success_html: str | None = None, error_html: str | None = None
+    ) -> CredentialsT:
         """Serve `redirect_uri` for one authorization callback, then exchange the received code.
 
         Binds the host and port from `redirect_uri` with a one-shot local HTTP server, ignores
@@ -80,12 +85,20 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
         [`UserError`][pydantic_ai.exceptions.UserError] when the provider reports an authorization
         error instead of a code (e.g. the user clicked Deny). Callers wanting a time limit can wrap
         the call in [`anyio.fail_after`](https://anyio.readthedocs.io/en/stable/cancellation.html).
+
+        Args:
+            success_html: The page shown in the browser once the authorization code arrives.
+                Defaults to a plain "You can close this tab." page.
+            error_html: The page shown when the provider reports an authorization error instead
+                of a code. Defaults to the same page as `success_html`.
         """
         parsed = urlparse(self.redirect_uri)
         address = (parsed.hostname or 'localhost', parsed.port or 80)
         callback_path = parsed.path
         expected_state = self.state
         result: dict[str, str] = {}
+        success_page = (success_html or _DEFAULT_CALLBACK_HTML).encode()
+        error_page = (error_html or _DEFAULT_CALLBACK_HTML).encode()
 
         class CallbackHandler(BaseHTTPRequestHandler):
             def setup(self) -> None:
@@ -103,14 +116,19 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
                     self.send_error(400, 'Malformed request')
                     return
                 params = {name: values[0] for name, values in parse_qs(url.query).items()}
+                body = _DEFAULT_CALLBACK_HTML.encode()  # stray requests aren't this flow's outcome
                 if url.path == callback_path and params.get('state') == expected_state:
                     if code := params.get('code'):
                         result['code'] = code
+                        body = success_page
                     else:
                         result['error'] = params.get('error', 'unknown')
+                        body = error_page
                 self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
-                self.wfile.write(b'You can close this tab.')
+                self.wfile.write(body)
 
             def log_message(self, format: str, *args: Any) -> None:
                 pass  # keep the caller's console clean
