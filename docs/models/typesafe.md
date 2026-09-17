@@ -112,6 +112,8 @@ print(result.output)
 #> True
 ```
 
+To grade a whole dataset this way, use the [`Classifier`](../evals/evaluators/built-in.md#classifier) evaluator from Pydantic Evals: `Classifier('Was the assistant polite?', model='typesafe:jev-latest')` asks the same question about every case, one request each, and reports Jev's confidence alongside each answer.
+
 ## Files
 
 Jev reads text only. To ask about a document, image or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
