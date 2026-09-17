@@ -1,14 +1,17 @@
 # Storage
 
-Three different problems get called "persistence", and they have three different answers. Start here:
+"Persistence", "memory", "sessions": several different problems go by those names, and they have different answers. Start here:
 
 | You want to… | Use | Where it lives |
 |---|---|---|
 | Save a conversation and pick it up later — a chat thread, a support ticket, an assistant that remembers yesterday | [Serialize the message history](message-history.md#storing-and-loading-messages-to-json) into a column of your own database | Core |
 | Not write the save-and-load code yourself, and get continue-and-fork for free | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
+| The agent to remember what it learned about someone *across* conversations, not just within one | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | A run to survive the process dying mid-tool-call, and resume exactly where it stopped | [Durable execution](durable_execution/overview.md) | Core |
 
-The three compose: a durable engine keeps one run alive, `StepPersistence` records what each run did, and a serialized history is what you hand to the next run. Reaching for a durable engine because you wanted to store a chat thread is the common mistake — a `jsonb` column is enough for that.
+The first two rows are also the answer to "how do I give my agent memory?" for most of what people mean by it: an agent's memory of the conversation it is having *is* its message history. There is no separate memory system to add for that — storing the history and passing it back is the whole mechanism. Memory becomes [its own thing](#remembering-across-conversations) only once it has to outlive the thread.
+
+The rows compose: a durable engine keeps one run alive, `StepPersistence` records what each run did, a serialized history is what you hand to the next run, and `Memory` is what's left when the thread is over. Reaching for a durable engine because you wanted to store a chat thread is the common mistake — a `jsonb` column is enough for that.
 
 ## Storing a conversation yourself
 
@@ -50,13 +53,28 @@ Messages carry more than they look like they do: [`run_id` and `conversation_id`
 
 What lives outside the messages is [`RunUsage`][pydantic_ai.usage.RunUsage]: the conversation's running total, including [`tool_calls`][pydantic_ai.usage.RunUsage.tool_calls], which no message records. Store it alongside the history and hand it back with `usage=` when [`UsageLimits`][pydantic_ai.usage.UsageLimits] should budget the whole conversation rather than each run. Carrying it changes nothing about what your traces show: each run's span reports that run's own tokens either way, so a conversation's spend is the sum of its runs.
 
+Nor does a history reach past its own conversation. Replaying yesterday's threads to give an agent that continuity works until it doesn't: the prompt grows without bound, every request pays for it, and [compaction](capabilities/compaction.md) drops the parts you were counting on. [Remembering across conversations](#remembering-across-conversations) is a different mechanism.
+
 ## Not writing that code yourself
 
 [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) packages the pattern as a capability you add to an agent, so the load and save calls are not yours to write. It ships in-memory, file, SQLite and MongoDB backends, and its store is a protocol you can implement against your own database.
 
 It records more than the messages: an append-only event log of what the agent did at each boundary, continuable snapshots you can resume or fork a conversation from, and a tool-effect ledger that tells you, after a crash, whether a side effect actually happened.
 
-Two related capabilities build on what it stores: [`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) ranks the stored history and gives the model a tool to pull earlier turns back into context, and [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) keeps notes the agent writes for itself, deliberately outliving any single conversation. `Memory` stays its own capability with its own store — a versioned notebook and an append-only run log have little in common — but both take the same database, so storing an agent's notes alongside its messages is one connection and one thing to back up.
+[`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) builds on that without storing anything of its own: it ranks the history `StepPersistence` already wrote and gives the model a tool to pull earlier turns back into context on demand, including turns [compaction](capabilities/compaction.md) dropped. Pair the two on one store instance and recall needs no extra write path.
+
+## Remembering across conversations
+
+Everything above is scoped to a conversation. What an agent knows about someone *between* conversations — their preferences, a decision from last week, a correction they shouldn't have to repeat — has a different key and a different lifetime.
+
+[`Memory`](https://pydantic.dev/docs/ai/harness/memory/) is the capability for that. It gives the agent a notebook of Markdown files that it writes, reads, and searches through its own tools, and puts a bounded excerpt in each request rather than the whole notebook. It is keyed by a namespace you resolve from your [dependencies](dependencies.md) — usually a user or tenant ID — rather than by `conversation_id`, which is exactly what lets it outlive the thread. Its stores are the durable ones: a file directory, SQLite, PostgreSQL, or one you implement against your own database.
+
+It stays a capability of its own, with a store of its own, rather than something `StepPersistence` writes: a versioned notebook and an append-only run log have little in common. But the two take the same database, so keeping an agent's notes next to its conversations is one connection and one thing to back up.
+
+Anthropic exposes a memory tool on its own side of the API: [`MemoryTool`](native-tools.md#memory-tool) has the model drive a directory of memory files through a tool contract the provider defines, with the storage behind it still yours to supply.
+
+!!! note "Memory is content the model wrote"
+    Notes an agent left for itself re-enter later prompts, and a note can be mistaken or planted by whoever the agent was talking to. `Memory` injects them as user-role content rather than as instructions, which lowers their authority, but that is not a hard prompt-injection boundary. The capability's [security and provenance notes](https://pydantic.dev/docs/ai/harness/memory/#security-and-provenance) cover what it does and doesn't guarantee.
 
 ## Letting a provider hold it
 
