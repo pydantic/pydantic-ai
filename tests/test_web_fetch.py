@@ -10,10 +10,12 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
+from markdownify import markdownify
 
 from pydantic_ai._utils import using_thread_executor
 from pydantic_ai.common_tools.web_fetch import (
     WebFetchLocalTool,
+    _convert_html,  # pyright: ignore[reportPrivateUsage]
     web_fetch_tool,
 )
 from pydantic_ai.exceptions import ModelRetry
@@ -653,6 +655,91 @@ class TestWebFetchLocalTool:
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
             with pytest.raises(ModelRetry, match='nested too deeply'):
                 await tool('https://example.com')
+
+    async def test_undecodable_charset_raises_model_retry(self):
+        """A charset the server picks that can't decode a document is reported as a failed fetch.
+
+        `idna` is a registered codec that rejects the replacement error handler `httpx2` decodes
+        with; an unknown label, by contrast, falls back to UTF-8 and never gets here.
+        """
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response('<p>Content</p>', content_type='text/html; charset=idna'),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(ModelRetry, match='Failed to decode'):
+                await tool('https://example.com')
+
+
+_CONVERTER_PARITY_CASES = [
+    pytest.param(
+        '<h1>Title</h1>\n<p>Some   text\twith  \n\n  mixed \r\n whitespace &amp; <b>bold</b> <code> x  y </code></p>',
+        id='whitespace',
+    ),
+    pytest.param(
+        '<ol start="3"><li>three</li><li>four\nsecond line</li><li></li><li><p>five</p><ul><li>a</li><li>b</li></ul></li></ol>'
+        '<ul><li>one</li><li><ol><li>nested</li><li>again</li></ol></li></ul><ol>\n  <li>a</li>\n  <li>b</li>\n</ol>',
+        id='lists',
+    ),
+    pytest.param(
+        '<pre>\n\n  code\n    more\n\n</pre><pre>   \n x \n   </pre><pre>x  </pre><pre>  x</pre><pre>\n</pre><pre></pre>'
+        '<pre><code class="language-py">print( 1 )\n\n</code></pre>',
+        id='pre',
+    ),
+    pytest.param(
+        '<div><p>a</p>   <p> b </p></div><table><tr><th>h</th></tr><tr><td> c  d </td></tr></table>'
+        '<blockquote>\n q\n</blockquote><a href="/x">  link  </a><!-- comment  with   spaces -->',
+        id='blocks',
+    ),
+    pytest.param(
+        '<p>a<![CDATA[ x   y \n z ]]>b<?php  echo  1 ?>c</p>',
+        id='cdata-and-pi',
+    ),
+]
+
+
+class TestMarkdownConverter:
+    @pytest.mark.parametrize('html', _CONVERTER_PARITY_CASES)
+    def test_matches_upstream(self, html: str):
+        """The linear-time replacements produce exactly what `markdownify`'s own steps produce."""
+        _, content = _convert_html(html)
+        assert content == markdownify(html, strip=['img', 'script', 'style'])
+
+    def test_non_decimal_list_start_is_ignored(self):
+        """A `start` made of digits `int()` rejects, like `²`, numbers the list from 1 instead of raising.
+
+        `markdownify` checks `isnumeric()` and then calls `int()`, which raises on such digits.
+        """
+        _, content = _convert_html('<ol start="²"><li>one</li><li>two</li></ol>')
+        assert content == '1. one\n2. two'
+
+    @pytest.mark.parametrize(
+        'html',
+        [
+            pytest.param('<p>x' + ' ' * 300_000 + 'x</p>', id='spaces-in-paragraph'),
+            pytest.param('<p><![CDATA[x' + ' ' * 300_000 + 'x]]></p>', id='spaces-in-cdata'),
+            pytest.param('<pre>' + ' ' * 300_000 + 'x</pre>', id='spaces-in-pre'),
+            pytest.param('<ol>' + '<li>x</li>' * 50_000 + '</ol>', id='long-ordered-list'),
+            pytest.param('<div>x' * 20_000, id='deep-nesting'),
+            pytest.param('x <i></i>' * 50_000, id='many-sibling-text-nodes'),
+        ],
+    )
+    def test_converts_pathological_runs_quickly(self, html: str):
+        """Whitespace runs, `<pre>` padding, ordered lists, deep nesting, and wide trees are handled in linear time.
+
+        `markdownify` on its own takes minutes on the whitespace and list shapes: a run of spaces
+        restarts its whitespace regexes at every character, and each `<li>` recounts its previous
+        siblings. The nested page can't be converted at all (it exceeds the recursion limit), but
+        finding that out must not take long either, and neither may normalizing text among tens of
+        thousands of siblings. The bound is generous; the point is that it isn't minutes.
+        """
+        start = time.perf_counter()
+        try:
+            _convert_html(html)
+        except RecursionError:
+            assert html.startswith('<div>x<div>')
+        assert time.perf_counter() - start < 10
 
 
 class TestWebFetchToolFactory:
