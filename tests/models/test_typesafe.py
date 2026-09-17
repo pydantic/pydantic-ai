@@ -496,14 +496,23 @@ async def test_connection_error(allow_model_requests: None):
     assert result.response.model_name == 'test'
 
 
-async def test_unexpected_answer_type(allow_model_requests: None):
-    """A `Score` answer where a yes/no or pick-one was asked is a server contract violation, not a user error."""
+@pytest.mark.parametrize(
+    'answer',
+    [
+        pytest.param({'type': 'score', 'score': 1, 'confidence': 1.0, 'legend': {}, 'probabilities': {}}, id='score'),
+        pytest.param(
+            {'type': 'choice', 'choice': 'yes', 'confidence': 0.9, 'probabilities': {'yes': 0.9}}, id='choice'
+        ),
+    ],
+)
+async def test_unexpected_answer_type(allow_model_requests: None, answer: dict[str, object]):
+    """An answer of another kind than the yes/no that was asked is a server contract violation, not a user error."""
 
-    def score(request: httpx2.Request) -> httpx2.Response:
-        return answers(response={'type': 'score', 'score': 1, 'confidence': 1.0, 'legend': {}, 'probabilities': {}})
+    def wrong_kind(request: httpx2.Request) -> httpx2.Response:
+        return answers(response=answer)
 
-    model = mock_model(score)
-    with pytest.raises(UnexpectedModelBehavior, match='Unexpected answer type'):
+    model = mock_model(wrong_kind)
+    with pytest.raises(UnexpectedModelBehavior, match="Unexpected answer from TypeSafe for output field 'response'"):
         await Agent(model, output_type=bool).run('anything')
 
 
@@ -525,7 +534,7 @@ async def test_missing_answer(allow_model_requests: None):
         return answers()
 
     model = mock_model(nothing)
-    with pytest.raises(UnexpectedModelBehavior, match="no answer for output field 'response'"):
+    with pytest.raises(UnexpectedModelBehavior, match="output field 'response': None"):
         await Agent(model, output_type=bool).run('anything')
 
 

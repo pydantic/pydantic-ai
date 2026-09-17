@@ -220,18 +220,17 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         confidence: dict[str, float] = {}
         probabilities: dict[str, dict[str, float]] = {}
         for name, prop in properties.items():
+            # Each answer must be the kind its question asked for; anything else is a broken response.
             answer = response.answers.get(name)
-            if answer is None:
-                raise UnexpectedModelBehavior(f'TypeSafe returned no answer for output field {name!r}.')
-            if isinstance(answer, NoulAnswer):
+            if isinstance(questions[name], Noul) and isinstance(answer, NoulAnswer):
                 args[name] = answer.noul if prop.get('type') == 'number' else answer.noul >= 0.5
                 confidence[name] = answer.noul
-            elif isinstance(answer, ChoiceAnswer):
+            elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
                 args[name] = answer.choice
                 confidence[name] = answer.confidence
                 probabilities[name] = answer.probabilities
             else:
-                raise UnexpectedModelBehavior(f'Unexpected answer type from TypeSafe for field {name!r}: {answer!r}')
+                raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
 
         return ModelResponse(
             parts=[ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id())],
