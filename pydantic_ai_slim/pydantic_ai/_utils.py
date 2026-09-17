@@ -1,11 +1,13 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import copy
 import functools
 import inspect
 import re
 import sys
+import textwrap
 import time
 import uuid
 from collections.abc import (
@@ -23,6 +25,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -1129,3 +1132,31 @@ def estimate_string_tokens(text: str) -> int:
     Blank text counts as one token, so a caller that wants zero for it guards the call itself.
     """
     return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))
+
+
+@functools.cache
+def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
+    """The docstring under each member of an `Enum`, by member name.
+
+    Pydantic reads a docstring under a model field with `use_attribute_docstrings`, but not one under an enum
+    member; this does the same for enums, so each option can be described where it is declared. Empty when the
+    source is not available, such as for a class defined in the REPL.
+    """
+    try:
+        source = inspect.getsource(cls)
+    except (OSError, TypeError):
+        return {}
+    class_def = ast.parse(textwrap.dedent(source)).body[0]
+    if not isinstance(class_def, ast.ClassDef):  # pragma: no cover
+        return {}
+    docstrings: dict[str, str] = {}
+    for previous, node in zip(class_def.body, class_def.body[1:]):
+        if not (
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        ):
+            continue
+        targets = previous.targets if isinstance(previous, ast.Assign) else [getattr(previous, 'target', None)]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                docstrings[target.id] = inspect.cleandoc(node.value.value)
+    return docstrings

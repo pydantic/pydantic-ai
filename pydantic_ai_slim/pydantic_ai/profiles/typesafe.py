@@ -20,5 +20,8 @@ def typesafe_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=False,
         supports_image_output=False,
         supports_audio_input=False,
+        supports_image_input=False,
+        supports_document_input=False,
+        supports_video_input=False,
         default_structured_output_mode='tool',
     )

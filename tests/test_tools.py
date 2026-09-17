@@ -3,6 +3,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
 import pydantic_core
@@ -5198,3 +5199,41 @@ def test_tool_return_part_serializes_with_serialization_alias():
     # The wire output keys agree with the advertised return schema properties.
     assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
     assert set(serialized_obj) == set(return_schema.get('properties', {}))
+
+
+def test_enum_member_docstrings_describe_options():
+    """A docstring under an enum member becomes that option's description, as `anyOf` of `const`s."""
+
+    class Priority(str, Enum):
+        """How urgent the ticket is."""
+
+        low = 'low'
+        """Can wait a week."""
+        high = 'high'
+        """Needs attention today."""
+        unknown = 'unknown'
+
+    Undocumented = Enum('Undocumented', {'a': 'a', 'b': 'b'})  # no source to read, so a plain enum
+
+    agent = Agent(FunctionModel(get_json_schema))
+
+    @agent.tool_plain
+    def triage(priority: Priority, other: Undocumented) -> None: ...  # pragma: no cover
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['parameters_json_schema']['$defs'] == snapshot(
+        {
+            'Priority': {
+                'anyOf': [
+                    {'const': 'low', 'description': 'Can wait a week.'},
+                    {'const': 'high', 'description': 'Needs attention today.'},
+                    {'const': 'unknown'},
+                ],
+                'description': 'How urgent the ticket is.',
+                'title': 'Priority',
+                'type': 'string',
+            },
+            'Undocumented': {'enum': ['a', 'b'], 'title': 'Undocumented', 'type': 'string'},
+        }
+    )

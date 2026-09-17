@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    CompactionPart,
+    FilePart,
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
@@ -23,6 +25,8 @@ from pydantic_ai import (
     PromptedOutput,
     RetryPromptPart,
     SystemPromptPart,
+    TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -52,19 +56,21 @@ pytestmark = [
 ]
 
 
+class Verdict(str, Enum):
+    """How to handle this command."""
+
+    run = 'run'
+    """Reads, builds, tests or edits inside the project. Reversible."""
+    reject = 'reject'
+    """Destroys data, rewrites shared history, or sends secrets over the network."""
+    ask = 'ask'
+    """Legitimate but consequential enough that a human should confirm."""
+
+
 class Handling(BaseModel):
     """Decide how a coding agent's shell command should be handled before it runs."""
 
-    verdict: Literal['run', 'reject', 'ask'] = Field(
-        description='How to handle this command.',
-        json_schema_extra={
-            'typesafe_criteria': {
-                'run': 'Reads, builds, tests or edits inside the project. Reversible.',
-                'reject': 'Destroys data, rewrites shared history, or sends secrets over the network.',
-                'ask': 'Legitimate but consequential enough that a human should confirm.',
-            }
-        },
-    )
+    verdict: Verdict
     irreversible: bool = Field(description='Would running this destroy data or leak secrets?')
 
 
@@ -114,7 +120,7 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
     agent = Agent(typesafe_model, output_type=Handling, instructions='Judge what the command would actually do.')
     result = await agent.run('rm -rf ./build')
 
-    assert result.output == snapshot(Handling(verdict='ask', irreversible=True))
+    assert result.output == snapshot(Handling(verdict=Verdict.ask, irreversible=True))
     assert result.response.parts == [ToolCallPart('final_result', result.output.model_dump(), tool_call_id=IsStr())]
     assert result.response.model_name == snapshot('jev-1.13.0')
     assert result.response.provider_name == 'typesafe'
@@ -129,7 +135,7 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
     )
 
     # Every field became one question, carrying the field description, the output type's docstring and the
-    # agent instructions; the prompt is the state.
+    # agent instructions; the enum member docstrings describe the options; the prompt is the state.
     assert request_capture.body('/v1/systemone') == snapshot(
         {
             'state': {'prompt': 'rm -rf ./build'},
@@ -199,7 +205,7 @@ async def test_enum_and_probability_output(
         {
             'colour': {
                 'type': 'choice',
-                'criteria': {'red': 'red', 'blue': 'blue'},
+                'criteria': {'red': None, 'blue': None},
                 'instructions': {
                     'question': 'Which colour is named?',
                     'goal': 'The final response which ends this conversation',
@@ -220,7 +226,7 @@ async def test_enum_and_probability_output(
 async def test_message_history(
     allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
 ):
-    """Earlier user prompts travel as `previous_prompts`; Jev's own earlier answers are not sent."""
+    """Everything before the latest prompt goes along as `history`, Jev's own earlier answer included."""
     agent = Agent(typesafe_model, output_type=bool, instructions='Does the latest message mention a fruit?')
     first = await agent.run('I like apples.')
     second = await agent.run('And bicycles.', message_history=first.all_messages())
@@ -229,7 +235,16 @@ async def test_message_history(
     assert second.output == snapshot(False)
     first_body, second_body = request_capture.bodies('/v1/systemone')
     assert first_body['state'] == snapshot({'prompt': 'I like apples.'})
-    assert second_body['state'] == snapshot({'prompt': 'And bicycles.', 'previous_prompts': ['I like apples.']})
+    assert second_body['state'] == snapshot(
+        {
+            'history': [
+                {'user': 'I like apples.'},
+                {'tool_call': {'name': 'final_result', 'args': {'response': True}}},
+                {'tool_return': {'name': 'final_result', 'content': 'Final result processed.'}},
+            ],
+            'prompt': 'And bicycles.',
+        }
+    )
     # The instructions are on every request in the history, but go out once.
     assert second_body['questions'] == first_body['questions']
 
@@ -299,14 +314,6 @@ class WithUnboundedFloat(BaseModel):
     score: float
 
 
-class WithWrongCriteria(BaseModel):
-    verdict: Literal['run', 'reject'] = Field(json_schema_extra={'typesafe_criteria': {'run': 'ok', 'stop': 'no'}})
-
-
-class WithCriteriaOnBool(BaseModel):
-    ok: bool = Field(json_schema_extra={'typesafe_criteria': {'yes': 'ok'}})
-
-
 @pytest.mark.parametrize(
     'output_type,match',
     [
@@ -315,12 +322,6 @@ class WithCriteriaOnBool(BaseModel):
         pytest.param(WithOptional, "Output field 'ok' is not supported", id='optional'),
         pytest.param(WithIntOptions, 'options are not all strings', id='int-options'),
         pytest.param(WithUnboundedFloat, "Output field 'score' is not supported", id='unbounded-float'),
-        pytest.param(
-            WithWrongCriteria,
-            "`typesafe_criteria` for output field 'verdict' must describe exactly its options",
-            id='criteria',
-        ),
-        pytest.param(WithCriteriaOnBool, "output field 'ok' has none", id='criteria-without-options'),
     ],
 )
 async def test_unsupported_output_fields(
@@ -348,45 +349,71 @@ async def test_native_tools_rejected(allow_model_requests: None, typesafe_model:
         await agent.run('anything')
 
 
-@pytest.mark.parametrize(
-    'history',
-    [
-        pytest.param(
-            [
-                ModelRequest(parts=[UserPromptPart('What is the weather?')]),
-                ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_1')]),
-                ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1')]),
-            ],
-            id='function-tool',
+async def test_history_from_another_model(allow_model_requests: None):
+    """A history from a model that called tools is the text under judgment: every part is sent, in order."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather?')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart('Let me check.'),
+                NativeToolCallPart('web_search', {'query': 'weather'}, tool_call_id='call_1'),
+                NativeToolReturnPart('web_search', 'Rainy', tool_call_id='call_1'),
+                ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_2'),
+            ]
         ),
-        pytest.param(
-            [
-                ModelRequest(parts=[UserPromptPart('What is the weather?')]),
-                ModelResponse(
-                    parts=[
-                        NativeToolCallPart('web_search', {'query': 'weather'}, tool_call_id='call_1'),
-                        NativeToolReturnPart('web_search', 'Rainy', tool_call_id='call_1'),
-                        ToolCallPart('final_result', {'response': True}, tool_call_id='call_2'),
-                    ]
-                ),
-                ModelRequest(parts=[ToolReturnPart('final_result', 'Final result processed.', tool_call_id='call_2')]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_2')]),
+        ModelResponse(parts=[TextPart('Rain.'), CompactionPart(content=None)]),
+        ModelRequest(parts=[RetryPromptPart('Say more.')]),
+        ModelResponse(parts=[TextPart('It is raining.'), CompactionPart(content='Weather was discussed.')]),
+    ]
+    agent = Agent(mock_model(record), output_type=bool, instructions='Was the user told the weather?')
+    result = await agent.run('Did the assistant answer?', message_history=history)
+
+    assert result.output is True
+    assert seen[0]['state'] == snapshot(
+        {
+            'history': [
+                {'user': 'What is the weather?'},
+                {'tool_call': {'name': 'web_search', 'args': {'query': 'weather'}}},
+                {'tool_return': {'name': 'web_search', 'content': 'Rainy'}},
+                {'tool_call': {'name': 'get_weather', 'args': {'city': 'London'}}},
+                {'tool_return': {'name': 'get_weather', 'content': 'Rainy'}},
+                {'assistant': 'Rain.'},
+                {
+                    'retry': """\
+Validation feedback:
+Say more.
+
+Fix the errors and try again.\
+"""
+                },
+                {'assistant': 'It is raining.'},
+                {'summary': 'Weather was discussed.'},
             ],
-            id='native-tool',
-        ),
-    ],
-)
-async def test_tool_history_rejected(
-    allow_model_requests: None, typesafe_model: TypeSafeModel, history: list[ModelMessage]
-):
-    """A history from another model that called tools cannot be continued on Jev."""
+            'prompt': 'Did the assistant answer?',
+        }
+    )
+
+
+async def test_file_in_history_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Draw a cat.')]),
+        ModelResponse(parts=[FilePart(BinaryContent(b'\x89PNG', media_type='image/png'))]),
+    ]
     agent = Agent(typesafe_model, output_type=bool)
-    with pytest.raises(UserError, match='Tool calls in the message history are not supported'):
-        await agent.run('Is it raining?', message_history=history)
+    with pytest.raises(UserError, match='Files are not supported'):
+        await agent.run('Is it a cat?', message_history=history)
 
 
 async def test_non_text_prompt_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
     agent = Agent(typesafe_model, output_type=bool)
-    with pytest.raises(UserError, match='Non-text prompts are not supported'):
+    with pytest.raises(UserError, match='Files are not supported'):
         await agent.run(['look at this', BinaryContent(b'\x89PNG', media_type='image/png')])
 
 
@@ -422,48 +449,39 @@ async def test_system_prompt(allow_model_requests: None):
     # A system prompt later in the history is an instruction too, not part of the judged text.
     history = [*first.all_messages(), ModelRequest(parts=[SystemPromptPart('Now be lenient.')])]
     await agent.run('again', message_history=history)
-    assert seen[1]['state'] == {'prompt': 'again', 'previous_prompts': ['anything']}
+    assert seen[1]['state']['prompt'] == 'again'
     assert seen[1]['questions']['response']['instructions']['instructions'] == snapshot(
         'Be strict.\n\nNow be lenient.\n\nIs it harmful?'
     )
 
 
-@pytest.mark.parametrize(
-    'part,match',
-    [
-        # Jev cannot revise an answer, so a retry prompt from an output validator is refused instead of re-asked.
-        pytest.param(
-            RetryPromptPart('Try again.', tool_name='final_result', tool_call_id='call_1'),
-            'cannot revise an answer',
-            id='retry',
-        ),
-        # A tool result on its own; the agent drops these before the request, a direct caller gets the refusal.
-        pytest.param(
-            ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_2'),
-            'Tool calls in the message history',
-            id='tool-result',
-        ),
-    ],
-)
-async def test_direct_request_rejected(
-    allow_model_requests: None, typesafe_model: TypeSafeModel, part: Any, match: str
-):
+async def test_direct_request_without_prompt(allow_model_requests: None):
+    """A request whose latest message has no user text still has something to judge: the history."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(ok={'type': 'noul', 'noul': 0.9})
+
     output_tool = ToolDefinition(
         name='final_result', parameters_json_schema={'type': 'object', 'properties': {'ok': {'type': 'boolean'}}}
     )
-    messages = [
+    messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('anything')]),
         ModelResponse(parts=[ToolCallPart('final_result', {'ok': True}, tool_call_id='call_1')]),
-        ModelRequest(parts=[part]),
+        ModelRequest(parts=[ToolReturnPart('final_result', 'Final result processed.', tool_call_id='call_1')]),
     ]
-    with pytest.raises(UserError, match=match):
-        await model_request(
-            typesafe_model,
-            messages,
-            model_request_parameters=ModelRequestParameters(
-                output_mode='tool', output_tools=[output_tool], allow_text_output=False
-            ),
-        )
+    await model_request(
+        mock_model(record),
+        messages,
+        model_request_parameters=ModelRequestParameters(
+            output_mode='tool', output_tools=[output_tool], allow_text_output=False
+        ),
+    )
+    assert 'prompt' not in seen[0]['state']
+    assert seen[0]['state']['history'][-1] == {
+        'tool_return': {'name': 'final_result', 'content': 'Final result processed.'}
+    }
 
 
 async def test_streaming_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):

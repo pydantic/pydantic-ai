@@ -27,33 +27,35 @@ export TYPESAFE_API_KEY='your-api-key'
 You can then use `TypeSafeModel` by name, with the `output_type` Jev should fill:
 
 ```python
-from typing import Literal
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
 
 
+class Verdict(str, Enum):
+    """How to handle this command."""
+
+    run = 'run'
+    """Reads, builds, tests or edits inside the project. Reversible."""
+    reject = 'reject'
+    """Destroys data, rewrites shared history, or sends secrets over the network."""
+    ask = 'ask'
+    """Legitimate but consequential enough that a human should confirm."""
+
+
 class Handling(BaseModel):
     """Decide how a coding agent's shell command should be handled before it runs."""
 
-    verdict: Literal['run', 'reject', 'ask'] = Field(
-        description='How to handle this command.',
-        json_schema_extra={
-            'typesafe_criteria': {
-                'run': 'Reads, builds, tests or edits inside the project. Reversible.',
-                'reject': 'Destroys data, rewrites shared history, or sends secrets over the network.',
-                'ask': 'Legitimate but consequential enough that a human should confirm.',
-            }
-        },
-    )
+    verdict: Verdict
     irreversible: bool = Field(description='Would running this destroy data or leak secrets?')
 
 
 agent = Agent('typesafe:jev-latest', output_type=Handling)
 result = agent.run_sync('rm -rf ./build')
 print(result.output)
-#> verdict='ask' irreversible=False
+#> verdict=<Verdict.ask: 'ask'> irreversible=False
 ```
 
 Or initialise the model directly with just the model name:
@@ -77,7 +79,7 @@ Every field of the output type is one question, and all of them go out in a sing
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
 | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
 
-The field description is the question text. The output type's docstring and the agent's instructions are passed along as context, so put the framing there and the per-field wording in the descriptions. Give each option of a `Literal` or `Enum` a description in `json_schema_extra={'typesafe_criteria': {...}}`; without them Jev only sees the option names.
+The field description is the question text, and for an `Enum` field its class docstring is. The output type's docstring and the agent's instructions are passed along as context, so put the framing there and the per-field wording in the descriptions. A docstring under an `Enum` member, as in the example above, describes that option; a `Literal` has nowhere to put one, so Jev only sees its option names.
 
 Jev's confidence for every field is on the response, so you can act on how sure it was, for example by asking a human below a threshold:
 
@@ -92,15 +94,60 @@ print(result.response.provider_details)
 #> {'confidence': {'response': 0.95}, 'probabilities': {}}
 ```
 
+## Judging a conversation
+
+The latest user prompt is the text Jev judges. Everything before it in the message history goes along as context: user prompts, answers, tool calls and their results, from whichever model produced them. That makes Jev a cheap judge of another agent's run:
+
+```python
+from pydantic_ai import Agent
+
+assistant = Agent('openai:gpt-5.6')
+conversation = assistant.run_sync('hello')
+
+judge = Agent('typesafe:jev-latest', output_type=bool, instructions='Was the assistant polite?')
+result = judge.run_sync('Judge the conversation above.', message_history=conversation.all_messages())
+print(result.output)
+#> True
+```
+
+## Files
+
+Jev reads text only. To ask about a document, image or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
+
+```python
+from enum import Enum
+
+from pydantic_ai import Agent, DocumentUrl
+from pydantic_ai.capabilities import FileUnderstanding
+
+
+class DocumentSubject(str, Enum):
+    """What is this document about?"""
+
+    animals = 'animals'
+    vehicles = 'vehicles'
+    other = 'other'
+
+
+agent = Agent(
+    'typesafe:jev-latest',
+    output_type=DocumentSubject,
+    capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6')],
+)
+result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
+print(result.output.value)
+#> animals
+```
+
 ## What fails, and how
 
-Jev cannot write text, call tools, look at images, or change an answer. Anything that needs one of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, so a wrong agent costs nothing:
+Jev cannot write text, call tools or look at files. Anything that needs one of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, so a wrong agent costs nothing:
 
 - Output: text output, `str` in the output types, more than one output type, [`NativeOutput`][pydantic_ai.output.NativeOutput], [`PromptedOutput`][pydantic_ai.output.PromptedOutput], an output type with no fields, or a field that is not one of the types above.
 - Tools: function tools, toolsets and native tools.
-- Prompt: images, audio, video, documents, or no text at all.
-- History: tool calls and tool results from another model, native tools included, and deferred tool results. Earlier user prompts are sent as `previous_prompts`; earlier answers, from Jev or another model, are not.
-- Retries: an output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or an answer Pydantic rejects. Jev cannot revise, so the run stops after the first request.
+- Files: an image, audio, video or document in the prompt or the history, unless [File Understanding](../capabilities/file-understanding.md) has described it first. A prompt with no text and no history at all is refused too.
+
+Jev cannot revise an answer either. An output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] sends the retry prompt along as history and gets an answer to the same question again, so a validator that keeps rejecting runs the agent out of retries.
 
 A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does not skip past a `UserError`, because it means the agent cannot run on Jev at all. It does fall back on [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] and [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which Jev raises like any other model when the API returns an error or cannot be reached. A response the SDK cannot parse is [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which is not skipped either.
 

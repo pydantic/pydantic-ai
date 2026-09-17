@@ -271,6 +271,18 @@ A = TypeVar('A')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
+    def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
+        # A docstring under an enum member describes that option, as `anyOf` of `const`s with descriptions
+        # (the JSON Schema way to describe single values), so models can tell the options apart.
+        json_schema = super().enum_schema(schema)
+        docstrings = _utils.enum_member_docstrings(schema['cls'])
+        if docstrings:
+            json_schema['anyOf'] = [
+                {'const': value, **({'description': docstrings[member.name]} if member.name in docstrings else {})}
+                for member, value in zip(schema['members'], json_schema.pop('enum'))
+            ]
+        return json_schema
+
     def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:
         # Remove largely-useless property titles
         s = super()._named_required_fields_schema(named_required_fields)

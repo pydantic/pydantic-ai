@@ -10,7 +10,8 @@ from .. import _utils, usage
 from .._http import to_httpx2_timeout
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..messages import (
-    LoadCapabilityReturnPart,
+    CompactionPart,
+    FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -19,10 +20,11 @@ from ..messages import (
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
+    TextPart,
+    ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
-    ToolSearchReturnPart,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -93,16 +95,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
 
 
     class Handling(BaseModel):
-        verdict: Literal['run', 'reject', 'ask'] = Field(
-            description='How to handle this command.',
-            json_schema_extra={
-                'typesafe_criteria': {
-                    'run': 'Reads, builds, tests or edits inside the project. Reversible.',
-                    'reject': 'Destroys data, rewrites shared history, or sends secrets over the network.',
-                    'ask': 'Legitimate but consequential enough that a human should confirm.',
-                }
-            },
-        )
+        verdict: Literal['run', 'reject', 'ask'] = Field(description='How to handle this command.')
         irreversible: bool = Field(description='Would running this destroy data or leak secrets?')
 
 
@@ -119,15 +112,17 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
 
     The field description is the question. The output type's docstring and the agent's instructions go along
-    as context. Describe each option of a `Literal` or `Enum` with
-    `json_schema_extra={'typesafe_criteria': {option: description}}`, or Jev only sees the option names.
+    as context. A docstring under an `Enum` member describes that option, see the [docs](../../models/typesafe.md);
+    without one Jev only sees its name.
     Jev's confidence per field is in
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `confidence`,
     and the full distribution of each pick-one field under `probabilities`.
 
+    The latest user prompt is the text Jev judges. Everything before it in the message history, from any model,
+    goes along as `history`: user prompts, answers, tool calls and their results, and retry prompts.
+
     Anything Jev cannot do is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request
-    is sent: text output, other field types, tools, non-text prompts, tool calls in the history, retries, and
-    streaming. Earlier user prompts are sent along; earlier answers are not.
+    is sent: text output, other field types, tools, files in the prompt or history, and streaming.
 
     Sampling settings like `temperature` do not apply and are ignored. `timeout`, `extra_headers` and
     `extra_body` are forwarded.
@@ -191,7 +186,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tool = _output_tool(model_request_parameters)
         properties = _properties(output_tool)
-        system_prompts, state = _map_messages(messages, output_tool.name)
+        system_prompts, state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join([*system_prompts, *(part.content for part in instruction_parts)]) or None
         questions = _questions(properties, output_tool, instructions)
@@ -289,20 +284,8 @@ def _questions(
         if instructions:
             ask['instructions'] = instructions
 
-        if options := prop.get('enum'):
-            if not all(isinstance(option, str) for option in options):
-                raise UserError(
-                    f'Output field {name!r} is not supported by this model: its options are not all strings. {_UNSUPPORTED_FIELD_HINT}'
-                )
-            criteria: dict[str, JSONContent] = prop.get('typesafe_criteria') or {option: option for option in options}
-            if set(criteria) != set(options):
-                raise UserError(
-                    f'`typesafe_criteria` for output field {name!r} must describe exactly its options {sorted(options)}, '
-                    f'got {sorted(criteria)}.'
-                )
-            questions[name] = Choice(instructions=ask, criteria=criteria)
-        elif prop.get('typesafe_criteria'):
-            raise UserError(f'`typesafe_criteria` describes options, but output field {name!r} has none.')
+        if (options := _options(name, prop)) is not None:
+            questions[name] = Choice(instructions=ask, criteria=options)
         elif prop.get('type') == 'boolean':
             questions[name] = Noul(instructions=ask)
         elif prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1:
@@ -312,66 +295,102 @@ def _questions(
     return questions
 
 
-def _prompt_text(part: UserPromptPart) -> list[str]:
+def _options(name: str, prop: dict[str, Any]) -> dict[str, str | None] | None:
+    """A pick-one field's options and their descriptions, or `None` when the field is not one.
+
+    A `Literal` is an `enum`; an `Enum` whose members have docstrings is an `anyOf` of `const`s with descriptions.
+    """
+    if 'enum' in prop:
+        options: dict[str, str | None] = dict.fromkeys(prop['enum'])
+    elif 'anyOf' in prop and all('const' in option for option in prop['anyOf']):
+        options = {option['const']: option.get('description') for option in prop['anyOf']}
+    else:
+        return None
+    if not all(isinstance(option, str) for option in options):
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: its options are not all strings. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    return options
+
+
+def _prompt_text(part: UserPromptPart) -> str:
     items = [part.content] if isinstance(part.content, str) else list(part.content)
     if not all(isinstance(item, str) for item in items):
         raise UserError(
-            'Non-text prompts are not supported by this model; images, audio, video and documents cannot be sent to Jev.'
+            'Files are not supported by this model; images, audio, video and documents cannot be sent to Jev.'
         )
-    return cast(list[str], items)
+    return '\n\n'.join(cast(list[str], items))
 
 
-def _tool_history_error() -> UserError:
-    return UserError('Tool calls in the message history are not supported by this model, which cannot call tools.')
-
-
-def _reject_tool_calls(message: ModelResponse, output_tool_name: str) -> None:
-    """Earlier answers are not context for Jev, but a tool exchange means this history needs a model with tools."""
+def _request_entries(message: ModelRequest, system_prompts: list[str]) -> list[JSONContent]:
+    """A request's parts as history entries; system prompts go to `system_prompts` instead."""
+    entries: list[JSONContent] = []
     for part in message.parts:
-        if isinstance(part, NativeToolCallPart | NativeToolReturnPart) or (
-            isinstance(part, ToolCallPart) and part.tool_name != output_tool_name
-        ):
-            raise _tool_history_error()
+        if isinstance(part, SystemPromptPart):
+            system_prompts.append(part.content)
+        elif isinstance(part, UserPromptPart):
+            entries.append({'user': _prompt_text(part)})
+        elif isinstance(part, ToolReturnPart):
+            entries.append({'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}})
+        elif isinstance(part, RetryPromptPart):
+            entries.append({'retry': part.model_response()})
+        elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+            raise _unsynthesized_tool_availability_delta_error()
+        elif isinstance(part, SpeechPart):  # pragma: no cover
+            # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
+            raise _unconverted_speech_part_error()
+        else:
+            assert_never(part)
+    return entries
 
 
-def _map_messages(messages: list[ModelMessage], output_tool_name: str) -> tuple[list[str], dict[str, JSONContent]]:
-    """The system prompts, and the state to judge: the latest user text, plus earlier turns' text."""
+def _response_entries(message: ModelResponse) -> list[JSONContent]:
+    """A response's parts as history entries; thinking is the model's own and is left out."""
+    entries: list[JSONContent] = []
+    for part in message.parts:
+        if isinstance(part, TextPart):
+            entries.append({'assistant': part.content})
+        elif isinstance(part, ToolCallPart | NativeToolCallPart):
+            entries.append({'tool_call': {'name': part.tool_name, 'args': part.args_as_dict()}})
+        elif isinstance(part, NativeToolReturnPart):
+            entries.append({'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}})
+        elif isinstance(part, CompactionPart):
+            if part.content:
+                entries.append({'summary': part.content})
+        elif isinstance(part, FilePart):
+            raise UserError(
+                'Files are not supported by this model; a file in the message history cannot be sent to Jev.'
+            )
+        elif isinstance(part, SpeechPart):  # pragma: no cover
+            raise _unconverted_speech_part_error()
+        elif not isinstance(part, ThinkingPart):
+            assert_never(part)
+    return entries
+
+
+def _map_messages(messages: list[ModelMessage]) -> tuple[list[str], dict[str, JSONContent]]:
+    """The system prompts, and the state to judge: the latest user text as `prompt`, everything before as `history`."""
     system_prompts: list[str] = []
-    prompts: list[str] = []
-    latest: list[str] = []
+    history: list[JSONContent] = []
+    prompt: str | None = None
     for message in messages:
         if isinstance(message, ModelRequest):
-            prompts.extend(latest)
-            latest = []
-            for part in message.parts:
-                if isinstance(part, SystemPromptPart):
-                    system_prompts.append(part.content)
-                elif isinstance(part, UserPromptPart):
-                    latest.extend(_prompt_text(part))
-                elif isinstance(part, RetryPromptPart):
-                    raise UserError(
-                        'Retries are not supported by this model; Jev cannot revise an answer. '
-                        f'This retry asked: {part.model_response()}'
-                    )
-                elif isinstance(part, ToolReturnPart | ToolSearchReturnPart | LoadCapabilityReturnPart):
-                    # The agent's own "Final result processed." return for an earlier answer is fine; nothing else is.
-                    if not (isinstance(part, ToolReturnPart) and part.tool_name == output_tool_name):
-                        raise _tool_history_error()
-                elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                    raise _unsynthesized_tool_availability_delta_error()
-                elif isinstance(part, SpeechPart):  # pragma: no cover
-                    # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
-                    raise _unconverted_speech_part_error()
-                else:
-                    assert_never(part)
+            entries = _request_entries(message, system_prompts)
+            if message is messages[-1]:
+                texts = [cast(str, entry['user']) for entry in entries if isinstance(entry, dict) and 'user' in entry]
+                entries = [entry for entry in entries if not (isinstance(entry, dict) and 'user' in entry)]
+                prompt = '\n\n'.join(texts) or None
+            history.extend(entries)
         elif isinstance(message, ModelResponse):
-            _reject_tool_calls(message, output_tool_name)
+            history.extend(_response_entries(message))
         else:
             assert_never(message)
 
-    if not any(latest):
+    state: dict[str, JSONContent] = {}
+    if history:
+        state['history'] = history
+    if prompt:
+        state['prompt'] = prompt
+    if not state:
         raise UserError('A request without user text is not supported by this model; Jev needs text to judge.')
-    state: dict[str, JSONContent] = {'prompt': '\n\n'.join(latest)}
-    if prompts:
-        state['previous_prompts'] = prompts
     return system_prompts, state
