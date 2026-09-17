@@ -497,10 +497,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             value: Any = _ResolvedModelRequestContext(projection=projection, model=resolved_model)
         else:
             value = result.value
-        if not (ctx.usage - usage_before).has_values():
+        applied = ctx.usage - usage_before
+        if not applied.has_values():
             # Recorded, not incremented: the operation accumulated this delta across the durable
             # boundary, where the activity's context can't reach the spans open back here.
             _usage_attribution.record_usage(ctx.usage, result.usage_delta)
+        else:
+            # Executed in process, so it already added to `ctx.usage` itself. The spans containing
+            # this run still have to hear about it, or a first run and a replay of the same
+            # operation would report different usage.
+            _usage_attribution.credit_applied(applied)
         return value
 
     def _capability_operation_parameter_transport(

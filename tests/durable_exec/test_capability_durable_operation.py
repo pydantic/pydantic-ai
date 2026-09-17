@@ -13,10 +13,18 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from inline_snapshot import snapshot
 
+try:
+    from logfire.testing import CaptureLogfire
+
+    logfire_installed = True
+except ImportError:  # pragma: lax no cover
+    logfire_installed = False
+
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    Instrumentation,
     ProcessEventStream,
     ResolveModelId,
     WrapperCapability,
@@ -1147,6 +1155,38 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.details['custom_units'],
         ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_operation_usage_reaches_the_run_span_whether_executed_or_replayed(
+    capfire: CaptureLogfire,
+) -> None:
+    """A capability operation's usage reaches the run span on the first run and on a replay.
+
+    An operation executed in process adds to `ctx.usage` itself; a replayed one reports a delta to
+    fold in. Both paths have to reach the spans containing the run, or the same capability would
+    report one number the first time and another on replay.
+    """
+    capability = UsageOperation()
+    agent = Agent(
+        TestModel(),
+        name='replayed_usage',
+        capabilities=[capability, ReplayingDurability(), Instrumentation()],
+    )
+
+    await agent.run('test')
+    await agent.run('test')
+
+    reported = [
+        (
+            span['attributes'].get('gen_ai.aggregated_usage.details.summary_tokens'),
+            span['attributes'].get('gen_ai.aggregated_usage.details.custom_units'),
+        )
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+    ]
+    assert capability.calls == 1
+    assert reported == snapshot([(3, 7), (3, 7)])
 
 
 @dataclass(kw_only=True)

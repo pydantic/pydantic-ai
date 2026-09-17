@@ -26,7 +26,7 @@ from contextvars import ContextVar
 
 from .usage import RequestUsage, RunUsage
 
-__all__ = ('accumulate', 'record_request', 'record_tool_call', 'record_usage')
+__all__ = ('accumulate', 'credit_applied', 'record_request', 'record_tool_call', 'record_usage')
 
 _active: ContextVar[tuple[RunUsage, ...]] = ContextVar['tuple[RunUsage, ...]'](
     'pydantic_ai.usage_attribution', default=()
@@ -55,6 +55,18 @@ def record_tool_call(usage: RunUsage) -> None:
     usage.tool_calls += 1
     for run_usage in _active.get():
         run_usage.tool_calls += 1
+
+
+def credit_applied(applied: RunUsage) -> None:
+    """Credit usage already applied to a run's own object to the runs containing it.
+
+    The durable-operation boundary is the one place that learns about usage after the fact: an
+    operation executed in process adds to `ctx.usage` itself, while a replayed one reports a delta
+    to fold in. Both have to reach the containing spans, or the same capability would report
+    different numbers on a first run and a replay.
+    """
+    for run_usage in _active.get():
+        run_usage.incr(applied)
 
 
 def record_usage(usage: RunUsage, recorded: RunUsage | RequestUsage) -> None:
