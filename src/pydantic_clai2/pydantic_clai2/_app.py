@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Generic, TypeVar
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import FormattedText
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
@@ -47,6 +48,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
         settings={'unrestricted_filesystem': True, 'repo_context': False},
     ),
     PluginSettings(id='repo_context', factory='pydantic_clai2.repo_context'),
+    PluginSettings(id='compaction', factory='pydantic_clai2.compaction', settings={}),
 )
 """Plugins CLAI ships enabled. `/plugins disable NAME` turns one off; `remove` restores this.
 
@@ -152,6 +154,7 @@ async def chat(
             complete=config_completions,
         )
     )
+    status = Status()
     loader: PluginLoader[DepsT] = PluginLoader(
         store=store,
         console=console,
@@ -159,6 +162,8 @@ async def chat(
         session_start=lambda: SessionStart(agent=agent, settings=context.settings),
         builtin=builtin_plugins,
         project=project.plugins,
+        conversation=session,
+        status=status,
     )
     commands.register(
         Command(
@@ -171,14 +176,13 @@ async def chat(
     for plugin in plugins:
         if isinstance(plugin, CommandProvider):
             commands.register_many(plugin.get_commands(context))
-    status = Status()
     prompt = PromptSession[str](
         history=input_history(store.path.with_name('input-history')),
         completer=PromptCompleter(commands),
         complete_while_typing=True,
         style=COMPLETION_STYLE,
         reserve_space_for_menu=6,
-        bottom_toolbar=lambda: status.text(),
+        bottom_toolbar=lambda: FormattedText(status.toolbar()),
     )
     shell = _Shell(
         agent=agent,
@@ -315,8 +319,9 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
 
 
 def _reset_status(command: str, status: Status) -> None:
-    if command == '/new':
+    if command.split(maxsplit=1)[0] == '/new':
         status.context_tokens = None
+        status.context_alert = False
         status.output_tokens = None
         status.streamed_chars = 0
 

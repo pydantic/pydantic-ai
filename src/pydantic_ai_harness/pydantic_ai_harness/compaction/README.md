@@ -1,9 +1,7 @@
 # Compaction
 
 A menu of strategies for keeping an agent's conversation history within a model's context
-window. Most are Pydantic AI `Capability` classes that edit the message history just before each
-request goes out. `FallbackCompaction` is instead a composing `CompactionStrategy` used through
-`TieredCompaction` or `compact_now`; it has no request trigger of its own. Edits **persist** into the
+window. These Pydantic AI `Capability` classes edit the message history just before each request goes out. `FallbackCompaction` optionally triggers its chain at a token threshold and also works as a composing `CompactionStrategy`. Edits **persist** into the
 run's message history, so a trim, clear, or summary carries forward to later steps (it is not
 recomputed from the full history every turn).
 
@@ -259,6 +257,7 @@ subclasses pass through immediately; `fallback_on` rejects types that do not der
 from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
 
 fallback = FallbackCompaction(
+    max_fraction=0.85,
     fallback_chain=[
         SummarizingCompaction(max_messages=1, keep_tokens=20_000),
         SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
@@ -266,9 +265,17 @@ fallback = FallbackCompaction(
 )
 ```
 
-The strategies' trigger fields are not consulted when a composing strategy calls `compact`
-directly. Put `fallback` inside `TieredCompaction` to give the chain a context trigger, or pass it
-to `compact_now` for manual compaction.
+Register `fallback` directly with `Agent(..., capabilities=[fallback])`. Its optional
+`max_tokens` or `max_fraction` trigger runs the chain only when estimated context tokens
+exceed the threshold. Fractions resolve against the request's model; `context_window`
+overrides its window and `fallback_context_window` supplies an unknown model's window.
+`tokenizer` customizes token estimation. The hook preserves pinned parts and persists
+compacted history, emitting the standard `compact_messages` span when history changes.
+
+With neither trigger configured, the request hook does nothing. Direct `compact()` and
+`compact_now()` calls run the chain regardless of its threshold, so it remains usable
+inside other composing strategies and for manual compaction. Each child's own trigger
+is bypassed when the chain calls its `compact()` method.
 
 ## `ClampOversizedMessages`: surviving a runaway generation
 

@@ -18,8 +18,19 @@ from rich.console import Console
 from . import theme
 from .commands import Commands, plugins_command
 from .config import PluginSettings
-from .plugins import DepsT, HostEvent, PluginHost, Renderer, SessionEnd, SessionEndReason, SessionStart, TurnStart
+from .plugins import (
+    Conversation,
+    DepsT,
+    HostEvent,
+    PluginHost,
+    Renderer,
+    SessionEnd,
+    SessionEndReason,
+    SessionStart,
+    TurnStart,
+)
 from .settings_store import SettingsStore
+from .status import Status
 
 _FOLDER_PACKAGE = 'pydantic_clai2_plugins'
 
@@ -86,12 +97,19 @@ class PluginLoader(Generic[DepsT]):
         session_start: Callable[[], SessionStart],
         builtin: Sequence[PluginSettings] = (),
         project: Sequence[PluginSettings] = (),
+        conversation: Conversation | None = None,
+        status: Status | None = None,
     ) -> None:
-        """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both."""
+        """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
+
+        `conversation` and `status` are handed to every host; see `PluginHost` for the defaults.
+        """
         self._store = store
         self._console = console
         self._commands = commands
         self._session_start = session_start
+        self._conversation = conversation
+        self._status = status
         self._builtin = {declaration.id: declaration for declaration in builtin}
         self._project = {declaration.id: declaration for declaration in project}
         self._entries: dict[str, PluginEntry[DepsT]] = {}
@@ -177,7 +195,13 @@ class PluginLoader(Generic[DepsT]):
         entry = self._entry(name)
         if entry.host is not None:
             return
-        host = PluginHost[DepsT](name=name, console=self._console, settings=entry.declaration.settings)
+        host = PluginHost[DepsT](
+            name=name,
+            console=self._console,
+            settings=entry.declaration.settings,
+            conversation=self._conversation,
+            status=self._status,
+        )
         try:
             module = self._import(entry, fresh=fresh)
             _activate(module, entry.declaration, host)

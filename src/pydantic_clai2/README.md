@@ -5,6 +5,8 @@ A separately installable terminal client for Pydantic AI. The coding tools,
 default, `/plugins disable coder` for a chat-only shell. The built-in
 `repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
 into the agent's instructions; `/plugins disable repo_context` turns that off.
+Context management is the built-in `compaction` plugin,
+[described below](#compacting-the-conversation).
 Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
@@ -215,12 +217,54 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set`, `/model`, `/help`, `/new`, `/exit`, `/config`, and `/plugins`.
+Interactive commands: `/login`, `/set`, `/model`, `/help`, `/new`, `/exit`, `/config`,
+`/plugins`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall saved prompt
 history. Ctrl-D exits. Ctrl-C at input clears the line; during a run it cancels
 the turn and returns to input. No cancelled run is automatically retried.
+
+## Compacting the conversation
+
+The built-in `compaction` plugin uses harness's `FallbackCompaction` with
+`SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
+It protects the most recent 50,000 tokens. `ModelAPIError`,
+`FallbackExceptionGroup`, and `UsageLimitExceeded` during summarisation fall
+back to truncation; other exceptions propagate. The summary request is billed
+to the current model unless `summarization_model` selects another.
+
+The chain runs automatically before requests above `threshold` (85% of the context
+window by default). `/compact` runs the same chain between turns regardless of that
+threshold. Add words to say what the summary must keep: `/compact the auth refactor, not the CSS`. You get one line
+with the message counts before and after and an estimate of the tokens saved.
+An empty conversation, or one that fits inside the protected tail, says so and
+sends nothing.
+
+The window comes from genai-prices, the same catalog the `/model` menu shows
+context sizes from. A model it does not list (`test`, a local endpoint) is
+assumed to have 200,000 tokens, the harness default. To change any of this,
+redeclare the plugin with your own settings; `/plugins disable compaction`
+turns it off, `/compact` included:
+
+```text
+/plugins add compaction pydantic_clai2.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
+```
+
+| Key | Default | Does |
+|---|---|---|
+| `strategy` | `"summarization"` | `"truncation"` skips the summary and only drops older messages |
+| `threshold` | `0.85` | fraction of the window above which the fallback chain runs |
+| `protected_tokens` | `50000` | tokens of the most recent messages never compacted |
+| `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
+| `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
+
+The context figure turns yellow when a request still exceeds `threshold` after
+compaction, for example because the protected tail is too large. For windows smaller
+than 50,000 tokens, redeclare the plugin with a smaller `protected_tokens` value;
+`/compact` does not override that protection. Run `/compact` to retry the chain,
+or `/new` to clear the history. The figure and colour
+refresh with the next request; `/compact` alone does not change them.
 
 ## Ask CLAI to customize itself
 
@@ -363,7 +407,10 @@ string tool-argument deltas. The estimate is characters divided by four, not a
 provider tokenizer count. On completion it is replaced by reported run output
 usage. Context is the most recent response's reported input plus output tokens,
 not cumulative conversation billing or a context-window percentage; `?` means
-unavailable. During a request it may reflect the previous response.
+unavailable. As each request goes out, the `compaction` plugin replaces it with
+that request's estimated size and paints it yellow while the history is
+[over its threshold](#compacting-the-conversation); the response's reported
+usage takes over when it lands.
 
 While running, the footer reserves the terminal's bottom row using ANSI scrolling
 regions. Its text shimmers with a moving highlight at ten frames per second, with no spinner and a

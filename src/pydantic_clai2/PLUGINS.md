@@ -68,14 +68,16 @@ Plugins are trusted code running as you. Only install what you trust.
 
 ## The built-in plugins
 
-The coding tools are a plugin too, and so is reading the repository's
-instruction file. `/plugins list` shows both, marked `(built-in)` and enabled
-unless you say otherwise:
+The coding tools are a plugin too, and so are reading the repository's
+instruction file and keeping the conversation inside the context window.
+`/plugins list` shows all three, marked `(built-in)` and enabled unless you say
+otherwise:
 
 | Id | Backed by | Settings | Does |
 |---|---|---|---|
 | `coder` | `pydantic_ai_harness.coder:Coder` | `{"unrestricted_filesystem": true, "repo_context": false}` | the file and shell tools |
 | `repo_context` | `pydantic_clai2.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
+| `compaction` | `pydantic_clai2.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
@@ -108,6 +110,19 @@ A repository can declare plugins too, in `.clai/settings.json`; they show as
 repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
 [Project settings](README.md#project-settings).
+
+`compaction` directly registers harness `FallbackCompaction` with
+`max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
+same chain unconditionally. Only `ModelAPIError`, `FallbackExceptionGroup`, and
+`UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
+propagate. `/plugins disable compaction` turns automatic compaction,
+`/compact`, and its context warning off; a declaration under the same name
+changes its settings (`strategy`, `threshold`, `protected_tokens`,
+`context_window`, `summarization_model`; see the README):
+
+```text
+/plugins add compaction pydantic_clai2.compaction '{"threshold": 0.7, "context_window": 200000}'
+```
 
 ## Managing plugins
 
@@ -344,6 +359,15 @@ settings = host.settings(NotifySettings)
 
 Bad or missing values fail at startup with a message naming your plugin.
 
+### Reach the conversation and the status row: `host.conversation`, `host.status`
+
+`host.conversation` is the retained history: `messages` is a snapshot,
+`replace_messages(...)` swaps it between turns, and `resolved_model()` is the
+model the next prompt will use. `host.status` is the footer's state; set
+`context_alert` to paint the context figure in the warning colour. The built-in
+`compaction` plugin uses both. A host built outside the shell gets an in-memory
+`Transcript` and a detached `Status`, so tests need no special case.
+
 ## Rules that keep plugins predictable
 
 - Handlers are `async`. There is no sync variant of anything.
@@ -379,6 +403,9 @@ activate(host)
 for handler in host.handlers:
     await handler(TurnEnd(text='hi', outcome='completed'))
 ```
+
+A plugin that reads the history gets a `Transcript` by default; pass
+`conversation=Transcript(messages=[...], model=TestModel())` to seed it.
 
 ## vllm connection
 

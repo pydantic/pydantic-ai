@@ -52,9 +52,20 @@ class Session(Generic[DepsT, OutputT]):
 
     def clear(self) -> None:
         """Start a new conversation without replacing the agent or plugins."""
+        self.replace_messages(())
+
+    def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
+        """Swap the retained history, as `/compact` does after summarising it."""
         if self._running:
-            raise RuntimeError('Cannot clear a running conversation')
-        self._messages.clear()
+            raise RuntimeError('Cannot replace the history of a running conversation')
+        self._messages = list(messages)
+
+    async def resolved_model(self) -> Model | str | None:
+        """The model the next run uses: the session's choice after `resolve_model`, else the agent's own."""
+        if self.model is None:
+            return self.agent.model
+        model = self.resolve_model(self.model)
+        return await model if isinstance(model, Awaitable) else model
 
     async def prompt(self, text: str) -> AgentRunResult[OutputT]:
         """Execute the complete native agent loop, including tool calls."""
@@ -62,9 +73,7 @@ class Session(Generic[DepsT, OutputT]):
             raise RuntimeError('A conversation can only run one prompt at a time')
         self._running = True
         try:
-            model = self.resolve_model(self.model) if self.model is not None else None
-            if isinstance(model, Awaitable):
-                model = await model
+            model = await self.resolved_model()
             with capture_run_messages() as messages:
                 try:
                     result = await self.agent.run(

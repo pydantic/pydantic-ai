@@ -75,13 +75,14 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   (`agent.run(capabilities=...)`), so "active for the next prompt" is the
   natural unit; nothing rebuilds the agent.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `_app.py` lists what CLAI ships enabled (`coder`, `repo_context`). The loader
-  treats them like drop-ins with the lowest precedence: a store declaration
-  with the same id replaces one, `disable` persists an override, `remove`
-  resets it. Do not special-case `Coder` anywhere else; the agent from
-  `create_agent()` has no coding tools of its own. `coder` is declared with
-  `repo_context: false` because `repo_context` binds harness `RepoContext`
-  itself; keep it that way or `AGENTS.md` reaches the model twice.
+  `_app.py` lists what CLAI ships enabled (`coder`, `repo_context`,
+  `compaction`). The loader treats them like drop-ins with the lowest
+  precedence: a store declaration with the same id replaces one, `disable`
+  persists an override, `remove` resets it. Do not special-case `Coder`
+  anywhere else; the agent from `create_agent()` has no coding tools of its
+  own. `coder` is declared with `repo_context: false` because `repo_context`
+  binds harness `RepoContext` itself; keep it that way or `AGENTS.md` reaches
+  the model twice.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
@@ -91,6 +92,14 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **A load failure leaves the session as it was.** Import or `activate` errors
   are reported and the plugin stays unloaded; partial registrations from a
   failed `activate` are discarded with the host.
+
+Compaction registers harness `FallbackCompaction` directly with `max_fraction`
+and `context_window` for both strategies. Harness owns the trigger; do not add
+threshold math or an orchestrator in CLAI. Register the usage gauge after the
+chain so yellow means the compacted request still exceeds the threshold.
+`/compact` drives the same chain regardless of threshold. Only `ModelAPIError`,
+`FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
+summary failure; other exceptions propagate.
 
 ## Adding or changing a hook
 
@@ -168,6 +177,7 @@ the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
 | `model_menu.py` | `/model`: the picker, `ModelSettingsSource`, `run_model_flow` |
 | `model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
+| `compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
 | `commands.py` | `Command`, the registry, completion |
 | `config.py` | `Settings`, `PluginSettings` |
 | `settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |

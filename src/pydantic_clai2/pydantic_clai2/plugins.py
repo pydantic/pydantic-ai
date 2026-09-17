@@ -1,8 +1,8 @@
 """Everything a plugin can register, recorded on one host per plugin."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Generic, Literal, Never, TypeVar, get_args, overload
+from typing import Generic, Literal, Never, Protocol, TypeVar, get_args, overload
 
 from pydantic import BaseModel, JsonValue
 from pydantic_ai import AgentRunResult, AgentStreamEvent
@@ -43,11 +43,14 @@ from pydantic_ai.capabilities.hooks import (
     WrapToolExecuteHookFunc,
     WrapToolValidateHookFunc,
 )
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import Model
 from rich.console import Console, RenderableType
 from typing_extensions import TypeVar as DefaultTypeVar
 
 from .commands import Commands
 from .config import Settings
+from .status import Status
 
 DepsT = DefaultTypeVar('DepsT', default=None)
 EventT = TypeVar('EventT', bound=AgentStreamEvent)
@@ -55,6 +58,45 @@ ModelT = TypeVar('ModelT', bound=BaseModel)
 
 SessionEndReason = Literal['exit', 'eof', 'error']
 TurnOutcome = Literal['completed', 'failed', 'cancelled']
+
+
+class Conversation(Protocol):
+    """The retained history as a plugin sees it. The shell's `Session` is one; `Transcript` is the plain one."""
+
+    @property
+    def messages(self) -> list[ModelMessage]:
+        """A snapshot of the retained messages."""
+        ...
+
+    def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
+        """Swap the retained history, as `/compact` does after summarising it."""
+        ...
+
+    async def resolved_model(self) -> Model | str | None:
+        """The model the next run uses; `None` when nothing has been chosen yet."""
+        ...
+
+
+class Transcript:
+    """An in-memory `Conversation` for hosts built outside the shell, such as in a plugin's tests."""
+
+    def __init__(self, *, messages: Sequence[ModelMessage] = (), model: Model | str | None = None) -> None:
+        """Start with `messages` retained and `model` as what `resolved_model` reports."""
+        self._messages = list(messages)
+        self.model = model
+
+    @property
+    def messages(self) -> list[ModelMessage]:
+        """A snapshot of the retained messages, like `Session.messages`; edit through `replace_messages`."""
+        return list(self._messages)
+
+    def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
+        """Swap the retained history."""
+        self._messages = list(messages)
+
+    async def resolved_model(self) -> Model | str | None:
+        """The `model` given at construction."""
+        return self.model
 
 
 @dataclass(kw_only=True)
@@ -149,10 +191,24 @@ CORE_HOOK_NAMES: frozenset[str] = frozenset(get_args(CoreHookName))
 class PluginHost(Generic[DepsT]):
     """The one object a plugin talks to. Discarding the host unloads the plugin."""
 
-    def __init__(self, *, name: str, console: Console, settings: dict[str, JsonValue]) -> None:
-        """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`."""
+    def __init__(
+        self,
+        *,
+        name: str,
+        console: Console,
+        settings: dict[str, JsonValue],
+        conversation: Conversation | None = None,
+        status: Status | None = None,
+    ) -> None:
+        """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
+
+        The shell passes its own `conversation` and `status`; a host built elsewhere gets a
+        `Transcript` and a detached status row, so a plugin needs no special case for either.
+        """
         self.name = name
         self.console = console
+        self.conversation: Conversation = conversation if conversation is not None else Transcript()
+        self.status = status if status is not None else Status()
         self.commands = Commands()
         self._settings = settings
         self._hooks: Hooks[DepsT] = Hooks()
