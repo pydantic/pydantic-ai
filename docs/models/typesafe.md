@@ -79,7 +79,7 @@ Every field of the output type is one question, and all of them go out in a sing
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
 | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
 
-The field description is the question text, and for an `Enum` field its class docstring is. The output type's docstring and the agent's instructions are passed along as context, so put the framing there and the per-field wording in the descriptions. A docstring under an `Enum` member, as in the example above, describes that option; a `Literal` has nowhere to put one, so Jev only sees its option names.
+The field description is the question text; an `Enum` field without one uses the enum's class docstring. The output type's docstring and the agent's instructions are context, so put the framing there and the per-field wording in the descriptions. A docstring under an `Enum` member, as in the example above, describes that option. A `Literal` has nowhere to put descriptions, so Jev only sees its option names.
 
 Jev's confidence for every field is on the response, so you can act on how sure it was, for example by asking a human below a threshold:
 

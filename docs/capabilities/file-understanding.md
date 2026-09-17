@@ -19,7 +19,7 @@ print(result.output)
 
 Which files need describing comes from the model's [profile](../models/overview.md#inspecting-a-models-profile): [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Most models accept images and documents, so with them the capability only has video described. A text-only model like [Jev](../models/typesafe.md) has everything described.
 
-`fallback_model` is the model that writes the descriptions, as a `'provider:model'` name or a [`Model`][pydantic_ai.models.Model] instance, and it has to accept the files itself. `instructions` replaces the default request for a detailed description:
+`fallback_model` is the model that writes the descriptions, as a `'provider:model'` name or a [`Model`][pydantic_ai.models.Model] instance, and it must accept the files itself. `instructions` replaces the default request for a detailed description:
 
 ```python {title="file_understanding_instructions.py"}
 from pydantic_ai.capabilities import FileUnderstanding
@@ -32,4 +32,4 @@ FileUnderstanding(
 
 The description reaches the model between `-----BEGIN FILE-----` and `-----END FILE-----` lines that name the file and its media type, the same way text files are inlined for models that take no attachments. Each file is described once per capability instance and the description is reused on later steps and runs, so a long conversation does not describe the same file again.
 
-A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] has no single profile, so the capability leaves its files alone; give the candidate models the capability instead, or pick the one you want described for.
+A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] has no single profile, so the capability leaves its files alone. Use the capability with a single model when files need to be described.

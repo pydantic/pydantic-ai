@@ -24,6 +24,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     Capability,
+    FileUnderstanding,
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
@@ -73,8 +74,6 @@ from .capability_models import (
     registered_capability_context as _registered_capability_context,
 )
 from .conftest import IsStr, iter_message_parts, remove_schema_descriptions, try_import
-
-from pydantic_ai.capabilities import FileUnderstanding
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 

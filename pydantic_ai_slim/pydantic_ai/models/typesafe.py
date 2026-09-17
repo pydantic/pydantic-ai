@@ -215,7 +215,6 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         confidence: dict[str, float] = {}
         probabilities: dict[str, dict[str, float]] = {}
         for name, prop in properties.items():
-            # Each answer must be the kind its question asked for; anything else is a broken response.
             answer = response.answers.get(name)
             if isinstance(questions[name], Noul) and isinstance(answer, NoulAnswer):
                 args[name] = answer.noul if prop.get('type') == 'number' else answer.noul >= 0.5
@@ -243,7 +242,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
 def _output_tool(model_request_parameters: ModelRequestParameters) -> ToolDefinition:
     """The one output tool Jev answers, or a `UserError` saying why this agent cannot run on Jev."""
     if model_request_parameters.function_tools:
-        raise UserError('Tools are not supported by this model. Give the agent an `output_type` and no tools.')
+        raise UserError('Function tools are not supported by this model. Give the agent an `output_type` and no tools.')
     if model_request_parameters.allow_text_output:
         raise UserError(
             'Text output is not supported by this model. Give the agent one structured `output_type`, '
@@ -252,8 +251,8 @@ def _output_tool(model_request_parameters: ModelRequestParameters) -> ToolDefini
     output_tools = model_request_parameters.output_tools
     if len(output_tools) != 1:
         raise UserError(
-            f'This model fills one output type per request, got {len(output_tools)}. '
-            'Give the agent a single structured `output_type`.'
+            f'Multiple output types are not supported by this model; got {len(output_tools)}. '
+            'Give the agent one structured `output_type`.'
         )
     return output_tools[0]
 
@@ -284,7 +283,18 @@ def _questions(
         if instructions:
             ask['instructions'] = instructions
 
-        if (options := _options(name, prop)) is not None:
+        options: dict[str, str | None] | None = None
+        if 'enum' in prop:
+            options = dict.fromkeys(prop['enum'])
+        elif 'anyOf' in prop and all('const' in option for option in prop['anyOf']):
+            options = {option['const']: option.get('description') for option in prop['anyOf']}
+
+        if options is not None:
+            if not all(isinstance(option, str) for option in options):
+                raise UserError(
+                    f'Output field {name!r} is not supported by this model: its options are not all strings. '
+                    f'{_UNSUPPORTED_FIELD_HINT}'
+                )
             questions[name] = Choice(instructions=ask, criteria=options)
         elif prop.get('type') == 'boolean':
             questions[name] = Noul(instructions=ask)
@@ -293,24 +303,6 @@ def _questions(
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
-
-
-def _options(name: str, prop: dict[str, Any]) -> dict[str, str | None] | None:
-    """A pick-one field's options and their descriptions, or `None` when the field is not one.
-
-    A `Literal` is an `enum`; an `Enum` whose members have docstrings is an `anyOf` of `const`s with descriptions.
-    """
-    if 'enum' in prop:
-        options: dict[str, str | None] = dict.fromkeys(prop['enum'])
-    elif 'anyOf' in prop and all('const' in option for option in prop['anyOf']):
-        options = {option['const']: option.get('description') for option in prop['anyOf']}
-    else:
-        return None
-    if not all(isinstance(option, str) for option in options):
-        raise UserError(
-            f'Output field {name!r} is not supported by this model: its options are not all strings. {_UNSUPPORTED_FIELD_HINT}'
-        )
-    return options
 
 
 def _prompt_text(part: UserPromptPart) -> str:
@@ -322,18 +314,24 @@ def _prompt_text(part: UserPromptPart) -> str:
     return '\n\n'.join(cast(list[str], items))
 
 
-def _request_entries(message: ModelRequest, system_prompts: list[str]) -> list[JSONContent]:
-    """A request's parts as history entries; system prompts go to `system_prompts` instead."""
-    entries: list[JSONContent] = []
+def _map_request(message: ModelRequest, *, latest: bool) -> tuple[list[str], list[JSONContent], list[str]]:
+    """Map a request to system prompts, history entries, and the text to judge."""
+    system_prompts: list[str] = []
+    history: list[JSONContent] = []
+    prompt_parts: list[str] = []
     for part in message.parts:
         if isinstance(part, SystemPromptPart):
             system_prompts.append(part.content)
         elif isinstance(part, UserPromptPart):
-            entries.append({'user': _prompt_text(part)})
+            text = _prompt_text(part)
+            if latest:
+                prompt_parts.append(text)
+            else:
+                history.append({'user': text})
         elif isinstance(part, ToolReturnPart):
-            entries.append({'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}})
+            history.append({'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}})
         elif isinstance(part, RetryPromptPart):
-            entries.append({'retry': part.model_response()})
+            history.append({'retry': part.model_response()})
         elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
             raise _unsynthesized_tool_availability_delta_error()
         elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -341,11 +339,11 @@ def _request_entries(message: ModelRequest, system_prompts: list[str]) -> list[J
             raise _unconverted_speech_part_error()
         else:
             assert_never(part)
-    return entries
+    return system_prompts, history, prompt_parts
 
 
 def _response_entries(message: ModelResponse) -> list[JSONContent]:
-    """A response's parts as history entries; thinking is the model's own and is left out."""
+    """Map a response to history entries, excluding the model's private thinking."""
     entries: list[JSONContent] = []
     for part in message.parts:
         if isinstance(part, TextPart):
@@ -372,15 +370,13 @@ def _map_messages(messages: list[ModelMessage]) -> tuple[list[str], dict[str, JS
     """The system prompts, and the state to judge: the latest user text as `prompt`, everything before as `history`."""
     system_prompts: list[str] = []
     history: list[JSONContent] = []
-    prompt: str | None = None
+    prompt_parts: list[str] = []
     for message in messages:
         if isinstance(message, ModelRequest):
-            entries = _request_entries(message, system_prompts)
-            if message is messages[-1]:
-                texts = [cast(str, entry['user']) for entry in entries if isinstance(entry, dict) and 'user' in entry]
-                entries = [entry for entry in entries if not (isinstance(entry, dict) and 'user' in entry)]
-                prompt = '\n\n'.join(texts) or None
+            request_system_prompts, entries, latest_prompt_parts = _map_request(message, latest=message is messages[-1])
+            system_prompts.extend(request_system_prompts)
             history.extend(entries)
+            prompt_parts.extend(latest_prompt_parts)
         elif isinstance(message, ModelResponse):
             history.extend(_response_entries(message))
         else:
@@ -389,7 +385,7 @@ def _map_messages(messages: list[ModelMessage]) -> tuple[list[str], dict[str, JS
     state: dict[str, JSONContent] = {}
     if history:
         state['history'] = history
-    if prompt:
+    if prompt := '\n\n'.join(prompt_parts):
         state['prompt'] = prompt
     if not state:
         raise UserError('A request without user text is not supported by this model; Jev needs text to judge.')

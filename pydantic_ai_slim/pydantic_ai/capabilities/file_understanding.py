@@ -9,7 +9,9 @@ from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     UserContent,
     UserPromptPart,
     VideoUrl,
@@ -81,19 +83,23 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         except NotImplementedError:
             # A `FallbackModel` has no profile of its own; which model answers is not known yet.
             return request_context
-        messages = request_context.messages
-        for index, message in enumerate(messages):
-            if not isinstance(message, ModelRequest):
-                continue
-            parts = list(message.parts)
-            for part_index, part in enumerate(parts):
-                if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                    content = [await self._describe_if_unsupported(item, profile) for item in part.content]
-                    if content != list(part.content):
-                        parts[part_index] = replace(part, content=content)
-            if parts != list(message.parts):
-                messages[index] = replace(message, parts=parts)
-        return request_context
+        messages = [await self._replace_unsupported_files(message, profile) for message in request_context.messages]
+        return replace(request_context, messages=messages)
+
+    async def _replace_unsupported_files(self, message: ModelMessage, profile: ModelProfile) -> ModelMessage:
+        if not isinstance(message, ModelRequest):
+            return message
+
+        original_parts = list(message.parts)
+        parts: list[ModelRequestPart] = []
+        for part in original_parts:
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                part = replace(
+                    part,
+                    content=[await self._describe_if_unsupported(item, profile) for item in part.content],
+                )
+            parts.append(part)
+        return replace(message, parts=parts) if parts != original_parts else message
 
     async def _describe_if_unsupported(self, item: UserContent, profile: ModelProfile) -> UserContent:
         if _accepted(item, profile):

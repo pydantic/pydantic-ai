@@ -279,7 +279,7 @@ async def test_fallback_on_http_error(allow_model_requests: None):
     [
         pytest.param(str, 'Text output is not supported', id='text'),
         pytest.param([Handling, str], 'Text output is not supported', id='text-in-union'),
-        pytest.param([Handling, EnumAndProbability], 'one output type per request, got 2', id='union'),
+        pytest.param([Handling, EnumAndProbability], 'Multiple output types are not supported.*got 2', id='union'),
         pytest.param(NativeOutput(Handling), 'Native structured output is not supported', id='native'),
         pytest.param(PromptedOutput(Handling), 'Text output is not supported', id='prompted'),
         pytest.param(Empty, 'no fields is not supported', id='empty'),
@@ -339,7 +339,7 @@ async def test_function_tools_rejected(allow_model_requests: None, typesafe_mode
     def lookup() -> str:
         return 'x'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Tools are not supported'):
+    with pytest.raises(UserError, match='Function tools are not supported'):
         await agent.run('anything')
 
 
