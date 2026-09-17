@@ -112,6 +112,7 @@ print(result.output)
 #> True
 ```
 
+To grade a whole dataset this way, use the [`Classifier`](../evals/evaluators/built-in.md#classifier) evaluator from Pydantic Evals: `Classifier('Was the assistant polite?', model='typesafe:jev-latest')` asks the same question about every case, one request each, and reports Jev's confidence alongside each answer.
 
 ## What Jev cannot do
 
