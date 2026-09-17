@@ -1179,6 +1179,7 @@ async def test_operation_usage_reaches_the_run_span_whether_executed_or_replayed
 
     reported = [
         (
+            span['attributes'].get('gen_ai.aggregated_usage.input_tokens'),
             span['attributes'].get('gen_ai.aggregated_usage.details.summary_tokens'),
             span['attributes'].get('gen_ai.aggregated_usage.details.custom_units'),
         )
@@ -1186,7 +1187,9 @@ async def test_operation_usage_reaches_the_run_span_whether_executed_or_replayed
         if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
     ]
     assert capability.calls == 1
-    assert reported == snapshot([(3, 7), (3, 7)])
+    # Tokens as well as details: the operation starts a nested agent run that records its own usage
+    # the ordinary way, so crediting the whole `ctx.usage` delta on top would count it twice.
+    assert reported == snapshot([(102, 3, 7), (102, 3, 7)])
 
 
 @dataclass(kw_only=True)
