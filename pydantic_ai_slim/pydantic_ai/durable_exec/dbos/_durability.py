@@ -51,6 +51,15 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         ```
     """
 
+    id: str | None = 'dbos_durability'
+    """One-off: an agent runs under a single durability engine, so the id is fixed.
+
+    Declaring it here is what makes a second DBOSDurability a construction-time error rather
+    than a silent double registration of the agent's durable units -- DBOS itself only reports
+    the duplicate and carries on. `name` stays separate: it identifies the *agent's* durable units,
+    while this identifies the capability.
+    """
+
     engine_spec = DurabilityEngineSpec(
         engine_name='DBOS',
         durable_unit_noun='step',
