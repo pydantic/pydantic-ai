@@ -924,7 +924,7 @@ async def model_logic(  # noqa: C901
                 return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
-        elif m.content == 'My card was charged twice.':
+        elif m.content == 'You have charged me twice and my account is now overdrawn. I need this reversed today.':
             # docs/models/typesafe.md: the prompt is the ticket, the questions are on the output type
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})]
@@ -933,7 +933,7 @@ async def model_logic(  # noqa: C901
             # docs/models/typesafe.md: Jev's confidence rides on `provider_details`
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': True})],
-                provider_details={'confidence': {'response': 0.95}, 'probabilities': {}, 'scores': {}},
+                provider_details={'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}},
             )
         elif m.content == 'The secret is 1234':
             return ModelResponse(parts=[TextPart('The secret is safe with me')])
