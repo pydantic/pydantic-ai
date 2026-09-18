@@ -363,7 +363,10 @@ class FileUrl(ABC):
         writes, which the private field holding it is excluded from the dump — and so from the schema —
         to leave to it.
         """
-        schema = handler.resolve_ref_schema(handler({k: v for k, v in core_schema.items() if k != 'serialization'}))
+        # `CoreSchema` is a union of `TypedDict`s, which can't express "this schema minus a key", so the
+        # copy the serializer is dropped from is handed back to the handler as the schema it still is.
+        without_serializer = {k: v for k, v in core_schema.items() if k != 'serialization'}
+        schema = handler.resolve_ref_schema(handler(cast('pydantic_core.CoreSchema', without_serializer)))
         properties: dict[str, Any] = schema.setdefault('properties', {})
         if 'media_type' not in properties:  # The validation schema already has it, under the field's alias.
             properties['media_type'] = {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Media Type'}
