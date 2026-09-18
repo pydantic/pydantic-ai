@@ -62,7 +62,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     agent = Agent(
         'anthropic:claude-fable-5',
         capabilities=[
-            Coder(),  # files, shell, repo context, planning, sub-agents, context management
+            Coder(),  # files, shell, repo context, sub-agents, context management
             WebSearch(),  # look up docs and error messages on the web
             Advisor('openai:gpt-5.6-sol'),  # a second opinion from another model when stuck
         ],
@@ -74,8 +74,8 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     ```python {test="skip" lint="skip"}
     capabilities = [
-        FileSystem('.'), Shell(cwd='.'), RepoContext(), Planning(), SubAgents(...),
-        ClearToolResults(), WarnNearLimits(), ToolOutputLimits(),
+        FileSystem('.'), Shell(cwd='.'), RepoContext(), SubAgents(...),
+        ClearToolResults(), WarnNearLimits(), ToolOutputLimits(), RepairToolArguments(),
     ]
     ```
 
