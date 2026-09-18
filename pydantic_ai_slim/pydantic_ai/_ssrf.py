@@ -251,15 +251,34 @@ def _embedded_ipv4s(ip: ipaddress.IPv6Address, *, exhaustive: bool) -> set[ipadd
     return candidates
 
 
-def is_cloud_metadata_ip(ip_str: str) -> bool:
-    """Check if an IP address is a cloud metadata/credential endpoint.
+def _parse_ip(ip_str: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse an IP address for blocklist comparison, or return `None` if it is not one.
 
-    These are always blocked for security reasons, even with allow_local=True. IPv6
-    transition forms are decoded so a metadata IP cannot be smuggled in as IPv6.
+    An IPv6 literal may carry a zone identifier (`fd00:ec2::254%251`, RFC 4007 §11), which
+    Python folds into address equality and hashing. A zone is only meaningful for a
+    link-local destination — the kernel ignores it for anything else and delivers the
+    request to the address regardless — so it must never change how a guard classifies
+    the address. Dropping it once, here, keeps every guard comparing the address itself,
+    whether it compares by set membership or by network containment.
     """
     try:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.scope_id is not None:
+        ip = ipaddress.IPv6Address(ip.packed)
+    return ip
+
+
+def is_cloud_metadata_ip(ip_str: str) -> bool:
+    """Check if an IP address is a cloud metadata/credential endpoint.
+
+    These are always blocked for security reasons, even with allow_local=True. IPv6
+    transition forms are decoded, and zone identifiers dropped, so a metadata IP cannot be
+    smuggled in as IPv6.
+    """
+    ip = _parse_ip(ip_str)
+    if ip is None:
         return False
     if isinstance(ip, ipaddress.IPv4Address):
         return ip in _CLOUD_METADATA_IPV4
@@ -272,11 +291,11 @@ def is_private_ip(ip_str: str) -> bool:
     """Check if an IP address is in a private/internal range.
 
     Handles both IPv4 and IPv6 addresses, including IPv6 transition forms that embed an
-    IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, NAT64, ISATAP).
+    IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, NAT64, ISATAP) and zone-scoped
+    literals.
     """
-    try:
-        ip = ipaddress.ip_address(ip_str)
-    except ValueError:
+    ip = _parse_ip(ip_str)
+    if ip is None:
         # Invalid IP address, treat as potentially dangerous
         return True
     targets: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [ip]
@@ -336,6 +355,22 @@ def validate_url_protocol(url: str) -> tuple[str, bool]:
     return scheme, scheme == 'https'
 
 
+def _normalized_host(host: str) -> str:
+    """Drop the FQDN root label from a hostname or a domain-list entry.
+
+    DNS treats `host.` and `host` as the same name, so both spellings have to land on one value
+    before an exact-match comparison. Leaving the root label in would also bypass the
+    allow/blocklists and skip the IP-literal fast path (e.g. `169.254.169.254.`).
+
+    Case is deliberately left alone here. `urlparse` has already lowercased a URL's host, and
+    the one part it leaves cased is an IPv6 zone identifier, which names an interface and *is*
+    case-sensitive (`if_nametoindex('ETH0')` is not `if_nametoindex('eth0')`) — so lowercasing
+    here would change which interface a `fe80::1%25ETH0` request goes out of. Entries are
+    case-folded in `_domain_key` instead, where the result is only ever compared, never dialed.
+    """
+    return host.rstrip('.')
+
+
 def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
     """Extract hostname, path, port, and protocol info from a URL.
 
@@ -351,11 +386,8 @@ def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
     parsed = urlparse(url)
     hostname = parsed.hostname
 
-    # Strip the trailing-dot (FQDN root label): DNS treats `host.` and `host` as the same,
-    # so leaving it in would bypass exact-match domain allow/blocklists and skip the
-    # IP-literal fast path (e.g. `169.254.169.254.`). urlparse already lowercases the host.
     if hostname:
-        hostname = hostname.rstrip('.')
+        hostname = _normalized_host(hostname)
 
     if not hostname:
         raise ValueError(f'Invalid URL: no hostname found in "{url}"')
@@ -492,15 +524,59 @@ def resolve_redirect_url(current_url: str, location: str) -> str:
         return urlunparse((parsed_current.scheme, parsed_current.netloc, f'{base_path}/{location}', '', '', ''))
 
 
+# Characters the IDNA codec turns into a label separator: the three RFC 3490 section 3.1 forms
+# (ideographic, fullwidth and halfwidth ideographic full stop) plus the two more the codec's NFKC
+# pass maps to `.` (one dot leader, small full stop). This list only has to cover the spellings the
+# codec rejects outright, since `_domain_key` strips the root label again after encoding.
+_IDNA_LABEL_SEPARATORS = ('\u3002', '\uff0e', '\uff61', '\u2024', '\ufe52')
+
+
+def _domain_key(host: str) -> str:
+    """The form a hostname and a domain-list entry are compared in.
+
+    `getaddrinfo` IDNA-encodes a non-ASCII hostname before resolving it, and that encoding
+    folds spellings that a comparison on the raw string reads as different domains:
+    `\uff45\uff56\uff49\uff4c.\uff43\uff4f\uff4d` written in fullwidth characters, or
+    `evil\u3002com` with an ideographic full stop, both resolve to `evil.com`. Comparing the
+    raw string would let those past a blocklist while the request still reached the blocked
+    host, so both sides are compared in the ASCII form the resolver will actually use.
+
+    The host is case-folded here rather than in `_normalized_host`, because this result is only
+    ever compared, never dialed: see that function on IPv6 zone identifiers.
+
+    The root label is stripped again *after* encoding, because a non-ASCII separator is only
+    turned into a `.` by the codec, i.e. after the first strip has already run: `evil.com\u2024`
+    would otherwise key as `evil.com.` and miss an `evil.com` entry. Stripping afterwards covers
+    every character the codec maps to a separator without this having to enumerate them.
+
+    A label the codec rejects (empty, or longer than 63 characters) is left as-is: it names a
+    host DNS cannot resolve, so the raw string is the only key it can have. The separators are
+    folded before encoding as well, so that a repeated one does not push the host onto that path.
+    """
+    for separator in _IDNA_LABEL_SEPARATORS:
+        host = host.replace(separator, '.')
+    address, separator, zone = _normalized_host(host).partition('%')
+    # Only the address is case-folded. A zone identifier names an interface and is
+    # case-sensitive, so `fe80::1%25eth0` and `fe80::1%25ETH0` are different destinations
+    # and must not collapse to one key -- an `allowed_domains` entry for one would
+    # otherwise authorize the other.
+    host = address.lower() + separator + zone
+    try:
+        return host.encode('idna').decode('ascii').rstrip('.')
+    except UnicodeError:
+        return host
+
+
 def _check_domain(hostname: str, *, allowed_domains: list[str] | None, blocked_domains: list[str] | None) -> None:
     """Validate a hostname against allowed/blocked domain lists.
 
     Raises:
         ValueError: If the hostname is not allowed or is blocked.
     """
-    if allowed_domains is not None and hostname not in allowed_domains:
+    key = _domain_key(hostname)
+    if allowed_domains is not None and key not in {_domain_key(d) for d in allowed_domains}:
         raise ValueError(f'Domain {hostname!r} is not in the allowed domains list. Allowed: {allowed_domains}')
-    if blocked_domains is not None and hostname in blocked_domains:
+    if blocked_domains is not None and key in {_domain_key(d) for d in blocked_domains}:
         raise ValueError(f'Domain {hostname!r} is blocked.')
 
 
@@ -596,10 +672,10 @@ async def safe_download(
                 `Cookie`, `Proxy-Authorization`) are stripped when a redirect
                 crosses origins (scheme + host + port), except for a same-host
                 http:80→https:443 upgrade.
-        allowed_domains: If set, only these hostnames are permitted (exact match).
-                Checked on every hop including redirects.
-        blocked_domains: If set, these hostnames are rejected (exact match).
-                Checked on every hop including redirects.
+        allowed_domains: If set, only these hostnames are permitted (exact match, ignoring case,
+                a trailing dot, and IDNA spelling). Checked on every hop including redirects.
+        blocked_domains: If set, these hostnames are rejected (exact match, ignoring case,
+                a trailing dot, and IDNA spelling). Checked on every hop including redirects.
 
     Returns:
         The httpx2.Response object.

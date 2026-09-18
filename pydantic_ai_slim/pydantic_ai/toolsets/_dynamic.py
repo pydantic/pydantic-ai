@@ -8,6 +8,7 @@ from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
+from ..tools import ToolDefinition
 from .abstract import AbstractToolset, ToolsetTool
 
 ToolsetFunc: TypeAlias = Callable[
@@ -129,6 +130,13 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if self._toolset is None:
             return None
         return await self._toolset.get_instructions(ctx)
+
+    async def get_tool_for_tool_def(
+        self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]
+    ) -> ToolsetTool[AgentDepsT]:
+        if self._toolset is None:
+            raise KeyError(tool_def.name)
+        return await self._toolset.get_tool_for_tool_def(tool_def, ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
