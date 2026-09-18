@@ -1419,16 +1419,17 @@ async def test_google_image_generation_accepts_the_gemini_api_provider_name_fami
         ),
     ],
 )
-async def test_google_cloud_image_generation_rejects_uploaded_file(
+async def test_google_cloud_image_generation_rejects_files_api_uploaded_file(
     provider_factory: Callable[[], BaseGoogleProvider], file_provider_name: UploadedFileProviderName
 ):
-    """The Files API is unavailable on Vertex AI, so an `UploadedFile` is rejected instead of forwarded.
+    """The Files API is unavailable on Vertex AI, so a Files API `UploadedFile` is rejected instead of forwarded.
 
     The rejection is keyed on the client's transport rather than on `system`: `GoogleProvider` stores a
     pre-built Vertex client as-is and keeps `name` `'google'`, so a name-keyed check would forward the
     file as a `fileData` part Vertex cannot resolve. It also runs before the `provider_name` check, so a
     file uploaded through the Gemini Files API (`provider_name='google'`) gets this error rather than
-    provider-mismatch advice that only leads back to it.
+    provider-mismatch advice that only leads back to it. A Cloud Storage `gs://` id is the reference
+    Vertex does resolve; `test_google_cloud_image_generation_forwards_gcs_references` pins that route.
     """
     model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider_factory())
     uploaded_file = UploadedFile(
@@ -1439,6 +1440,131 @@ async def test_google_cloud_image_generation_rejects_uploaded_file(
 
     with pytest.raises(UserError, match='The Gemini Files API is not available on Google Cloud'):
         await model.generate('edit this image', images=[uploaded_file])
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_forwards_gcs_references(monkeypatch: pytest.MonkeyPatch):
+    """On Vertex a Cloud Storage `gs://` reference travels as a `fileData` part, never as inline bytes.
+
+    Vertex has no Files API; Cloud Storage is its file store, and it reads the object server-side —
+    the route `GoogleModel._resolve_file` already takes for the conversational API. Both spellings of
+    the reference are pinned: an `UploadedFile` whose `file_id` is the URI, and an `ImageUrl` whose URL
+    is, with the media type inferred from the object name's extension or taken from an explicit
+    `media_type` when there is none. `download_item` is monkeypatched to prove nothing is fetched — a
+    `gs://` URL is not downloadable, so the old inline path could not have served it at all.
+    """
+    download_mock = AsyncMock(side_effect=AssertionError('a gs:// reference must not be downloaded'))
+    monkeypatch.setattr(google_images, 'download_item', download_mock)
+    requests: list[httpx2.Request] = []
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                'candidates': [
+                    {
+                        'content': {
+                            'parts': [{'inlineData': {'data': 'aGVsbG8=', 'mimeType': 'image/png'}}],
+                            'role': 'model',
+                        },
+                        'finishReason': 'STOP',
+                    }
+                ]
+            },
+        )
+
+    async with _mock_google_provider(
+        handle_request,
+        build_provider=lambda http_options: GoogleCloudProvider(
+            client=GoogleClient(vertexai=True, api_key='test-api-key', http_options=http_options)
+        ),
+    ) as provider:
+        model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+
+        await model.generate(
+            'composite the logo',
+            images=[
+                ImageUrl('gs://bucket/brand/logo.png'),
+                ImageUrl('gs://bucket/brand/no-extension', media_type='image/webp'),
+                UploadedFile(
+                    file_id='gs://bucket/brand/product.jpg', provider_name='google-cloud', media_type='image/jpeg'
+                ),
+                UploadedFile(
+                    file_id='gs://bucket/brand/hero.png',
+                    provider_name='google-vertex',
+                    media_type='image/png',
+                    vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_HIGH'}},
+                ),
+            ],
+        )
+
+    download_mock.assert_not_awaited()
+    body = json.loads(requests[0].content)
+    parts = body['contents'][0]['parts'][1:]
+    # The nested key spelling is google-genai's serialization, which varies by version and transport
+    # (`test_google_cloud_image_generation_downloads_files_api_url` reads both for `inlineData`), so the
+    # assertion reads either; the coverage is that every reference is a `fileData` part.
+    assert [(part['fileData'].get('fileUri') or part['fileData'].get('file_uri')) for part in parts] == snapshot(
+        [
+            'gs://bucket/brand/logo.png',
+            'gs://bucket/brand/no-extension',
+            'gs://bucket/brand/product.jpg',
+            'gs://bucket/brand/hero.png',
+        ]
+    )
+    assert [(part['fileData'].get('mimeType') or part['fileData'].get('mime_type')) for part in parts] == snapshot(
+        ['image/png', 'image/webp', 'image/jpeg', 'image/png']
+    )
+    assert [part.get('mediaResolution') for part in parts] == snapshot(
+        [None, None, None, {'level': 'MEDIA_RESOLUTION_HIGH'}]
+    )
+    assert not any('inlineData' in part for part in parts)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_requires_media_type_for_extensionless_gcs_url():
+    """A `gs://` `ImageUrl` whose object name carries no extension needs an explicit `media_type`.
+
+    The Files API branch has the same failure mode; both get the guidance instead of the bare
+    `ValueError` `ImageUrl.media_type` raises.
+    """
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=GoogleCloudProvider(api_key='test-api-key'))
+
+    with pytest.raises(UserError, match='cannot be inferred'):
+        await model.generate('edit this', images=[ImageUrl('gs://bucket/brand/abc123')])
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_rejects_foreign_uploaded_file():
+    """A `gs://` file stamped with another provider's name is rejected with the Vertex name family.
+
+    The family is the Google Cloud one on this transport (`google-cloud`, plus the pre-v2 `google-vertex`),
+    not the Gemini API family the same check accepts on the other transport.
+    """
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=GoogleCloudProvider(api_key='test-api-key'))
+    uploaded_file = UploadedFile(file_id='gs://bucket/brand/logo.png', provider_name='openai', media_type='image/png')
+
+    with pytest.raises(UserError, match=r"Expected `provider_name` to be one of \['google-cloud', 'google-vertex'\]"):
+        await model.generate('edit this', images=[uploaded_file])
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_gcs_url_is_not_forwarded_on_the_gemini_api(monkeypatch: pytest.MonkeyPatch):
+    """The `gs://` shortcut is keyed on the transport: the Gemini Developer API cannot resolve Cloud Storage.
+
+    So the URL takes the download path there, where `download_item` rejects the scheme, rather than
+    being forwarded as a `fileData` part the API would fail on server-side.
+    """
+    download_mock = AsyncMock(side_effect=ValueError('Unsupported URL scheme: gs'))
+    monkeypatch.setattr(google_images, 'download_item', download_mock)
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=GoogleProvider(api_key='test-api-key'))
+    image_url = ImageUrl('gs://bucket/brand/logo.png')
+
+    with pytest.raises(ValueError, match='Unsupported URL scheme'):
+        await model.generate('edit this', images=[image_url])
+
+    download_mock.assert_awaited_once_with(image_url, data_format='bytes')
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -2134,6 +2260,73 @@ async def test_google_cloud_image_edit_vcr(
         {'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'}
     )
     assert result.provider_response_id
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    'image',
+    [
+        pytest.param(ImageUrl('gs://cloud-samples-data/generative-ai/image/scones.jpg'), id='image-url'),
+        pytest.param(
+            UploadedFile(
+                file_id='gs://cloud-samples-data/generative-ai/image/scones.jpg',
+                provider_name='google-cloud',
+                media_type='image/jpeg',
+            ),
+            id='uploaded-file',
+        ),
+    ],
+)
+async def test_google_cloud_gcs_image_edit_vcr(
+    google_cloud_capture_provider: GoogleCloudProvider,
+    request_capture: RequestCapture,
+    image: ImageUrl | UploadedFile,
+):
+    """Vertex reads a public GCS reference server-side for both input types."""
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=google_cloud_capture_provider)
+
+    result = await model.generate(
+        'Turn this photograph of scones into a watercolor painting.',
+        images=[image],
+        settings=GoogleImageGenerationSettings(dimensions=(512, 512)),
+    )
+
+    # Capture the current request too: VCR's default matchers do not compare bodies.
+    assert request_capture.bodies() == snapshot(
+        [
+            {
+                'contents': [
+                    {
+                        'parts': [
+                            {'text': 'Turn this photograph of scones into a watercolor painting.'},
+                            {
+                                'fileData': {
+                                    'file_uri': 'gs://cloud-samples-data/generative-ai/image/scones.jpg',
+                                    'mime_type': 'image/jpeg',
+                                }
+                            },
+                        ],
+                        'role': 'user',
+                    }
+                ],
+                'generationConfig': {
+                    'responseModalities': ['IMAGE'],
+                    'imageConfig': {'aspectRatio': '1:1', 'imageSize': '512'},
+                },
+            }
+        ]
+    )
+
+    assert len(result.images) == 1
+    edited_image = result.images[0]
+    assert edited_image.content.data[:8] == b'\x89PNG\r\n\x1a\n'
+    assert edited_image.content.media_type == 'image/png'
+    assert edited_image.output_format == 'png'
+    assert result.model_name == 'gemini-3.1-flash-image'
+    assert result.provider_name == 'google-cloud'
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
 
 
 def _xai_image_responses(*data: bytes, respect_moderation: bool = True) -> list[XaiImageResponse]:
