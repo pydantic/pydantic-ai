@@ -1,7 +1,9 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
@@ -9,6 +11,7 @@ from typing_extensions import assert_never
 from .. import _utils, usage
 from .._http import to_httpx2_timeout
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION
+from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..messages import (
     BaseToolReturnPart,
@@ -19,6 +22,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
@@ -39,6 +43,7 @@ from ..tools import ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
+    StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -69,6 +74,7 @@ __all__ = (
     'TypeSafeModel',
     'TypeSafeModelName',
     'TypeSafeModelSettings',
+    'TypeSafeStreamedResponse',
     'LatestTypeSafeModelNames',
     'ToolCallProposed',
 )
@@ -83,7 +89,7 @@ TypeSafeModelName = str | LatestTypeSafeModelNames
 
 _UNSUPPORTED_FIELD_HINT = (
     'Use `bool`, a `Literal` or `Enum` of two or more strings, an `IntEnum` whose members are 0 upwards with a '
-    'docstring each, or a `float` bounded with `ge=0` and `le=1`.'
+    'docstring each, a `float` bounded with `ge=0` and `le=1`, a `list` of a `Literal` or `Enum`, or a model of these.'
 )
 
 
@@ -162,6 +168,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
     | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
     | `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the score rounded to a level |
+    | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
+    | a nested model of these | its fields, named `outer.inner` | the model |
+    | `Literal[...] | None` or `Enum | None` | pick one, or none of these | the option, or `None` |
 
     The field description is the question. The output type's docstring and the agent's instructions go along
     as context. A docstring under an `Enum` member describes that option, see the [docs](../../models/typesafe.md);
@@ -184,8 +193,10 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     which a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands
     that model, tools and all.
 
+    Jev answers in one piece, so a streamed run gets the whole answer as one event rather than failing.
+
     Anything else Jev cannot do is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a
-    request is sent: text output, other field types, native tools, files in the prompt or history, and streaming.
+    request is sent: text output, other field types, native tools, and files in the prompt or history.
 
     Sampling settings like `temperature` do not apply and are ignored. `timeout`, `extra_headers` and
     `extra_body` are forwarded.
@@ -249,7 +260,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tool, hand_offs = _output_tools(model_request_parameters)
         tools = [*hand_offs, *model_request_parameters.function_tools]
-        properties = _properties(output_tool) if output_tool else {}
+        properties = _fields(output_tool) if output_tool else {}
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
@@ -280,60 +291,16 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             # not encode as JSON. That is the caller's to fix, not the model's.
             raise UserError(f'TypeSafe could not send this request: {e}') from e
 
-        args: dict[str, Any] = {}
-        confidence: dict[str, float] = {}
-        probabilities: dict[str, dict[str, float]] = {}
-        scores: dict[str, float] = {}
-        for name, prop in properties.items():
-            answer = response.answers.get(name)
-            if isinstance(questions[name], Noul) and isinstance(answer, NoulAnswer):
-                if prop.get('type') == 'number':
-                    # The probability is the answer, so there is no separate confidence to report: a field
-                    # that asks for the number would otherwise get it back twice under two names.
-                    args[name] = answer.noul
-                else:
-                    # Jev reports no confidence for a yes/no: `noul` is the probability of yes, and what is
-                    # lost in rounding it to an answer is how sure that answer is. That is the distance from
-                    # the coin flip, doubled so it runs 0 to 1 like the confidence Jev reports for the other
-                    # two kinds of question — a no returned at 0.01 is a confident no, and reports 0.98.
-                    args[name] = answer.noul >= 0.5
-                    confidence[name] = abs(answer.noul - 0.5) * 2
-            elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
-                args[name] = answer.choice
-                confidence[name] = answer.confidence
-                probabilities[name] = answer.probabilities
-            elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
-                # `score` is a position along the rubric and falls between levels. The answer has to be one
-                # of them, and TypeSafe's way to get one is to "round it to the nearest level"; the mode
-                # would throw away the ordering that makes a rubric a rubric.
-                args[name] = round(answer.score)
-                confidence[name] = answer.confidence
-                probabilities[name] = {str(level): p for level, p in answer.probabilities.items()}
-                scores[name] = answer.score
-            else:
-                raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
-
-        provider_details: dict[str, Any] = {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
+        args, provider_details = _answers(response.answers, properties, questions)
         parts: list[ModelResponsePart] = []
         if output_tool:
             parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
         if tool_key is not None:
-            answer = response.answers.get(tool_key)
-            if not isinstance(answer, ChoiceAnswer):
-                raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for the tool question: {answer!r}')
-            probability = answer.probabilities[answer.choice]
-            # The pick and its probabilities are reported either way, so the hand-off rate can be watched.
-            provider_details['tool'] = {'choice': answer.choice, 'probabilities': answer.probabilities}
-            # With nothing to fill, the pick is the answer. Otherwise a tool picked below the threshold is a lean,
-            # and the output is filled.
-            if output_tool is None or (
-                answer.choice != output_tool.name and probability >= settings.get('typesafe_tool_call_threshold', 0.8)
+            threshold = settings.get('typesafe_tool_call_threshold', 0.8)
+            if call := _tool_call(
+                self._model_name, response.answers.get(tool_key), output_tool, tools, threshold, provider_details
             ):
-                tool = next(tool for tool in tools if tool.name == answer.choice)
-                if tool.parameters_json_schema.get('properties'):
-                    raise ToolCallProposed(self._model_name, answer.choice, probability)
-                # Nothing to write, so Jev makes the call itself.
-                parts = [ToolCallPart(answer.choice, {}, _utils.generate_tool_call_id())]
+                parts = [call]
 
         return ModelResponse(
             parts=parts,
@@ -346,6 +313,134 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             provider_details=provider_details,
             finish_reason='tool_call',
         )
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        # Jev answers in one piece, so the whole answer is the one event; a streamed run keeps working.
+        response = await self.request(messages, model_settings, model_request_parameters)
+        yield TypeSafeStreamedResponse(model_request_parameters, response)
+
+
+@dataclass
+class TypeSafeStreamedResponse(StreamedResponse):
+    """A whole answer from Jev as a stream of one event, so that a streamed run works on a model that cannot stream."""
+
+    _response: ModelResponse
+
+    def __post_init__(self):
+        self._usage = self._response.usage
+        self.provider_details = self._response.provider_details
+        self.finish_reason = self._response.finish_reason
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        for i, part in enumerate(self._response.parts):
+            assert isinstance(part, ToolCallPart)  # `request` builds nothing else
+            yield self._parts_manager.handle_tool_call_part(
+                vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
+            )
+
+    @property
+    def model_name(self) -> str:
+        return self._response.model_name or ''
+
+    @property
+    def provider_name(self) -> str | None:
+        return self._response.provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        return self._response.provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._response.timestamp
+
+
+def _answers(
+    answers: Mapping[str, object], properties: dict[str, dict[str, Any]], questions: dict[str, Noul | Choice | Score]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The output's arguments and `provider_details` from Jev's answers to the field questions."""
+    args: dict[str, Any] = {}
+    confidence: dict[str, float] = {}
+    probabilities: dict[str, dict[str, float]] = {}
+    scores: dict[str, float] = {}
+    for name, prop in properties.items():
+        prop, none_key = _optional(prop)
+        if prop.get('type') == 'array':
+            # One yes/no went out per option; the answer is the options that came back yes, in their order.
+            labelled: dict[str, float] = {}
+            for option in _options(prop['items']) or {}:
+                answer = answers.get(f'{name}.{option}')
+                if not isinstance(answer, NoulAnswer):
+                    raise UnexpectedModelBehavior(
+                        f'Unexpected answer from TypeSafe for output field {name!r}, option {option!r}: {answer!r}'
+                    )
+                labelled[option] = answer.noul
+            _set(args, name, [option for option, p in labelled.items() if p >= 0.5])
+            confidence[name] = min(abs(p - 0.5) * 2 for p in labelled.values())
+            probabilities[name] = labelled
+            continue
+        answer = answers.get(name)
+        if isinstance(questions[name], Noul) and isinstance(answer, NoulAnswer):
+            if prop.get('type') == 'number':
+                # The probability is the answer, so there is no separate confidence to report: a field
+                # that asks for the number would otherwise get it back twice under two names.
+                _set(args, name, answer.noul)
+            else:
+                # Jev reports no confidence for a yes/no: `noul` is the probability of yes, and what is
+                # lost in rounding it to an answer is how sure that answer is. That is the distance from
+                # the coin flip, doubled so it runs 0 to 1 like the confidence Jev reports for the other
+                # two kinds of question — a no returned at 0.01 is a confident no, and reports 0.98.
+                _set(args, name, answer.noul >= 0.5)
+                confidence[name] = abs(answer.noul - 0.5) * 2
+        elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
+            _set(args, name, None if answer.choice == none_key else answer.choice)
+            confidence[name] = answer.confidence
+            probabilities[name] = answer.probabilities
+        elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
+            # `score` is a position along the rubric and falls between levels. The answer has to be one
+            # of them, and TypeSafe's way to get one is to "round it to the nearest level"; the mode
+            # would throw away the ordering that makes a rubric a rubric.
+            _set(args, name, round(answer.score))
+            confidence[name] = answer.confidence
+            probabilities[name] = {str(level): p for level, p in answer.probabilities.items()}
+            scores[name] = answer.score
+        else:
+            raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
+    return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
+
+
+def _tool_call(
+    model_name: str,
+    answer: object,
+    output_tool: ToolDefinition | None,
+    tools: list[ToolDefinition],
+    threshold: float,
+    provider_details: dict[str, Any],
+) -> ToolCallPart | None:
+    """The tool call Jev makes itself from its answer to the tool question, if it takes one it can make.
+
+    With nothing to fill, the pick is the answer. Otherwise a tool picked below the threshold is a lean, and the
+    output is filled. A tool taken that needs arguments is raised as `ToolCallProposed` for a model behind Jev.
+    """
+    if not isinstance(answer, ChoiceAnswer):
+        raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for the tool question: {answer!r}')
+    probability = answer.probabilities[answer.choice]
+    # The pick and its probabilities are reported either way, so the hand-off rate can be watched.
+    provider_details['tool'] = {'choice': answer.choice, 'probabilities': answer.probabilities}
+    if output_tool is not None and (answer.choice == output_tool.name or probability < threshold):
+        return None
+    tool = next(tool for tool in tools if tool.name == answer.choice)
+    if tool.parameters_json_schema.get('properties'):
+        raise ToolCallProposed(model_name, answer.choice, probability)
+    # Nothing to write, so Jev makes the call itself.
+    return ToolCallPart(answer.choice, {}, _utils.generate_tool_call_id())
 
 
 def _output_tools(
@@ -375,16 +470,92 @@ def _output_tools(
     return (with_fields[0] if with_fields else None), hand_offs
 
 
-def _properties(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
-    """The output schema's fields, with `$ref`s to `$defs` (how Pydantic renders an `Enum`) resolved."""
+def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
+    """The output schema's fields, flattened, with `$ref`s to `$defs` (how Pydantic renders an `Enum` or a model) resolved.
+
+    A nested model is its fields, named `outer.inner`: Jev answers questions, and a field of a field is still one
+    question. The answers are nested back into place by `_set`.
+    """
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
-    properties: dict[str, dict[str, Any]] = {}
-    for name, prop in schema['properties'].items():
+
+    def resolve(prop: dict[str, Any]) -> dict[str, Any]:
         if ref := prop.get('$ref'):
-            prop = {**defs[ref.removeprefix('#/$defs/')], **{k: v for k, v in prop.items() if k != '$ref'}}
-        properties[name] = prop
-    return properties
+            prop = {**resolve(defs[ref.removeprefix('#/$defs/')]), **{k: v for k, v in prop.items() if k != '$ref'}}
+        if 'items' in prop:
+            prop = {**prop, 'items': resolve(prop['items'])}
+        if 'anyOf' in prop:
+            prop = {**prop, 'anyOf': [resolve(option) for option in prop['anyOf']]}
+        return prop
+
+    def flatten(properties: dict[str, Any], prefix: str) -> dict[str, dict[str, Any]]:
+        fields: dict[str, dict[str, Any]] = {}
+        for name, prop in properties.items():
+            prop = resolve(prop)
+            if prop.get('type') == 'object' and prop.get('properties'):
+                fields.update(flatten(prop['properties'], f'{prefix}{name}.'))
+            else:
+                fields[f'{prefix}{name}'] = prop
+        return fields
+
+    return flatten(schema['properties'], '')
+
+
+def _set(args: dict[str, Any], name: str, value: Any) -> None:
+    """Put a flattened field's answer back where it belongs, `outer.inner` under `outer`."""
+    *path, leaf = name.split('.')
+    for part in path:
+        args = args.setdefault(part, {})
+    args[leaf] = value
+
+
+def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """An `X | None` field as `X` plus the name of one more option, "none of these"; any other field as it is.
+
+    Measured on labelled tickets, an explicit option is as accurate as an `other` member the user wrote and more
+    accurate than reading `None` off low confidence, which is what the field's confidence is for.
+    """
+    if 'anyOf' not in prop or len(prop['anyOf']) != 2 or {'type': 'null'} not in prop['anyOf']:
+        return prop, None
+    inner = next(option for option in prop['anyOf'] if option != {'type': 'null'})
+    prop = {**inner, **{k: v for k, v in prop.items() if k not in ('anyOf', 'default')}}
+    key = 'none'
+    while key in (_options(prop) or {}):
+        key += '_'
+    return prop, key
+
+
+def _options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
+    """The options of a pick-one schema, each with its description, or `None` when the schema is not one."""
+    if 'enum' in prop:
+        return dict.fromkeys(prop['enum'])
+    if 'anyOf' in prop and all('const' in option for option in prop['anyOf']):
+        return {option['const']: option.get('description') for option in prop['anyOf']}
+    return None
+
+
+def _ask(
+    name: str, prop: dict[str, Any], output_tool: ToolDefinition, instructions: str | None
+) -> dict[str, JSONContent]:
+    """What a field asks, as the labelled parts TypeSafe's own examples use."""
+    # Only what the user wrote goes to Jev. A bare `bool` output is wrapped in a field named `response`
+    # by Pydantic AI, and the output tool has a stock description; neither says anything about the question.
+    ask: dict[str, JSONContent] = {}
+    # A field's name says what is being asked about, which is not the same as asking something, so it
+    # goes under `field` and leaves `question` for a question. The wrapper field Pydantic AI puts around
+    # a bare output is named `response` and says nothing about anything, so it is not sent at all.
+    if name != output_tool.outer_typed_dict_key:
+        ask['field'] = name
+    if description := prop.get('description'):
+        ask['question'] = description
+    if output_tool.description and output_tool.description != DEFAULT_OUTPUT_TOOL_DESCRIPTION:
+        ask['goal'] = output_tool.description
+    if instructions:
+        # With no field to describe, a bare output's whole question is what the agent was instructed to
+        # ask, so it goes where a question goes. Alongside fields of its own it is shared framing.
+        ask['question' if 'question' not in ask and 'field' not in ask else 'instructions'] = instructions
+
+    return ask
 
 
 def _questions(
@@ -393,34 +564,34 @@ def _questions(
     """One Jev question per output field."""
     questions: dict[str, Noul | Choice | Score] = {}
     for name, prop in properties.items():
-        # Only what the user wrote goes to Jev. A bare `bool` output is wrapped in a field named `response`
-        # by Pydantic AI, and the output tool has a stock description; neither says anything about the question.
-        ask: dict[str, JSONContent] = {}
-        # A field's name says what is being asked about, which is not the same as asking something, so it
-        # goes under `field` and leaves `question` for a question. The wrapper field Pydantic AI puts around
-        # a bare output is named `response` and says nothing about anything, so it is not sent at all.
-        if name != output_tool.outer_typed_dict_key:
-            ask['field'] = name
-        if description := prop.get('description'):
-            ask['question'] = description
-        if output_tool.description and output_tool.description != DEFAULT_OUTPUT_TOOL_DESCRIPTION:
-            ask['goal'] = output_tool.description
-        if instructions:
-            # With no field to describe, a bare output's whole question is what the agent was instructed to
-            # ask, so it goes where a question goes. Alongside fields of its own it is shared framing.
-            ask['question' if 'question' not in ask and 'field' not in ask else 'instructions'] = instructions
-
-        options: dict[Any, str | None] | None = None
-        if 'enum' in prop:
-            options = dict.fromkeys(prop['enum'])
-        elif 'anyOf' in prop and all('const' in option for option in prop['anyOf']):
-            options = {option['const']: option.get('description') for option in prop['anyOf']}
+        ask = _ask(name, prop, output_tool, instructions)
+        prop, none_key = _optional(prop)
+        options = _options(prop)
+        if none_key is not None:
+            if options is None or not all(isinstance(option, str) for option in options):
+                raise UserError(
+                    f'Output field {name!r} is not supported by this model: only a `Literal` or `Enum` of strings can '
+                    f'be optional, since `None` is one more option to pick. {_UNSUPPORTED_FIELD_HINT}'
+                )
+            options = {**options, none_key: 'None of these.'}
 
         # A single value needs no labelling, and TypeSafe's advice is to start with a string; the object
         # form earns its keys only once there is more than one thing in it.
         asked: JSONContent | None = next(iter(ask.values())) if len(ask) == 1 else (ask or None)
 
-        if options is not None:
+        if prop.get('type') == 'array':
+            # Several options at once is one yes/no per option, all in the same request, which TypeSafe call
+            # fanning out: does this option apply, asked with the field's question and the option's description.
+            labels = _options(prop['items'])
+            if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
+                raise UserError(
+                    f'Output field {name!r} is not supported by this model: a list must be of two or more string '
+                    f'options. {_UNSUPPORTED_FIELD_HINT}'
+                )
+            for label, meaning in labels.items():
+                option = f'{label}: {meaning}' if meaning else label
+                questions[f'{name}.{label}'] = Noul(instructions={**ask, 'option': option})
+        elif options is not None:
             # `bool` is an `int` in Python but never a rubric level, and it is handled as a yes/no below.
             if options and all(isinstance(option, int) and not isinstance(option, bool) for option in options):
                 questions[name] = _score_question(name, cast('dict[int, str | None]', options), asked)

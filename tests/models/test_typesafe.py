@@ -4,7 +4,7 @@ import json
 import pickle
 from collections.abc import Callable
 from enum import Enum, IntEnum
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import httpx2
 import pytest
@@ -391,10 +391,6 @@ class WithText(BaseModel):
     summary: str
 
 
-class WithNested(BaseModel):
-    inner: Handling
-
-
 class WithOptional(BaseModel):
     ok: bool | None
 
@@ -442,7 +438,6 @@ class WithUndescribedBool(BaseModel):
     'output_type,match',
     [
         pytest.param(WithText, "Output field 'summary' is not supported", id='str-field'),
-        pytest.param(WithNested, "Output field 'inner' is not supported", id='nested'),
         pytest.param(WithOptional, "Output field 'ok' is not supported", id='optional'),
         pytest.param(WithIntOptions, 'a rubric must be the whole numbers from 0 upwards', id='rubric-not-from-0'),
         pytest.param(WithUndescribedLevels, 'every level needs to say what it means', id='rubric-undescribed'),
@@ -531,7 +526,7 @@ async def test_a_tool_is_proposed_not_called(
     assert str(exc_info.value) == snapshot(
         "Jev proposed calling 'refund' (probability 1.00) and cannot call tools itself. Put a model that can behind it: `FallbackModel(jev, llm)` hands it this request."
     )
-    assert request_capture.body('/v1/systemone')['questions']['tool'] == snapshot(
+    assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['tool'] == snapshot(
         {
             'type': 'choice',
             'criteria': {'final_result': 'Triage a support ticket.', 'refund': 'Return a payment to the customer.'},
@@ -588,7 +583,7 @@ async def test_the_output_tool_is_one_of_the_options(allow_model_requests: None)
     jev = mock_model(lambda _: tool_answers('final_result', 0.9))
     result = await Agent(jev, output_type=Ticket, tools=[refund]).run('Is my invoice due?')
     assert result.output == Ticket(urgent=True)
-    assert result.response.provider_details['tool'] == {
+    assert (result.response.provider_details or {})['tool'] == {
         'choice': 'final_result',
         'probabilities': {'final_result': 0.9, 'refund': 0.1},
     }
@@ -653,13 +648,13 @@ async def test_an_output_function_is_a_hand_off_jev_picks(
     agent = Agent(typesafe_model, output_type=[Ticket, escalate])
     result = await agent.run('I have explained this to your bot four times. I want a person to call me back today.')
     assert result.output == snapshot('escalated after 2 messages')
-    assert result.response.provider_details['tool'] == snapshot(
+    assert (result.response.provider_details or {})['tool'] == snapshot(
         {
             'choice': 'final_result_escalate',
             'probabilities': {'final_result_escalate': 1.0, 'final_result_Ticket': 0.0},
         }
     )
-    assert request_capture.body('/v1/systemone')['questions']['tool']['criteria'] == snapshot(
+    assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['tool']['criteria'] == snapshot(
         {
             'final_result_Ticket': 'Triage a support ticket.',
             'final_result_escalate': 'Hand the ticket to a person on the support team.',
@@ -718,6 +713,160 @@ async def test_a_tool_with_arguments_is_proposed_even_with_nothing_to_fill(allow
     with pytest.raises(ToolCallProposed) as exc_info:
         await Agent(jev, output_type=[approve], tools=[refund]).run('Give me my money back.')
     assert exc_info.value.probability == 0.6
+
+
+class Customer(BaseModel):
+    """About the customer."""
+
+    angry: bool = Field(description='Is the customer angry?')
+
+
+class Area(str, Enum):
+    billing = 'billing'
+    """Money already owed, charged or refunded."""
+    account = 'account'
+    bug = 'bug'
+
+
+class Triage(BaseModel):
+    """Triage a support ticket."""
+
+    customer: Customer
+    areas: list[Area] = Field(description='Which teams does this touch?')
+    plan: Literal['free', 'pro', 'enterprise'] | None = Field(description='Which plan does the customer name, if any?')
+
+
+@pytest.mark.vcr
+async def test_nested_fields_lists_and_optionals(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """A nested model is its fields under dotted names, a list is one yes/no per option, and `| None` is one more option."""
+    agent = Agent(typesafe_model, output_type=Triage)
+    result = await agent.run('Third time our pro plan has been charged twice this year. I am furious. Refund it.')
+    assert result.output == snapshot(
+        Triage(customer=Customer(angry=True), areas=[Area.billing, Area.account, Area.bug], plan='pro')
+    )
+    assert result.response.provider_details == snapshot(
+        {
+            'confidence': {'customer.angry': 0.98, 'areas': 0.19999999999999996, 'plan': 1.0},
+            'probabilities': {
+                'areas': {'billing': 0.97, 'account': 0.76, 'bug': 0.6},
+                'plan': {'pro': 1.0, 'free': 0.0, 'enterprise': 0.0, 'none': 0.0},
+            },
+            'scores': {},
+        }
+    )
+    assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions']) == snapshot(
+        {
+            'customer.angry': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'customer.angry',
+                    'question': 'Is the customer angry?',
+                    'goal': 'Triage a support ticket.',
+                },
+            },
+            'areas.billing': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'areas',
+                    'question': 'Which teams does this touch?',
+                    'goal': 'Triage a support ticket.',
+                    'option': 'billing: Money already owed, charged or refunded.',
+                },
+            },
+            'areas.account': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'areas',
+                    'question': 'Which teams does this touch?',
+                    'goal': 'Triage a support ticket.',
+                    'option': 'account',
+                },
+            },
+            'areas.bug': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'areas',
+                    'question': 'Which teams does this touch?',
+                    'goal': 'Triage a support ticket.',
+                    'option': 'bug',
+                },
+            },
+            'plan': {
+                'type': 'choice',
+                'criteria': {'free': None, 'pro': None, 'enterprise': None, 'none': 'None of these.'},
+                'instructions': {
+                    'field': 'plan',
+                    'question': 'Which plan does the customer name, if any?',
+                    'goal': 'Triage a support ticket.',
+                },
+            },
+        }
+    )
+
+
+async def test_an_optional_pick_one_answers_none(allow_model_requests: None):
+    class Named(BaseModel):
+        plan: Literal['free', 'pro'] | None = Field(description='Which plan, if any?')
+
+    jev = mock_model(
+        lambda _: answers(
+            plan={
+                'type': 'choice',
+                'choice': 'none',
+                'confidence': 0.9,
+                'probabilities': {'none': 0.9, 'free': 0.05, 'pro': 0.05},
+            }
+        )
+    )
+    result = await Agent(jev, output_type=Named).run('Hello.')
+    assert result.output == Named(plan=None)
+
+
+async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
+    class Touches(BaseModel):
+        areas: list[Literal['billing', 'bug']] = Field(description='Which teams?')
+
+    jev = mock_model(
+        lambda _: answers(
+            **{
+                'areas.billing': {'type': 'choice', 'choice': 'yes', 'confidence': 0.9, 'probabilities': {'yes': 0.9}},
+                'areas.bug': {'type': 'noul', 'noul': 0.1},
+            }
+        )
+    )
+    with pytest.raises(UnexpectedModelBehavior, match="output field 'areas', option 'billing'"):
+        await Agent(jev, output_type=Touches).run('Hello.')
+
+
+@pytest.mark.parametrize(
+    'annotation,match',
+    [
+        pytest.param('list[str]', 'a list must be of two or more string options', id='list of text'),
+        pytest.param('bool | None', 'only a `Literal` or `Enum` of strings can be optional', id='optional yes/no'),
+        pytest.param('Customer | None', 'is not supported by this model', id='optional model'),
+    ],
+)
+async def test_unsupported_richer_fields(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, annotation: str, match: str
+):
+    Richer = type('Richer', (BaseModel,), {'__annotations__': {'value': eval(annotation)}})
+    with pytest.raises(UserError, match=match):
+        await Agent(typesafe_model, output_type=Richer, instructions='Judge it.').run('anything')
+
+
+async def test_a_nested_field_jev_cannot_answer_is_named_in_full(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    class Inner(BaseModel):
+        note: str
+
+    class Outer(BaseModel):
+        inner: Inner
+
+    with pytest.raises(UserError, match=r"Output field 'inner\.note' is not supported"):
+        await Agent(typesafe_model, output_type=Outer).run('anything')
 
 
 async def test_one_output_function_alone_leaves_nothing_to_ask(
@@ -992,11 +1141,24 @@ async def test_direct_request_without_prompt(allow_model_requests: None):
     }
 
 
-async def test_streaming_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
-    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
-    with pytest.raises(UserError, match='does not support streamed requests'):
-        async with agent.run_stream('anything'):
-            pass  # pragma: no cover
+async def test_streaming_gives_the_whole_answer_as_one_event(allow_model_requests: None):
+    """Jev answers in one piece, so a streamed run gets the answer as a single event rather than failing."""
+    jev = mock_model(lambda _: answers(response={'type': 'noul', 'noul': 0.9}))
+    agent = Agent(jev, output_type=bool, instructions='Is this fine?')
+    async with agent.run_stream('anything') as stream:
+        assert await stream.get_output() is True
+    response = stream.response
+    assert response.model_name == 'jev-latest'
+    assert response.provider_details == {'confidence': {'response': 0.8}, 'probabilities': {}, 'scores': {}}
+    assert response.usage == RequestUsage(input_tokens=10)
+
+
+async def test_a_streamed_fallback_takes_the_proposed_step(allow_model_requests: None):
+    jev = mock_model(lambda _: tool_answers('refund', 0.95))
+    agent = Agent(FallbackModel(jev, TestModel()), output_type=Ticket, tools=[refund])
+    async with agent.run_stream('Charged twice.') as stream:
+        await stream.get_output()
+    assert stream.response.model_name == 'test'
 
 
 async def test_fallback_does_not_skip_a_user_error(allow_model_requests: None, typesafe_model: TypeSafeModel):

@@ -89,10 +89,15 @@ Every field of the output type is one question, and all of them go out in a sing
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
 | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
 | `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the score rounded to the nearest level |
+| `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
+| a nested model of these | its fields, asked as `outer.inner` | the model |
+| `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or `None` |
 
 The field description is the question text; an `Enum` field without one uses the enum's class docstring. The output type's docstring and the agent's instructions are context, so put the framing there and the per-field wording in the descriptions — see [where the question goes](#where-the-question-goes). A docstring under an `Enum` member, as in the example above, describes that option. A `Literal` has nowhere to put descriptions, so Jev only sees its option names.
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the example below.
+
+A `list` of options is TypeSafe's fan-out: one yes/no per option, all in the same request, and the answer is the options Jev said yes to. An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it; on labelled tickets that reads as well as an `other` member the user wrote, and better than turning low confidence into `None`, which is what the field's confidence is for. A nested model is its fields, asked as `outer.inner` and put back in place.
 
 Confidence in each answer is on the response, so you can act on how sure the model was, for example by asking a human below a threshold. It runs 0 to 1, where 0 is undecided, and means the same thing for every field, so one threshold reads the same way across an output type.
 
@@ -306,6 +311,10 @@ The whole history goes, so trim it to what the question is about — `message_hi
     agent's run folded that agent's persona into Jev's question. Give a Jev agent its question through
     `instructions=`.
 
+## Streaming
+
+Jev answers in one piece, so there is nothing to stream, and nothing that stops working: `run_stream`, an `event_stream_handler`, and the AG-UI and Vercel AI adapters get the whole answer as a single event.
+
 ## What Jev answers badly
 
 Everything below returns an answer rather than an error, which is what makes it worth knowing. TypeSafe publish these per model version, on their [jaggedness page for `jev-1.13`](https://docs.typesafe.ai/model-jaggedness/jev-1.13), and revise them as models change.
@@ -319,12 +328,11 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 ## What Jev cannot do
 
-Jev does not write text, write a tool's arguments, read files or stream. An agent that needs any of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
+Jev does not write text, write a tool's arguments or read files. An agent that needs any of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be one structured type made of the field types above, beside any output functions that take no arguments: no `str`, no second type with fields, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 - No native tools. A function tool with arguments is not called by Jev either, but [proposed](#tools-jev-picks-and-calls-what-it-can) for a model behind it.
 - No image, audio, video or document in the prompt or the history.
-- No streaming: `run_stream`, `event_stream_handler` and the AG-UI and Vercel AI adapters do not work with it.
 
 Jev does not revise an answer either. An output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] gets the same answer again, so a validator that keeps rejecting runs the agent out of retries.
 
