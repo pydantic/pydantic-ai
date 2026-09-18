@@ -26,6 +26,13 @@ Custom agents can opt in with `customization_guide()` from
 write files, activate plugins, or grant permission to execute generated code.
 Keep the bundled guide aligned with this contract when changing plugin APIs.
 
+## Tool retries
+
+CLAI defaults to three retries per tool call. `/set run.tool_retries N` changes
+that default for subsequent turns; `N` must be a non-negative integer, with `0`
+disabling retries. Explicit retry limits on a tool or toolset take precedence.
+Output-validation and HTTP transport retry budgets are unchanged.
+
 ## Credentials
 
 CLAI's `/login openai-codex` and the vllm and openrouter connections store tokens

@@ -54,6 +54,7 @@ class Session(Generic[DepsT, OutputT]):
         )
         self.model: str | None = None
         self.model_settings: ModelSettings | None = None
+        self.tool_retries: int | None = None
         self.resolve_model: Callable[[str], Model | str | Awaitable[Model | str]] = lambda name: name
         self.agent = agent
         self.deps = deps
@@ -161,6 +162,7 @@ class Session(Generic[DepsT, OutputT]):
                         deps=self.deps,
                         model=model,
                         model_settings=self.model_settings,
+                        retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
                         message_history=previous,
                         conversation_id=self.summary.id,
                         run_id=run_id,

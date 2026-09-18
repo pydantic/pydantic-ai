@@ -15,6 +15,9 @@ class Settings(BaseModel):
     request_limit: int = Field(
         default=10000, gt=0, description='Most model requests one prompt may make before the turn stops.'
     )
+    tool_retries: int = Field(
+        default=3, ge=0, description='Default retries per tool call. Explicit tool retry limits take precedence.'
+    )
     session_namer: bool = Field(default=True, description='Name saved sessions in the background using a model.')
     session_namer_model: str | None = Field(
         default=None, description='Naming model override; null uses the current model.'
@@ -48,6 +51,7 @@ SETTING_FIELDS = {
     'display.shell_lines': 'shell_lines',
     'display.grep_lines': 'grep_lines',
     'display.smooth_seconds': 'smooth_seconds',
+    'run.tool_retries': 'tool_retries',
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
 }

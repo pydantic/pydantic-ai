@@ -194,6 +194,7 @@ def _create_shell(
     if summary is not None:
         session.summary = summary
     session.model = settings.model
+    session.tool_retries = settings.tool_retries
     auth = CodexAuth(console)
 
     async def resolve_model(name: str) -> Model | str:
@@ -210,6 +211,8 @@ def _create_shell(
     def apply_setting(key: str, updated: Settings) -> None:
         if key == 'model':
             session.model = updated.model
+        elif key == 'run.tool_retries':
+            session.tool_retries = updated.tool_retries
         elif key == 'run.request_limit':
             session.usage_limits = replace(session.usage_limits or UsageLimits(), request_limit=updated.request_limit)
 

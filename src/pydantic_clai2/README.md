@@ -150,6 +150,7 @@ Pass secret references or use plugin-owned credential storage instead of embeddi
 /set model <Tab>
 /set display.thinking false
 /set run.request_limit 10000
+/set run.tool_retries 3
 ```
 
 `/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the
@@ -159,6 +160,11 @@ model get a picker (the model list is searchable, with "Type a value..." for
 anything not listed), everything else a typed input that validates as you go.
 An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`.
+
+`run.tool_retries` sets the default retry budget per tool call, starting at `3`.
+Use a non-negative integer; `0` disables retries. Changes apply to the next turn.
+Explicit per-tool or per-toolset retry limits take precedence. This setting does
+not change output-validation or HTTP transport retries.
 
 ## Models and their settings
 
