@@ -268,11 +268,18 @@ def test_described_options_fold_into_one_enum_google():
             'description': 'How urgent the ticket is.\nlow: Can wait a week.\nhigh: Needs attention today.',
         }
     )
-    # A union of real alternatives is left alone.
+    # A union of real alternatives is left alone, and so is one of single values of different types.
     mixed = {'anyOf': [{'const': 'low'}, {'type': 'integer'}]}
     assert GoogleJsonSchemaTransformer(deepcopy(mixed)).walk() == snapshot(
         {'anyOf': [{'enum': ['low'], 'type': 'string'}, {'type': 'integer'}]}
     )
+    typed_apart = {'anyOf': [{'const': 'low'}, {'const': 1}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(typed_apart)).walk() == snapshot(
+        {'anyOf': [{'enum': ['low'], 'type': 'string'}, {'enum': [1], 'type': 'integer'}]}
+    )
+    # Options with no descriptions and no type fold into a bare `enum`, with nothing added to the description.
+    bare = {'anyOf': [{'enum': ['a']}, {'enum': ['b']}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(bare)).walk() == snapshot({'enum': ['a', 'b']})
 
 
 def test_typeless_anyof_member_still_recursed():
