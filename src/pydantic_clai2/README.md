@@ -48,8 +48,10 @@ and completed tool side effects cannot be undone.
 model | context: ... | running: shell
 ```
 
-The bordered prompt area stays visible below streamed output while CLAI works.
-It shows a busy hint instead of an editable field during a turn. Wait for the
+The prompt sits above the footer with one editable line when empty. It grows
+for wrapped or pasted text and completion suggestions, not to fill the terminal.
+History search stays compact too. The bordered prompt area stays visible below
+streamed output while CLAI works. It shows a busy hint during a turn. Wait for the
 turn to finish, or press Ctrl-C to cancel it, before entering your next prompt.
 There is no message queue or mid-turn editing. Full-screen question menus
 temporarily replace the prompt area; it returns when the menu closes.

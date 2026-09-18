@@ -8,8 +8,11 @@ from typing import Generic, TypeVar
 
 from anyio import create_task_group
 from prompt_toolkit import PromptSession
-from prompt_toolkit.filters import Condition, is_done
+from prompt_toolkit.filters import Always, Condition, is_done
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.layout import BufferControl, HSplit
+from prompt_toolkit.layout.containers import VerticalAlign
+from prompt_toolkit.layout.dimension import Dimension
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
@@ -359,10 +362,22 @@ class _Shell(Generic[DepsT, OutputT]):
 
     async def run(self) -> SessionEndReason:
         show_frame = ~is_done & Condition(lambda: self.console.width >= 4 and self.console.height >= 6)
+
+        def prepare_prompt() -> None:
+            layout = self.prompt.layout
+            for window in layout.find_all_windows():
+                if isinstance(window.content, BufferControl):
+                    window.dont_extend_height = Always()
+            layout.current_window.height = lambda: Dimension(
+                min=self.prompt.reserve_space_for_menu if self.prompt.default_buffer.complete_state else 1
+            )
+            assert isinstance(layout.container, HSplit)
+            layout.container.align = VerticalAlign.BOTTOM
+
         while True:
             try:
                 self.status.model = self.session.model or _model_label(self.agent)
-                text = (await self.prompt.prompt_async('> ', show_frame=show_frame)).strip()
+                text = (await self.prompt.prompt_async('> ', show_frame=show_frame, pre_run=prepare_prompt)).strip()
             except KeyboardInterrupt:
                 if self.interrupts.press():
                     return 'exit'

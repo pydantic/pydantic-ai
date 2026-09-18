@@ -10,7 +10,7 @@ from pathlib import Path
 
 import anyio
 import pytest
-from prompt_toolkit.application import create_app_session
+from prompt_toolkit.application import create_app_session, get_app
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -206,19 +206,44 @@ def test_set_autocomplete() -> None:
     assert all(c.text.startswith('anthropic:') for c in models)
 
 
-async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path) -> None:
+@pytest.mark.parametrize('height', [24, 45])
+async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path, height: int) -> None:
     painted = anyio.Event()
+    completions = anyio.Event()
+    searched = anyio.Event()
+    pasted = anyio.Event()
+    frame: list[str] = []
     working = anyio.Event()
     finish = anyio.Event()
     done = anyio.Event()
 
     class Output(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+        def write(self, text: str) -> int:
+            if '\x1b[6n' in text:
+                pipe.send_text('\x1b[10;1R')
+            return super().write(text)
+
         def flush(self) -> None:
-            if '└' in self.getvalue() and '>' in self.getvalue():
-                painted.set()
+            nonlocal frame
+            screen = get_app().renderer.last_rendered_screen
+            if screen is not None:
+                frame = [
+                    ''.join(screen.data_buffer[row][col].char for col in range(80)) for row in range(screen.height)
+                ]
+                if any('ready' in line for line in frame):
+                    painted.set()
+                if any('display.thinking' in line for line in frame):
+                    completions.set()
+                if any('reverse-i-search' in line for line in frame):
+                    searched.set()
+                if any('second line' in line for line in frame):
+                    pasted.set()
 
     output = Output()
-    terminal = Vt100_Output(output, lambda: Size(rows=24, columns=80), enable_cpr=False)
+    terminal = Vt100_Output(output, lambda: Size(rows=height, columns=80), term='xterm-256color')
     agent = Agent(TestModel(call_tools=['work'], custom_output_text='Finished work'))
 
     @agent.tool_plain
@@ -231,7 +256,7 @@ async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path) -> None:
         await chat(
             agent,
             deps=None,
-            console=Console(file=output, force_terminal=True, width=80, height=24),
+            console=Console(file=output, force_terminal=True, width=80, height=height),
             store=SettingsStore(tmp_path / 'config.db'),
         )
         done.set()
@@ -240,11 +265,29 @@ async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path) -> None:
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run)
             await painted.wait()
-            assert '┌' in output.getvalue() and '└' in output.getvalue()
-            pipe.send_text('hello\n')
+            top = next(row for row, line in enumerate(frame) if '┌' in line)
+            bottom = next(row for row, line in enumerate(frame) if '└' in line)
+            assert bottom - top == 2
+            assert bottom == len(frame) - 2
+            pipe.send_text('\x12')
+            await searched.wait()
+            top = next(row for row, line in enumerate(frame) if '┌' in line)
+            bottom = next(row for row, line in enumerate(frame) if '└' in line)
+            assert bottom - top == 2
+            pipe.send_text('\x07/set ')
+            await completions.wait()
+            top = next(row for row, line in enumerate(frame) if '┌' in line)
+            bottom = next(row for row, line in enumerate(frame) if '└' in line)
+            assert bottom - top == 7
+            pipe.send_text('\x15\x1b[200~first line\nsecond line\x1b[201~')
+            await pasted.wait()
+            top = next(row for row, line in enumerate(frame) if '┌' in line)
+            bottom = next(row for row, line in enumerate(frame) if '└' in line)
+            assert bottom - top == 3
+            pipe.send_text('\n')
             await working.wait()
             assert '│> Working... Ctrl-C to interrupt' in output.getvalue()
-            assert '\x1b[1;20r' in output.getvalue()
+            assert f'\x1b[1;{height - 4}r' in output.getvalue()
             finish.set()
             pipe.send_text('/exit\n')
             await done.wait()
