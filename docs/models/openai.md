@@ -504,9 +504,9 @@ Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI o
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.
 Before getting started, check the [installation and configuration](#install) instructions above.
 
-Use the provider class for the service you are calling when one is available, such as [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider], [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider], or [`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] for a [LiteLLM proxy](#litellm).
+Use the provider class for the service you are calling when one is available, such as [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider], [`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] for a [LiteLLM proxy](#litellm), or [`VLLMProvider`][pydantic_ai.providers.vllm.VLLMProvider] for a [local or remote vLLM server](#vllm).
 These providers configure authentication and select [model profiles](#model-profile) that account for the service's model names and API behavior.
-You can also use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-v4-flash")`, or pass the provider name to `OpenAIChatModel(provider=...)`.
+You can also use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("openrouter:openai/gpt-5.6-sol")`, or pass the provider name to `OpenAIChatModel(provider=...)`.
 
 If the service has no dedicated provider, you can use [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with a custom `base_url` and `api_key`, or the `OPENAI_BASE_URL` and `OPENAI_API_KEY` environment variables:
 
@@ -567,15 +567,21 @@ If your gateway routes requests to multiple providers, subclass [`OpenAIProvider
 This selects a profile for every model using that provider, so you do not need to pass `profile=` on each model.
 Only normalize the name for profile lookup; the model ID sent to the gateway stays unchanged.
 
-For example, this gateway uses `openrouter/<provider>/<model>` for OpenRouter routes and LiteLLM-style IDs for its other routes:
+Like the built-in providers, use helpers from [`pydantic_ai.profiles`](../api/profiles.md) to select the underlying model's profile, then apply any gateway-specific overrides.
+For example, this gateway uses `openrouter/<provider>/<model>` for OpenRouter routes and `<provider>/<model>` for its other routes:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.providers.litellm import LiteLLMProvider
+from pydantic_ai.profiles import ModelProfile, merge_profile
+from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    openai_model_profile,
+)
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 
 class GatewayProvider(OpenAIProvider):
@@ -584,10 +590,20 @@ class GatewayProvider(OpenAIProvider):
         return 'my-gateway'
 
     @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
-        if model_name.startswith('openrouter/'):
-            return OpenRouterProvider.model_profile(model_name.removeprefix('openrouter/'))
-        return LiteLLMProvider.model_profile(model_name)
+    def model_profile(model_name: str) -> ModelProfile:
+        provider_to_profile = {
+            'openai': openai_model_profile,
+            'groq': groq_model_profile,
+            'moonshotai': moonshotai_model_profile,
+        }
+        provider_name, _, model_name = model_name.removeprefix('openrouter/').partition('/')
+        profile = None
+        if profile_func := provider_to_profile.get(provider_name):
+            profile = profile_func(model_name)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+        )
 
 
 provider = GatewayProvider(
@@ -598,13 +614,13 @@ model = OpenAIChatModel('openrouter/openai/gpt-5.6-sol', provider=provider)
 agent = Agent(model)
 ```
 
-Adapt the routing rules to your gateway, including any aliases it defines.
+Extend the mapping and normalization rules for the models and aliases your gateway serves.
+The OpenAI JSON schema transformer is a fallback; a model-family helper can supply its own transformer.
 The returned profile replaces `OpenAIProvider`'s profile selection; Pydantic AI merges it with [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] automatically.
-Use [`merge_profile()`][pydantic_ai.profiles.merge_profile] if your gateway needs to override individual fields in the delegated profile.
+Add gateway-specific overrides as a final argument to [`merge_profile()`][pydantic_ai.profiles.merge_profile], after the model-family profile.
 
-Delegating profile lookup does not switch the model class: `OpenAIChatModel` still constructs an OpenAI Chat Completions request.
-Reuse another provider's profile only where its settings match your gateway's API behavior.
-For example, `OpenRouterProvider` enables thinking for all models because OpenRouter accepts a reasoning setting universally; copying that profile does not add [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel]'s request translation to `OpenAIChatModel`.
+Profile selection does not switch the model class: `OpenAIChatModel` still constructs an OpenAI Chat Completions request.
+Set capability flags according to what your gateway accepts; the model-family helpers cannot account for its request translation or API restrictions.
 
 #### Detect incomplete streamed responses
 
