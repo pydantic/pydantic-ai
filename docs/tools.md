@@ -261,6 +261,24 @@ Even better, Pydantic AI extracts the docstring from functions and (thanks to [g
 
 [Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy`, and `sphinx` style docstrings. Pydantic AI will infer the format to use based on the docstring, but you can explicitly set it using [`docstring_format`][pydantic_ai.tools.DocstringFormat]. You can also enforce parameter requirements by setting `require_parameter_descriptions=True`. This will raise a [`UserError`][pydantic_ai.exceptions.UserError] if a parameter description is missing.
 
+Parameter descriptions can also be supplied through `Annotated` and [`Field(description=...)`][pydantic.fields.Field]. These descriptions satisfy `require_parameter_descriptions=True`, including for `**kwargs`. For ordinary parameters, a `Field` description takes precedence over a docstring description; the docstring is used when the `Field` description is `None`.
+
+```python {title="annotated_tool_description.py"}
+from typing import Annotated
+
+from pydantic import Field
+
+from pydantic_ai import Agent
+
+agent = Agent()
+
+
+@agent.tool_plain(require_parameter_descriptions=True)
+def square(value: Annotated[int, Field(description='The number to square')]) -> int:
+    """Square a number."""
+    return value * value
+```
+
 Three parts of the docstring reach the model: the leading description, the parameter descriptions, and the
 first entry of the returns section. Other sections Griffe can parse, such as `Raises`, `Examples`, `Notes`,
 `Warnings` and `Yields`, are dropped, so anything the model needs to act on belongs in the

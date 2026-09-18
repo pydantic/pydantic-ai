@@ -5,12 +5,12 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 from unittest.mock import AsyncMock
 
 import anyio
 import pytest
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 from typing_extensions import Self
 
 if sys.version_info < (3, 11):
@@ -267,6 +267,59 @@ async def test_function_toolset_with_defaults():
             return a + b  # pragma: no cover
 
 
+async def test_function_toolset_requires_var_keyword_description():
+    toolset = FunctionToolset(require_parameter_descriptions=True)
+
+    with pytest.raises(UserError, match='Missing parameter descriptions for kwargs'):
+
+        @toolset.tool_plain
+        def collect(**kwargs: int) -> dict[str, int]:
+            return kwargs  # pragma: no cover
+
+
+@pytest.mark.parametrize('description', ['', 'Keyword value'])
+@pytest.mark.parametrize('require_parameter_descriptions', [False, True])
+async def test_function_toolset_var_keyword_field_description(description: str, require_parameter_descriptions: bool):
+    toolset = FunctionToolset(require_parameter_descriptions=require_parameter_descriptions)
+
+    def collect(**kwargs: int) -> dict[str, int]:
+        return kwargs  # pragma: no cover
+
+    collect.__annotations__['kwargs'] = Annotated[int, Field(description=description)]
+    toolset.tool_plain(collect)
+
+    tools = await toolset.get_tools(build_run_context(None))
+    assert tools['collect'].tool_def.parameters_json_schema == snapshot(
+        {
+            'additionalProperties': {'description': description, 'type': 'integer'},
+            'properties': {},
+            'type': 'object',
+        }
+    )
+
+
+async def test_function_toolset_var_keyword_docstring_description():
+    toolset = FunctionToolset(require_parameter_descriptions=True)
+
+    @toolset.tool_plain
+    def collect(**kwargs: int) -> dict[str, int]:
+        """Collect keyword values.
+
+        Args:
+            kwargs: Keyword values to collect.
+        """
+        return kwargs  # pragma: no cover
+
+    tools = await toolset.get_tools(build_run_context(None))
+    assert tools['collect'].tool_def.parameters_json_schema == snapshot(
+        {
+            'additionalProperties': {'type': 'integer'},
+            'properties': {},
+            'type': 'object',
+        }
+    )
+
+
 async def test_abstract_toolset_instructions_default():
     """Test that the default instructions method returns None."""
     toolset = MockToolsetWithInstructions(instructions=None)
@@ -299,6 +352,19 @@ async def test_function_toolset_with_defaults_overridden():
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers"""
         return a - b  # pragma: no cover
+
+
+async def test_function_toolset_field_description_satisfies_requirement():
+    toolset = FunctionToolset(require_parameter_descriptions=True)
+
+    @toolset.tool_plain
+    def add(value: Annotated[int, Field(description='The value to add')]) -> int:
+        return value  # pragma: no cover
+
+    tools = await toolset.get_tools(build_run_context(None))
+    schema = tools['add'].tool_def.parameters_json_schema
+    assert schema['properties']['value']['description'] == 'The value to add'
+    assert schema['required'] == ['value']
 
 
 async def test_prepared_toolset_sync_prepare_func():
