@@ -453,7 +453,8 @@ human in the loop for the calls that matter most: a judgement at 180 ms is cheap
 is exactly why it should not be the only thing standing between an agent and an irreversible action.
 
 `typesafe_boolean_threshold` matters here more than anywhere else on this page. The default rounds at the coin
-flip, and for a guard the two mistakes rarely cost the same: see [what `True` has to mean](#what-true-has-to-mean).
+flip, and for a guard the two mistakes rarely cost the same: a missed irreversible command costs more than a
+second look at a safe one.
 
 ### Choose from a set built at run time
 
@@ -508,7 +509,7 @@ long conversation still matter before it is compacted. Both are classifications 
 and both are questions you would not ask a language model on every step.
 
 Two things to hold on to. A classifier in the loop is a component like any other, so it needs the same
-[measurement](#measure-on-your-own-data) as the classifier you would deploy on its own — a router that is right 80%
+measurement as the classifier you would deploy on its own — a router that is right 80%
 of the time sends one request in five to the wrong model, and nothing in the run will tell you. And Jev reads the
 state as data rather than as instructions, so text written to steer it can move it: a guard built this way belongs
 alongside deterministic checks, not instead of them.
