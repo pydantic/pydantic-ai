@@ -917,6 +917,48 @@ async def test_with_nothing_to_fill_the_pick_is_the_answer(allow_model_requests:
     assert result.output == 'approved'
 
 
+async def test_the_last_route_left_is_proposed_when_it_needs_arguments(allow_model_requests: None):
+    """The one route left is taken without a question; needing arguments, it is proposed rather than called."""
+
+    def unasked(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('Jev was asked a question when there was nothing left to ask about.')
+
+    history = [
+        ModelRequest(parts=[UserPromptPart('Charged twice.')]),
+        ModelResponse(parts=[ToolCallPart('approve', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('approve', 'approved', 'call_1')]),
+        ModelResponse(parts=[ToolCallPart('final_result', {}, 'call_2')]),
+        ModelRequest(parts=[ToolReturnPart('final_result', 'rejected', 'call_2')]),
+    ]
+    agent = Agent(mock_model(unasked), output_type=[reject], tools=[approve, refund])
+    with pytest.raises(ToolCallProposed) as exc_info:
+        await agent.run(message_history=history)
+    assert (exc_info.value.tool_name, exc_info.value.probability) == ('refund', 1.0)
+
+
+async def test_below_the_threshold_with_no_hand_off_left_the_pick_stands(allow_model_requests: None):
+    """Below the threshold, with nothing to fill and every output function returned, the lean is taken anyway."""
+    jev = mock_model(
+        lambda _: answers(
+            tool={
+                'type': 'choice',
+                'choice': 'refund',
+                'confidence': 0.2,
+                'probabilities': {'refund': 0.55, 'approve': 0.45},
+            }
+        )
+    )
+    history = [
+        ModelRequest(parts=[UserPromptPart('Charged twice.')]),
+        ModelResponse(parts=[ToolCallPart('final_result', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('final_result', 'rejected', 'call_1')]),
+    ]
+    agent = Agent(jev, output_type=[reject], tools=[approve, refund])
+    with pytest.raises(ToolCallProposed) as exc_info:
+        await agent.run(message_history=history)
+    assert (exc_info.value.tool_name, exc_info.value.probability) == ('refund', 0.55)
+
+
 async def test_a_tool_with_arguments_is_proposed_even_with_nothing_to_fill(allow_model_requests: None):
     jev = mock_model(
         lambda _: answers(
