@@ -53,6 +53,34 @@ def test_frame_fits_and_handles_narrow_terminals(width: int, height: int) -> Non
     assert '\x1b' not in plain('unsafe\x1b[2J')
 
 
+@pytest.mark.parametrize('color', ['', 'truecolor'])
+@pytest.mark.parametrize('width', [40, 120])
+def test_focus_labels_and_persistent_project_highlight(monkeypatch: pytest.MonkeyPatch, color: str, width: int) -> None:
+    monkeypatch.setenv('COLORTERM', color)
+    widget, _ = browser()
+    highlight = module.theme.sgr(module.theme.INFO, bold=True)
+    project = f'{highlight}> /a/project (2)\x1b[0m'
+    assert project in '\n'.join(widget.frame(width=120, height=24))
+    assert 'SELECT PROJECT' in '\n'.join(widget.frame(width=width, height=24))
+    assert 'Enter/Right open project' in widget.footer()
+    widget.handle_key(Key.ENTER)
+    assert project in '\n'.join(widget.frame(width=120, height=24))
+    frame = '\n'.join(widget.frame(width=width, height=24))
+    assert 'SELECT SESSION' in frame
+    assert 'SELECT PROJECT' not in frame
+    assert f'{highlight}> ' in frame
+    assert 'Left/Esc projects' in widget.footer()
+    widget.handle_key(Key.DOWN)
+    cards = widget.frame(width=40, height=24)
+    assert any(f'{highlight}> ' in line and 'Other' in line for line in cards)
+    assert not any(f'{highlight}> ' in line and 'Fix renderer' in line for line in cards)
+    widget.handle_key(Key.LEFT)
+    assert 'SELECT PROJECT' in '\n'.join(widget.frame(width=width, height=24))
+    widget.handle_key(Key.DOWN)
+    assert f'{highlight}> /b/project (1)\x1b[0m' in '\n'.join(widget.frame(width=120, height=24))
+    assert project not in '\n'.join(widget.frame(width=120, height=24))
+
+
 def test_project_selection_preview_and_back() -> None:
     widget, _ = browser()
     assert widget.project == '/a/project'

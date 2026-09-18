@@ -42,9 +42,9 @@ def date_label(moment: datetime, *, now: datetime | None = None) -> str:
     return day.isoformat()
 
 
-def colored(text: str, *, role: str = theme.INFO) -> str:
+def colored(text: str, *, role: str = theme.INFO, bold: bool = False) -> str:
     """Use the shared brand palette, including the 16-color fallback."""
-    return f'{theme.sgr(role)}{plain(text)}\x1b[0m'
+    return f'{theme.sgr(role, bold=bold)}{plain(text)}\x1b[0m'
 
 
 class SessionBrowser:
@@ -155,7 +155,7 @@ class SessionBrowser:
         projects = self.projects
         cursor = projects.index(self.project) if self.project in projects else 0
         start = max(0, cursor - budget + 2)
-        lines = [colored('PROJECTS')]
+        lines = [colored('SELECT PROJECT' if self.mode == 'projects' else 'PROJECTS', bold=self.mode == 'projects')]
         labels = [Path(p).name for p in projects]
         for project in projects[start : start + budget - 1]:
             label = Path(project).name or project
@@ -163,7 +163,8 @@ class SessionBrowser:
                 label = project
             count = sum(e.workspace == project for e in self.entries)
             marker = '> ' if project == self.project else '  '
-            lines.append(plain(f'{marker}{label} ({count})'))
+            line = f'{marker}{label} ({count})'
+            lines.append(colored(line, bold=True) if project == self.project else plain(line))
         return lines
 
     def _sessions_frame(self, *, budget: int, width: int) -> list[str]:
@@ -175,8 +176,10 @@ class SessionBrowser:
         start = max(0, cursor - capacity + 1)
         lines = [
             colored(
+                f'{"SELECT SESSION" if self.mode == "sessions" else "SESSIONS"}: '
                 f'{"Search all projects: " + self.query if self.query else self.project} | '
-                f'Sort: {("recent", "messages", "tokens")[self.sort]}'
+                f'Sort: {("recent", "messages", "tokens")[self.sort]}',
+                bold=self.mode == 'sessions',
             )
         ]
         last_day = ''
@@ -192,6 +195,8 @@ class SessionBrowser:
             if len(counts) > width // 2:
                 counts = f'{entry.message_count} msgs'
             title = truncate(plain(title), max(1, width - len(counts) - 1))
+            if entry == selected and self.mode == 'sessions':
+                title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
             lines.append(title + ' ' * max(1, width - visible_length(title) - len(counts)) + counts)
             tags = list(entry.tags)
             while tags and len(' '.join(f'#{t}' for t in tags)) > width // 2:
@@ -217,7 +222,9 @@ class SessionBrowser:
             return plain(f'{self.mode}: {self.buffer} | Enter apply / Esc cancel')
         if self.mode == 'preview':
             return 'Up/Down scroll - Esc back - Ctrl-C close'
-        return 'Esc back / Ctrl-C close - Up/Down move - Enter resume - Right preview - / search - s sort - r rename - d delete - m more'
+        if self.mode == 'projects':
+            return 'Enter/Right open project - Up/Down move - / search - Esc/Ctrl-C close'
+        return 'Left/Esc projects - Enter resume - Up/Down move - Right preview - / search - s sort - r rename - d delete - m more - Ctrl-C close'
 
     def handle_key(self, key: str) -> str | None:
         """Return a session ID on selection, an empty string on close, otherwise continue."""

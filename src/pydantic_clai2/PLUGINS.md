@@ -613,6 +613,8 @@ project grouping. The
 project/session browser is a dedicated Termflow widget: unlike a single-pane
 `MenuBuilder`, it has two independently navigable panes and two-line cards. Its
 pure frame and scripted-key tests follow the same headless menu conventions.
+The selected project stays highlighted while browsing sessions. The focused pane
+is labeled **SELECT PROJECT** or **SELECT SESSION**, with matching key hints.
 
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode

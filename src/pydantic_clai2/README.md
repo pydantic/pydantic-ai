@@ -306,6 +306,8 @@ remain in effect. The saved model name is shown for reference.
 The browser follows Code Puppy's project/session design:
 
 - Projects on the left, with session counts. The current directory is preselected.
+  The selected project stays highlighted while browsing its sessions. **SELECT
+  PROJECT** or **SELECT SESSION** labels the focused pane, with matching key hints.
 - Two-line session cards on the right: time, title, subtitle, tags, message and
   token counts. Recent sorting groups cards by local calendar date.
 - Enter opens a project or resumes a session. Right opens a scrollable transcript,
