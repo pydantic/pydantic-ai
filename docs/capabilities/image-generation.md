@@ -173,14 +173,16 @@ write alt text", `result.output` is the alt text and [`result.response.images`][
 is empty when the image came from a local generator (the capability's `local=` tool) rather than the model's own native
 tool on the last response.
 
-Walk the message history for [`BinaryImage`][pydantic_ai.messages.BinaryImage] tool returns when you need every image the
-run produced:
+Walk the message history for [`BinaryImage`][pydantic_ai.messages.BinaryImage] **tool returns** when you need every image
+the run produced. Restrict the traversal to [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] so a caller-supplied
+image input is not mistaken for a generated image:
 
 ```python {title="image_generation_retrieve_from_history.py"}
 from pathlib import Path
 
 from pydantic_ai import Agent, BinaryImage, ImageGenerator
 from pydantic_ai.capabilities import ImageGeneration
+from pydantic_ai.messages import ToolReturnPart
 
 images = ImageGenerator('openai:gpt-image-2')
 agent = Agent(
@@ -195,7 +197,7 @@ generated = [
     part.content
     for message in result.all_messages()
     for part in message.parts
-    if isinstance(getattr(part, 'content', None), BinaryImage)
+    if isinstance(part, ToolReturnPart) and isinstance(part.content, BinaryImage)
 ]
 Path('cafe.png').write_bytes(generated[0].data)
 ```
