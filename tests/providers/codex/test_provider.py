@@ -842,6 +842,7 @@ async def test_exchange_code_from_callback(monkeypatch: pytest.MonkeyPatch):
     stray = await _get_callback(url, {'state': 'not-this-flow', 'code': 'stray-code'})
     assert stray.status_code == 200  # answered politely, but ignored: the server keeps serving
     accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    assert accepted.headers['content-type'] == 'text/html; charset=utf-8'
     assert 'close this tab' in accepted.text
 
     credentials = await exchange
@@ -912,8 +913,46 @@ async def test_exchange_code_from_callback_denied():
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
-    await _get_callback(url, {'state': flow.state, 'error': 'access_denied'})
+    denied = await _get_callback(url, {'state': flow.state, 'error': 'access_denied'})
+    assert 'close this tab' in denied.text  # the default page covers both outcomes
 
+    with pytest.raises(UserError, match='Authorization failed: access_denied'):
+        await exchange
+
+
+async def test_exchange_code_from_callback_custom_html(monkeypatch: pytest.MonkeyPatch):
+    """Custom pages replace the default for this flow's outcomes only; stray requests keep the default.
+
+    An empty string is a deliberate empty response, not a request for the default page.
+    """
+    mock = TokenEndpointMock(TOKEN_RESPONSE)
+    monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    success_html = '<!doctype html><h1>Signed in, olé</h1>'
+    error_html = '<!doctype html><h1>Login failed</h1>'
+
+    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback(success_html=success_html, error_html=error_html))
+    stray = await _get_callback(url, {'state': 'not-this-flow', 'code': 'stray-code'})
+    assert 'close this tab' in stray.text
+    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    assert accepted.text == success_html
+    assert accepted.headers['content-type'] == 'text/html; charset=utf-8'
+    assert (await exchange).account_id == 'acc-9'
+
+    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback(success_html=success_html, error_html=error_html))
+    denied = await _get_callback(url, {'state': flow.state, 'error': 'access_denied'})
+    assert denied.text == error_html
+    with pytest.raises(UserError, match='Authorization failed: access_denied'):
+        await exchange
+
+    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    flow = OpenAICodexOAuthFlow(redirect_uri=url)
+    exchange = asyncio.create_task(flow.exchange_code_from_callback(success_html=success_html, error_html=''))
+    denied = await _get_callback(url, {'state': flow.state, 'error': 'access_denied'})
+    assert denied.text == ''
     with pytest.raises(UserError, match='Authorization failed: access_denied'):
         await exchange
 
