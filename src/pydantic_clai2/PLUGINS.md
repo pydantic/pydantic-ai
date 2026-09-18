@@ -217,7 +217,9 @@ for `/agent` and `/mcp`:
 The left side lists every plugin with `[x]` for on and `[ ]` for off. The right
 side shows details for the highlighted one: where it came from, whether it
 loaded, what it registered, and the last error if loading failed. Every key
-acts immediately; there is no save step, so Enter, Q, and Esc all just close.
+acts immediately; there is no save step, so Enter, Q, Esc, and Ctrl-C all just close.
+Closing returns to the prompt without printing the plugin list. Use `/plugins list`
+to print it.
 Adding a plugin needs a name and a module, so that stays a typed command.
 
 With arguments `/plugins` is a plain command, and `clai2 plugins ...` outside

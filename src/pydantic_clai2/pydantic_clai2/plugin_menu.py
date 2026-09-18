@@ -126,7 +126,7 @@ async def open_plugins_menu(
 
     menu = PluginMenu(loader, apply=apply)
     await run_worker(lambda: (run or _run_menu)(menu))
-    return await loader.command(['list'])
+    return ''
 
 
 def _run_menu(menu: PluginMenu[DepsT]) -> None:  # pragma: no cover -- needs a real terminal.

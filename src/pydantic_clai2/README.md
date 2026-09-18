@@ -639,7 +639,8 @@ def activate(host: PluginHost) -> None:
 Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
 importable with `/plugins add NAME module[:attr] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove. Plugins are trusted code running as you.
+reload, and remove. Closing the menu returns to the prompt without printing the
+plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has the full list of hooks, events, and rules.
 

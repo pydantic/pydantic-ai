@@ -99,8 +99,21 @@ async def test_open_menu_applies_actions_from_the_menu_thread(tmp_path: Path) ->
     def run(menu: PluginMenu[None]) -> None:
         menu.toggle(FakeMenu(), menu.items()[0])
 
-    listing = await open_plugins_menu(loader, run=run)
+    assert await open_plugins_menu(loader, run=run) == ''
+    assert loader.entries()[0].host is not None
+    listing = await loader.command(['list'])
     assert 'gamma:' in listing and '(enabled, loaded)' in listing
+
+
+@pytest.mark.parametrize('names', [(), ('gamma',)])
+async def test_open_menu_closes_quietly_without_changes(tmp_path: Path, names: tuple[str, ...]) -> None:
+    loader = make_loader(tmp_path, *names)
+
+    def run(menu: PluginMenu[None]) -> None:
+        assert menu.items()
+
+    assert await open_plugins_menu(loader, run=run) == ''
+    assert all(entry.host is None for entry in loader.entries())
 
 
 @pytest.fixture

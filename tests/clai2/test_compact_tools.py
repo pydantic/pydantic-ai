@@ -112,8 +112,9 @@ async def test_tool_header_colors(name: str, arguments: dict[str, str], show_too
     console = Console(file=output, force_terminal=True, color_system='truecolor')
     renderer = StreamRenderer(console, stop_loading=lambda: None, show_tool_output=show_tool_output)
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart(name, arguments)))
+    # Text.from_ansi drops the final newline; check spacing on the terminal output itself.
+    assert output.getvalue().endswith('\n\n')
     text = Text.from_ansi(output.getvalue())
-    assert text.plain.endswith('\n\n')
     assert text.get_style_at_offset(console, 0).color == console.get_style(theme.MUTED).color
     assert text.get_style_at_offset(console, 2).color == console.get_style(theme.ACCENT).color
     if arguments:
