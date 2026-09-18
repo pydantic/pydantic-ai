@@ -495,7 +495,7 @@ class Ticket(BaseModel):
 
 def refund(amount: float) -> str:
     """Return a payment to the customer."""
-    return f'Refunded {amount}'  # pragma: no cover
+    return f'Refunded {amount}'
 
 
 def tool_answers(choice: str, probability: float) -> httpx2.Response:
