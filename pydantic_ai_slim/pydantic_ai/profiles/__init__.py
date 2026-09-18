@@ -55,6 +55,9 @@ class ModelProfile(TypedDict, total=False):
     supports_tools: bool
     """Whether the model supports tools. Default: `True`."""
 
+    supports_text_output: bool
+    """Whether the model supports text output. Default: `True`."""
+
     supports_tool_return_schema: bool
     """Whether the model natively supports tool return schemas. Default: `False`.
 
@@ -224,6 +227,7 @@ def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
 
 DEFAULT_PROFILE: ModelProfile = {
     'supports_tools': True,
+    'supports_text_output': True,
     'supports_tool_return_schema': False,
     'supports_json_schema_output': False,
     'supports_json_object_output': False,

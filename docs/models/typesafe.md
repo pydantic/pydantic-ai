@@ -115,7 +115,7 @@ Each field of the output type is a question, and all of them go out in a single 
 
 | Field type | Question | Answer |
 |---|---|---|
-| `bool` | yes or no | `True` when Jev's probability is at least 0.5 |
+| `bool` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
 | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
@@ -128,9 +128,9 @@ A bare `bool`, `Literal` or `float` as the `output_type` is a single question wi
 
 A `list` of options is TypeSafe's fan-out: one yes/no per option, all in the same request, and the answer is the options Jev said yes to. An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. A nested model is its fields, asked as `outer.inner` and put back in place; the parent field's description is not sent, so put the context each question needs on the field that asks it. The round trip of lists and nested models is tested; their accuracy against labels is not measured, so check them on your own data before relying on either.
 
-Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field, so one threshold reads the same way across an output type. It is a margin, not a probability that the answer is right. For a yes/no it is how far Jev's probability sits from the coin flip, doubled — a `False` answered from a probability of 0.01 reports 0.98, one answered from 0.45 reports 0.10. For a pick-one it is Jev's own number, from how its probabilities are spread; for a list of options it is the least sure option's. `provider_details['probabilities']` holds the whole distribution of each pick-one field, and each option's probability for a list.
+Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field, so one threshold reads the same way across an output type. It is a margin, not a probability that the answer is right. For a yes/no it is how far Jev's probability sits from the threshold that decided it, scaled to run from 0 at the threshold to 1 at certainty — at the default of 0.5 that is the distance from the coin flip, doubled, so a `False` answered from a probability of 0.01 reports 0.98 and one answered from 0.45 reports 0.10. For a pick-one it is Jev's own number, from how its probabilities are spread; for a list of options it is the least sure option's. `provider_details['probabilities']` holds the whole distribution of each pick-one field, and each option's probability for a list.
 
-A `float` field has no entry. The probability *is* its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement — and `0.5` means Jev is undecided, not that the answer is middling. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give.
+A `float` field has no entry. The probability *is* its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement — and `0.5` means Jev is undecided, not that the answer is middling. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give at the default threshold; against a `typesafe_boolean_threshold` of your own, the margin is the distance from *that* bar scaled to the room left on the side the answer fell — `(value - t) / (1 - t)` at or above it, `(t - value) / t` below.
 
 Pick the threshold from what the answer is used for rather than once for the whole system — acting automatically deserves a higher bar than flagging something for review — and calibrate it against labelled examples of your own. `jev-latest` moves when TypeSafe ship a release, which can shift the numbers under you; once you have tuned a threshold, pin the version it was tuned against (`typesafe:jev-1.13.0`) and move deliberately.
 
@@ -307,6 +307,81 @@ Write the output type's docstring as the action it is — "Triage a support tick
     They say the mappings work, not how Jev will do on your task. Measure accuracy, the hand-off rate and any
     threshold on labelled examples of your own before relying on them.
 
+## A union of output types
+
+An `output_type` of several structured types is a set of routes. Jev picks which one the text calls for, then a second request asks only that type's fields — the same two steps a [selected tool's arguments](#tools-jev-picks-and-calls-what-it-can) take, because it is the same question asked twice.
+
+```python {title="union_output.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+class Escalation(BaseModel):
+    """Hand the ticket to a human specialist."""
+
+    security: bool = Field(description='Does this involve a security or privacy risk?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation])
+```
+
+Each member is described by **its own docstring**, which is what Jev weighs the routes against. With one output type the agent's instructions can say what filling it is for; with several they cannot, because one instruction cannot describe two different routes, so a member without a docstring is a [`UserError`][pydantic_ai.exceptions.UserError].
+
+The pick is reported in `provider_details['tool']`, with the probability of every member, and `provider_details['requests']` is `2` — a turn that asked twice, which `usage` cannot express because [`RequestUsage.requests`][pydantic_ai.usage.RequestUsage.requests] is fixed at 1.
+
+The [tool threshold](#tools-jev-picks-and-calls-what-it-can) gates tools, not output types. Picking an output type is Jev saying which result to fill, not proposing that something else be done, so a tool picked below the threshold falls back to the likeliest output type rather than being taken.
+
+### A member Jev cannot fill
+
+A union member may use fields Jev cannot express, such as a `str`. It is still offered as a route, and picking it raises [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] — a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands it the whole step:
+
+```python {title="union_handoff.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.models.fallback import FallbackModel
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+class DraftedReply(BaseModel):
+    """Write the customer a reply."""
+
+    body: str
+
+
+agent = Agent(
+    FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
+    output_type=[Ticket, DraftedReply],
+)
+```
+
+Jev answers the tickets it can and hands over the ones that need writing, so only those cost a language model call.
+
+A lone `output_type` Jev cannot fill is still refused before any request. There is no other route the run could have taken, so an unfillable one can only ever fail — that is a coding error, and finding out at setup beats finding out from the bill. Offered beside others, it is a route like any other.
+
+!!! warning "Watch the hand-off rate"
+    A union that hands off on most requests costs a language model call **plus** a Jev call, and is slower than
+    not using Jev at all. Measure the rate on your own data before relying on the arrangement.
+
+    Note where the number is. On a request Jev answers, its pick is in `provider_details['tool']['probabilities']`.
+    On a hand-off it is not: [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] is raised instead
+    of a response, and [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] returns the *next* model's
+    response, which carries none of Jev's numbers. So counting hand-offs by their absence in `provider_details` is
+    the measurement, and the exception carries `tool_name` and `probability` if you would rather catch it: run the
+    models separately, or wrap the fallback, when you want both.
+
 ## Ask one thing per field
 
 TypeSafe call this "probably the most important concept" in their guide, and it is the one habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible number with low confidence, and you find out later.
@@ -376,12 +451,12 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 ## What Jev cannot do
 
-Jev does not write text or read files, and it only fills tool arguments that map to the typed questions above. An agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
+Jev does not write text or read files, and it only fills tool arguments that map to the typed questions above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and shared request preparation refuses any agent that asks such a model for text. An agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
-- The `output_type` must be one structured type made of the field types above, beside any output functions that take no arguments: no `str`, no second type with fields, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
+- The `output_type` must be made of the field types above, beside any output functions that take no arguments: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. A [union](#a-union-of-output-types) of structured types is supported.
 - No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
-- At most 255 options in one question. A pick-one field counts its own options, and the tool question counts every tool plus the output type, so 255 tools is already one too many.
+- At most 255 options in one question. A pick-one field counts its own options, and the route question counts every tool plus every output type, so 255 tools is already one too many.
 
 Jev does not revise an answer the way a language model does. Its previous answer and the validator's complaint both go back in the history, so they are part of what it judges, but the question is unchanged and a confident answer does not move: an output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] usually gets the same answer again, and one that keeps rejecting runs the agent out of retries.
 
@@ -438,7 +513,7 @@ See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this inte
 
 ## Model settings
 
-Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request, and `typesafe_tool_call_threshold` sets how sure Jev has to be before it [takes a tool](#tools-jev-picks-and-calls-what-it-can):
+Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request, `typesafe_tool_call_threshold` sets how sure Jev has to be before it [takes a tool](#tools-jev-picks-and-calls-what-it-can), and `typesafe_boolean_threshold` sets how likely a yes has to be before a `bool` field is `True`:
 
 ```python
 from pydantic_ai import Agent
@@ -448,3 +523,43 @@ model = TypeSafeModel('jev-latest')
 agent = Agent(model, output_type=bool, model_settings={'timeout': 5})
 ...
 ```
+
+### What `True` has to mean
+
+Jev answers a yes/no with the probability of yes, and `typesafe_boolean_threshold` decides where that rounds. The
+default of 0.5 is the coin flip: the answer is whichever side Jev leans. That is the right default and the wrong
+setting for any field where the two mistakes do not cost the same.
+
+Raise it where a false positive is the expensive one, so a `True` has to be earned:
+
+```python {title="earn_a_true.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.models.typesafe import TypeSafeModelSettings
+
+
+class Handling(BaseModel):
+    """Decide how a coding agent's shell command should be handled before it runs."""
+
+    safe_to_run: bool = Field(description='Is this command safe to run without a human looking at it?')
+
+
+agent = Agent(
+    'typesafe:jev-latest',
+    output_type=Handling,
+    model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.9),
+)
+```
+
+Lower it where a false negative is, so a `True` only has to be plausible — a flag that sends a borderline case to a
+human is cheap, and one that misses a real case is not.
+
+The threshold applies to every `bool` field and to each option of a `list` of a `Literal` or `Enum`, which is one
+yes/no per option. It does not apply to a `float` bounded with `ge=0` and `le=1`, which asks for the probability
+itself and hands it back unrounded: a field whose threshold you would want to vary per call is often better
+declared that way, and compared in your own code.
+
+Confidence moves with the threshold, because it is the margin over the bar that was actually used: a yes at 0.8
+under a threshold of 0.75 reports 0.2, not the 0.6 it would report against a coin flip. A
+[fallback on low confidence](#falling-back-on-low-confidence) therefore keeps meaning what it meant.
