@@ -38,17 +38,20 @@ sys.path.insert(0, str(Path(__file__).parent))
 # tests import each from where it actually lives, not from a re-export.
 import agentic_workflow_guard
 import pydantic_ai_gh_aw_shim as pkg
-from mcp.shared.exceptions import McpError
+from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage]
 from mcp.types import ErrorData
 from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
 )
 
+from pydantic_ai._mcp_compat import is_mcp_sdk_v2
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model as _Model
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
+
+_MCP_SDK_V2 = is_mcp_sdk_v2()
 
 # The exact argv shape gh-aw's claude_harness.cjs passes, prompt appended last.
 GHAW_ARGV = [
@@ -1833,6 +1836,9 @@ def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path: Path):
 # from the gh-aw gateway escaped `MCPToolset` and killed the whole run).
 # --------------------------------------------------------------------------- #
 def _mcp_error(message: str) -> McpError:
+    # SDK v2 takes the fields directly where v1 wrapped them in an `ErrorData`.
+    if _MCP_SDK_V2:
+        return cast(Any, McpError)(code=-32602, message=message)
     return McpError(ErrorData(code=-32602, message=message))
 
 

@@ -49,7 +49,7 @@ from typing import Any, TypeAlias, cast
 import httpx2
 import logfire
 from anthropic import AsyncAnthropic
-from mcp.shared.exceptions import McpError
+from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage]
 from pydantic import ValidationError
 
 from pydantic_ai import Agent, RunContext
