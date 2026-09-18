@@ -347,6 +347,7 @@ Jev does not write text, write a tool's arguments or read files. An agent that n
 - The `output_type` must be one structured type made of the field types above, beside any output functions that take no arguments: no `str`, no second type with fields, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 - No native tools. A function tool with arguments is offered to Jev but never called by it: picking one is [proposed](#tools-jev-picks-and-calls-what-it-can) to a model behind it, which is a `ModelAPIError` after the request rather than a refusal before it; with tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
+- At most 255 options in one question. A pick-one field counts its own options, and the tool question counts every tool plus the output type, so 255 tools is already one too many.
 
 Jev does not revise an answer the way a language model does. Its previous answer and the validator's complaint both go back in the history, so they are part of what it judges, but the question is unchanged and a confident answer does not move: an output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] usually gets the same answer again, and one that keeps rejecting runs the agent out of retries.
 
