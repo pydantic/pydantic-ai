@@ -373,8 +373,14 @@ A lone `output_type` Jev cannot fill is still refused before any request. There 
 
 !!! warning "Watch the hand-off rate"
     A union that hands off on most requests costs a language model call **plus** a Jev call, and is slower than
-    not using Jev at all. `provider_details['tool']['probabilities']` is on every response, so measure the rate on
-    your own data before relying on the arrangement.
+    not using Jev at all. Measure the rate on your own data before relying on the arrangement.
+
+    Note where the number is. On a request Jev answers, its pick is in `provider_details['tool']['probabilities']`.
+    On a hand-off it is not: [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] is raised instead
+    of a response, and [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] returns the *next* model's
+    response, which carries none of Jev's numbers. So counting hand-offs by their absence in `provider_details` is
+    the measurement, and the exception carries `tool_name` and `probability` if you would rather catch it: run the
+    models separately, or wrap the fallback, when you want both.
 
 ## Ask one thing per field
 

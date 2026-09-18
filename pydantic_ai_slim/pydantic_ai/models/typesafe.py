@@ -299,6 +299,15 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
             return await self._forced_with_arguments(forced_tool, state, instructions, settings)
+        if len(output_tools) > 1 and not any(_expressible(tool, instructions) for tool in output_tools):
+            # A member Jev cannot fill is a hand-off, but only while some other member is a real alternative.
+            # With none of them fillable the choice is decided before it is asked: every answer hands off, so
+            # the request that asks it buys nothing and every run pays for Jev on top of the model behind it.
+            raise UserError(
+                'None of the output types can be filled by this model, so every answer would be handed off and '
+                'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
+                'it from this model.'
+            )
         questions = _questions(properties, output_tool, instructions) if output_tool else {}
         tool_key = _tool_question(questions, output_tools, tools, instructions)
         threshold = settings.get('typesafe_tool_call_threshold', 0.6)
@@ -615,6 +624,15 @@ def _tool_call(
         return tool
     # Nothing to write, so the call is made on Jev's pick.
     return ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())
+
+
+def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
+    """Whether Jev could fill this route's fields, asked without sending anything."""
+    try:
+        _questions(_fields(tool), tool, instructions)
+    except UserError:
+        return False
+    return True
 
 
 def _output_tools(

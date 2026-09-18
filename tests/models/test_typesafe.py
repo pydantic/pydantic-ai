@@ -2224,3 +2224,54 @@ async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: N
     details = result.response.provider_details or {}
     assert details['tool']['probabilities'] == {'refund': 0.3}
     assert details['requests'] == 2
+
+
+async def test_a_union_no_member_of_which_jev_can_fill_is_refused_before_any_request(allow_model_requests: None):
+    """A hand-off is worth building only while some other route is a real alternative.
+
+    With every member beyond Jev the choice is decided before it is asked: each answer hands off, so the
+    request that asks which one buys nothing and every run pays for Jev on top of the model behind it.
+    """
+
+    class DraftedReply(BaseModel):
+        """Write the customer a reply."""
+
+        body: str
+
+    class Summary(BaseModel):
+        """Summarise the thread."""
+
+        text: str
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a union with nothing fillable must be refused before any request')
+
+    agent = Agent(mock_model(unreachable), output_type=[DraftedReply, Summary])
+    with pytest.raises(UserError, match='None of the output types can be filled by this model'):
+        await agent.run('Write back.')
+
+
+async def test_a_union_with_one_fillable_member_is_still_offered(allow_model_requests: None):
+    """One real alternative is enough: the hand-off then depends on the text rather than on the types."""
+
+    class DraftedReply(BaseModel):
+        """Write the customer a reply."""
+
+        body: str
+
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route('final_result_Ticket', {'final_result_Ticket': 0.9, 'final_result_DraftedReply': 0.1})
+            )
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, DraftedReply])
+    result = await agent.run('Is this urgent?')
+
+    assert result.output == Ticket(urgent=True)
+    # Both were offered: the hand-off now depends on which one the text calls for.
+    assert set(seen[0]['questions']['tool']['criteria']) == {'final_result_Ticket', 'final_result_DraftedReply'}
