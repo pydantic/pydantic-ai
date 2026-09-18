@@ -507,3 +507,40 @@ def test_run_sync():
     # Second call skips name inference because the name is already set.
     assert graph.run_sync(inputs=4) == 10
     assert graph.name == 'graph'
+
+
+async def test_genuine_cancellation_preserves_cancelled_error():
+    """Test that genuine cancellation with an in-flight stream node still surfaces CancelledError."""
+    from collections.abc import AsyncIterator
+
+    import anyio
+
+    g = GraphBuilder(output_type=int)
+    entered = anyio.Event()
+
+    @g.stream()
+    async def stream_never(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        entered.set()
+        await anyio.sleep_forever()
+        yield 0  # pragma: no cover
+
+    g.add(
+        g.edge_from(g.start_node).to(stream_never),
+        # A stream node needs an outgoing edge for the graph runtime to wire up its
+        # iterable; the generator below never yields, so no items ever flow through
+        # this edge.
+        g.edge_from(stream_never).map().to(g.end_node),
+    )
+    graph = g.build()
+
+    async with create_task_group() as outer:
+
+        async def run_graph():
+            with pytest.raises(anyio.get_cancelled_exc_class()):
+                async with graph.iter() as run:
+                    async for _event in run:
+                        pass
+
+        outer.start_soon(run_graph)
+        await entered.wait()
+        outer.cancel_scope.cancel()

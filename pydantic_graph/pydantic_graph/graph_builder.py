@@ -882,6 +882,17 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 # `BrokenResourceError`); both are benign here — the result/error
                 # is no longer needed because the run is being torn down.
                 pass
+            except Exception as exc:
+                # An exception raised while consuming the node's streaming iterable
+                # (i.e. from the node's own generator body) must not escape into the
+                # task group, which would surface it as CancelledError instead of the
+                # original exception. Forward it like the node-call handler above so
+                # `iter_graph` yields an `ErrorMarker` and `GraphRun` re-raises the
+                # original exception in-context, where the caller can recover from it.
+                # Catching `Exception` rather than `BaseException` is deliberate:
+                # `CancelledError` inherits from `BaseException`, so genuine
+                # cancellation still propagates unchanged.
+                await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
 
     async def _run_task(
         self,
