@@ -114,13 +114,15 @@ class TestListFiles:
         monkeypatch.setenv('PATH', f'{fake}{os.pathsep}{os.environ["PATH"]}')
         assert await toolset(workspace).list_files() == '[... truncated at 1000 files]'
 
-    async def test_event(self, workspace: Path) -> None:
+    @pytest.mark.parametrize('cwd_name', ['.', 'src'])
+    async def test_event(self, workspace: Path, cwd_name: str) -> None:
         recorder = Recorder()
-        await call(workspace, 'list_files', {'glob': '*.py'}, capabilities=[recorder])
+        await call(workspace, 'list_files', {'glob': '*.py'}, capabilities=[recorder], cwd=workspace / cwd_name)
         assert recorder.events[0].search == 'find'
         assert recorder.events[0].pattern == '*.py'
         assert recorder.events[0].match_count == 1
-        assert recorder.events[0].path == '.'
+        assert recorder.events[0].path == cwd_name
+        assert recorder.events[0].root_dir == os.path.realpath(workspace)
 
     @pytest.mark.parametrize('path', ['notes.txt', 'missing', '..'])
     async def test_rejects_non_directories(self, workspace: Path, path: str) -> None:
@@ -165,12 +167,16 @@ class TestGrep:
             '[... truncated at 2 lines]',
         ]
 
-    async def test_event(self, workspace: Path) -> None:
+    @pytest.mark.parametrize('cwd_name,path', [('.', 'src'), ('src', '.')])
+    async def test_event(self, workspace: Path, cwd_name: str, path: str) -> None:
         recorder = Recorder()
-        await call(workspace, 'grep', {'pattern': 'os', 'path': 'src'}, capabilities=[recorder])
+        await call(
+            workspace, 'grep', {'pattern': 'os', 'path': path}, capabilities=[recorder], cwd=workspace / cwd_name
+        )
         assert recorder.events[0].search == 'grep'
         assert recorder.events[0].pattern == 'os'
         assert recorder.events[0].path == 'src'
+        assert recorder.events[0].root_dir == os.path.realpath(workspace)
         assert recorder.events[0].match_count == 2
 
     @pytest.mark.parametrize(

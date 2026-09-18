@@ -82,7 +82,7 @@ over those ignore files; unlike ripgrep, dotfiles and dot-directories stay
 hidden even then, as with the other walkers. Output is sorted by path, so a capped
 result is a deterministic prefix rather than a random subset. `grep` reports
 matches as `path:line:text` and context lines as `path-line-text`, paths relative
-to `root_dir`; a pattern uses ripgrep's regex syntax unless `literal` is set. A
+to `cwd`; a pattern uses ripgrep's regex syntax unless `literal` is set. A
 missing `rg` or a pattern ripgrep rejects comes back to the model as a retry, so
 it can correct the call or use `search_files`/`find_files` instead. Every path
 ripgrep prints goes through the same containment and pattern checks as the other
@@ -103,8 +103,13 @@ agent they only add tokens to every read and write. Events still carry
 `cwd` is the directory relative paths resolve from; it defaults to `root_dir`
 and must lie inside it. Set it to hand the model a project directory while
 `root_dir` grants access to more, such as a parent directory or the filesystem
-root, without the model spelling out absolute paths. Containment is still
-checked against `root_dir`, and event paths stay relative to `root_dir`.
+root, without the model spelling out absolute paths.
+
+`list_directory`, `find_files`, `search_files`, `list_files`, and `grep` return
+paths relative to `cwd`, even when searching a subdirectory. These paths can be
+passed directly to read/write tools. Files outside `cwd` but inside `root_dir`
+use `..` components. Containment, access patterns, and event paths retain their
+`root_dir` basis, as does `search_files`'s `include_glob` filter.
 
 ## Events
 
@@ -215,8 +220,8 @@ applies the same rule to absolute symlink targets.
 
 ## Security model
 
-- **Containment.** Paths resolve relative to `root_dir`; anything resolving
-  outside -- via `..`, an absolute path, or a symlink -- is rejected. Symlinks
+- **Containment.** Relative paths resolve from `cwd`; anything resolving
+  outside `root_dir` -- via `..`, an absolute path, or a symlink -- is rejected. Symlinks
   are resolved with `os.path.realpath` *before* the containment check, and I/O
   then uses the resolved path. Directory walks (`list_directory`,
   `search_files`, `find_files`, `list_files`, `grep`) resolve each entry the same way and match the

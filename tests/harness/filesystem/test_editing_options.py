@@ -7,7 +7,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset, Replacement
+from pydantic_ai_harness.filesystem import FILE_SYSTEM_TOOL_NAMES, FileSystem, FileSystemToolset, Replacement
 
 from .._tool_calls import call_tool
 
@@ -162,6 +162,87 @@ class TestMaxReadChars:
 
 
 class TestCwd:
+    @pytest.mark.parametrize('search_path', ['.', 'src', '../shared'])
+    @pytest.mark.parametrize(
+        'name,arguments',
+        [
+            ('list_directory', {}),
+            ('find_files', {'pattern': 'AGENTS.md'}),
+            ('search_files', {'pattern': 'instructions'}),
+            ('list_files', {'glob': 'AGENTS.md'}),
+            ('grep', {'pattern': 'instructions'}),
+        ],
+    )
+    async def test_discovery_paths_can_be_reused(
+        self, tmp_path: Path, search_path: str, name: str, arguments: dict[str, object]
+    ) -> None:
+        project = tmp_path / 'project'
+        project.mkdir()
+        directory = (project / search_path).resolve()
+        directory.mkdir(exist_ok=True)
+        target = directory / 'AGENTS.md'
+        target.write_text('Project instructions')
+        capability = FileSystem[None](root_dir=tmp_path, cwd=project, tools=FILE_SYSTEM_TOOL_NAMES)
+
+        discovered = await call_tool([capability], name, {'path': search_path, **arguments})
+        path = discovered.partition(':')[0].partition('  (')[0]
+        assert path == os.path.relpath(target, project)
+
+        decoy = project / target.relative_to(tmp_path)
+        decoy.parent.mkdir(parents=True, exist_ok=True)
+        decoy.write_text('Different instructions')
+        assert 'Project instructions' in await call_tool([capability], 'read_file', {'path': path})
+        await call_tool([capability], 'edit_file', {'path': path, 'old_text': 'Project', 'new_text': 'Updated'})
+        assert target.read_text() == 'Updated instructions'
+        await call_tool([capability], 'write_file', {'path': path, 'content': 'Replaced instructions'})
+        assert target.read_text() == 'Replaced instructions'
+        assert decoy.read_text() == 'Different instructions'
+
+    @pytest.mark.parametrize(
+        'name,arguments',
+        [
+            ('list_directory', {}),
+            ('find_files', {'pattern': '*.txt'}),
+            ('search_files', {'pattern': 'content', 'include_glob': 'project/*.txt'}),
+            ('list_files', {'glob': '*.txt'}),
+            ('grep', {'pattern': 'content'}),
+        ],
+    )
+    async def test_discovery_preserves_root_relative_access_patterns(
+        self, tmp_path: Path, name: str, arguments: dict[str, object]
+    ) -> None:
+        project = tmp_path / 'project'
+        project.mkdir()
+        for filename in ['allowed.txt', 'denied.txt', 'other.md']:
+            (project / filename).write_text('content')
+        capability = FileSystem[None](
+            root_dir=tmp_path,
+            cwd=project,
+            tools=FILE_SYSTEM_TOOL_NAMES,
+            allowed_patterns=['project/*.txt'],
+            denied_patterns=['project/denied.txt'],
+            protected_patterns=['project/allowed.txt'],
+        )
+
+        result = await call_tool([capability], name, arguments)
+        path = result.partition(':')[0].partition('  (')[0]
+        assert path == 'allowed.txt'
+        assert 'content' in await call_tool([capability], 'read_file', {'path': path})
+        assert 'protected' in await call_tool([capability], 'write_file', {'path': path, 'content': 'changed'})
+        assert (project / 'allowed.txt').read_text() == 'content'
+
+    @pytest.mark.parametrize('content_hashes', [False, True])
+    async def test_tool_schemas_describe_cwd_relative_inputs(self, tmp_path: Path, content_hashes: bool) -> None:
+        model = TestModel(call_tools=[])
+        await Agent(
+            model,
+            capabilities=[FileSystem(root_dir=tmp_path, tools=FILE_SYSTEM_TOOL_NAMES, content_hashes=content_hashes)],
+        ).run('Inspect tools')
+        assert model.last_model_request_parameters is not None
+        for tool in model.last_model_request_parameters.function_tools:
+            description = tool.parameters_json_schema['properties']['path']['description']
+            assert 'relative to `cwd`' in description
+
     async def test_relative_paths_resolve_from_cwd(self, tmp_path: Path) -> None:
         project = tmp_path / 'project'
         project.mkdir()

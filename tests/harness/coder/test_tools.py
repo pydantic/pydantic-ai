@@ -28,6 +28,18 @@ async def call(
 
 
 class TestCoder:
+    @pytest.mark.parametrize('unrestricted_filesystem', [False, True])
+    async def test_discovered_paths_can_be_read_and_edited(self, tmp_path: Path, unrestricted_filesystem: bool) -> None:
+        (tmp_path / 'src').mkdir()
+        target = tmp_path / 'src' / 'AGENTS.md'
+        target.write_text('Project instructions')
+        coder = Coder[None](tmp_path, unrestricted_filesystem=unrestricted_filesystem, repo_context=False)
+        path = await call_tool([coder], 'list_files', {'glob': '**/AGENTS.md'})
+        assert Path(path) == Path('src/AGENTS.md')
+        assert 'Project instructions' in await call_tool([coder], 'read_file', {'path': path})
+        await call_tool([coder], 'edit_file', {'path': path, 'old_text': 'Project', 'new_text': 'Updated'})
+        assert target.read_text() == 'Updated instructions'
+
     async def test_schema(self, tmp_path: Path) -> None:
         model = TestModel(call_tools=[])
         await Agent(model, capabilities=[Coder(tmp_path)]).run('Inspect tools')

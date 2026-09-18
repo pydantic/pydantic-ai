@@ -462,7 +462,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     """Toolset providing filesystem operations scoped to a root directory.
 
     Security model:
-    - All paths resolved relative to root with canonical path checks
+    - Relative paths resolved from `cwd` and checked for containment in `root_dir`
     - Symlinks resolved before authorization, and again after a listener has
       held a change request; a rename on the path between that check and the
       by-name I/O remains possible, as the documented security model says
@@ -624,6 +624,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """Canonical path of a resolved location relative to the real root."""
         return str(resolved.relative_to(self._real_root))
 
+    def _relative_to_cwd(self, path: Path) -> str:
+        """Format an authorized discovery path for reuse as a tool input."""
+        return os.path.relpath(path, self._cwd)
+
     def _event_location(self, resolved: Path) -> _EventLocation:
         """Path fields for an event about `resolved`.
 
@@ -659,7 +663,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Args:
             ctx: The current agent run context.
-            path: File path relative to the root directory.
+            path: File path relative to `cwd`.
             offset: Zero-based line offset to start reading from.
             limit: Maximum number of lines to return (default: 2000).
 
@@ -731,7 +735,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Args:
             ctx: The current agent run context.
-            path: File path relative to the root directory.
+            path: File path relative to `cwd`.
             content: The text content to write.
             expected_hash: If provided, the write is rejected when the file exists
                 and its current hash doesn't match (optimistic concurrency).
@@ -746,7 +750,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Args:
             ctx: The current agent run context.
-            path: File path relative to the root directory.
+            path: File path relative to `cwd`.
             content: The text content to write.
         """
         return await self._write_file(ctx, path, content)
@@ -834,7 +838,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Args:
             ctx: The current agent run context.
-            path: File path relative to the root directory.
+            path: File path relative to `cwd`.
             old_text: The exact text to find (must appear exactly once).
             new_text: The replacement text.
             replacements: Replacements to apply in order, instead of a single pair.
@@ -865,7 +869,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Args:
             ctx: The current agent run context.
-            path: File path relative to the root directory.
+            path: File path relative to `cwd`.
             old_text: The exact text to find (must appear exactly once).
             new_text: The replacement text.
             replacements: Replacements to apply in order, instead of a single pair.
@@ -920,10 +924,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Args:
             ctx: The current agent run context.
-            path: Directory path relative to the root directory.
+            path: Directory path relative to `cwd`.
 
         Returns:
-            A newline-separated listing with type indicators and sizes.
+            Paths relative to `cwd`, with type indicators and sizes.
         """
         return await self._list_directory(ctx, path)
 
@@ -950,7 +954,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             target = self._resolve_walk_entry(entry)
             if target is None:
                 continue
-            rel = str(rel_path)
+            rel = self._relative_to_cwd(entry)
             if target.is_dir():
                 line = f'{rel}/'
             else:
@@ -984,11 +988,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Args:
             ctx: The current agent run context.
             pattern: Regex pattern to search for.
-            path: Directory to search in, relative to the root directory.
-            include_glob: If provided, only search files matching this glob (e.g. '*.py').
+            path: Directory to search in, relative to `cwd`.
+            include_glob: If provided, match this glob against root-relative paths (e.g. '*.py').
 
         Returns:
-            str: Matching lines formatted as file:line_number:text.
+            str: Matching lines formatted as file:line_number:text, with paths relative to `cwd`.
         """
         return await self._search_files(ctx, pattern, path=path, include_glob=include_glob)
 
@@ -1039,7 +1043,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if _is_binary(raw):
                 continue
             text = raw.decode('utf-8', errors='replace')
-            matches, capped = _matching_lines(text, compiled, rel_str, self._max_search_results - len(results))
+            matches, capped = _matching_lines(
+                text, compiled, self._relative_to_cwd(file_path), self._max_search_results - len(results)
+            )
             results.extend(matches)
             if capped:
                 break
@@ -1072,10 +1078,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             ctx: The current agent run context.
             pattern: Glob pattern to match, relative to `path` (e.g. '*.py',
                 '**/*.json'). Absolute patterns are rejected.
-            path: Directory to search in, relative to the root directory.
+            path: Directory to search in, relative to `cwd`.
 
         Returns:
-            Newline-separated list of matching file paths relative to root.
+            Newline-separated list of matching file paths relative to `cwd`.
         """
         return await self._find_files(ctx, pattern, path=path)
 
@@ -1124,7 +1130,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if len(matches) >= self._max_find_results:
                 capped = True
                 break
-            rel = str(rel_path)
+            rel = self._relative_to_cwd(match)
             suffix = '/' if target.is_dir() else ''
             matches.append(f'{rel}{suffix}')
 
@@ -1143,11 +1149,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Args:
             ctx: The current agent run context.
-            path: Directory to list, relative to the root directory.
+            path: Directory to list, relative to `cwd`.
             glob: If provided, only list files matching this glob (e.g. '*.py' or 'src/**').
 
         Returns:
-            One file path per line, relative to the root directory.
+            One file path per line, relative to `cwd`.
         """
         return await self._list_files(ctx, path, glob=glob)
 
@@ -1212,7 +1218,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Args:
             ctx: The current agent run context.
             pattern: Regular expression (ripgrep syntax), or exact text when `literal` is set.
-            path: Directory or file to search, relative to the root directory.
+            path: Directory or file to search, relative to `cwd`.
             glob: If provided, only search files matching this glob (e.g. '*.py').
             file_type: If provided, only search this ripgrep file type (e.g. 'py', 'rust').
             ignore_case: Match case-insensitively.
@@ -1220,7 +1226,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             context: Lines of context to show around each match (0 to 20).
 
         Returns:
-            Matches as `file:line:text`; context lines as `file-line-text`.
+            Matches as `file:line:text`; context lines as `file-line-text`. Paths are relative to `cwd`.
         """
         return await self._grep(
             ctx,
@@ -1288,7 +1294,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         return '\n'.join(results) if results else 'No matches found.'
 
     def _ripgrep_entry(self, cwd: Path, record: Record) -> str | None:
-        """Authorize a path `rg` printed and return it relative to the root, or `None` to drop it.
+        """Authorize a path `rg` printed and return it relative to the configured `cwd`, or `None` to drop it.
 
         A `glob` makes ripgrep surface hidden files it would otherwise skip;
         dropping dot-prefixed entries here keeps these walkers in step with the
@@ -1297,7 +1303,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if any(part.startswith('.') for part in Path(record.path).parts if part != '.'):
             return None
         target = self._resolve_walk_entry(cwd / record.path)
-        return None if target is None else self._relative_to_root(target)
+        return None if target is None else self._relative_to_cwd(target)
 
     def _match_line(self, cwd: Path, record: Record) -> str | None:
         """Rebuild ripgrep's `path:line:text` (match) or `path-line-text` (context) line for an authorized path."""
@@ -1316,7 +1322,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         Args:
             ctx: The current agent run context.
-            path: Directory path relative to the root directory.
+            path: Directory path relative to `cwd`.
 
         Returns:
             Confirmation message.
@@ -1358,7 +1364,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """Get metadata about a file or directory.
 
         Args:
-            path: File or directory path relative to the root directory.
+            path: File or directory path relative to `cwd`.
 
         Returns:
             Formatted metadata including size, type, and permissions.

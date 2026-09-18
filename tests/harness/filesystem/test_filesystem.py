@@ -1751,7 +1751,7 @@ class TestFileSystemCapability:
             '<summary>Search file contents using a regular expression.</summary>\n'
             '<returns>\n'
             '<type>str</type>\n'
-            '<description>Matching lines formatted as file:line_number:text.</description>\n'
+            '<description>Matching lines formatted as file:line_number:text, with paths relative to `cwd`.</description>\n'
             '</returns>'
         )
 
