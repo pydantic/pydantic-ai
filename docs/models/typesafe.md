@@ -273,6 +273,95 @@ Write the output type's docstring as the action it is — "Triage a support tick
     They say the mappings work, not how Jev will do on your task. Measure accuracy, the hand-off rate and any
     threshold on labelled examples of your own before relying on them.
 
+## Two places Jev fits in an agent loop
+
+Jev's speed is worth most where a decision sits *between* the expensive steps, not where it replaces them. Two patterns need no new API.
+
+### Pick the model for the run
+
+One question decides which model answers, and the run is made on that model. The agent is built without one, so the pick is the only thing that chooses:
+
+```python {title="route_to_a_model.py"}
+from typing import Literal
+
+from pydantic_ai import Agent
+
+router = Agent(
+    'typesafe:jev-latest',
+    output_type=Literal['fast', 'capable'],
+    instructions=(
+        'Which model should answer this request? Answer `fast` for a lookup, an '
+        'extraction, or a change confined to one place. Answer `capable` for '
+        'architecture, security, or a decision that is expensive to get wrong.'
+    ),
+)
+agent = Agent(instructions='You are a helpful engineering assistant.')
+
+MODELS = {'fast': 'openai:gpt-5.6-luna', 'capable': 'openai:gpt-5.6-sol'}
+
+
+async def answer(question: str) -> str:
+    picked = await router.run(question)
+    return (await agent.run(question, model=MODELS[picked.output])).output
+```
+
+The whole routing decision costs one Jev request. The pick's confidence is in `provider_details['confidence']`, so an unsure route can go to the capable model rather than the cheap one, which is the conservative direction when a wrong route is expensive.
+
+### Judge a tool call before it runs
+
+A tool marked `requires_approval=True` stops before its body runs and arrives as an approval request, which a [deferred tool handler](../deferred-tools.md) resolves. Jev is fast enough to sit in that loop, so every call is judged in about the time a network hop takes:
+
+```python {title="judge_a_tool_call.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import (
+    Agent,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDenied,
+)
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+
+
+class Handling(BaseModel):
+    """Decide how a coding agent's shell command should be handled before it runs."""
+
+    irreversible: bool = Field(
+        description='Would running this destroy data or leak secrets?'
+    )
+
+
+judge = Agent('typesafe:jev-latest', output_type=Handling)
+
+
+async def judge_calls(
+    ctx: RunContext, requests: DeferredToolRequests
+) -> DeferredToolResults:
+    approvals: dict[str, bool | ToolDenied] = {}
+    for call in requests.approvals:
+        verdict = await judge.run(str(call.args))
+        approvals[call.tool_call_id] = (
+            ToolDenied('That command destroys data or leaks secrets.')
+            if verdict.output.irreversible
+            else True
+        )
+    return requests.build_results(approvals=approvals)
+
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    capabilities=[HandleDeferredToolCalls(handler=judge_calls)],
+)
+
+
+@agent.tool_plain(requires_approval=True)
+def run_shell(command: str) -> str:
+    return f'ran {command!r}'
+```
+
+This judges the call the model proposed, not the model's intent, so it is a check on what is about to happen rather than on what was said. Denying a call sends the message back to the model, which can try something else. Keep a human in the loop for the calls that matter most: a judgement at 180 ms is cheap enough to run on everything, which is exactly why it should not be the only thing standing between an agent and an irreversible action.
+
 ## Ask one thing per field
 
 TypeSafe call this "probably the most important concept" in their guide, and it is the one habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible number with low confidence, and you find out later.
