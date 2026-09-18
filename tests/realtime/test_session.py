@@ -2290,6 +2290,7 @@ async def test_tool_response_finalized_on_usage_is_not_duplicated_at_terminal() 
                 args='{}',
                 response_usage_follows=True,
             ),
+            OutputTranscript(text='I will check that now.', is_final=True),
             SessionUsage(
                 usage=RequestUsage(output_tokens=1),
                 provider_response_id='response-tool',
@@ -2307,11 +2308,20 @@ async def test_tool_response_finalized_on_usage_is_not_duplicated_at_terminal() 
         return 'done'
 
     session = RealtimeSession(conn, runner)
-    _ = await collect_events(session)
+    events = await collect_events(session)
 
     responses = [message for message in session.new_messages() if isinstance(message, ModelResponse)]
     assert len(responses) == 1
-    assert isinstance(responses[0].parts[0], ToolCallPart)
+    assert responses[0].parts == [
+        ToolCallPart(tool_name='noop', args='{}', tool_call_id='tc-1'),
+        SpeechPart(speaker='assistant', transcript='I will check that now.'),
+    ]
+    assert responses[0].provider_response_id == 'response-tool'
+    assert responses[0].usage == RequestUsage(output_tokens=1)
+    assert session.usage.requests == 1
+    assert [
+        event.part for event in events if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart)
+    ] == [SpeechPart(speaker='assistant', transcript='I will check that now.')]
 
 
 async def test_tool_call_events_carry_real_parts() -> None:
@@ -3034,6 +3044,22 @@ async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
     with pytest.raises(ValueError, match='tool exploded'):
         await session.send('x')
     await session.close()
+
+    response, request = session.all_messages()
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [ToolCallPart(tool_name='noop', args='{}', tool_call_id='tc1')]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='noop',
+                content='The tool raised an unhandled error and the session ended.',
+                tool_call_id='tc1',
+                timestamp=IsDatetime(),
+                outcome='failed',
+            )
+        ]
+    )
 
 
 async def test_tool_retry_exhaustion_ends_views_when_the_stream_was_never_iterated() -> None:
@@ -5905,6 +5931,32 @@ async def test_agent_realtime_session_tool_exception() -> None:
         with pytest.raises(ValueError, match='nope'):
             _ = [e async for e in session]
     assert conn.sent == []
+    assert [(type(message).__name__, message.parts) for message in session.all_messages()] == snapshot(
+        [
+            (
+                'ModelResponse',
+                [ToolCallPart(tool_name='explode', args='{}', tool_call_id='tc')],
+            ),
+            (
+                'ModelRequest',
+                [
+                    ToolReturnPart(
+                        tool_name='explode',
+                        content='The tool raised an unhandled error and the session ended.',
+                        tool_call_id='tc',
+                        timestamp=IsDatetime(),
+                        outcome='failed',
+                    )
+                ],
+            ),
+        ]
+    )
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='continued')])
+
+    result = await Agent(FunctionModel(respond)).run('continue', message_history=session.all_messages())
+    assert result.output == 'continued'
 
 
 async def test_agent_realtime_session_tool_failed_returns_error_result() -> None:

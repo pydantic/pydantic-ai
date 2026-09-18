@@ -52,6 +52,7 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from .. import _usage_attribution
 from ._capability_operation import (
     CapabilityBoundOperation,
     CapabilityCacheIdentity,
@@ -112,6 +113,7 @@ from ._toolset import (
     guard_run_context,
     resolve_tool_durable_config,
     run_args_validator,
+    toolset_for_unit,
     unwrap_recorded_tool_call_result,
     unwrap_tool_call_result,
     validate_dynamic_tool_args,
@@ -497,7 +499,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         else:
             value = result.value
         if not (ctx.usage - usage_before).has_values():
-            ctx.usage.incr(result.usage_delta)
+            # Recorded, not incremented: the operation accumulated this delta across the durable
+            # boundary, where the activity's context can't reach the spans open back here.
+            _usage_attribution.record_usage(ctx.usage, result.usage_delta)
         return value
 
     def _capability_operation_parameter_transport(
@@ -1168,7 +1172,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _bind_mcp_get_tools_operation(self, toolset: Any) -> Any:
         async def get_tools_handler(params: ToolsetGetToolsParams) -> dict[str, ToolDefinition]:
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
-                tools = await toolset.get_tools(durable_ctx)
+                # Discovery is normally the first unit to need the server, so this is usually where
+                # the session the run holds gets opened — inside a unit, where the engine retries a
+                # failed connection — and it then stays open for the units that follow.
+                async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
+                    tools = await unit_toolset.get_tools(durable_ctx)
             return {name: tool.tool_def for name, tool in tools.items()}
 
         operation = DurableOperation(
@@ -1212,12 +1220,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def get_instructions_handler(params: ToolsetGetToolsParams) -> Instructions:
             with self._durable_run_context_scope(params.ctx) as durable_ctx:
                 # A server's instructions are captured during `__aenter__`, so it has to be
-                # connected *inside* this unit: an engine whose lifecycle never enters the
-                # toolset (DBOS's `enter-never`) would otherwise journal `None` and silently
-                # drop the instructions. Entry is refcounted, so this is a no-op when the
-                # toolset is already entered (`enter-always`/`enter-outside-durable`).
-                async with toolset:
-                    return await toolset.get_instructions(durable_ctx)
+                # connected *inside* this unit: an engine whose lifecycle leaves entering to the
+                # units would otherwise journal `None` and silently drop the instructions. Entry is
+                # refcounted, so reusing the session the run holds — or one the wrapper already
+                # entered (`enter-always`/`enter-outside-durable`) — costs nothing.
+                async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
+                    return await unit_toolset.get_instructions(durable_ctx)
 
         operation = DurableOperation(
             operation_id=ToolsetGetInstructionsId(cast(str, toolset.id)),
@@ -1241,9 +1249,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def call_tool_handler(params: ToolsetCallToolParams) -> CallToolResult:
             assert params.tool is not None
             with self._durable_run_context_scope(params.ctx) as durable_ctx:
-                return await wrap_tool_call_result(
-                    toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
-                )
+                async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
+                    return await wrap_tool_call_result(
+                        unit_toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
+                    )
 
         backend = self.get_durable_operation_backend()
         call_operation = DurableOperation(

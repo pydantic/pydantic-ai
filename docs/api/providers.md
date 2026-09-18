@@ -78,4 +78,6 @@
 
 ::: pydantic_ai.providers.snowflake.SnowflakeProvider
 
+::: pydantic_ai.providers.typesafe.TypeSafeProvider
+
 ::: pydantic_ai.providers.zai.ZaiProvider

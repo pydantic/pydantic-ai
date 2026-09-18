@@ -1,0 +1,7 @@
+{
+  "$comment": "Pages the Pydantic AI Harness ships that docs/navigation.yml deliberately does not publish. Checked by .github/scripts/check_harness_navigation.py. Every entry needs a reason, so an omission is a decision somebody made rather than one nobody noticed.",
+  "unpublished": {
+    "clai2.md": "A separately installable terminal client, not a capability, and still experimental (pydantic-ai-harness#875). No module under pydantic_ai_harness/, and listed in that repository's _NON_CAPABILITY_PAGES.",
+    "mutation-testing.md": "Contributor guidance for the harness's own test suite (running mutmut over its filesystem and shell toolsets), not something a reader of these docs can use. Listed in that repository's _NON_CAPABILITY_PAGES."
+  }
+}
