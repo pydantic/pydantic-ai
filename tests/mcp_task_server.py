@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING, Any
+
 from fastmcp.server import Context, FastMCP
 
 try:
@@ -5,6 +7,15 @@ try:
 except ImportError:
     # FastMCP 4 moved `TaskConfig`.
     from fastmcp.utilities.tasks import TaskConfig
+
+# `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a declaration.
+if TYPE_CHECKING:
+    TasksExtension: Any
+else:
+    try:
+        from fastmcp_tasks import TasksExtension
+    except ImportError:
+        TasksExtension = None
 
 mcp: FastMCP[None] = FastMCP('Pydantic AI MCP Task Server')
 
@@ -19,14 +30,10 @@ async def optional_task_tool(ctx: Context) -> str:
     return 'optional_task' if ctx.is_background_task else 'optional_sync'
 
 
-try:
-    from fastmcp_tasks import TasksExtension
-except ImportError:
-    # FastMCP 3 serves task-augmented tools itself (SEP-1686). FastMCP 4 hands them to the tasks
-    # extension (SEP-2663) and refuses to start a server that declares them without it registered.
-    pass
-else:
-    mcp.add_extension(TasksExtension())
+# FastMCP 3 serves task-augmented tools itself (SEP-1686). FastMCP 4 hands them to the tasks
+# extension (SEP-2663) and refuses to start a server that declares them without it registered.
+if TasksExtension is not None:
+    getattr(mcp, 'add_extension')(TasksExtension())
 
 
 if __name__ == '__main__':

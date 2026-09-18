@@ -6,12 +6,14 @@ typed against the shape rather than any one of those classes.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class _SpanNode(Protocol):
     content: str
-    children: list[_SpanNode]
+    # `list[Any]`, not `list[_SpanNode]`: a mutable attribute is invariant, so each engine's own
+    # `BasicSpan` — whose `children` is a list of itself — would not satisfy the narrower spelling.
+    children: list[Any]
 
 
 def drop_fastmcp_client_spans(span: _SpanNode) -> None:

@@ -28,7 +28,7 @@ async def echo_deps(ctx: Context) -> dict[str, Any]:
         Dictionary with an echo message and the deps.
     """
 
-    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    deps: Any = getattr(getattr(ctx.request_context, 'meta', None), 'deps')
     return {'echo': 'This is an echo message', 'deps': deps}
 
 

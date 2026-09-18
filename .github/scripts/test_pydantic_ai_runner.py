@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # tests import each from where it actually lives, not from a re-export.
 import agentic_workflow_guard
 import pydantic_ai_gh_aw_shim as pkg
-from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage]
+from fastmcp.exceptions import McpError
 from mcp.types import ErrorData
 from pydantic_ai_gh_aw_shim import (
     cli as shim,

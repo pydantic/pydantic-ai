@@ -10,6 +10,10 @@ import base64
 from pathlib import Path
 from typing import Any, cast
 
+# `fastmcp.prompts` reaches back into `fastmcp.server` on FastMCP 3.3, so the server package has to
+# be initialized first — importing prompts first resolves that against a half-built module and fails
+# with fastmcp's "server support is not installed" hint.
+import fastmcp.server  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from fastmcp.prompts import Message
 from fastmcp.server import FastMCP
 from fastmcp.utilities.types import Image
