@@ -825,18 +825,37 @@ async def test_an_optional_pick_one_answers_none(allow_model_requests: None):
     assert result.output == Named(plan=None)
 
 
+async def test_the_none_option_stays_clear_of_an_option_named_none(allow_model_requests: None):
+    seen: list[dict[str, Any]] = []
+
+    class Named(BaseModel):
+        plan: Literal['none', 'some'] | None = Field(description='Which plan, if any is named?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            plan={
+                'type': 'choice',
+                'choice': 'none_',
+                'confidence': 0.9,
+                'probabilities': {'none_': 0.9, 'none': 0.05, 'some': 0.05},
+            }
+        )
+
+    result = await Agent(mock_model(record), output_type=Named).run('Hello.')
+    assert result.output == Named(plan=None)
+    assert list(seen[0]['questions']['plan']['criteria']) == ['none', 'some', 'none_']
+
+
 async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
     class Touches(BaseModel):
         areas: list[Literal['billing', 'bug']] = Field(description='Which teams?')
 
-    jev = mock_model(
-        lambda _: answers(
-            **{
-                'areas.billing': {'type': 'choice', 'choice': 'yes', 'confidence': 0.9, 'probabilities': {'yes': 0.9}},
-                'areas.bug': {'type': 'noul', 'noul': 0.1},
-            }
-        )
-    )
+    payload: dict[str, dict[str, object]] = {
+        'areas.billing': {'type': 'choice', 'choice': 'yes', 'confidence': 0.9, 'probabilities': {'yes': 0.9}},
+        'areas.bug': {'type': 'noul', 'noul': 0.1},
+    }
+    jev = mock_model(lambda _: answers(**payload))
     with pytest.raises(UnexpectedModelBehavior, match="output field 'areas', option 'billing'"):
         await Agent(jev, output_type=Touches).run('Hello.')
 

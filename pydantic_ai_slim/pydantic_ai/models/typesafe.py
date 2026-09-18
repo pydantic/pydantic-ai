@@ -341,8 +341,12 @@ class TypeSafeStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._response.parts):
             assert isinstance(part, ToolCallPart)  # `request` builds nothing else
+            # `ToolCallPart` subclasses narrow `args` to a `TypedDict`; the parts manager takes the plain union.
             yield self._parts_manager.handle_tool_call_part(
-                vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
+                vendor_part_id=i,
+                tool_name=part.tool_name,
+                args=cast('str | dict[str, Any] | None', part.args),
+                tool_call_id=part.tool_call_id,
             )
 
     @property
