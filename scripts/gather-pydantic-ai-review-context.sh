@@ -592,6 +592,10 @@ per finding):
 ```
 
 Return an empty list if no finding applies.
+
+## Zero findings (Parent Agent)
+
+If you have zero findings to report across the entire PR (whether or not there is a prior review), you MUST call the `mcp__safeoutputs__noop` tool explicitly with a short reason (e.g., "No findings to report"). Do not finish without calling a safe-outputs tool.
 REVIEW_INSTRUCTIONS_EOF
 
 echo ""
