@@ -18,7 +18,7 @@ def anyio_backend() -> str:
 @pytest.mark.parametrize('tool_truncated', [False, True])
 async def test_grep_preview(tool_truncated: bool) -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, grep_lines=1)
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True, grep_lines=1)
     await renderer.on_stream_event(
         FunctionToolCallEvent(
             part=ToolCallPart(
@@ -50,7 +50,7 @@ async def test_grep_preview(tool_truncated: bool) -> None:
 
 async def test_grep_no_matches() -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True)
     await renderer.on_stream_event(
         FunctionToolCallEvent(
             part=ToolCallPart(

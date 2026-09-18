@@ -29,9 +29,10 @@ class Notice(CapabilityEvent, namespace='test'):
     pass
 
 
-async def test_render_edge_events() -> None:
+@pytest.mark.parametrize('show_tool_output', [False, True])
+async def test_render_edge_events(show_tool_output: bool) -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=show_tool_output)
     await renderer.on_stream_event(Notice())
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 123})))
     await renderer.on_stream_event(
@@ -75,7 +76,7 @@ async def test_render_edge_events() -> None:
 @pytest.mark.parametrize('abort', [False, True])
 async def test_refused_write_releases_diff(abort: bool) -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True)
     for call_id in ('refused', 'pending'):
         await renderer.on_stream_event(
             FileChangeRequestEvent(

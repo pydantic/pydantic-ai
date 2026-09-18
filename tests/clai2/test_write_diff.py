@@ -25,7 +25,7 @@ async def test_write_diff_through_agent(tmp_path: Path, existing: bool) -> None:
     if existing:
         path.write_text('old content\n')
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True)
     calls = 0
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:

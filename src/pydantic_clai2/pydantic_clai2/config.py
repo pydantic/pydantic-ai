@@ -17,10 +17,15 @@ class Settings(BaseModel):
     )
     thinking: bool = Field(default=True, description="Show the model's thinking as it streams.")
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
-    shell_lines: int = Field(
-        default=20, ge=0, le=1000, description='Lines of shell output to preview before truncating.'
+    tool_output: bool = Field(
+        default=False, description='Show tool output previews and file diffs below tool summaries.'
     )
-    grep_lines: int = Field(default=20, ge=0, le=1000, description='Grep result lines to preview before truncating.')
+    shell_lines: int = Field(
+        default=20, ge=0, le=1000, description='Shell preview lines when display.tool_output is enabled.'
+    )
+    grep_lines: int = Field(
+        default=20, ge=0, le=1000, description='Grep preview lines when display.tool_output is enabled.'
+    )
     smooth_seconds: float = Field(
         default=0.5,
         ge=0.1,
@@ -35,6 +40,7 @@ SETTING_FIELDS = {
     'run.request_limit': 'request_limit',
     'display.thinking': 'thinking',
     'display.splash': 'splash',
+    'display.tool_output': 'tool_output',
     'display.shell_lines': 'shell_lines',
     'display.grep_lines': 'grep_lines',
     'display.smooth_seconds': 'smooth_seconds',

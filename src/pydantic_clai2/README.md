@@ -14,7 +14,15 @@ Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydanti
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
 Relative paths use the launch workspace. Use a custom agent with `Coder()` to
-retain workspace-scoped file tools. Shell output is displayed dimly.
+retain workspace-scoped file tools.
+
+Tool calls show a single-line summary by default. Shell output, exit details and
+log paths, grep results, and file diffs stay out of the terminal; the model still
+receives full tool results. Long summaries are clipped to the terminal width.
+Use `/set display.tool_output true` to show detailed output again, or
+`/set display.tool_output false` to return to summaries. In detailed mode,
+`display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
+default. Plugin-provided rendering, including interactive questions, is unchanged.
 
 ## Interrupting a turn
 

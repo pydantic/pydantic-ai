@@ -385,6 +385,7 @@ async def _run_prompt(
         stop_loading=lambda: None,
         show_thinking=settings.thinking,
         smooth_seconds=settings.smooth_seconds,
+        show_tool_output=settings.tool_output,
         shell_lines=settings.shell_lines,
         grep_lines=settings.grep_lines,
         renderers=renderers,

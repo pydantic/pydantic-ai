@@ -51,14 +51,16 @@ class StreamRenderer:
         stop_loading: Callable[[], None],
         show_thinking: bool = True,
         smooth_seconds: float = 0.5,
+        show_tool_output: bool = False,
         shell_lines: int = 20,
         grep_lines: int = 20,
         renderers: Sequence[Callable[[AgentStreamEvent], RenderableType | None]] = (),
     ) -> None:
         self.console = console
         self._renderers = tuple(renderers)
-        self._tool_output = ToolOutput(console, shell_lines=shell_lines)
-        self._grep_output = GrepOutput(console, lines=grep_lines)
+        self.show_tool_output = show_tool_output
+        self._tool_output = ToolOutput(console, shell_lines=shell_lines, show_output=show_tool_output)
+        self._grep_output = GrepOutput(console, lines=grep_lines, show_output=show_tool_output)
         self.smooth_seconds = smooth_seconds
         self._thinking = False
         self._heading_printed = False
@@ -120,7 +122,8 @@ class StreamRenderer:
             self.console.print(
                 f'● {name}', style=theme.MUTED, markup=False, highlight=False, overflow='ellipsis', no_wrap=True
             )
-            self.console.print()
+            if self.show_tool_output:
+                self.console.print()
 
     async def _render_with_plugins(self, event: AgentStreamEvent) -> bool:
         for renderer in self._renderers:

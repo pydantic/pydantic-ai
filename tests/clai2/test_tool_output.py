@@ -20,7 +20,7 @@ def anyio_backend() -> str:
 
 async def test_shell_header_includes_argument_once() -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True)
     await renderer.on_stream_event(
         FunctionToolCallEvent(
             part=ToolCallPart(
@@ -43,7 +43,9 @@ async def test_shell_header_includes_argument_once() -> None:
 async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(
-        Console(file=output, force_terminal=True, color_system='truecolor'), stop_loading=lambda: None
+        Console(file=output, force_terminal=True, color_system='truecolor'),
+        stop_loading=lambda: None,
+        show_tool_output=True,
     )
     for chunk in ('\x1b[1;', '35mMAGENTA\n', 'STILL MAGENTA\x1b[0m\n', '\x1b[2J\x1b]52;c;payload\x07safe\n'):
         await renderer.on_stream_event(CommandOutputEvent(tool_call_id='colors', text=chunk))
@@ -76,14 +78,14 @@ async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
 )
 async def test_inspection_headers(name: str, args: dict[str, object], expected: str) -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output, width=160), stop_loading=lambda: None)
+    renderer = StreamRenderer(Console(file=output, width=160), stop_loading=lambda: None, show_tool_output=True)
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart(name, args, tool_call_id='inspect')))
     assert output.getvalue() == expected + '\n\n'
 
 
 async def test_shell_event_display() -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True)
     await renderer.on_stream_event(CommandStartedEvent(tool_call_id='1', command='printf hello', pid=12))
     await renderer.on_stream_event(CommandOutputEvent(tool_call_id='1', text='hello\x1b]52;c;payload\x07'))
     await renderer.on_stream_event(
@@ -105,7 +107,7 @@ async def test_shell_event_display() -> None:
 @pytest.mark.parametrize('limit', [0, 1, 2])
 async def test_shell_line_limit_across_chunks(limit: int) -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, shell_lines=limit)
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True, shell_lines=limit)
     for chunk in ('fir', 'st\nsecond', '\nthird\nfourth'):
         await renderer.on_stream_event(CommandOutputEvent(tool_call_id='test', text=chunk))
     await renderer.on_stream_event(
@@ -128,7 +130,7 @@ async def test_shell_line_limit_across_chunks(limit: int) -> None:
 
 async def test_shell_progress_replaces_carriage_return_frames() -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None, show_tool_output=True)
     await renderer.on_stream_event(
         CommandStartedEvent(
             tool_call_id='progress',
@@ -158,7 +160,9 @@ async def test_shell_progress_replaces_carriage_return_frames() -> None:
 
 async def test_edit_uses_termflow_diff_renderer() -> None:
     output = io.StringIO()
-    renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None)
+    renderer = StreamRenderer(
+        Console(file=output, force_terminal=True), stop_loading=lambda: None, show_tool_output=True
+    )
     await renderer.on_stream_event(
         FileEditedEvent(
             path='demo.py',

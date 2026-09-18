@@ -19,10 +19,11 @@ class GrepArguments(BaseModel):
 class GrepOutput:
     """Keep concurrent grep results associated with their invocation."""
 
-    def __init__(self, console: Console, *, lines: int = 20) -> None:
+    def __init__(self, console: Console, *, lines: int = 20, show_output: bool = False) -> None:
         """Limit display only, without changing the result sent to the model."""
         self.console = console
         self.lines = lines
+        self.show_output = show_output
         self._calls: dict[str, str] = {}
 
     def render(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> bool:
@@ -36,12 +37,22 @@ class GrepOutput:
                 return False
             label = f'grep {args.pattern!r} in {args.path!r}'
             self._calls[event.part.tool_call_id] = label
-            self.console.print(f'● {terminal_text(label)}', style=theme.MUTED, markup=False, highlight=False)
-            self.console.print()
+            self.console.print(
+                f'● {terminal_text(label)}',
+                style=theme.MUTED,
+                markup=False,
+                highlight=False,
+                overflow='ellipsis',
+                no_wrap=True,
+            )
+            if self.show_output:
+                self.console.print()
             return True
         label = self._calls.pop(event.part.tool_call_id, None)
         if label is None:
             return False
+        if not self.show_output:
+            return True
         if not isinstance(event.part, ToolReturnPart) or not isinstance(event.part.content, str):
             self.console.print(
                 f'{terminal_text(label)}: tool did not return text results.', style=theme.MUTED, markup=False

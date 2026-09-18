@@ -29,7 +29,7 @@ async def test_intermediate_text_flushes_before_tool_arguments() -> None:
     assert output.getvalue() == before
 
 
-async def test_tools_have_one_line_and_one_blank_separator() -> None:
+async def test_tools_have_one_line_without_blank_separators() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
     for name in ('shell', 'write_file', 'shell'):
@@ -38,14 +38,14 @@ async def test_tools_have_one_line_and_one_blank_separator() -> None:
             FunctionToolResultEvent(part=ToolReturnPart(tool_name=name, content='done', tool_call_id='test'))
         )
     await renderer.finish()
-    assert output.getvalue() == '● shell\n\n● write_file\n\n● shell\n\n'
+    assert output.getvalue() == '● shell\n● write_file\n● shell\n'
 
 
 async def test_long_tool_name_does_not_wrap() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=20), stop_loading=lambda: None)
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart(tool_name='a' * 100, args='{}')))
-    assert len(output.getvalue().splitlines()) == 2
+    assert len(output.getvalue().splitlines()) == 1
 
 
 async def test_markdown_uses_brand_palette() -> None:
