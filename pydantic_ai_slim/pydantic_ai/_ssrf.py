@@ -12,7 +12,7 @@ import socket
 import zlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx2
 
@@ -494,36 +494,7 @@ def resolve_redirect_url(current_url: str, location: str) -> str:
     Returns:
         The absolute URL to follow.
     """
-    parsed_location = urlparse(location)
-
-    # Check if it's an absolute URL (has scheme) or protocol-relative URL (has netloc but no scheme)
-    if parsed_location.scheme:
-        return location
-    if parsed_location.netloc:
-        # Protocol-relative URL (e.g., "//example.com/path") - use current scheme
-        parsed_current = urlparse(current_url)
-        return urlunparse(
-            (
-                parsed_current.scheme,
-                parsed_location.netloc,
-                parsed_location.path,
-                '',
-                parsed_location.query,
-                parsed_location.fragment,
-            )
-        )
-
-    # Relative URL - resolve against current URL
-    parsed_current = urlparse(current_url)
-    if location.startswith('/'):
-        # Absolute path
-        return urlunparse((parsed_current.scheme, parsed_current.netloc, location, '', '', ''))
-    else:
-        # Relative path
-        base_path = parsed_current.path.rsplit('/', 1)[0]
-        return urlunparse((parsed_current.scheme, parsed_current.netloc, f'{base_path}/{location}', '', '', ''))
-
-
+    return urljoin(current_url, location)
 # Characters the IDNA codec turns into a label separator: the three RFC 3490 section 3.1 forms
 # (ideographic, fullwidth and halfwidth ideographic full stop) plus the two more the codec's NFKC
 # pass maps to `.` (one dot leader, small full stop). This list only has to cover the spellings the

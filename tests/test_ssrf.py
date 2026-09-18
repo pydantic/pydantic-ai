@@ -573,6 +573,30 @@ class TestResolveRedirectUrl:
         result = resolve_redirect_url('https://example.com/old/path', 'new-file.txt')
         assert result == 'https://example.com/old/new-file.txt'
 
+    def test_query_only_redirect_preserves_current_path(self) -> None:
+        """Test that a query-only redirect keeps the current path."""
+        result = resolve_redirect_url(
+            'https://example.com/a/file?old=1',
+            '?new=2',
+        )
+        assert result == 'https://example.com/a/file?new=2'
+
+    def test_fragment_only_redirect_preserves_path_and_query(self) -> None:
+        """Test that a fragment-only redirect keeps the current path and query."""
+        result = resolve_redirect_url(
+            'https://example.com/a/file?old=1',
+            '#section',
+        )
+        assert result == 'https://example.com/a/file?old=1#section'
+
+    def test_protocol_relative_redirect_preserves_path_params(self) -> None:
+        """Test that protocol-relative redirects preserve path parameters."""
+        result = resolve_redirect_url(
+            'https://example.com/a/file',
+            '//other.example/path;param?x=1',
+        )
+        assert result == 'https://other.example/path;param?x=1'
+
     def test_protocol_relative_url_preserves_query_and_fragment(self) -> None:
         """Test that protocol-relative URLs preserve query strings and fragments."""
         result = resolve_redirect_url('https://example.com/path', '//cdn.example.com/file.txt?token=abc#section')
