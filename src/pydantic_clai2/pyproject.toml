@@ -29,16 +29,7 @@ clai2 = 'pydantic_clai2.__main__:main'
 packages = ['src/pydantic_clai2']
 
 [tool.uv.sources]
-pydantic-ai-harness = { path = '..', editable = true }
-
-[dependency-groups]
-dev = ['pytest>=9', 'pytest-anyio', 'pyright>=1.1.408', 'ruff>=0.14', 'coverage>=7.10.7']
-
-[tool.pyright]
-pythonVersion = '3.11'
-typeCheckingMode = 'strict'
-venvPath = '.'
-venv = '.venv'
+pydantic-ai-harness = { workspace = true }
 
 [tool.ruff]
 extend = '../pyproject.toml'

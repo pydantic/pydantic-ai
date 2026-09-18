@@ -7,6 +7,12 @@ import pytest
 from pydantic_ai import models
 
 
+@pytest.fixture
+def anyio_backend() -> str:
+    """CLAI's terminal and cancellation primitives require asyncio."""
+    return 'asyncio'
+
+
 @pytest.fixture(autouse=True)
 def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Redirect default databases, including subprocesses, away from user data."""

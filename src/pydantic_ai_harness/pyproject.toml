@@ -142,7 +142,8 @@ dev = [
 ]
 lint = [
     'ruff>=0.14',
-    'pyright>=1.1.408',
+    # Match CLAI's version for its decorator-based plugin API (issue #875).
+    'pyright>=1.1.414',
 ]
 
 [tool.hatch.version]
@@ -174,6 +175,8 @@ bump = true
 # on browser-use's exact pins.
 override-dependencies = ['anthropic>=1.3.0', 'openai>=2.45.0']
 
+[tool.uv.workspace]
+members = ['pydantic-clai2']
 
 [tool.hatch.build.targets.wheel]
 packages = ['pydantic_ai_harness']
@@ -213,19 +216,22 @@ docstring-code-format = false
 quote-style = 'single'
 
 [tool.pyright]
-pythonVersion = '3.10'
+# Shared library stubs need CLAI's Python version; Harness source keeps its own target below.
+pythonVersion = '3.11'
 typeCheckingMode = 'strict'
-# Standalone packages have their own environments and typecheck jobs.
-exclude = ['template', '.venv*', 'local-notes', 'mutants', '.agents', '.claude', 'pydantic-clai2']
+exclude = ['template', '**/.venv*', 'local-notes', 'mutants', '.agents', '.claude']
 # `reportUnusedFunction` is disabled for tests because fixtures and `@agent.tool_plain`
 # helpers are registered via decorators and never referenced by name (matches pydantic-ai).
 executionEnvironments = [
-    { root = 'tests', reportPrivateUsage = false, reportUnusedFunction = false },
+    { root = 'pydantic-clai2', extraPaths = ['pydantic-clai2/src'] },
+    { root = '.venv', pythonVersion = '3.11' },
+    { root = 'tests', pythonVersion = '3.10', reportPrivateUsage = false, reportUnusedFunction = false },
     # `redis.asyncio.Redis` ships `py.typed` but leaves most of its command surface
     # partially unknown (`from_url`, `ping`, `scan_iter`, `ttl`). Only the live-Redis
     # tests touch the client directly -- `RedisSpendStore` itself goes through the
     # `RedisClient` protocol and stays fully checked.
-    { root = 'integration_tests/redis', reportUnknownMemberType = false, reportUnknownVariableType = false, reportUnknownArgumentType = false },
+    { root = 'integration_tests/redis', pythonVersion = '3.10', reportUnknownMemberType = false, reportUnknownVariableType = false, reportUnknownArgumentType = false },
+    { root = '.', pythonVersion = '3.10' },
 ]
 
 [tool.pytest.ini_options]

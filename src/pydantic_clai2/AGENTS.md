@@ -209,12 +209,15 @@ Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
 ## Local verification
 
+Run from the repository root. CLAI shares the root `uv.lock`, `.venv`, and
+Pyright configuration with Harness.
+
 ```bash
-cd pydantic-clai2
+uv sync --locked --all-packages --group lint
 uv run --no-sync ruff format --check .
 uv run --no-sync ruff check .
-PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright src tests
-uv run --no-sync pytest -p no:cacheprovider tests
+PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright pydantic-clai2/src pydantic-clai2/tests
+uv run --no-sync pytest -p no:cacheprovider -c pydantic-clai2/pyproject.toml pydantic-clai2/tests
 ```
 
 ## Docs parity
