@@ -134,6 +134,55 @@ Every route is checked, including `/api/health`. A health check or container pro
 
 Pass `allowed_hosts=['*']` to answer to any host, but only if something in front of the app already authenticates requests. Only list domains whose subdomains you control: a wildcard for a domain where anyone can obtain a subdomain re-opens the problem.
 
+## Mounting below a path
+
+The web app derives its public browser and API paths from each request's ASGI `root_path`. Mount it
+under a Starlette or FastAPI application and the UI stays below that mount automatically:
+
+```python
+from starlette.applications import Starlette
+from starlette.routing import Mount
+
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+web_app = agent.to_web()
+
+app = Starlette(routes=[Mount('/demo', app=web_app)])
+```
+
+This serves conversation pages below `/demo/` and calls the API below `/demo/api/`. A reverse proxy
+that strips a public prefix gets the same behavior when its ASGI integration sets `root_path` to that
+prefix.
+
+If the browser-visible paths do not match `root_path`, set them independently:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+app = agent.to_web(
+    base_path='/chat/',
+    api_path='/agent-api/',
+)
+```
+
+Both values must be absolute same-origin directory paths. `base_path` controls conversation URLs and
+navigation; `api_path` is the complete directory containing `configure` and `chat`. These settings
+describe public routing: they do not mount or move the returned app's internal routes, so the outer
+application or proxy must route those public paths to the app accordingly.
+
+At the origin root, omitted settings are not injected, and the UI keeps its own build defaults.
+
+When settings are injected, three sources are layered, each overriding the one before it: the paths
+derived from `root_path`, then a `window.PYDANTIC_AI_CHAT_CONFIG` that a custom
+[`html_source`](#custom-html-source) sets for itself, then `base_path` and `api_path`. So a custom
+HTML file keeps control of any path it configures unless you pass that path explicitly.
+
+`clai web` always serves at the origin root; to serve below a prefix, build the app with
+`agent.to_web()` and mount or proxy it yourself.
+
 ## Reserved Routes
 
 All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under-a-hostname). The web UI app uses the following routes which should not be overwritten:
@@ -143,7 +192,8 @@ All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under
 - `/api/configure` - Frontend configuration (GET)
 - `/api/health` - Health check (GET)
 
-The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI expects these routes at the root. You can add additional routes to the app, but avoid conflicts with these reserved paths.
+You can add additional routes to the app, but avoid conflicts with these reserved paths. When the app
+is mounted below a path, the mount prefix is prepended to every route above.
 
 ## Custom HTML Source
 
@@ -163,7 +213,7 @@ inlined, so it needs no network access beyond your own server:
 from pydantic_ai.ui import OFFLINE_HTML_URL
 
 print(OFFLINE_HTML_URL)  # Use this URL to download the self-contained UI HTML file
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/offline/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/offline/index.html
 ```
 
 Download it once from a machine that has internet access, then move it into the air-gapped
@@ -196,5 +246,5 @@ is unchanged and still uses the split build:
 from pydantic_ai.ui import DEFAULT_HTML_URL
 
 print(DEFAULT_HTML_URL)
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/dist/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.3.0/dist/index.html
 ```
