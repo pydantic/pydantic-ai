@@ -48,20 +48,32 @@ class _GradingResult:
     score: float
 
 
-class _BinaryGradingOutput(BaseModel, populate_by_name=True):
-    """Judge an output against a rubric."""
+def _binary_grading_output_type(context: Sequence[str]) -> type[JsonSchemaValue]:
+    """A pass/fail verdict for a judge that cannot write the reason.
 
-    pass_: bool = Field(
-        validation_alias='pass',
-        serialization_alias='pass',
-        description=(
-            'Is the statement in <Rubric> true for <Output>, taking <Input> and <ExpectedOutput> into account '
-            'when present?'
-        ),
+    The question lives in the field description, so it names only the sections this prompt
+    actually carries: a judge told to take an `<ExpectedOutput>` into account when there is
+    none is being asked about something it cannot see.
+    """
+    considering = f', taking {" and ".join(context)} into account' if context else ''
+    return StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'pass': {
+                    'type': 'boolean',
+                    'description': f'Is the statement in <Rubric> true for <Output>{considering}?',
+                }
+            },
+            'required': ['pass'],
+            'additionalProperties': False,
+        },
+        name='BinaryGrading',
+        description='Judge an output against a rubric.',
     )
 
 
-_non_text_judge_agent = Agent(name='judge_without_text', output_type=_BinaryGradingOutput)
+_non_text_judge_agent = Agent(name='judge_without_text')
 
 
 def _resolve_judge_model(model: models.Model | models.KnownModelName | str | None) -> models.Model:
@@ -83,6 +95,7 @@ def _model_supports_text_output(model: models.Model) -> bool:
 async def _run_grading_agent(
     agent: Agent[None, GradingOutput],
     user_prompt: str | Sequence[str | UserContent],
+    context: Sequence[str],
     model: models.Model | models.KnownModelName | str | None,
     model_settings: ModelSettings | None,
     *,
@@ -95,12 +108,17 @@ async def _run_grading_agent(
                 'This judge model cannot generate the reason required by the `judge_*` helpers. '
                 'Use the `LLMJudge` evaluator to record a reasonless verdict.'
             )
-        result = await _non_text_judge_agent.run(
-            user_prompt,
-            model=resolved_model,
-            model_settings=model_settings,
-        )
-        return _GradingResult(reason=None, pass_=result.output.pass_, score=float(result.output.pass_))
+        verdict = (
+            await _non_text_judge_agent.run(
+                user_prompt,
+                model=resolved_model,
+                model_settings=model_settings,
+                output_type=_binary_grading_output_type(context),
+            )
+        ).output.get('pass')
+        if not isinstance(verdict, bool):
+            raise ValueError(f'Judge returned an invalid verdict: {verdict!r}')
+        return _GradingResult(reason=None, pass_=verdict, score=float(verdict))
     output = (await agent.run(user_prompt, model=resolved_model, model_settings=model_settings)).output
     return _GradingResult(reason=output.reason, pass_=output.pass_, score=output.score)
 
@@ -147,9 +165,9 @@ async def _judge_output(
     *,
     allow_reasonless: bool,
 ) -> _GradingResult:
-    user_prompt = _build_prompt(output=output, rubric=rubric)
+    user_prompt, context = _build_prompt(output=output, rubric=rubric)
     return await _run_grading_agent(
-        _judge_output_agent, user_prompt, model, model_settings, allow_reasonless=allow_reasonless
+        _judge_output_agent, user_prompt, context, model, model_settings, allow_reasonless=allow_reasonless
     )
 
 
@@ -201,9 +219,9 @@ async def _judge_input_output(
     *,
     allow_reasonless: bool,
 ) -> _GradingResult:
-    user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric)
+    user_prompt, context = _build_prompt(inputs=inputs, output=output, rubric=rubric)
     return await _run_grading_agent(
-        _judge_input_output_agent, user_prompt, model, model_settings, allow_reasonless=allow_reasonless
+        _judge_input_output_agent, user_prompt, context, model, model_settings, allow_reasonless=allow_reasonless
     )
 
 
@@ -259,9 +277,14 @@ async def _judge_input_output_expected(
     *,
     allow_reasonless: bool,
 ) -> _GradingResult:
-    user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
+    user_prompt, context = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
     return await _run_grading_agent(
-        _judge_input_output_expected_agent, user_prompt, model, model_settings, allow_reasonless=allow_reasonless
+        _judge_input_output_expected_agent,
+        user_prompt,
+        context,
+        model,
+        model_settings,
+        allow_reasonless=allow_reasonless,
     )
 
 
@@ -317,9 +340,9 @@ async def _judge_output_expected(
     *,
     allow_reasonless: bool,
 ) -> _GradingResult:
-    user_prompt = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)
+    user_prompt, context = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)
     return await _run_grading_agent(
-        _judge_output_expected_agent, user_prompt, model, model_settings, allow_reasonless=allow_reasonless
+        _judge_output_expected_agent, user_prompt, context, model, model_settings, allow_reasonless=allow_reasonless
     )
 
 
@@ -388,7 +411,7 @@ def _build_prompt(
     rubric: str,
     inputs: Any | None = None,
     expected_output: Any | None = None,
-) -> str | Sequence[str | UserContent]:
+) -> tuple[str | Sequence[str | UserContent], Sequence[str]]:
     """Build a prompt that includes input, output, expected output, and rubric.
 
     Sections are emitted in the same order the judge agents' system-prompt few-shot
@@ -396,20 +419,26 @@ def _build_prompt(
     `judge_input_output_expected` naming — so the runtime prompt matches the format the
     model was primed with and the rubric (the instruction) comes last, after all the
     context it applies to.
+
+    Returns the prompt along with the optional context sections it carries, so that a judge
+    which has to put its question in a field description can name what it was actually given.
     """
     sections: list[str | UserContent] = []
+    context: list[str] = []
     if inputs is not None:
         sections.extend(_make_section(inputs, 'Input'))
+        context.append('<Input>')
 
     sections.extend(_make_section(output, 'Output'))
 
     if expected_output is not None:
         sections.extend(_make_section(expected_output, 'ExpectedOutput'))
+        context.append('<ExpectedOutput>')
 
     sections.extend(_make_section(rubric, 'Rubric'))
     if all(isinstance(section, str) for section in sections):
-        return '\n'.join(sections)  # type: ignore[arg-type]
-    return sections
+        return '\n'.join(sections), context  # type: ignore[arg-type]
+    return sections, context
 
 
 class GEvalOutput(BaseModel):
@@ -505,7 +534,7 @@ async def _judge_g_eval(
             f'where {score_range[0]} is the worst and {score_range[1]} is the best according to the criteria.',
         ]
     )
-    user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
+    user_prompt, _ = _build_prompt(output=output, rubric=rubric, inputs=inputs)
     resolved_model = _resolve_judge_model(model)
     if not _model_supports_text_output(resolved_model):
         if not allow_reasonless:

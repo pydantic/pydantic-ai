@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from pytest_mock import MockerFixture
@@ -23,10 +23,13 @@ with try_import() as imports_successful:
         GradingOutput,
         _build_prompt,  # pyright: ignore[reportPrivateUsage]
         _judge_g_eval,  # pyright: ignore[reportPrivateUsage]
+        _judge_input_output,  # pyright: ignore[reportPrivateUsage]
         _judge_input_output_agent,  # pyright: ignore[reportPrivateUsage]
+        _judge_input_output_expected,  # pyright: ignore[reportPrivateUsage]
         _judge_input_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
         _judge_output,  # pyright: ignore[reportPrivateUsage]
         _judge_output_agent,  # pyright: ignore[reportPrivateUsage]
+        _judge_output_expected,  # pyright: ignore[reportPrivateUsage]
         _judge_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
         _stringify,  # pyright: ignore[reportPrivateUsage]
         judge_g_eval,
@@ -155,19 +158,85 @@ async def test_judge_output_without_text_support():
     assert schemas == snapshot(
         [
             {
+                'additionalProperties': False,
                 'properties': {
                     'pass': {
-                        'description': 'Is the statement in <Rubric> true for <Output>, taking <Input> and '
-                        '<ExpectedOutput> into account when present?',
+                        'description': 'Is the statement in <Rubric> true for <Output>?',
                         'type': 'boolean',
                     },
                 },
                 'required': ['pass'],
-                'title': '_BinaryGradingOutput',
+                'title': 'BinaryGrading',
                 'type': 'object',
             }
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'judge,kwargs,expected_question',
+    [
+        pytest.param(
+            _judge_output,
+            {'output': 'O', 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>?',
+            id='output',
+        ),
+        pytest.param(
+            _judge_input_output,
+            {'inputs': 'I', 'output': 'O', 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>, taking <Input> into account?',
+            id='input and output',
+        ),
+        pytest.param(
+            _judge_output_expected,
+            {'output': 'O', 'expected_output': 'E', 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>, taking <ExpectedOutput> into account?',
+            id='output and expected output',
+        ),
+        pytest.param(
+            _judge_input_output_expected,
+            {'inputs': 'I', 'output': 'O', 'expected_output': 'E', 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>, taking <Input> and <ExpectedOutput> into account?',
+            id='input, output and expected output',
+        ),
+        pytest.param(
+            _judge_input_output_expected,
+            {'inputs': None, 'output': 'O', 'expected_output': None, 'rubric': 'R'},
+            'Is the statement in <Rubric> true for <Output>?',
+            id='the helper takes both but the caller passed neither',
+        ),
+    ],
+)
+async def test_the_verdict_question_names_only_the_sections_the_prompt_carries(
+    judge: Any, kwargs: dict[str, Any], expected_question: str
+):
+    """A judge that cannot write a reason is asked about the sections it was given, and no others."""
+    questions: list[str] = []
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        properties = output_tool.parameters_json_schema['properties']
+        questions.append(properties['pass']['description'])
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, {'pass': True})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    await judge(**kwargs, model=model, allow_reasonless=True)
+
+    assert questions == [expected_question]
+
+
+async def test_a_verdict_that_is_not_a_boolean_is_refused():
+    """A judge that cannot write a reason still has to answer the one question it was asked."""
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'pass': 'yes'})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    with pytest.raises(ValueError, match="Judge returned an invalid verdict: 'yes'"):
+        await _judge_output('Hello world', 'Content contains a greeting', model=model, allow_reasonless=True)
 
 
 async def test_judge_g_eval_without_text_support():
@@ -343,7 +412,7 @@ def test_build_prompt_section_order_matches_few_shot_examples(
         'input_output_expected': _judge_input_output_expected_agent,
     }[variant]
 
-    prompt = _build_prompt(**kwargs)
+    prompt, _ = _build_prompt(**kwargs)
     assert isinstance(prompt, str)
     assert re.findall(r'<(\w+)>', prompt) == expected_tags
 
