@@ -761,7 +761,7 @@ async def test_the_boolean_threshold_applies_to_each_option_of_a_list(allow_mode
     result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.65))
     assert result.output == Routing(channels=['email'])
     # The field is as sure as its least sure option, which is the `sms` that only just missed the bar.
-    assert result.response.provider_details['confidence'] == {'channels': snapshot(0.07692307692307698)}
+    assert (result.response.provider_details or {})['confidence'] == {'channels': snapshot(0.07692307692307698)}
 
 
 async def test_the_boolean_threshold_leaves_a_probability_field_alone(allow_model_requests: None):
