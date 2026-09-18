@@ -11,6 +11,8 @@ from .._http import to_httpx2_timeout
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..messages import (
+    BaseToolReturnPart,
+    CachePoint,
     CompactionPart,
     FilePart,
     ModelMessage,
@@ -21,6 +23,7 @@ from ..messages import (
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
@@ -389,12 +392,26 @@ def _score_question(name: str, options: dict[int, str | None], asked: JSONConten
 
 
 def _prompt_text(part: UserPromptPart) -> str:
-    items = [part.content] if isinstance(part.content, str) else list(part.content)
-    if not all(isinstance(item, str) for item in items):
-        raise UserError(
-            'Files are not supported by this model; images, audio, video and documents cannot be sent to Jev.'
-        )
-    return '\n\n'.join(cast(list[str], items))
+    texts: list[str] = []
+    for item in [part.content] if isinstance(part.content, str) else part.content:
+        if isinstance(item, str):
+            texts.append(item)
+        elif isinstance(item, TextContent):
+            texts.append(item.content)
+        elif isinstance(item, CachePoint):
+            pass  # A marker for models that cache a prompt prefix; there is nothing in it to send.
+        else:
+            raise UserError(
+                'Files are not supported by this model; images, audio, video and documents cannot be sent to Jev.'
+            )
+    return '\n\n'.join(texts)
+
+
+def _tool_return_entry(part: BaseToolReturnPart) -> JSONContent:
+    """A tool result as history, or a `UserError` when it carries a file: `model_response_str` would leave it out."""
+    if part.files:
+        raise UserError('Files are not supported by this model; a file in a tool result cannot be sent to Jev.')
+    return {'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}}
 
 
 def _map_request(message: ModelRequest, *, latest: bool) -> tuple[list[JSONContent], list[str]]:
@@ -413,7 +430,7 @@ def _map_request(message: ModelRequest, *, latest: bool) -> tuple[list[JSONConte
             else:
                 history.append({'user': text})
         elif isinstance(part, ToolReturnPart):
-            history.append({'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}})
+            history.append(_tool_return_entry(part))
         elif isinstance(part, RetryPromptPart):
             history.append({'retry': part.model_response()})
         elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
@@ -435,7 +452,7 @@ def _response_entries(message: ModelResponse) -> list[JSONContent]:
         elif isinstance(part, ToolCallPart | NativeToolCallPart):
             entries.append({'tool_call': {'name': part.tool_name, 'args': part.args_as_dict()}})
         elif isinstance(part, NativeToolReturnPart):
-            entries.append({'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}})
+            entries.append(_tool_return_entry(part))
         elif isinstance(part, CompactionPart):
             if part.content:
                 entries.append({'summary': part.content})

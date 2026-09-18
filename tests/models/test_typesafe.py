@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    CachePoint,
     CompactionPart,
     FilePart,
     ModelAPIError,
@@ -25,6 +26,7 @@ from pydantic_ai import (
     PromptedOutput,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -606,6 +608,60 @@ async def test_text_list_prompt(allow_model_requests: None):
     await Agent(mock_model(record), output_type=bool, instructions='Is this fine?').run(['first', 'second'])
     # With nothing but the latest text, the state is that text, as TypeSafe's own examples pass it.
     assert seen[0]['state'] == 'first\n\nsecond'
+
+
+async def test_text_content_and_cache_points_are_text(allow_model_requests: None):
+    """`TextContent` is text with metadata attached and a `CachePoint` marks a prefix to cache; neither is a file."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=bool, instructions='Is this fine?')
+    await agent.run([TextContent('first', metadata={'source': 'form'}), CachePoint(), 'second'])
+    assert seen[0]['state'] == 'first\n\nsecond'
+
+
+@pytest.mark.parametrize(
+    'history',
+    [
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart('Take a photo.')]),
+                ModelResponse(parts=[ToolCallPart('camera', {}, 'call-1')]),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            'camera', ['A cat.', BinaryContent(b'\x89PNG', media_type='image/png')], 'call-1'
+                        )
+                    ]
+                ),
+            ],
+            id='tool_return',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart('Take a photo.')]),
+                ModelResponse(
+                    parts=[
+                        NativeToolReturnPart(
+                            'camera', ['A cat.', BinaryContent(b'\x89PNG', media_type='image/png')], 'call-1'
+                        )
+                    ]
+                ),
+            ],
+            id='native_tool_return',
+        ),
+    ],
+)
+async def test_file_in_tool_result_rejected(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, history: list[ModelMessage]
+):
+    """`model_response_str` leaves a tool result's files out, so a result carrying one is refused rather than sent short."""
+    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
+    with pytest.raises(UserError, match='a file in a tool result'):
+        await agent.run('Is it a cat?', message_history=history)
 
 
 async def test_system_prompts_are_judged_not_asked(allow_model_requests: None):

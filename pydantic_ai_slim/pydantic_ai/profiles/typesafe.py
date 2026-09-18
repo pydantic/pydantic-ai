@@ -9,8 +9,8 @@ def typesafe_model_profile(model_name: str) -> ModelProfile | None:
     Jev answers typed questions about a state; it does not generate text, call tools, or read
     anything but text. Tool-mode structured output is how
     [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] fills an `output_type`, and it rides on
-    `supports_tools`, so that stays on. System prompts anywhere in the history become instructions, so they
-    need no wrapping. Every other capability flag is off, and what no flag covers, such as a file in a prompt,
+    `supports_tools`, so that stays on. A system prompt anywhere in the history is part of what Jev judges, so it
+    needs no wrapping. Every other capability flag is off, and what no flag covers, such as a file in a prompt,
     the model refuses itself.
     """
     return ModelProfile(

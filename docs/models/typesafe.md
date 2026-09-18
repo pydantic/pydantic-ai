@@ -88,7 +88,7 @@ Every field of the output type is one question, and all of them go out in a sing
 | `bool` | yes or no | `True` when Jev's probability is at least 0.5 |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
 | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
-| `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the level Jev thought most likely |
+| `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the score rounded to the nearest level |
 
 The field description is the question text; an `Enum` field without one uses the enum's class docstring. The output type's docstring and the agent's instructions are context, so put the framing there and the per-field wording in the descriptions — see [where the question goes](#where-the-question-goes). A docstring under an `Enum` member, as in the example above, describes that option. A `Literal` has nowhere to put descriptions, so Jev only sees its option names.
 
@@ -226,7 +226,6 @@ result = judge.run_sync('Judge the conversation above.', message_history=convers
 print(result.output)
 #> True
 ```
-
 
 The whole history goes, so trim it to what the question is about — `message_history=conversation.all_messages()[-4:]`, or a [history processor](../message-history.md#processing-message-history). Accuracy falls as the state grows with detail the question does not need, and `jev-1.13` takes 64k tokens for the state and questions together, with 32k for the state plus the longest question.
 
