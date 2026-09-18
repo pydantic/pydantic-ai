@@ -176,9 +176,9 @@ def _print_intro(
         capabilities=details.capabilities,
         observability=not details.instrumented,
         # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
-        # every time; a console not writing to one has no width to report, and says so by being
-        # asked only when it is.
-        width=console.width if console.is_terminal else None,
+        # every time. Without one it answers 80 whether it read that off `COLUMNS` or had nothing
+        # to go on, so the width comes from the stream instead, which tells those two apart.
+        width=console.width if console.is_terminal else _display.terminal_width(console.file),
     )
     try:
         # Rendered by the console but written by hand: a write rich fails on stays in its buffer, so

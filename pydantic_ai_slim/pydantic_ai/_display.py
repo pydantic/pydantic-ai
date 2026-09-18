@@ -333,7 +333,7 @@ def display_agent_banner(
             # Nothing renders this one for us, so the conventions have to be honored here: colour
             # belongs to a terminal, and an agent reading `stderr` back would get the codes raw.
             color=is_terminal and 'NO_COLOR' not in os.environ,
-            width=_terminal_width(stderr),
+            width=terminal_width(stderr),
         )
         # Written to the stream that was checked, rather than to whatever `sys.stderr` is by now.
         print(banner, file=stderr)
@@ -344,13 +344,14 @@ def display_agent_banner(
         pass
 
 
-def _terminal_width(stream: IO[str]) -> int | None:
+def terminal_width(stream: IO[str]) -> int | None:
     """Columns `stream`'s terminal has to write in, or `None` when it isn't one or won't say.
 
     Asked of the stream the banner is going to rather than of the process: `stdout` is often a pipe
     while `stderr` is the terminal the user is reading. `COLUMNS` then overrides what the terminal
-    reports, as `shutil` and `rich` both read it, so that `clai` and a plain agent run — which asks
-    its console rather than this — agree on how wide the user's terminal is.
+    reports, as `shutil` and `rich` both read it. `clai` asks its console first, which knows the
+    same two things and a width it was handed, and falls through to here when it has no terminal —
+    so a `COLUMNS` the user exported is honoured whichever of the two shows the banner.
     """
     width: int | None = None
     try:

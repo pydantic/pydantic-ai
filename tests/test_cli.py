@@ -1542,6 +1542,7 @@ def terminal_clai(env: TestEnv) -> Iterator[None]:
     """A `clai` session that believes it owns a terminal, and starts with the banner unclaimed."""
     env.set('FORCE_COLOR', '1')
     env.remove('CI')
+    env.remove('COLUMNS')
     env.remove('PYDANTIC_AI_NO_BANNER')
     # The suite that asserts on the banner is the one place a test run is allowed to show one.
     env.remove('PYTEST_VERSION')
@@ -1557,6 +1558,7 @@ def agent_clai(env: TestEnv) -> Iterator[None]:
     """A `clai` a coding agent started, whose output is a pipe it reads back rather than a terminal."""
     env.set('AI_AGENT', 'some-harness')
     env.remove('CI')
+    env.remove('COLUMNS')
     env.remove('PYDANTIC_AI_NO_BANNER')
     env.remove('PYTEST_VERSION')
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
@@ -1602,6 +1604,25 @@ def test_clai_nested_in_an_agent_still_opens_with_a_banner(
     assert LOGO_MARKER in output
     # Nothing renders the codes for a pipe, so the console leaves them out rather than writing them raw.
     assert '\x1b[' not in output
+
+
+def test_clai_piped_to_a_file_still_honours_an_exported_columns(
+    capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, agent_clai: None
+):
+    """The console answers 80 for a pipe whether it read that or guessed it, so it isn't asked.
+
+    Without this, `clai | tee log.txt` and a plain agent run piped the same way would lay the
+    banner out at two different widths under the same exported `COLUMNS`.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    env.set('COLUMNS', '70')
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['hello']) == 0
+
+    output = capfd.readouterr().out
+    assert LOGO_MARKER in output
+    assert max(map(len, output.splitlines())) <= 70
 
 
 def test_clai_intro_names_the_agent_the_user_asked_for(
