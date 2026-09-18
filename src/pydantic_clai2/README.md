@@ -9,6 +9,9 @@ see [Questions from the model](#questions-from-the-model). The built-in
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 Context management is the built-in `compaction` plugin,
 [described below](#compacting-the-conversation).
+The `/plugins` menu also lists every other harness capability, disabled by
+default. Press Space to enable one. Some need optional packages, credentials,
+or constructor settings first; see [optional harness capabilities](PLUGINS.md#optional-harness-capabilities).
 Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do

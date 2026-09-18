@@ -70,7 +70,7 @@ Plugins are trusted code running as you. Only install what you trust.
 
 The coding tools are a plugin too, and so are asking you multiple-choice
 questions mid-run, reading the repository's instruction file, and keeping the
-conversation inside the context window. `/plugins list` shows all five, marked
+conversation inside the context window. These five plugins are marked
 `(built-in)` and enabled unless you say otherwise:
 
 | Id | Backed by | Settings | Does |
@@ -80,6 +80,32 @@ conversation inside the context window. `/plugins list` shows all five, marked
 | `repo_context` | `pydantic_clai2.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+
+### Optional harness capabilities
+
+`/plugins` and `/plugins list` also include every other public harness capability,
+including each compaction strategy and guardrail. These entries start disabled.
+`Coder`, `AskUser`, and `RepoContext` use the integrated entries above instead of
+appearing twice. Deprecated aliases, toolsets, stores, and the ACP server adapter
+are not separate capabilities.
+
+Press Space to enable an entry. Its preview shows the import path and any load
+error. Listing disabled entries does not import their modules or require their
+optional packages. Some capabilities need an extra installed in CLAI's Python
+environment, credentials, or constructor settings before they can load. Supply
+JSON constructor settings by replacing the declaration under the same id:
+
+```text
+/plugins add sliding_window_compaction pydantic_ai_harness.compaction:SlidingWindowCompaction '{"max_messages": 40}'
+```
+
+For callbacks, stores, or other Python objects, use a plugin module that builds
+the capability and calls `host.add(...)`, registered under that id. The menu does
+not construct these objects or install dependencies. Avoid enabling overlapping
+tool providers together, such as `filesystem` or `shell` alongside `coder`.
+Removing an optional built-in restores its disabled declaration; enable and
+disable choices persist between launches. Project, drop-in, and saved declarations
+retain their usual precedence over built-ins.
 
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;

@@ -25,6 +25,7 @@ from ._completion_adapter import COMPLETION_STYLE, PromptCompleter
 from ._rendering import StreamRenderer
 from ._session import Session
 from .auth import CodexAuth
+from .capability_catalog import HARNESS_PLUGINS
 from .command_context import CommandContext, CommandProvider
 from .commands import Command, Commands, config_command, config_completions, set_completions
 from .config import PluginSettings, Settings
@@ -61,8 +62,9 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='repo_context', factory='pydantic_clai2.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_clai2.compaction', settings={}),
     PluginSettings(id='persistence', factory='pydantic_clai2.sessions'),
+    *HARNESS_PLUGINS,
 )
-"""Plugins CLAI ships enabled. `/plugins disable NAME` turns one off; `remove` restores this.
+"""Built-in declarations, including opt-in harness capabilities. `remove` restores their defaults.
 
 `coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
 """
