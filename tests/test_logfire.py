@@ -4288,7 +4288,7 @@ async def _run_delegating_agent(*, share_usage: bool, sequential: bool) -> None:
 @pytest.mark.parametrize('share_usage', [True, False])
 @pytest.mark.parametrize('sequential', [True, False])
 @pytest.mark.anyio
-async def test_run_span_reports_its_subtree_usage_under_concurrent_delegation(
+async def test_run_span_reports_its_own_usage_under_concurrent_delegation(
     capfire: CaptureLogfire, share_usage: bool, sequential: bool
 ) -> None:
     """Each agent-run span reports its own requests, whatever the delegates do with the usage object.

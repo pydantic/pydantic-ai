@@ -97,11 +97,10 @@ class Instrumentation(AbstractCapability[Any]):
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
     _run_usage: RunUsage = field(default_factory=RunUsage, repr=False, init=False)
-    """Usage recorded while this run's span is open, credited by `_usage_attribution`.
+    """Usage this run recorded while its span was open, credited by `_usage_attribution`.
 
-    Unlike the fields around it, this one *is* written from concurrent tasks — a delegate credits
-    the runs containing it from its own task — but only ever by `+=` on an int with no await in
-    between, so the interleaving points the event loop has are never inside an increment.
+    A nested run's `accumulate` replaces the active accumulator for the length of its own span, so
+    what a delegate records is the delegate's; this holds only what this run recorded itself.
     """
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
@@ -230,8 +229,8 @@ class Instrumentation(AbstractCapability[Any]):
                 set_status_on_exception=False,
             ) as span,
             _record_uncaught_errors(span, include_content=settings.include_content),
-            # Entered with the span and exited with it, so `_run_usage` ends up holding exactly the
-            # usage recorded while this span was open — its subtree, nested agent runs included.
+            # Entered with the span and exited with it, so `_run_usage` ends up holding exactly
+            # the usage this run recorded — nested runs report their own on their own spans.
             _usage_attribution.accumulate(self._run_usage),
         ):
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
@@ -310,10 +309,10 @@ class Instrumentation(AbstractCapability[Any]):
         if metadata is not None:
             attrs['metadata'] = safe_to_json(serialize_any(redact_binary_content(metadata, settings))).decode()
 
-        # The usage of this span's subtree, which is what `gen_ai.aggregated_usage.*` means and
-        # what summing root agent-run spans relies on. Not `ctx.usage`: that is the object the
-        # caller passed in, accumulated into in place, so it holds the whole conversation when
-        # usage is carried across runs, and misses a delegate's tokens when it is not shared.
+        # What this run spent, which is what `gen_ai.aggregated_usage.*` means and what lets the
+        # agent-run spans in a trace be summed without counting a nested run twice. Not `ctx.usage`:
+        # that is the object the caller passed in, accumulated into in place, so it holds the whole
+        # conversation when usage is carried across runs and a delegate's tokens when it is shared.
         # The per-request `chat` spans are unaffected either way.
         usage_attrs = settings.aggregated_usage_attributes(self._run_usage)
 
