@@ -62,6 +62,7 @@ is the source of truth.
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.messages import NativeToolReturnPart, PartEndEvent
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 agent = Agent(instructions='Answer questions, searching the web when useful.')
 
@@ -75,6 +76,8 @@ async def main():
         async for event in session:
             if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
                 print(event.part.content)
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break  # keep listening in a real call; we stop after one reply
 ```
 
 An unsupported native tool with a configured local fallback is replaced before connection. Without
@@ -207,6 +210,11 @@ and may reply, call a tool, or move on. To add context without prompting a turn,
 [`send(..., respond=False)`](turns.md#text-turns) instead. Delivered turns become ordinary
 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s in history, as in
 [injecting messages mid-run](../message-history.md#injecting-messages-mid-run).
+
+`enqueue()` does not replace `send()`: it waits for the response in flight to finish, while
+[`send()`][pydantic_ai.realtime.RealtimeSession.send] delivers immediately, even while a tool call or
+response is in progress. Reach for `enqueue()` for a follow-up that should wait its turn, and for
+`send()` to interject into a gap.
 
 Multimodal content and model responses are rejected because the realtime live-input channel cannot
 preserve their standard-run semantics.
