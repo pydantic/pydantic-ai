@@ -55,7 +55,7 @@ with try_import() as evals_imports_successful:
 with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
-    from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel, TypeSafeModelSettings
+    from pydantic_ai.models.typesafe import TextOutputRequired, ToolCallProposed, TypeSafeModel, TypeSafeModelSettings
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
 pytestmark = [
@@ -437,7 +437,6 @@ class WithUndescribedBool(BaseModel):
 @pytest.mark.parametrize(
     'output_type,match',
     [
-        pytest.param(WithText, "Output field 'summary' is not supported", id='str-field'),
         pytest.param(WithOptional, "Output field 'ok' is not supported", id='optional'),
         pytest.param(WithIntOptions, 'a rubric must be the whole numbers from 0 upwards', id='rubric-not-from-0'),
         pytest.param(WithUndescribedLevels, 'every level needs to say what it means', id='rubric-undescribed'),
@@ -451,6 +450,78 @@ async def test_unsupported_output_fields(
 ):
     agent = Agent(typesafe_model, output_type=output_type)
     with pytest.raises(UserError, match=match):
+        await agent.run('anything')
+
+
+async def test_a_text_field_requires_a_model_that_can_write(allow_model_requests: None):
+    """The hand-off is decided from the schema, so a bare Jev model fails once without making a request."""
+    requests = 0
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        nonlocal requests
+        requests += 1
+        raise AssertionError('the request should never be sent')
+
+    with pytest.raises(TextOutputRequired) as exc_info:
+        await Agent(mock_model(unreachable), output_type=WithText).run('anything')
+
+    assert requests == 0
+    assert exc_info.value.model_name == 'jev-latest'
+    assert exc_info.value.field_names == ('summary',)
+    assert str(exc_info.value) == snapshot(
+        "Output field 'summary' requires text, which Jev cannot write. `FallbackModel(jev, llm)` can hand the whole request to a model that can; without one, this request fails."
+    )
+
+
+async def test_a_fallback_model_takes_a_text_output_step(allow_model_requests: None):
+    """`TextOutputRequired` is a `ModelAPIError`, so the next model writes the whole mixed output."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the request should never be sent')
+
+    agent = Agent(FallbackModel(mock_model(unreachable), TestModel()), output_type=WithText)
+    result = await agent.run('anything')
+
+    assert result.response.model_name == 'test'
+    assert isinstance(result.output, WithText)
+
+
+async def test_a_streamed_fallback_takes_a_text_output_step(allow_model_requests: None):
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the request should never be sent')
+
+    agent = Agent(FallbackModel(mock_model(unreachable), TestModel()), output_type=WithText)
+    async with agent.run_stream('anything') as stream:
+        output = await stream.get_output()
+
+    assert stream.response.model_name == 'test'
+    assert isinstance(output, WithText)
+
+
+async def test_all_text_fields_are_named(allow_model_requests: None):
+    class Detail(BaseModel):
+        note: str
+
+    class SeveralTextFields(BaseModel):
+        summary: str
+        detail: Detail
+        reply: str | None
+
+    with pytest.raises(TextOutputRequired) as exc_info:
+        await Agent(mock_model(lambda _: answers()), output_type=SeveralTextFields).run('anything')
+
+    assert exc_info.value.field_names == ('summary', 'detail.note', 'reply')
+
+
+async def test_an_unsupported_non_text_field_stays_a_user_error(allow_model_requests: None):
+    """A text field does not turn a separate unsupported shape into an automatic expensive hand-off."""
+
+    class TextAndInteger(BaseModel):
+        summary: str
+        count: int
+
+    agent = Agent(FallbackModel(mock_model(lambda _: answers()), TestModel()), output_type=TextAndInteger)
+    with pytest.raises(UserError, match="Output field 'count' is not supported"):
         await agent.run('anything')
 
 
@@ -818,6 +889,11 @@ def test_tool_call_proposed_pickles():
     assert (exc.model_name, exc.tool_name, exc.probability) == ('jev-latest', 'refund', 0.9)
 
 
+def test_text_output_required_pickles():
+    exc = pickle.loads(pickle.dumps(TextOutputRequired('jev-latest', ('summary', 'detail.note'))))
+    assert (exc.model_name, exc.field_names) == ('jev-latest', ('summary', 'detail.note'))
+
+
 def approve() -> str:
     """Approve the request as it stands."""
     return 'approved'
@@ -1154,17 +1230,16 @@ async def test_a_dot_in_a_field_name_is_refused(allow_model_requests: None, type
         await Agent(typesafe_model, output_type=Dotted).run('anything')
 
 
-async def test_a_nested_field_jev_cannot_answer_is_named_in_full(
-    allow_model_requests: None, typesafe_model: TypeSafeModel
-):
+async def test_a_nested_text_field_is_named_in_full(allow_model_requests: None, typesafe_model: TypeSafeModel):
     class Inner(BaseModel):
         note: str
 
     class Outer(BaseModel):
         inner: Inner
 
-    with pytest.raises(UserError, match=r"Output field 'inner\.note' is not supported"):
+    with pytest.raises(TextOutputRequired) as exc_info:
         await Agent(typesafe_model, output_type=Outer).run('anything')
+    assert exc_info.value.field_names == ('inner.note',)
 
 
 async def test_one_output_function_alone_leaves_nothing_to_ask(

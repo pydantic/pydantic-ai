@@ -143,6 +143,32 @@ print(result.response.provider_details)
 #> {'confidence': {'response': 0.95}, 'probabilities': {}, 'scores': {}}
 ```
 
+## Falling back for text fields
+
+Jev cannot write a free-form `str` field. When every other field is supported, [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] detects one from the output schema before sending a Jev request and raises [`TextOutputRequired`][pydantic_ai.models.typesafe.TextOutputRequired], which names every field that needs text. It is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so the default [`FallbackModel`](overview.md#fallback-model) behavior hands the whole step to the next model:
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.models.fallback import FallbackModel
+
+
+class Ticket(BaseModel):
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+    area: Literal['billing', 'bug', 'account', 'other'] = Field(description='Which team owns it?')
+    reply: str = Field(description='Write a reply to the customer.')
+
+
+model = FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol')
+agent = Agent(model, output_type=Ticket)
+...
+```
+
+The language model fills every field, not only `reply`; Jev has not answered the other fields and its request is not included in the run's usage. Without the `FallbackModel`, `TextOutputRequired` ends the request immediately rather than entering an agent retry loop. This automatic hand-off is specific to free-form string fields: a non-text shape Jev cannot express remains a [`UserError`][pydantic_ai.exceptions.UserError], so a schema mistake cannot silently route every request to the more expensive model.
+
 ## Falling back on low confidence
 
 [`FallbackModel`](overview.md#fallback-model) falls back on API errors by default, and its `fallback_on` also takes a handler that looks at the response. Jev's confidence is on the response, so a language model can take over exactly the requests Jev was unsure about — the cheap model answers what it can, the expensive one only the rest:
@@ -340,9 +366,10 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 ## What Jev cannot do
 
-Jev does not write text, write a tool's arguments or read files. An agent that needs any of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
+Jev does not write text, write a tool's arguments or read files. Each is refused before a request is sent or handed to another model only where that behavior is explicit:
 
-- The `output_type` must be one structured type made of the field types above, beside any output functions that take no arguments: no `str`, no second type with fields, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
+- A free-form `str` field raises [`TextOutputRequired`][pydantic_ai.models.typesafe.TextOutputRequired], which a `FallbackModel` [hands to a model that can write](#falling-back-for-text-fields). Bare `str` output, a `str` member beside another output type, [`NativeOutput`][pydantic_ai.output.NativeOutput] and [`PromptedOutput`][pydantic_ai.output.PromptedOutput] remain unsupported output modes and raise a [`UserError`][pydantic_ai.exceptions.UserError].
+- Other unsupported field types, and a second output type with fields, raise a `UserError`; they never trigger an automatic fallback.
 - No native tools. A function tool with arguments is not called by Jev either, but [proposed](#tools-jev-picks-and-calls-what-it-can) for a model behind it; with tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
 

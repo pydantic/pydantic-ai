@@ -76,6 +76,7 @@ __all__ = (
     'TypeSafeModelSettings',
     'TypeSafeStreamedResponse',
     'LatestTypeSafeModelNames',
+    'TextOutputRequired',
     'ToolCallProposed',
 )
 
@@ -135,6 +136,32 @@ class ToolCallProposed(ModelAPIError):
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.model_name, self.tool_name, self.probability)
+
+
+class TextOutputRequired(ModelAPIError):
+    """One or more output fields require text, which Jev cannot write itself.
+
+    A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands it the
+    whole step by default. With no fallback model, the request fails with this error rather than being retried.
+    """
+
+    field_names: tuple[str, ...]
+    """The output fields that require text."""
+
+    def __init__(self, model_name: str, field_names: tuple[str, ...]):
+        self.field_names = field_names
+        names = ', '.join(repr(name) for name in field_names)
+        field = 'field' if len(field_names) == 1 else 'fields'
+        require = 'requires' if len(field_names) == 1 else 'require'
+        super().__init__(
+            model_name,
+            f'Output {field} {names} {require} text, which Jev cannot write. '
+            '`FallbackModel(jev, llm)` can hand the whole request to a model that can; without one, this request fails.',
+        )
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.field_names)
 
 
 @dataclass(init=False)
@@ -198,8 +225,12 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
 
     Jev answers in one piece, so a streamed run gets the whole answer as one event rather than failing.
 
-    Anything else Jev cannot do is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a
-    request is sent: text output, other field types, native tools, and files in the prompt or history.
+    When every other field is supported, a free-form `str` field raises
+    [`TextOutputRequired`][pydantic_ai.models.typesafe.TextOutputRequired] before a request is sent. As a
+    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], it hands the whole step to a language model behind
+    Jev in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]. Other unsupported field types, bare
+    text output, native tools, and files in the prompt or history are refused with a
+    [`UserError`][pydantic_ai.exceptions.UserError].
 
     Sampling settings like `temperature` do not apply and are ignored. `timeout`, `extra_headers` and
     `extra_body` are forwarded.
@@ -277,7 +308,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
-        questions = _questions(properties, output_tool, instructions) if output_tool else {}
+        questions = _questions(properties, output_tool, instructions, self._model_name) if output_tool else {}
         tool_key = _tool_question(questions, output_tool, tools, instructions)
         settings = cast(TypeSafeModelSettings, model_settings or {})
         threshold = settings.get('typesafe_tool_call_threshold', 0.6)
@@ -639,14 +670,23 @@ def _ask(
 
 
 def _questions(
-    properties: dict[str, dict[str, Any]], output_tool: ToolDefinition, instructions: str | None
+    properties: dict[str, dict[str, Any]],
+    output_tool: ToolDefinition,
+    instructions: str | None,
+    model_name: str,
 ) -> dict[str, Noul | Choice | Score]:
     """One Jev question per output field."""
     questions: dict[str, Noul | Choice | Score] = {}
+    # Validate the other fields before handing off, so text cannot mask a non-text schema error and silently
+    # route every request to the more expensive model.
+    text_fields: list[str] = []
     for name, prop in properties.items():
         ask = _ask(name, prop, output_tool, instructions)
         prop, none_key = _optional(prop)
         options = _options(prop)
+        if prop.get('type') == 'string' and options is None and 'const' not in prop:
+            text_fields.append(name)
+            continue
         if none_key is not None:
             if options is None or not all(isinstance(option, str) for option in options):
                 raise UserError(
@@ -697,6 +737,8 @@ def _questions(
             questions[name] = Noul(instructions=asked)
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
+    if text_fields:
+        raise TextOutputRequired(model_name, tuple(text_fields))
     return questions
 
 
