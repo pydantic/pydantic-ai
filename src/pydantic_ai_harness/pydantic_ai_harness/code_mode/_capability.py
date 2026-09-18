@@ -113,7 +113,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     no single `run_code` snippet runs longer than `max_duration_secs`. It is not a run-wide budget,
     since consecutive calls share one session allowance and any reset of the session (`restart:
     true`, a crash, a type error, a host-side failure) starts a fresh one. `'unlimited'` removes
-    both caps.
+    the time and memory caps, but Monty's finite suspension budget still applies. Set
+    `max_suspensions` to bound cumulative host interactions across consecutive snippets.
     """
 
     eager: bool = False

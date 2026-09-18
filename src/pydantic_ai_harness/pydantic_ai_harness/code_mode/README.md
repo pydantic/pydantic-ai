@@ -210,7 +210,7 @@ REPL: a worker crash, a type error, a host-side failure, and a syntax error befo
 Each of those renews the allowance without the model asking for a restart. An ordinary exception
 inside a snippet is not one of them.
 
-Once a session's allowance is spent, every later `run_code` call fails on arrival, including
+Once a session's duration allowance is spent, every later `run_code` call fails on arrival, including
 snippets that would cost almost nothing, because they reuse the same session. Rewriting the code
 does not help. `restart: true` is what recovers it, at the cost of the REPL state that session was
 holding, so any variables, imports, and definitions have to be recreated. `run_code` says as much
@@ -218,6 +218,14 @@ in the retry it returns, and that retry also reports the nested calls the snippe
 restarting does not throw away the only record of them. The behaviour is worth knowing when
 choosing `max_duration_secs`: set it low and a long agent run will spend it on ordinary work and
 pay a restart to continue.
+
+Monty also limits cumulative suspensions with `max_suspensions` (default 1,000 per session).
+External calls, OS callbacks, name lookups and future resolutions each consume this budget, so
+it is not a tool-call count. Consecutive snippets share it. After exhaustion, further host
+interactions fail, although pure Python using existing state may still work. `run_code` includes
+the started-call summary and explicit restart guidance: inspect partial results before continuing,
+since `restart: true` discards REPL state and replaying completed calls repeats their side effects.
+There is no automatic restart or replay for exhaustion.
 
 Nested tool calls are bounded separately by `max_tool_calls`, which defaults to 100 per `run_code`
 call. The budget is reserved before each call is scheduled, so a snippet cannot dispatch more work
@@ -233,13 +241,14 @@ model some calls are missing from what it can see. The list is context for the m
 nothing stops it from calling those tools again, so treat it as informing the next attempt rather
 than preventing a repeat.
 
-Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_217_728}` and
+Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary
-supplies equivalent limits.
+supplies equivalent limits. It removes the time and memory caps, but leaves Monty's default
+suspension budget in place; suspensions cannot be unlimited.
 
 When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_secs`, including an
 explicit override. `run_code` is replayed in workflow code, so measuring elapsed time there could
-make replay choose a different path from the recorded workflow. The memory cap still applies. Put
+make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
 
 ## REPL state

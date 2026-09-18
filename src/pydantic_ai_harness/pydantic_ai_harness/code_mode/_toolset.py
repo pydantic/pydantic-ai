@@ -82,6 +82,7 @@ _RETRY_SUMMARY_MAX_CHARS = 2000
 _SANDBOX_LIMIT_MARKERS = {
     'max_duration_secs': 'time limit exceeded',
     'max_memory': 'memory limit exceeded',
+    'max_suspensions': 'suspension limit ',
 }
 
 
@@ -220,7 +221,7 @@ def _describe_started_calls(calls: dict[str, ToolCallPart], returns: dict[str, T
         lines.append(line)
         used += len(line)
     return (
-        f'{len(calls)} nested tool calls started before the limit was reached:\n'
+        f'{len(calls)} nested tool calls started before execution stopped:\n'
         + '\n'.join(lines)
         + f'\nAccount for all {len(calls)} before retrying; repeating a call repeats whatever it already did.'
     )
@@ -236,6 +237,12 @@ class CodeModeResourceLimits(TypedDict, total=False):
 
     max_duration_secs: float
     max_memory: int
+    max_suspensions: int
+    """Cumulative host-interaction budget per session, not a per-snippet tool-call count.
+
+    External calls, OS callbacks, name lookups and future resolutions consume this budget.
+    Omission keeps Monty's finite default of 1,000; it cannot be disabled.
+    """
 
 
 def _resolve_resource_limits(
@@ -253,11 +260,18 @@ def _resolve_resource_limits(
             )
     max_duration_secs = 30 if limits is None else limits.get('max_duration_secs', 30)
     max_memory = 256 * 1024 * 1024 if limits is None else limits.get('max_memory', 256 * 1024 * 1024)
+    max_suspensions = 1000 if limits is None else limits.get('max_suspensions', 1000)
+    if max_suspensions < 1:
+        raise UserError('`max_suspensions` must be at least 1')
     if in_temporal_workflow:
         # `run_code` executes in workflow code and Temporal replays it. An elapsed timer may
         # make the original run and replay take different branches, which Temporal cannot record.
         max_duration_secs = None
-    return {'max_duration_secs': max_duration_secs, 'max_memory': max_memory}
+    return {
+        'max_duration_secs': max_duration_secs,
+        'max_memory': max_memory,
+        'max_suspensions': max_suspensions,
+    }
 
 
 @dataclass
@@ -646,7 +660,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     no single `run_code` snippet runs longer than `max_duration_secs`. It is not a run-wide budget,
     since consecutive calls share one session allowance and any reset of the session (`restart:
     true`, a crash, a type error, a host-side failure) starts a fresh one. `'unlimited'` removes
-    both caps.
+    the time and memory caps, but Monty's finite suspension budget still applies. Set
+    `max_suspensions` to bound cumulative host interactions across consecutive snippets.
     """
 
     os_access: CodeModeOS | None = None
@@ -1035,6 +1050,21 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     'arrival too and revising this code will not help. Pass `restart: true` to '
                     'start a fresh session; that discards REPL state, so recreate anything you '
                     'still need.'
+                )
+            if isinstance(e.exception(), RuntimeError) and re.fullmatch(
+                r'suspension limit [0-9]+ exceeded', e.display(format='msg')
+            ):
+                # Monty has no typed marker for this limit, and unlike a timeout it has a
+                # traceback. Keep the advice conditional: a tool could raise the same text.
+                message += (
+                    "\n\nIf this reports the sandbox session's `max_suspensions` limit, "
+                    'its cumulative host-interaction budget is exhausted. Further tool calls, '
+                    'OS callbacks, name lookups and future resolutions need a fresh session; '
+                    'revising the snippet does not replenish this budget. Pure Python using '
+                    'existing state may still work. Pass `restart: true` to start a fresh '
+                    'session; that discards all REPL variables, imports and definitions. '
+                    'Check the calls already started before continuing, and do not replay '
+                    'completed side effects.'
                 )
             raise ModelRetry(message) from e
         except MontyCrashedError as e:
