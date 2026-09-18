@@ -15,6 +15,8 @@ failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
 exceptions end the session and propagate from iteration; if the event stream was never iterated,
 they end the audio and transcript views and are raised when the session closes. (A consumer that
 started iterating and then stopped has chosen to stop listening: nothing is raised on its behalf.)
+The failed call is recorded with `outcome='failed'`, so the settled history can be passed to
+[`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
 The general
 [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]
 capability hook also applies in realtime and can turn an exception into a replacement result or
@@ -60,6 +62,7 @@ is the source of truth.
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.messages import NativeToolReturnPart, PartEndEvent
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 agent = Agent(instructions='Answer questions, searching the web when useful.')
 
@@ -73,6 +76,8 @@ async def main():
         async for event in session:
             if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
                 print(event.part.content)
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break  # keep listening in a real call; we stop after one reply
 ```
 
 An unsupported native tool with a configured local fallback is replaced before connection. Without

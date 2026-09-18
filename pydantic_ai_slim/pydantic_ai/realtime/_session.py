@@ -9,7 +9,7 @@ import wave
 import weakref
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
@@ -261,9 +261,16 @@ class _TapView(AsyncIterator[_TapItem]):
     collected.
     """
 
-    def __init__(self, iterator: AsyncGenerator[_TapItem, None], taps: set[_Tap], tap: _Tap) -> None:
+    def __init__(
+        self,
+        iterator: AsyncGenerator[_TapItem, None],
+        taps: set[_Tap],
+        tap: _Tap,
+        on_close: Callable[[], None] | None = None,
+    ) -> None:
         self._iterator = iterator
         self._discard = weakref.finalize(self, taps.discard, tap)
+        self._finish = weakref.finalize(self, on_close) if on_close is not None else None
 
     def __aiter__(self) -> AsyncIterator[_TapItem]:
         return self
@@ -273,6 +280,8 @@ class _TapView(AsyncIterator[_TapItem]):
 
     async def aclose(self) -> None:
         self._discard()
+        if self._finish is not None:
+            self._finish()
         await self._iterator.aclose()
 
 
@@ -298,6 +307,13 @@ class _AudioTap:
     """
     played_bytes: int = 0
     """Chunks the consumer finished with — counted when it resumes the iterator for the next one."""
+    progress: asyncio.Event = field(default_factory=asyncio.Event)
+    """Set when playback advances or the view ends, waking `wait_for_playback()`."""
+    ended: bool = False
+
+    def finish(self) -> None:
+        self.ended = True
+        self.progress.set()
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -435,19 +451,17 @@ def _build_session_tool_return(
     return result_part, user_content
 
 
-def _unsettled_call_return(call: ToolCallPart, error: ApprovalRequired | CallDeferred | RunCancelled) -> ToolReturnPart:
-    """The failed return a session answers with when a tool call couldn't settle normally.
+def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolReturnPart:
+    """The return a session records when a tool call couldn't settle normally.
 
-    Both cases are ones the graph resolves by ending or isolating the run, which a live conversation
-    can't do — so each becomes a deliberate explanation the model can voice, marked `'failed'` rather
-    than left at the default `'success'`. Recording a refusal as a successful return would be a
-    misleading audit trail: `all_messages()` handed to `Agent.run` would read it as a tool that ran.
+    These are cases the graph resolves by ending or isolating the run, which a live conversation
+    can't do — so each gets a deliberate local settlement rather than leaving a dangling call.
     """
     if isinstance(error, RunCancelled):
         # Exactly the graph path's settlement (this session's own cancellation arrives as
         # `CancelledError`, which `_run_tool` re-raises untouched) — shared so the two can't drift.
         return cancelled_sub_agent_return(call, error)
-    else:
+    elif isinstance(error, (ApprovalRequired, CallDeferred)):
         # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the chance to
         # resolve the deferral inline (approve, deny, retry, or substitute a result); reaching here
         # means no handler resolved it. The graph's fallback — pausing the run with a
@@ -455,6 +469,8 @@ def _unsettled_call_return(call: ToolCallPart, error: ApprovalRequired | CallDef
         # out-of-band result, and the provider expects an answer on the string-only tool channel).
         reason = 'requires approval' if isinstance(error, ApprovalRequired) else 'runs externally'
         content = f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.'
+    else:
+        content = 'The tool raised an unhandled error and the session ended.'
     return ToolReturnPart(
         tool_name=call.tool_name,
         content=content,
@@ -1158,10 +1174,44 @@ class RealtimeSession:
                     # next — that is the moment the previous chunk finished playing, which is what
                     # makes `played_audio_bytes` an accurate playback position with no caller counting.
                     tap.played_bytes += len(item)
+                    tap.progress.set()
             finally:
+                tap.finish()
                 self._audio_taps.discard(tap)
 
-        return _TapView(iterate(), self._audio_taps, tap)
+        return _TapView(iterate(), self._audio_taps, tap, tap.finish)
+
+    async def wait_for_playback(self) -> None:
+        """Wait until the session's single audio view has accounted for all audio emitted so far.
+
+        Call this after a reply finishes generating, before closing the session or opening the
+        microphone, so buffered audio is not cut off. Playback advances with the same one-chunk lag
+        as [`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes]: a chunk
+        counts once the consumer requests the next one. Audio the view never plays counts as accounted for
+        rather than played: discarded by a barge-in or by the view's buffer overflowing, or emitted before
+        the view subscribed. The wait also ends if the view is closed or abandoned, or the session closes.
+        Requires exactly one active
+        [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator.
+        """
+        tap = self._single_audio_tap('`wait_for_playback()`', 'wait for playback from')
+        while not self._closed and not tap.ended:
+            # Clear before checking so that progress made between the check and the wait still wakes us.
+            tap.progress.clear()
+            playhead = tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes
+            # Once the pump has finished, the only item left in the queue is the completion sentinel.
+            buffer_empty = tap.queue.empty() or (self._pump_finished and tap.queue.qsize() == 1)
+            if buffer_empty and playhead >= self._emitted_audio_bytes:
+                return
+            await tap.progress.wait()
+
+    def _single_audio_tap(self, method: str, purpose: str) -> _AudioTap:
+        if len(self._audio_taps) != 1:
+            raise UserError(
+                f'{method} needs exactly one active `stream_audio()` iterator to {purpose}, '
+                f'not {len(self._audio_taps)}; keep your own accounting instead.'
+            )
+        (tap,) = self._audio_taps
+        return tap
 
     @property
     def played_audio_bytes(self) -> int:
@@ -1177,13 +1227,7 @@ class RealtimeSession:
         [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] on
         barge-in. Requires exactly one active `stream_audio()` iterator, like that call.
         """
-        if len(self._audio_taps) != 1:
-            raise UserError(
-                '`played_audio_bytes` needs exactly one active `stream_audio()` iterator to report '
-                f'the playback position of, not {len(self._audio_taps)}; keep your own accounting instead.'
-            )
-        (tap,) = self._audio_taps
-        return tap.played_bytes
+        return self._single_audio_tap('`played_audio_bytes`', 'report the playback position of').played_bytes
 
     @overload
     def stream_transcripts(self, *, delta: Literal[False] = False) -> AsyncIterator[SpeechPart]: ...
@@ -1681,6 +1725,9 @@ class RealtimeSession:
                 break
             assert isinstance(item, bytes)
             tap.dropped_bytes += len(item)
+        # Every change to the playback accounting wakes `wait_for_playback()`, so it re-checks against
+        # the flushed queue rather than waiting for audio that will never come.
+        tap.progress.set()
 
     async def _auto_barge_in(self, event: RealtimeEvent) -> None:
         """The local half of barge-in, run by the session itself under `handle_barge_in=True`.
@@ -2776,11 +2823,13 @@ class RealtimeSession:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
 
-    def _accumulate_response_usage(self, event: SessionUsage) -> None:
+    def _accumulate_response_usage(self, event: SessionUsage) -> list[RealtimeEvent]:
+        events: list[RealtimeEvent] = []
         self._pending_response_usage = self._pending_response_usage + event.usage
         self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
         self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
         if self._tool_calls_awaiting_usage:
+            events.extend(self._finalize_assistant_part())
             self._finalize_response(
                 provider_response_id=event.provider_response_id,
                 finish_reason=event.finish_reason,
@@ -2788,8 +2837,10 @@ class RealtimeSession:
             # OpenAI emits this usage immediately before `response.done`; the response is complete
             # already, so that terminal must not append a second, empty `ModelResponse`.
             self._response_finalized_before_terminal = True
+        return events
 
-    async def _handle_usage_event(self, event: SessionUsage) -> None:
+    async def _handle_usage_event(self, event: SessionUsage) -> list[RealtimeEvent]:
+        events: list[RealtimeEvent] = []
         if event.response_scoped:
             self._begin_response()
         self.usage.incr(event.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
@@ -2799,10 +2850,11 @@ class RealtimeSession:
                 self._usage_limits.check_per_request_input_tokens(
                     (self._pending_response_usage + event.usage).input_tokens
                 )
-            self._accumulate_response_usage(event)
+            events.extend(self._accumulate_response_usage(event))
         if self._asap_drain_ready:
             self._asap_drain_ready = False
             await self._drain_pending_messages('asap')
+        return events
 
     async def _run_tool(
         self,
@@ -2830,6 +2882,7 @@ class RealtimeSession:
         except asyncio.CancelledError:
             raise
         except BaseException as e:
+            self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.
@@ -3008,7 +3061,11 @@ class RealtimeSession:
                     self._queue_put(out)
             return False
         if isinstance(event, SessionUsage):
-            await self._handle_usage_event(event)
+            # Only part and response boundaries come out of a usage report, never a speech-start
+            # or interruption signal, so there is nothing for `_auto_barge_in` to do here.
+            for out in await self._handle_usage_event(event):
+                self._publish_taps(out)
+                self._queue_put(out)
             return False
         for out in self._translate_event(event):
             self._publish_taps(out)
@@ -3094,6 +3151,9 @@ class RealtimeSession:
                         self._transcript_tap_drops += 1
 
     def _finish_taps(self, *, discard_pending: bool = False) -> None:
+        if discard_pending:
+            for tap in self._audio_taps:
+                tap.finish()
         audio_queues = (tap.queue for tap in self._audio_taps)
         for queue in (*audio_queues, *self._transcript_taps, *self._transcript_delta_taps):
             if discard_pending:

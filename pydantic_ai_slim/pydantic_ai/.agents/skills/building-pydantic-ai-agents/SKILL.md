@@ -228,6 +228,10 @@ boundary, when generation and tool work are complete. This is not always the end
 on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. Before
 passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
 chunks carry no sample-rate metadata.
+After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), await
+`session.wait_for_playback()` before closing the session or opening the microphone. It waits for the single
+device-paced `stream_audio()` view to account for all audio emitted so far — played, discarded on a barge-in or a
+full buffer, or emitted before the view subscribed; it requires exactly one audio view.
 
 ```python {test="skip"}
 import anyio
@@ -316,11 +320,12 @@ Key facts for building realtime agents:
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
   `google_async_tool_calls=True` on a native-audio model). An unhandled tool exception is raised
   from session iteration; when only `stream_audio()` or `stream_transcripts()` is consumed, it ends
-  those views and is raised when the session context closes. An `on_tool_execute_error` capability
-  can return a replacement result or raise `ModelRetry` to keep the session running. To end the call
-  from a tool, await `ctx.realtime_session.close()` for a clean hang-up (the tool does not resume and
-  its call is recorded as interrupted), or call `ctx.cancel()` to make the session context raise
-  `RunCancelled`. A watchdog can also await `session.close()` safely: cancelling the watchdog does
+  those views and is raised when the session context closes. Its call is recorded with
+  `outcome='failed'`, leaving history valid for a standard-agent handoff. An
+  `on_tool_execute_error` capability can return a replacement result or raise `ModelRetry` to keep
+  the session running. To end the call from a tool, await `ctx.realtime_session.close()` for a clean
+  hang-up (the tool does not resume and its call is recorded as interrupted), or call `ctx.cancel()`
+  to make the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely: cancelling the watchdog does
   not interrupt teardown, and the session context waits for teardown before exiting.
 - **Late event consumption is bounded**: while nothing is iterating the session, it retains only the
   most recent 512 `PartDeltaEvent`s and the most recent 512 structural events, so a long call that
