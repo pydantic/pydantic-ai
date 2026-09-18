@@ -13,10 +13,10 @@ from prompt_toolkit.formatted_text import FormattedText
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from rich.console import Console
 
 from . import openrouter, theme, vllm
@@ -38,6 +38,7 @@ from .plugin_loader import PluginError, PluginLoader
 from .plugin_menu import open_plugins_menu
 from .plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart
 from .project_settings import ProjectSettings
+from .reloading import reload_clai
 from .screen import Screen
 from .sessions import Sessions
 from .set_menu import set_command
@@ -97,12 +98,96 @@ async def chat(
     console.print(
         '/new starts a session; /resume restores one; /exit quits. Ctrl-C interrupts a turn.', style=theme.MUTED
     )
-    settings = settings or Settings(model=None)
-    store = store or SettingsStore()
     project = project or ProjectSettings()
     _report_project(project, console)
+    use_defaults = builtin_plugins is DEFAULT_PLUGINS
+    shell = _create_shell(
+        agent,
+        deps=deps,
+        plugins=plugins,
+        usage_limits=usage_limits,
+        console=console,
+        settings=settings,
+        store=store,
+        builtin_plugins=builtin_plugins,
+        project=project,
+    )
+    fresh = False
+    async with agent:
+        while True:
+            reason: SessionEndReason = 'error'
+            try:
+                async with create_task_group() as workers:
+                    workers.start_soon(shell.sessions.namer.run)
+                    try:
+                        await shell.loader.load_all(fresh=fresh)
+                        _report_project_plugins(shell.loader, console)
+                        if resume is not None:
+                            console.print(await shell.sessions.command([resume] if resume else []), markup=False)
+                            resume = None
+                        reason = await shell.run()
+                    finally:
+                        workers.cancel_scope.cancel()
+            except BaseExceptionGroup as exc:
+                if len(exc.exceptions) == 1:
+                    raise exc.exceptions[0] from None
+                raise
+            finally:
+                await shell.loader.close(reason)
+            if not shell.reload_requested:
+                return
+            shell.reload_requested = False
+            try:
+                shell = reload_clai(
+                    lambda shell=shell: _create_shell(
+                        agent,
+                        deps=deps,
+                        plugins=plugins,
+                        usage_limits=shell.session.usage_limits,
+                        console=console,
+                        settings=shell.context.settings,
+                        store=SettingsStore(shell.context.store.path),
+                        builtin_plugins=DEFAULT_PLUGINS if use_defaults else builtin_plugins,
+                        project=project,
+                        message_history=shell.session.messages,
+                        summary=shell.session.summary,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
+                console.print(f'Reload failed: {type(exc).__name__}: {exc}', style=theme.ERROR, markup=False)
+                fresh = False
+            else:
+                console.print('CLAI2 reloaded. Conversation preserved.', style=theme.INFO)
+                fresh = True
+
+
+def _create_shell(
+    agent: AbstractAgent[DepsT, OutputT],
+    *,
+    deps: DepsT,
+    plugins: Sequence[AgentCapability[DepsT]],
+    usage_limits: UsageLimits | None,
+    console: Console,
+    settings: Settings | None,
+    store: SettingsStore | None,
+    builtin_plugins: Sequence[PluginSettings],
+    project: ProjectSettings,
+    message_history: Sequence[ModelMessage] = (),
+    summary: ConversationSummary | None = None,
+) -> '_Shell[DepsT, OutputT]':
+    settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
+    store = store or SettingsStore()
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
-    session = Session(agent, deps=deps, plugins=plugins, usage_limits=usage_limits, conversations=conversations)
+    session = Session(
+        agent,
+        deps=deps,
+        plugins=plugins,
+        usage_limits=usage_limits,
+        message_history=message_history,
+        conversations=conversations,
+    )
+    if summary is not None:
+        session.summary = summary
     session.model = settings.model
     auth = CodexAuth(console)
 
@@ -201,9 +286,9 @@ async def chat(
         console=console,
         commands=commands,
         session_start=lambda: SessionStart(agent=agent, settings=context.settings),
-        builtin=builtin_plugins,
+        builtin=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
         full_screen=screen.full,
-        project=project.plugins,
+        project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
         status=status,
     )
@@ -240,24 +325,10 @@ async def chat(
         screen=screen,
         sessions=sessions,
     )
-    reason: SessionEndReason = 'error'
-    try:
-        async with agent, create_task_group() as workers:
-            workers.start_soon(sessions.namer.run)
-            try:
-                await loader.load_all()
-                _report_project_plugins(loader, console)
-                if resume is not None:
-                    console.print(await sessions.command([resume] if resume else []), markup=False)
-                reason = await shell.run()
-            finally:
-                workers.cancel_scope.cancel()
-    except BaseExceptionGroup as exc:
-        if len(exc.exceptions) == 1:
-            raise exc.exceptions[0] from None
-        raise
-    finally:
-        await loader.close(reason)
+    commands.register(
+        Command(name='reload', description='Reload CLAI2 code without restarting', handler=shell.request_reload)
+    )
+    return shell
 
 
 @dataclass(kw_only=True)
@@ -276,6 +347,13 @@ class _Shell(Generic[DepsT, OutputT]):
     interrupts: Interrupts
     screen: Screen
     sessions: Sessions[DepsT, OutputT]
+    reload_requested: bool = False
+
+    def request_reload(self, args: list[str]) -> str:
+        if args:
+            raise ValueError('Usage: /reload')
+        self.reload_requested = True
+        return 'Reloading CLAI2...'
 
     async def run(self) -> SessionEndReason:
         show_frame = ~is_done & Condition(lambda: self.console.width >= 4 and self.console.height >= 6)
@@ -297,7 +375,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 await self.interrupts.run(
                     _execute_command(self.commands, text, console=self.console, status=self.status)
                 )
-                if text == '/exit' or self.interrupts.exit_requested:
+                if text == '/exit' or self.interrupts.exit_requested or self.reload_requested:
                     return 'exit'
                 continue
             if self.session.model is None and self.agent.model is None:

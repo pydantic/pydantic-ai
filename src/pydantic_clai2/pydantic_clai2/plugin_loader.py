@@ -186,12 +186,12 @@ class PluginLoader(Generic[DepsT]):
         """Consulted before the default display, in load order."""
         return [renderer for host in self._loaded.values() for renderer in host.renderers]
 
-    async def load_all(self) -> None:
-        """Load every enabled plugin at startup, reporting failures without stopping."""
+    async def load_all(self, *, fresh: bool = False) -> None:
+        """Load enabled plugins, re-importing after a shell reload so host event types match."""
         for entry in self.entries():
             if entry.declaration.enabled and entry.host is None:
                 try:
-                    await self.load(entry.name)
+                    await self.load(entry.name, fresh=fresh)
                 except PluginError as exc:
                     self._console.print(str(exc), style=theme.ERROR, markup=False)
 

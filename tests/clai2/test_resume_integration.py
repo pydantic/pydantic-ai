@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -27,6 +28,32 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.session_browser import SessionBrowser
 from pydantic_clai2.sessions import Sessions
 from pydantic_clai2.settings_store import SettingsStore
+
+
+async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def rebuild(factory: Callable[[], object]) -> object:
+        return factory()
+
+    monkeypatch.setattr('pydantic_clai2._app.reload_clai', rebuild)
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('first\n/reload\nsecond\n/exit\n')
+        await chat(
+            Agent(TestModel(call_tools=[], custom_output_text='answer')),
+            deps=None,
+            console=Console(file=StringIO()),
+            store=SettingsStore(tmp_path / 'settings.db'),
+        )
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    summaries = await store.listing()
+    assert len(summaries) == 1
+    saved = await store.get(conversation_id=summaries[0].id)
+    assert [
+        part.content
+        for message in saved.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ] == ['first', 'second']
 
 
 def cancel_browser(browser: SessionBrowser) -> str:

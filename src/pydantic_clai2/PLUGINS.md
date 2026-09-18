@@ -204,6 +204,18 @@ CLAI does the same thing:
 | `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts |
 | `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
+| `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
+
+`/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,
+agent, selected model, and active settings, and reactivates enabled plugins against
+the refreshed shell types. Each loaded plugin receives `session_end` before reload
+and `session_start` when loaded again. Plugin hosts and their registrations are
+recreated, but installed module globals not overwritten by the new source can
+survive. Initialize mutable state in `activate`. Disabled and unapproved project
+plugins stay off. Failed imports or shell rebuilds restore the
+previous module bindings and report the error, but cannot undo import-time side
+effects. Restart for changes to startup code, import dependencies, or agent
+construction. Third-party dependencies are not recursively reloaded.
 
 What "load" and "unload" mean for your plugin:
 
@@ -212,8 +224,9 @@ What "load" and "unload" mean for your plugin:
 - Unload fires `session_end` for that plugin, then drops everything it
   registered: handlers, commands, tools, renderers. Nothing else is touched.
 - Both only happen between prompts, never while the agent is running.
-- Python cannot truly forget a module. Reload re-imports it; if a plugin keeps
-  state at module level, that state comes back fresh.
+- Drop-in entry modules load from current source. Installed entry modules use
+  `importlib.reload`, which retains globals absent from the new source. Initialize
+  plugin state explicitly on activation.
 
 ## The first plugin: give the agent web search
 

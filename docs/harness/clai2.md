@@ -139,12 +139,36 @@ Settings are validated before writes. `/set` updates the active settings snapsho
 legacy `/config` writes apply on restart; plugin changes apply on the next prompt.
 `--request-limit` controls the full prompt's model-request budget.
 
-Interactive commands: `/login`, `/set`, `/model`, `/help`, `/new`, `/exit`, `/config`, and `/plugins`.
+Interactive commands: `/login`, `/set`, `/model`, `/help`, `/new`, `/exit`, `/config`, `/plugins`, and `/reload`.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history
 within this process. Ctrl-D exits. Ctrl-C at input clears the line; during a run it
 exits and unwinds the agent. No cancelled run is automatically retried.
+
+## Reload CLAI during development
+
+```text
+/reload
+```
+
+After editing `pydantic_clai2` source, run `/reload` without arguments. It uses
+`importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
+and session with the updated code. The Python process, agent, dependencies passed
+to `chat`, conversation messages, selected model, and active settings are kept.
+Enabled plugins unload and activate again so their handlers use the refreshed
+shell types. Disabled and unapproved project plugins stay off.
+
+If an import or shell rebuild fails, CLAI reports the error and restores the
+previous module bindings. Correct the source and retry `/reload`. Plugin hosts
+and their registrations are recreated. Installed module globals not overwritten
+by the new source can survive; initialize mutable state in `activate`.
+Import-time side effects cannot be undone.
+
+Reload ordering follows the modules' existing imports. Restart after changing
+import dependencies, startup code, or the custom agent's construction. `/reload`
+does not rerun the CLI or recursively reload third-party packages. Use
+`/plugins reload NAME` when you only want to reload one plugin.
 
 ## Bring an agent
 
