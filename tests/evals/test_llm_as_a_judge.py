@@ -10,6 +10,7 @@ from ..conftest import BinaryContent, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai import Agent
+    from pydantic_ai.exceptions import UserError
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.models.test import TestModel
@@ -172,6 +173,28 @@ async def test_judge_g_eval_without_text_support_rejects_an_invalid_score():
     model = FunctionModel(answer, profile={'supports_text_output': False})
     with pytest.raises(ValueError, match="Judge returned an invalid score: 'high'"):
         await judge_g_eval('Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model)
+
+
+async def test_judge_g_eval_without_text_support_rejects_too_many_score_levels():
+    """An oversized rubric fails before the grading agent can make a request."""
+    request_made = False
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal request_made
+        request_made = True
+        return ModelResponse()
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            '`score_range` can contain at most 20 levels for a judge that does not support text output; '
+            'got 21 in (0, 20).'
+        ),
+    ):
+        await judge_g_eval('Clear output.', 'clarity', ['Read it.'], score_range=(0, 20), model=model)
+
+    assert request_made is False
 
 
 def test_stringify():

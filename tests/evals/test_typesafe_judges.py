@@ -6,8 +6,7 @@ from pydantic_core import to_jsonable_python
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
-    import typesafe_sdk  # noqa: F401
-
+    from pydantic_ai.models.typesafe import TypeSafeModel
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext, GEval, LLMJudge
     from pydantic_evals.otel._errors import SpanTreeRecordingError
 
@@ -45,11 +44,12 @@ async def test_llm_judge_with_typesafe(allow_model_requests: None, env: TestEnv,
 async def test_g_eval_with_typesafe(allow_model_requests: None, env: TestEnv, typesafe_api_key: str):
     """Jev scores the normalized rubric and GEval returns the requested 0-4 scale without a reason."""
     env.set('TYPESAFE_API_KEY', typesafe_api_key)
+    model = TypeSafeModel('jev-latest')
     evaluator = GEval(
         criteria='urgency',
         evaluation_steps=['Decide whether someone is blocked now or many users are affected.', 'Assign the score.'],
         score_range=(0, 4),
-        model='typesafe:jev-latest',
+        model=model,
     )
 
     result = await evaluator.evaluate(_context('Checkout returns a 500 for every customer right now.'))

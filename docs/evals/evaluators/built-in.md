@@ -387,7 +387,7 @@ GEval(
 **Returns:** `EvaluationReason` with the integer score and the judge's reasoning
 
 For a judge whose profile has `supports_text_output=False`, the score keeps the requested integer
-scale and the reason is `None`.
+scale, the reason is `None`, and `score_range` may contain at most 20 levels.
 
 **See Also:** [Standard Quality Metrics](standard-quality-metrics.md)
 

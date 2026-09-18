@@ -9,6 +9,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, StructuredDict, UserContent, models
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
 from pydantic_ai.settings import ModelSettings
 
@@ -25,6 +26,7 @@ __all__ = (
 
 
 _default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
+_MAX_G_EVAL_SCORE_LEVELS = 20
 
 
 class GradingOutput(BaseModel, populate_by_name=True):
@@ -53,7 +55,7 @@ class _BinaryGradingOutput(BaseModel, populate_by_name=True):
 _non_text_judge_agent = Agent(name='judge_without_text', output_type=_BinaryGradingOutput)
 
 
-async def _resolve_judge_model(model: models.Model | models.KnownModelName | str | None) -> models.Model:
+def _resolve_judge_model(model: models.Model | models.KnownModelName | str | None) -> models.Model:
     model = model or _default_model
     if isinstance(model, models.Model):
         return model
@@ -66,7 +68,7 @@ async def _run_grading_agent(
     model: models.Model | models.KnownModelName | str | None,
     model_settings: ModelSettings | None,
 ) -> GradingOutput:
-    resolved_model = await _resolve_judge_model(model)
+    resolved_model = _resolve_judge_model(model)
     if not resolved_model.profile.get('supports_text_output', True):
         result = await _non_text_judge_agent.run(
             user_prompt,
@@ -332,7 +334,7 @@ class GEvalOutput(BaseModel):
 def _g_eval_output_type(score_range: tuple[int, int]) -> type[JsonSchemaValue]:
     """A normalized integer rubric for a judge that cannot write the reasoning trace."""
     minimum, maximum = score_range
-    levels = []
+    levels: list[dict[str, int | str]] = []
     for score in range(minimum, maximum + 1):
         if score == minimum:
             description = f'{score}: the worst score according to the evaluation criteria.'
@@ -398,7 +400,8 @@ async def judge_g_eval(
         output: The output being evaluated.
         criteria: The aspect being evaluated (e.g. "coherence", "fluency").
         evaluation_steps: Explicit chain-of-thought steps the judge should follow.
-        score_range: Inclusive `(min, max)` integer score range.
+        score_range: Inclusive `(min, max)` integer score range. A judge that cannot generate text supports at
+            most 20 score levels.
         inputs: Optional inputs/context to show alongside the output.
         model: The model to use. If not specified, the default judge model is used.
         model_settings: Optional model settings.
@@ -408,6 +411,7 @@ async def judge_g_eval(
         the judge's reasoning and integer score.
 
     Raises:
+        UserError: If a judge that cannot generate text is given more than 20 score levels.
         ValueError: If `score_range` is invalid, `evaluation_steps` is empty, or the judge
             returns a score outside the range.
     """
@@ -429,8 +433,14 @@ async def judge_g_eval(
         ]
     )
     user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
-    resolved_model = await _resolve_judge_model(model)
+    resolved_model = _resolve_judge_model(model)
     if not resolved_model.profile.get('supports_text_output', True):
+        score_levels = score_range[1] - score_range[0] + 1
+        if score_levels > _MAX_G_EVAL_SCORE_LEVELS:
+            raise UserError(
+                f'`score_range` can contain at most {_MAX_G_EVAL_SCORE_LEVELS} levels for a judge that does not '
+                f'support text output; got {score_levels} in {score_range!r}.'
+            )
         normalized = (
             await _non_text_judge_agent.run(
                 user_prompt,
