@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pydantic import ValidationError
 from pydantic_ai.models import known_model_names
 
+from .api_keys import set_api_key
 from .command_context import CommandContext
 from .config import SETTING_FIELDS, Settings
 from .field_menu import FieldMenu, FieldRow, first_error, run_flow, shown
@@ -70,3 +71,10 @@ async def open_settings_menu(context: CommandContext, *, run: Callable[[FieldMen
     """Show the menu in a thread; edits save and apply as they happen."""
     messages = await run_worker(lambda: (run or run_flow)(FieldMenu(SettingsSource(context))))
     return '\n'.join(messages) or 'No changes.'
+
+
+async def set_command(context: CommandContext, args: list[str]) -> str:
+    """Route private credential entry separately from ordinary settings."""
+    if args and args[0] == 'api_key':
+        return await set_api_key(args=args[1:])
+    return context.set_setting(args) if args else await open_settings_menu(context)

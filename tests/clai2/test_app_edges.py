@@ -7,16 +7,19 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
+from menu_script import Script, pick, typed
 from prompt_toolkit.styles import BaseStyle
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from rich.console import Console
+from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
-from pydantic_clai2 import chat
+from pydantic_clai2 import api_keys, chat, key_menu
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import Settings
+from pydantic_clai2.field_menu import Runners
 from pydantic_clai2.settings_store import SettingsStore
 
 PromptT = TypeVar('PromptT')
@@ -121,3 +124,23 @@ async def test_connected_provider_resolution(tmp_path: Path, monkeypatch: pytest
         console=Console(file=output),
     )
     assert 'Connected response' in output.getvalue()
+
+
+async def test_keys_command_in_shell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inputs(monkeypatch, ['/keys', '/help', '/exit'])
+    script = Script(
+        lists=[pick(key_menu.KeyAction(action='add')), MenuResult(cancelled=True)],
+        choices=[],
+        texts=[typed('shell_key'), typed('private-value')],
+    )
+    original = key_menu.run_keys_flow
+
+    def scripted(*, runners: Runners = script.runners) -> None:
+        original(runners=runners)
+
+    monkeypatch.setattr(key_menu, 'run_keys_flow', scripted)
+    output = io.StringIO()
+    await chat(Agent(TestModel()), deps=None, console=Console(file=output), store=SettingsStore(tmp_path / 'config.db'))
+    assert api_keys.load_keys()['SHELL_KEY'].get_secret_value() == 'private-value'
+    assert '/keys' in output.getvalue()
+    assert 'private-value' not in output.getvalue()

@@ -34,6 +34,7 @@ class FieldRow:
     description: str
     default: str
     choices: tuple[str, ...] = ()
+    secret: bool = False
     note: str = ''
     """Where the value comes from when not from the user; shown muted after the value."""
 
@@ -159,16 +160,18 @@ class FieldMenu:
 
     def build_editor(self, row: FieldRow) -> TextInput:
         """A typed input that validates as you go; empty resets."""
-        return (
+        builder = (
             TextInputBuilder(f'New value for {row.key}')
             .style(markdown_style())
             .prompt('Value: ')
-            .placeholder(f'current: {self._source.current(row)} (empty resets)')
+            .placeholder('Enter a new secret' if row.secret else f'current: {self._source.current(row)} (empty resets)')
             .validator(lambda text: None if not text.strip() else self._source.problem(row, text.strip()))
             .footer_hint('Enter save - Esc cancel')
             .key_source(menu_key)
-            .build()
         )
+        if row.secret:
+            builder.mask()
+        return builder.build()
 
     def apply(self, row: FieldRow, raw: str) -> str:
         """Save and apply, or reset on empty input."""

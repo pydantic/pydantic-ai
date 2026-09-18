@@ -146,6 +146,7 @@ async def test_connect_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         return SecretStr('browser-key')
 
     async def discover(connection: openrouter.Connection) -> list[str]:
+        assert isinstance(connection.token, SecretStr)
         assert connection.token.get_secret_value() == 'browser-key'
         return ['my/model']
 

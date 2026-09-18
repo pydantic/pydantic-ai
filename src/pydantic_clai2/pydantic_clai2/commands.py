@@ -143,7 +143,7 @@ def config_command(store: SettingsStore, args: list[str]) -> str:
 def set_completions(args: list[str]) -> Iterable[str]:
     """Complete setting names and values without network calls or credentials."""
     if len(args) <= 1:
-        return SETTING_FIELDS
+        return (*SETTING_FIELDS, 'api_key')
     if len(args) == 2 and args[0] == 'model':
         names = known_model_names()
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})

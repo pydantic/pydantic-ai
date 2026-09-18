@@ -11,16 +11,17 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.vllm import VLLMProvider
 from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingTypeStubs]
 
+from .api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection
 from .command_context import CommandContext
-from .credential_store import load_codex_credentials, save_codex_credentials
+from .credential_store import load_codex_credentials
 from .menu_worker import menu_key, run_worker
 
 
 class Connection(BaseModel):
-    """Endpoint and optional credential, stored together in keyring."""
+    """Saved connection with a named-key reference or a legacy inline credential."""
 
     url: str
-    token: SecretStr = Field(default_factory=lambda: SecretStr(''))
+    token: SecretStr | KeyReference = Field(default_factory=lambda: SecretStr(''))
 
 
 class ServedModel(BaseModel):
@@ -49,7 +50,7 @@ def api_url(value: str) -> str:
 
 async def discover(connection: Connection, *, transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
     """Query only the requested endpoint; do not forward credentials across redirects."""
-    token = connection.token.get_secret_value()
+    token = await asyncio.to_thread(resolve_key, token=connection.token)
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(transport=transport, timeout=20, follow_redirects=False, trust_env=False) as client:
         try:
@@ -68,9 +69,10 @@ async def discover(connection: Connection, *, transport: httpx.AsyncBaseTranspor
 
 def save_connection(connection: Connection) -> None:
     """Keep credentials out of command history and SQLite."""
-    value = connection.model_dump()
-    value['token'] = connection.token.get_secret_value()
-    save_codex_credentials(value=json.dumps(value), account='vllm')
+    value = connection.model_dump(mode='json')
+    if isinstance(connection.token, SecretStr):
+        value['token'] = connection.token.get_secret_value()
+    save_key_connection(value=json.dumps(value), account='vllm', token=connection.token)
 
 
 def model(name: str) -> OpenAIChatModel:
@@ -83,7 +85,7 @@ def model(name: str) -> OpenAIChatModel:
     except ValidationError:
         raise UserError('Stored connection is invalid. Reconfigure through /model > vllm.') from None
     provider = VLLMProvider(
-        base_url=api_url(connection.url), api_key=connection.token.get_secret_value() or 'not-required'
+        base_url=api_url(connection.url), api_key=resolve_key(token=connection.token) or 'not-required'
     )
     return OpenAIChatModel(name.removeprefix('vllm:'), provider=provider)
 
@@ -133,10 +135,12 @@ async def prompt_connection() -> Connection | None:
     prompt: PromptSession[str] = PromptSession()
     try:
         url = api_url(await prompt.prompt_async('vLLM server URL: '))
-        token = await prompt.prompt_async('Token (optional, Enter for none): ', is_password=True)
+        token = await prompt_api_key(prompt=prompt, label='Token (optional, Enter for none): ', optional=True)
     except (EOFError, KeyboardInterrupt):
         return None
-    return Connection(url=url, token=SecretStr(token))
+    if token is None:
+        return None
+    return Connection(url=url, token=token if isinstance(token, KeyReference) else SecretStr(token))
 
 
 def connection_action() -> str | None:  # pragma: no cover -- real terminal.

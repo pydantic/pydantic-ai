@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from typing import Annotated
 
 import httpx
 from prompt_toolkit import PromptSession
@@ -14,16 +15,17 @@ from termflow.tui import MenuBuilder, MenuItem  # pyright: ignore[reportMissingT
 from termflow.tui.menu import Menu  # pyright: ignore[reportMissingTypeStubs]
 
 from ._rendering import markdown_style
+from .api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection
 from .command_context import CommandContext
-from .credential_store import load_codex_credentials, save_codex_credentials
+from .credential_store import load_codex_credentials
 from .menu_worker import menu_key, run_worker
 from .openrouter_auth import OpenRouterAuth
 
 
 class Connection(BaseModel):
-    """Endpoint and optional credential, stored together in keyring."""
+    """Saved connection with a named-key reference or a legacy inline credential."""
 
-    token: SecretStr = Field(min_length=1)
+    token: Annotated[SecretStr, Field(min_length=1)] | KeyReference
 
 
 class ServedModel(BaseModel):
@@ -40,7 +42,7 @@ class ModelList(BaseModel):
 
 async def discover(connection: Connection, *, transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
     """Query only the requested endpoint; do not forward credentials across redirects."""
-    token = connection.token.get_secret_value()
+    token = await asyncio.to_thread(resolve_key, token=connection.token)
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(transport=transport, timeout=20, follow_redirects=False) as client:
         try:
@@ -61,9 +63,10 @@ async def discover(connection: Connection, *, transport: httpx.AsyncBaseTranspor
 
 def save_connection(connection: Connection) -> None:
     """Keep credentials out of command history and SQLite."""
-    value = connection.model_dump()
-    value['token'] = connection.token.get_secret_value()
-    save_codex_credentials(value=json.dumps(value), account='openrouter')
+    value = connection.model_dump(mode='json')
+    if isinstance(connection.token, SecretStr):
+        value['token'] = connection.token.get_secret_value()
+    save_key_connection(value=json.dumps(value), account='openrouter', token=connection.token)
 
 
 def model(name: str) -> OpenRouterModel:
@@ -75,7 +78,7 @@ def model(name: str) -> OpenRouterModel:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
         raise UserError('Stored connection is invalid. Reconfigure through /model > openrouter.') from None
-    provider = OpenRouterProvider(api_key=connection.token.get_secret_value())
+    provider = OpenRouterProvider(api_key=resolve_key(token=connection.token))
     return OpenRouterModel(name.removeprefix('openrouter:'), provider=provider)
 
 
@@ -127,10 +130,11 @@ async def prompt_connection() -> Connection | None:
     if method.item.value == 'browser':
         return Connection(token=await OpenRouterAuth(console=Console()).login())
     prompt: PromptSession[str] = PromptSession()
-    try:
-        token = await prompt.prompt_async('OpenRouter API key (https://openrouter.ai/keys): ', is_password=True)
-    except (EOFError, KeyboardInterrupt):
+    token = await prompt_api_key(prompt=prompt, label='OpenRouter API key (https://openrouter.ai/keys): ')
+    if token is None:
         return None
+    if isinstance(token, KeyReference):
+        return Connection(token=token)
     if not token.strip():
         raise ValueError('An OpenRouter API key is required.')
     return Connection(token=SecretStr(token.strip()))

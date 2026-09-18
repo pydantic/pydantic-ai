@@ -28,13 +28,14 @@ from .config import PluginSettings, Settings
 from .customization import customization_guide
 from .input_history import input_history
 from .interrupts import Interrupts
+from .key_menu import keys_command
 from .model_menu import open_model_menu
 from .plugin_loader import PluginError, PluginLoader
 from .plugin_menu import open_plugins_menu
 from .plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart
 from .project_settings import ProjectSettings
 from .screen import Screen
-from .set_menu import open_settings_menu
+from .set_menu import set_command
 from .settings_store import SettingsStore
 from .status import Status, StatusLine
 from .usage_report import cost_line, session_usage, usage_command
@@ -117,6 +118,7 @@ async def chat(
     )
 
     commands = Commands()
+    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command))
     commands.register(
         Command(
             name='login',
@@ -129,7 +131,7 @@ async def chat(
         Command(
             name='set',
             description='Change settings; no arguments opens the menu',
-            handler=lambda args: context.set_setting(args) if args else open_settings_menu(context),
+            handler=lambda args: set_command(context, args),
             complete=set_completions,
         )
     )

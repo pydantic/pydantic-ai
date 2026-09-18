@@ -525,3 +525,38 @@ Open `/model`, choose `openrouter`, then choose **Sign in with browser** or **En
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
 The connection is saved in the configured Python keyring backend after selection, or in a per-user `0600` file when no keyring backend exists, as described in [Codex authentication](#codex-authentication). Backend security depends on your keyring configuration. Tokens are not stored in SQLite or command history. The selected model persists across restarts. Select the provider again to browse its live models or reconfigure the saved connection. Discovery is explicit and has a 20-second network timeout; redirects are not followed. Agent inference uses Pydantic AI core.
+
+
+## Saved API keys
+
+Open `/keys` to browse and manage saved API keys in a full-screen menu.
+Use A to add, Enter to replace a value, R to rename, and D to delete with
+confirmation. Values are masked and are not shown in previews. Changes save
+immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
+
+The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
+and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letters,
+numbers, and underscores, starting with a letter or underscore. Saving an existing
+name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
+the secret on the command line.
+
+When saved keys exist, vLLM's token prompt and OpenRouter's **Enter API key** flow
+show a searchable list of names. Choose one, enter a different key privately, or
+choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
+login flows are unchanged. Select keys only for endpoints you trust.
+
+Named keys use the existing credential backend, separate from provider logins and
+SQLite settings. If no OS keyring exists, CLAI warns that it saved them in the
+per-user `0600` plaintext file `credentials-api-keys.json` in its config directory.
+Key values never appear in the picker or confirmation. Names are labels, not
+exported environment variables. Selecting a saved key stores a reference, not a copy. Discovery and each new
+turn resolve its current value. Replacing a key updates connections that reference
+it. Deleting it makes those connections fail until you restore the same name or
+reconfigure them. Keys referenced by saved connections cannot be renamed. A cross-process lock
+serializes key changes and connection saves so concurrent CLAI sessions do not
+overwrite each other's key edits. The lock file contains no credentials.
+
+Existing connections with inline credentials, manually entered connection keys,
+and browser logins remain unchanged. To switch an existing connection to a
+reference, reconfigure it through `/model` and select a saved key. Changes do not
+alter an already running request or revoke credentials at the provider.
