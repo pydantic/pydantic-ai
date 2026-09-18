@@ -578,6 +578,18 @@ class TestResolveRedirectUrl:
         result = resolve_redirect_url('https://example.com/path', '//cdn.example.com/file.txt?token=abc#section')
         assert result == 'https://cdn.example.com/file.txt?token=abc#section'
 
+    def test_query_only_redirect_keeps_current_path(self) -> None:
+        result = resolve_redirect_url('https://example.com/a/file?old=1', '?new=2')
+        assert result == 'https://example.com/a/file?new=2'
+
+    def test_fragment_only_redirect_keeps_current_path_and_query(self) -> None:
+        result = resolve_redirect_url('https://example.com/a/file?old=1', '#section')
+        assert result == 'https://example.com/a/file?old=1#section'
+
+    def test_protocol_relative_redirect_preserves_path_params(self) -> None:
+        result = resolve_redirect_url('https://example.com/a/file', '//other.example/path;param?x=1')
+        assert result == 'https://other.example/path;param?x=1'
+
 
 class TestResolveHostname:
     """Tests for resolve_hostname function."""
