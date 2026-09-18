@@ -298,13 +298,15 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         settings = cast(TypeSafeModelSettings, model_settings or {})
-        if forced_tool is not None:
-            # Every other route has returned this turn, so the one left is taken without a choice question.
-            return await self._forced_with_arguments(forced_tool, state, instructions, settings)
-        questions = _questions(properties, output_tool, instructions) if output_tool else {}
-        tool_key = _tool_question(questions, output_tool, tools, instructions)
+        # Both bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding
+        # out from a rejected answer would mean paying for the request that carried the prompt and history.
         threshold = _threshold(settings, 'typesafe_tool_call_threshold', 0.6)
         boolean_threshold = _threshold(settings, 'typesafe_boolean_threshold', 0.5)
+        if forced_tool is not None:
+            # Every other route has returned this turn, so the one left is taken without a choice question.
+            return await self._forced_with_arguments(forced_tool, state, instructions, settings, boolean_threshold)
+        questions = _questions(properties, output_tool, instructions) if output_tool else {}
+        tool_key = _tool_question(questions, output_tool, tools, instructions)
 
         response = await self._system_one(state, questions, settings)
         response_usage = _request_usage(response)
@@ -326,7 +328,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             elif picked is not None and picked is not output_tool:
                 probability = provider_details['tool']['probabilities'][picked.name]
                 response, args, argument_details = await self._tool_arguments(
-                    picked, probability, state, instructions, settings
+                    picked, probability, state, instructions, settings, boolean_threshold
                 )
                 response_usage += _request_usage(response)
                 provider_details.update(argument_details)
@@ -383,6 +385,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         state: JSONContent,
         instructions: str | None,
         settings: TypeSafeModelSettings,
+        boolean_threshold: float,
     ) -> tuple[SystemOneResponse, dict[str, Any], dict[str, Any]]:
         """Ask only a selected tool's arguments, or propose it when Jev cannot express them."""
         try:
@@ -393,9 +396,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
 
         try:
             response = await self._system_one(state, questions, settings)
-            args, provider_details = _answers(
-                response.answers, properties, questions, _threshold(settings, 'typesafe_boolean_threshold', 0.5)
-            )
+            args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
             # could silently choose another route, so an argument-fill failure is terminal and names that tool.
@@ -410,10 +411,13 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         state: JSONContent,
         instructions: str | None,
         settings: TypeSafeModelSettings,
+        boolean_threshold: float,
     ) -> ModelResponse:
         """Fill the arguments of the one route left, without a choice request."""
         details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
-        response, args, argument_details = await self._tool_arguments(tool, 1.0, state, instructions, settings)
+        response, args, argument_details = await self._tool_arguments(
+            tool, 1.0, state, instructions, settings, boolean_threshold
+        )
         details.update(argument_details)
         return ModelResponse(
             parts=[ToolCallPart(tool.name, args, _utils.generate_tool_call_id())],

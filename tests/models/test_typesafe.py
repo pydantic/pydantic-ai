@@ -2143,3 +2143,36 @@ rm -rf ./build
             },
         ]
     )
+
+
+@pytest.mark.parametrize('setting', ['typesafe_tool_call_threshold', 'typesafe_boolean_threshold'])
+async def test_a_bad_threshold_is_refused_before_the_forced_route_spends_a_request(
+    allow_model_requests: None, setting: str
+):
+    """The forced-fill path takes no choice question, so its bars are checked before it sends anything.
+
+    Reading them only while handling the answer would mean paying for the request that carried the prompt and
+    the whole history before saying the settings were wrong.
+    """
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a threshold outside 0 to 1 must be refused before any request')
+
+    def set_direction(direction: Literal['left', 'right']) -> str:
+        """Set the direction to take.
+
+        Args:
+            direction: Which direction should be taken?
+        """
+        return direction  # pragma: no cover
+
+    # No output type to fill, and `approve` already returned this turn, so `set_direction` is the one route
+    # left: it is filled without a choice question, which is the path that used to validate too late.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go left.')]),
+        ModelResponse(parts=[ToolCallPart('final_result', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('final_result', 'approved', 'call_1')]),
+    ]
+    agent = Agent(mock_model(unreachable), output_type=[approve], tools=[set_direction])
+    with pytest.raises(UserError, match=f'`{setting}` must be between 0 and 1'):
+        await agent.run(message_history=history, model_settings=cast(TypeSafeModelSettings, {setting: 1.5}))
