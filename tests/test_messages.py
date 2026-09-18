@@ -1721,14 +1721,19 @@ def test_url_media_type_is_written_under_its_public_name(url: str) -> None:
     assert ModelMessagesTypeAdapter.dump_python(messages, mode='json', by_alias=False) == aliased
 
     # Writing the two derived values by hand must not cost the caller the dump arguments pydantic would
-    # have applied to them: leaving one out, or dropping a media type there turned out to be none of.
-    item_ta = TypeAdapter(ImageUrl)
-    excluded = item_ta.dump_python(ImageUrl(url=url), mode='json', exclude={'identifier'})
-    assert 'identifier' not in excluded
-    assert excluded['media_type'] == aliased[0]['parts'][0]['content'][0]['media_type']
+    # have applied to a field of its own.
+    item, item_ta = ImageUrl(url=url), TypeAdapter(ImageUrl)
+    media_type = aliased[0]['parts'][0]['content'][0]['media_type']
 
-    without_none = item_ta.dump_python(ImageUrl(url=url), mode='json', exclude_none=True)
-    assert ('media_type' in without_none) is (excluded['media_type'] is not None)
+    assert 'media_type' not in item_ta.dump_python(item, mode='json', exclude={'media_type'})
+    assert set(item_ta.dump_python(item, mode='json', include={'url'})) == {'url'}
+    assert 'identifier' not in item_ta.dump_python(item, mode='json', exclude={'identifier'})
+    # A media type there turned out to be none of is dropped by `exclude_none`; one there was, isn't.
+    without_none = item_ta.dump_python(item, mode='json', exclude_none=True)
+    assert ('media_type' in without_none) is (media_type is not None)
+    # A filter aimed at the item from further up resolves to the same thing by the time it gets here.
+    nested = TypeAdapter(list[ImageUrl]).dump_python([item], mode='json', exclude={0: {'media_type'}})
+    assert 'media_type' not in nested[0]
 
 
 def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():

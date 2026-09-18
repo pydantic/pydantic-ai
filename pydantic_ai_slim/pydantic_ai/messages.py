@@ -330,11 +330,17 @@ class FileUrl(ABC):
         The key is written literally rather than aliased off the private `_media_type` field, because a
         serialization alias only applies when dumping `by_alias`, and `model_dump(by_alias=False)` would
         then hand users a `_media_type` key naming a private field they never set. Writing it by hand does
-        mean honoring `exclude_none` by hand, which pydantic would otherwise have applied for us.
+        mean applying the arguments the dump was asked for — `exclude_none`, `include`, `exclude` — that
+        pydantic would have applied to a field of its own.
         """
         data = handler(self)
         media_type = self._media_type_or_none()
-        if media_type is None and info.exclude_none:
+        include, exclude = info.include, info.exclude
+        if (
+            (media_type is None and info.exclude_none)
+            or (include is not None and 'media_type' not in include)
+            or (exclude is not None and 'media_type' in exclude)
+        ):
             return data
         # `identifier` is a computed field and so sorts last; keep `media_type` ahead of it, where it has
         # always been written, so a history dumped before this change compares equal to one dumped after.
