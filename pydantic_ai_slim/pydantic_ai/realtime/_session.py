@@ -742,6 +742,7 @@ class RealtimeSession:
         # providers that do not identify input transcript items.
         self._user_turns: dict[str | None, _UserTurn] = {}
         self._finalized_user_item_ids: set[str] = set()
+        self._finalized_anonymous_user: bool = False
         # Where in history each user turn belongs, remembered when the turn *starts* — see
         # `_open_user_turn_anchor`. `_pending_user_turn_anchor` holds the anchor of a turn that has begun
         # but whose transcript hasn't identified it yet; `_user_turn_anchors` keys them by item id (`None`
@@ -2057,8 +2058,11 @@ class RealtimeSession:
                 events.extend(self._finalize_user(item_id=item_id))
             return events
 
+        if self._finalized_anonymous_user:
+            return []
         events: list[RealtimeEvent] = []
         if None not in self._user_turns:
+            self._finalized_anonymous_user = False
             self._user_turn_active = True
             part = SpeechPart(speaker='user', transcript='')
             self._claim_user_turn_anchor(None)
@@ -2105,6 +2109,7 @@ class RealtimeSession:
                     audio=BinaryContent(data=_pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
                 )
         if item_id is None:
+            self._finalized_anonymous_user = True
             self._record_user_request(None, self._new_request([part]))
             self._user_turns.pop(None)
         else:
@@ -2206,6 +2211,9 @@ class RealtimeSession:
                 self._claim_user_turn_anchor(item_id)
             self._finalized_user_item_ids.add(item_id)
         else:
+            if self._finalized_anonymous_user:
+                return []
+            self._finalized_anonymous_user = True
             turn = self._user_turns.get(None)
             start_emitted = turn is not None
             part = replace(turn.part, transcript=None) if turn is not None else SpeechPart(speaker='user')
@@ -2241,6 +2249,7 @@ class RealtimeSession:
 
     def _flush_pending_users(self) -> None:
         """Preserve transcript-bearing user items that never received an explicit final event."""
+        self._finalized_anonymous_user = True
         if None in self._user_turns:
             self._finalize_user()
         for item_id, turn in list(self._user_turns.items()):

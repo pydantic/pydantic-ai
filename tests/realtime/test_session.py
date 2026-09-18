@@ -7560,3 +7560,40 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
         assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
         assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
         assert len(conn.sent) == 1
+
+
+async def test_duplicate_final_input_transcript_is_idempotent_anonymous_user() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', is_final=True, item_id=None),
+            InputTranscript(text='hello', is_final=True, item_id=None),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+    _ = await collect_events(session)
+
+    assert session.all_messages() == [
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')], timestamp=IsDatetime())
+    ]
+
+
+async def test_input_transcription_failure_ignores_already_closed_items_anonymous_user() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeInputTranscriptionErrorEvent(message='failed', item_id=None),
+            RealtimeInputTranscriptionErrorEvent(message='duplicate failure', item_id=None),
+            OutputTranscript(text='Sorry', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='m')
+    events = await collect_events(session)
+
+    ended = [e.part for e in events if isinstance(e, PartEndEvent) and isinstance(e.part, SpeechPart)]
+    assert ended == [SpeechPart(speaker='user'), SpeechPart(speaker='assistant', transcript='Sorry')]
+    user_parts = [
+        part for message in session.new_messages() if isinstance(message, ModelRequest) for part in message.parts
+    ]
+    assert user_parts == [
+        SpeechPart(speaker='user'),
+    ]
