@@ -180,7 +180,6 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
     | a nested model of these | its fields, named `outer.inner` | the model |
     | `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or `None` |
-    | a union of structured types | pick the type, then ask its fields | the chosen type |
 
     The field description is the question. The output type's docstring and the agent's instructions go along
     as context. An option is described by a description on its value in the schema, and by its name without one.
@@ -195,8 +194,15 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     the message history, from any model, goes along beside it as `history`: user prompts, answers, tool calls
     and their results, and retry prompts.
 
-    With tools attached, one more question asks which, the output type first among the options, described by its
-    docstring or the agent's instructions. A tool that takes no arguments, or an output function that takes nothing
+    An `output_type` of several structured types is a union, and a route rather than a field: one question picks
+    which type the text calls for, described by each type's own docstring, and a second request asks only that
+    type's fields. A member whose fields Jev cannot express is still offered, and picking it raises
+    [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed]; a lone `output_type` it cannot express is
+    refused before any request instead, since no other route could have been taken. A model *field* typed as a
+    union of structured types is not supported.
+
+    With tools attached, one more question asks which, the output types first among the options, described by their
+    docstrings or the agent's instructions. A tool that takes no arguments, or an output function that takes nothing
     but the run context, is called on Jev's pick. When a picked tool's arguments use the field types above, a second
     request asks only those arguments and Jev returns the filled call. If any argument is unsupported, the call is
     raised as [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed], which a
@@ -317,7 +323,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             if isinstance(picked, ToolCallPart):
                 parts = [picked]
             elif picked is not None and picked is not output_tool:
-                probability = provider_details['tool']['probabilities'][picked.name]
+                # `_tool_call` tolerates an offered route missing from `probabilities` when it falls back to
+                # the likeliest one, so the route it returns is not necessarily one Jev priced.
+                probability = provider_details['tool']['probabilities'].get(picked.name, 0.0)
                 response, args, argument_details = await self._fill(picked, probability, state, instructions, settings)
                 response_usage += _request_usage(response)
                 provider_details.update(argument_details)

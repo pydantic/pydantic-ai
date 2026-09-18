@@ -2200,3 +2200,27 @@ async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None
     agent = Agent(typesafe_model, output_type=[Ticket, WithOptional], instructions='Handle the ticket.')
     with pytest.raises(UserError, match="'final_result_WithOptional' says nothing about itself"):
         await agent.run('anything')
+
+
+async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: None):
+    """`_tool_call` falls back to the likeliest output type without requiring Jev to have priced it.
+
+    Jev is not obliged to report a probability for every option it was offered, so the route that comes back
+    is not necessarily one that appears in `probabilities`. Reading it as a plain index raised `KeyError`.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            # A below-threshold tool pick, with neither output type priced.
+            return answers(tool=_route('refund', {'refund': 0.3}))
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation], tools=[refund])
+    result = await agent.run('You charged me twice.')
+
+    assert result.output == Ticket(urgent=True)
+    details = result.response.provider_details or {}
+    assert details['tool']['probabilities'] == {'refund': 0.3}
+    assert details['requests'] == 2
