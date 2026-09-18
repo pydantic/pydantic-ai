@@ -15,7 +15,17 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import FilePart, RetryPromptPart, ThinkingPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    FilePart,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    RetryPromptPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
+)
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
@@ -262,6 +272,57 @@ def test_output_retry_history():
                 'role': 'user',
                 'content': {'type': 'text', 'text': 'Validation feedback:\nTry again\n\nFix the errors and try again.'},
             },
+        ]
+    )
+
+
+def test_framework_tool_history():
+    """Locally executed framework tools share the ordinary function-tool wire format."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search'),
+                LoadCapabilityCallPart(args={'id': 'forecast'}, tool_call_id='load'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(content={'discovered_tools': [{'name': 'weather'}]}, tool_call_id='search'),
+                LoadCapabilityReturnPart(content={'instructions': 'Use Celsius'}, tool_call_id='load'),
+            ]
+        ),
+    ]
+    create_message = AsyncMock(
+        return_value=CreateMessageResult(role='assistant', content=TextContent(type='text', text='Done'), model='test')
+    )
+    Agent(MCPSamplingModel(fake_session(create_message))).run_sync('Continue', message_history=history)
+    assert [msg.model_dump(by_alias=True, exclude_none=True) for msg in create_message.call_args.args[0]] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {'type': 'tool_use', 'id': 'search', 'name': 'search_tools', 'input': {'queries': ['weather']}},
+                    {'type': 'tool_use', 'id': 'load', 'name': 'load_capability', 'input': {'id': 'forecast'}},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'tool_result',
+                        'toolUseId': 'search',
+                        'content': [{'type': 'text', 'text': '{"discovered_tools":[{"name":"weather"}]}'}],
+                        'isError': False,
+                    },
+                    {
+                        'type': 'tool_result',
+                        'toolUseId': 'load',
+                        'content': [{'type': 'text', 'text': '{"instructions":"Use Celsius"}'}],
+                        'isError': False,
+                    },
+                ],
+            },
+            {'role': 'user', 'content': {'type': 'text', 'text': 'Continue'}},
         ]
     )
 
