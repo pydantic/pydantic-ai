@@ -17,9 +17,18 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models import DEFAULT_PROFILE, AbstractModel, Model, infer_model, infer_model_profile, parse_model_id
+from pydantic_ai.models import (
+    DEFAULT_PROFILE,
+    AbstractModel,
+    Model,
+    ModelRequestParameters,
+    infer_model,
+    infer_model_profile,
+    parse_model_id,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
 
@@ -37,6 +46,26 @@ with try_import() as imports_successful:
 
 if not imports_successful():
     pytest.skip('model packages were not installed', allow_module_level=True)  # pragma: lax no cover
+
+
+def test_prepare_model_settings_hook() -> None:
+    """The internal hook runs after generic preparation without changing no-op model behavior."""
+
+    class CustomModel(TestModel):
+        def _prepare_model_settings(
+            self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+        ) -> ModelSettings | None:
+            assert model_request_parameters.output_mode == 'tool'
+            return {**(model_settings or {}), 'max_tokens': 42}
+
+    settings: ModelSettings = {'temperature': 0.2}
+    unchanged, _ = TestModel().prepare_request(settings, ModelRequestParameters(output_mode='auto'))
+    prepared, parameters = CustomModel().prepare_request(settings, ModelRequestParameters(output_mode='auto'))
+
+    assert unchanged is settings
+    assert prepared == {'temperature': 0.2, 'max_tokens': 42}
+    assert settings == {'temperature': 0.2}
+    assert parameters.output_mode == 'tool'
 
 
 # TODO(Marcelo): We need to add Vertex AI to the test cases.

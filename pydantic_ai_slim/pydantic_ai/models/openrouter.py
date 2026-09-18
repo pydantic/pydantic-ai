@@ -871,16 +871,14 @@ class OpenRouterModel(OpenAIChatModel):
         return frozenset({WebSearchTool, AdvisorTool})
 
     @override
-    def prepare_request(
+    def _prepare_model_settings(
         self,
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _openrouter_settings_to_openai_settings(
-            cast(OpenRouterModelSettings, merged_settings or {}), customized_parameters
+    ) -> ModelSettings:
+        return _openrouter_settings_to_openai_settings(
+            cast(OpenRouterModelSettings, model_settings or {}), model_request_parameters
         )
-        return new_settings, customized_parameters
 
     @override
     def _translate_thinking(
