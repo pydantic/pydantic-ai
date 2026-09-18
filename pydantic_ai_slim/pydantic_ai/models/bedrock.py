@@ -343,6 +343,15 @@ LatestBedrockModelNames = Literal[
     # Amazon Nova
     'us.amazon.nova-premier-v1:0',
     'global.amazon.nova-2-lite-v1:0',
+    # OpenAI GPT-5.6 (models that require a cross-region inference profile)
+    'us.openai.gpt-5.6-sol',
+    'global.openai.gpt-5.6-sol',
+    'us.openai.gpt-5.6-luna',
+    'in.openai.gpt-5.6-luna',
+    'global.openai.gpt-5.6-luna',
+    'us.openai.gpt-5.6-terra',
+    'in.openai.gpt-5.6-terra',
+    'global.openai.gpt-5.6-terra',
     # Meta Llama 4
     'us.meta.llama4-maverick-17b-instruct-v1:0',
     'us.meta.llama4-scout-17b-instruct-v1:0',
@@ -989,12 +998,17 @@ class BedrockConverseModel(Model[BaseClient]):
                 if thinking is not False:
                     existing['thinking'] = {'type': 'adaptive'}
                     # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
+                    # The merged profile carries the Anthropic xhigh flag, so `xhigh` passes through on the same
+                    # models as the direct API. Bedrock rejects it on the other models, where it maps to `max`.
                     if (
                         profile.get('bedrock_supports_effort', False)
                         and isinstance(thinking, str)
                         and 'output_config' not in existing
                     ):
-                        existing['output_config'] = {'effort': resolve_anthropic_effort(thinking, supports_xhigh=False)}
+                        effort = resolve_anthropic_effort(
+                            thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                        )
+                        existing['output_config'] = {'effort': effort}
             elif thinking is False:
                 existing['thinking'] = {'type': 'disabled'}
             else:

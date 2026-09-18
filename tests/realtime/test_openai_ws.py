@@ -114,6 +114,7 @@ async def test_enqueued_message_delivery_event(
                 },
                 output_tokens=5,
                 input_tokens=14,
+                cost=Decimal('0.000136'),
             ),
             model_name='gpt-realtime',
             timestamp=IsDatetime(),

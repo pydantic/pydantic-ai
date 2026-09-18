@@ -548,6 +548,7 @@ navigation:
           - "durable-execution"
           - "durable-execution/overview"
           - "integrations/durable_execution"
+          - "durable_execution"
           - "durable_execution/overview"
       - page: "Building a backend"
         path: "durable_execution/backends.md"
@@ -595,6 +596,7 @@ navigation:
             slug: "integrations/ui/overview"
             aliases:
               - "integrations/ui"
+              - "ui/overview"
           - page: "AG-UI"
             path: "ui/ag-ui.md"
             slug: "integrations/ui/ag-ui"
@@ -628,6 +630,7 @@ navigation:
         slug: "integrations/logfire"
         aliases:
           - "logfire"
+          - "observability"
       - page: "Image Generation"
         path: "image-generation.md"
         slug: "guides/image-generation"
@@ -682,6 +685,8 @@ navigation:
           - page: "Overview"
             path: "evals/evaluators/overview.md"
             slug: "evals/evaluators/overview"
+            aliases:
+              - "evals/evaluators"
           - page: "Built-in Evaluators"
             path: "evals/evaluators/built-in.md"
             slug: "evals/evaluators/built-in"

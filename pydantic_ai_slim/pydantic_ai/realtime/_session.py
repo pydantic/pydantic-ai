@@ -1951,7 +1951,7 @@ class RealtimeSession:
                 # at this response boundary. A provider-reported cost arrived in those events too.
                 self.usage.incr(RequestUsage(cost=response.usage.cost))
             self._history.append(response)
-            self.usage.requests += 1
+            self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
             self._tool_run_step += 1
             for part in parts:
                 if isinstance(part, ToolCallPart):
@@ -2804,7 +2804,7 @@ class RealtimeSession:
     async def _handle_usage_event(self, event: SessionUsage) -> None:
         if event.response_scoped:
             self._begin_response()
-        self.usage.incr(event.usage)
+        self.usage.incr(event.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
         if event.response_scoped:
             # Measured before accumulating: a tool-call response is finalized by the accumulation
             # itself, which resets the accumulator.

@@ -64,6 +64,7 @@ from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -223,6 +224,45 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
             ),
         ]
     )
+
+
+@pytest.mark.parametrize('model_name', ['us.openai.gpt-5.6-sol', 'us.openai.gpt-5.6-luna', 'us.openai.gpt-5.6-terra'])
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_gpt_5_6_converse(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    model_name: str,
+):
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    result = await Agent(model).run('Reply with exactly the word: OK')
+
+    assert result.output == snapshot('OK')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == model_name
+    assert response.finish_reason == 'stop'
+
+
+@pytest.mark.parametrize(
+    'model_name', ['global.openai.gpt-5.6-sol', 'global.openai.gpt-5.6-luna', 'global.openai.gpt-5.6-terra']
+)
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_gateway_bedrock_gpt_5_6_converse(
+    allow_model_requests: None, gateway_api_key: str | None, model_name: str
+):
+    provider = gateway_provider(
+        'bedrock',
+        api_key=gateway_api_key or 'test-api-key',
+        base_url=os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.info/proxy'),
+    )
+    model = BedrockConverseModel(model_name, provider=provider)
+    result = await Agent(model).run('Reply with exactly the word: OK', model_settings={'max_tokens': 32})
+
+    assert result.output == snapshot('OK')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == model_name
+    assert response.finish_reason == 'stop'
 
 
 @pytest.mark.vcr()
