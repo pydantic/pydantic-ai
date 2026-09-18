@@ -368,7 +368,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     # A URL Pydantic AI could not read a media type out of, dumped with an
                                     # empty one: recover the kind from the metadata written alongside it,
                                     # rather than letting the empty media prefix make everything a document.
-                                    url_type = _KIND_TO_URL_TYPE.get(provider_meta.get('kind'), DocumentUrl)
+                                    # `provider_metadata` is the client's to send, so normalize before the
+                                    # lookup, which falls back to a document on anything we didn't write.
+                                    url_type = _KIND_TO_URL_TYPE.get(str(provider_meta.get('kind')), DocumentUrl)
                                 file = url_type(
                                     url=part.url,
                                     media_type=part.media_type,

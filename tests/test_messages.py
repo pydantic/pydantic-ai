@@ -1684,7 +1684,9 @@ def test_tool_return_url_items_rehydrate_only_with_media_type(
 
 
 @pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
-def test_extensionless_url_media_type_serializes_null_and_round_trips(url_type: type[FileUrl]) -> None:
+def test_extensionless_url_media_type_serializes_null_and_round_trips(
+    url_type: type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl],
+) -> None:
     """A URL whose media type can't be inferred serializes `media_type: null` and round-trips.
 
     The run itself never needs the media type — providers that take the URL as it is never read one —
