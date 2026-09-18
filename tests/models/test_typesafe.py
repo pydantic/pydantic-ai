@@ -2176,3 +2176,15 @@ async def test_a_bad_threshold_is_refused_before_the_forced_route_spends_a_reque
     agent = Agent(mock_model(unreachable), output_type=[approve], tools=[set_direction])
     with pytest.raises(UserError, match=f'`{setting}` must be between 0 and 1'):
         await agent.run(message_history=history, model_settings=cast(TypeSafeModelSettings, {setting: 1.5}))
+
+
+@pytest.mark.parametrize('noul', [-0.1, 1.5])
+async def test_a_probability_outside_zero_to_one_is_a_model_error_not_a_crash(allow_model_requests: None, noul: float):
+    """Both confidence scalings divide by the room left on their side of the bar, which can be zero.
+
+    At a threshold of 0 a negative probability used to reach `(0 - noul) / 0`. A malformed answer is
+    something the model reports, like every other unexpected answer, rather than a `ZeroDivisionError`.
+    """
+    agent = Agent(mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': noul})), output_type=Ticket)
+    with pytest.raises(UnexpectedModelBehavior, match=f'Unexpected probability from TypeSafe: {noul}'):
+        await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0))

@@ -513,6 +513,10 @@ def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
     side of it the answer fell — like the confidence Jev reports for the other two kinds of question. Under the
     default bar of 0.5 this is the distance from the coin flip, doubled: a no returned at 0.01 reports 0.98.
     """
+    if not 0 <= probability <= 1:
+        # Both scalings divide by the room left on their side of the bar, which a probability outside the
+        # range Jev answers in can make zero. A malformed answer is the model's to report, not a crash.
+        raise UnexpectedModelBehavior(f'Unexpected probability from TypeSafe: {probability!r}')
     if probability >= threshold:
         # An answer exactly at the bar is the least sure one there is, including when the bar is certainty.
         return True, (probability - threshold) / (1 - threshold) if threshold < 1 else 0.0
