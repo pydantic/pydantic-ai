@@ -3250,6 +3250,53 @@ async def test_pump_error_delivered_to_send_is_not_raised_again_by_the_iterator(
             await anext(events)
 
 
+async def test_delivered_pump_error_still_reports_an_in_flight_tool_result() -> None:
+    """A delivered pump error must not cut the iterator off while a tool is still running.
+
+    Ending the stream as soon as the error is seen would drop the `FunctionToolResultEvent` of a tool
+    that goes on to complete successfully, losing a result the session did produce. The iterator
+    instead keeps reading until the pump is finished *and* the last background task is done, which
+    each task's completion callback wakes it to re-check.
+    """
+    release = asyncio.Event()
+
+    class _DyingAfterToolCall(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield RealtimeInputSpeechStartEvent()
+            yield ToolCall(tool_call_id='bg', tool_name='slow', args='{}')
+            raise RuntimeError('socket died')
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return 'done'
+
+    session = RealtimeSession(_DyingAfterToolCall([]), runner)
+    async with session:
+        events = session.__aiter__()
+        seen: list[RealtimeEvent] = [await anext(events) for _ in range(3)]
+
+        assert session._pump_task is not None  # pyright: ignore[reportPrivateUsage]
+        await session._pump_task  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(RuntimeError, match='socket died'):
+            await session.send('x')
+
+        async def drain() -> None:
+            with pytest.raises(StopAsyncIteration):
+                while True:
+                    seen.append(await anext(events))
+
+        draining = asyncio.create_task(drain())
+        await asyncio.sleep(0)
+        assert not draining.done(), 'the iterator ended while the tool was still running'
+
+        release.set()
+        await asyncio.wait_for(draining, timeout=_LIVENESS_TIMEOUT)
+
+    result = seen[-1]
+    assert isinstance(result, FunctionToolResultEvent)
+    assert result.part.content == 'done'
+
+
 @pytest.mark.parametrize('consumer', ['iterating', 'taps_only', 'iterated_then_taps'])
 async def test_pending_message_error_is_delivered_once_to_every_consumer_shape(
     consumer: Literal['iterating', 'taps_only', 'iterated_then_taps'],

@@ -371,10 +371,16 @@ async def test_media_views_subscribe_before_iteration(
     assert transcript_parts[0].transcript
 
 
+@pytest.mark.realtime_ws_hold_open
 async def test_wait_for_playback_drains_audio_before_close(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
-    """A generation boundary does not let session teardown cut off device-paced playback."""
+    """A generation boundary does not let session teardown cut off device-paced playback.
+
+    The recording ends with the reply, but the session is still live: this test stops iterating and
+    then calls another session method, so without holding the socket open the replay's
+    end-of-conversation close would reach that call as a receive-side failure.
+    """
     provider, _ = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
     agent = Agent(instructions='Reply in one short sentence.')
