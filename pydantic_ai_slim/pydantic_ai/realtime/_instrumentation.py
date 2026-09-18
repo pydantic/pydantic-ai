@@ -366,6 +366,20 @@ class SessionInstrumentation:
         if self.chat_span is not None:
             self.chat_span.set_attribute('gen_ai.output.type', output_type)
 
+    def set_conversation_id(self, conversation_id: str) -> None:
+        """Adopt an id the session minted after this helper was constructed.
+
+        A session opened without a `conversation_id` mints one the first time its `conversation` is
+        taken, which can happen after the session span is already open. The span has to carry the
+        same id the session's messages do, or the spoken conversation can't be correlated with the
+        text runs that continue it.
+        """
+        self.conversation_id = conversation_id
+        if self.session_span is not None:
+            self.session_span.set_attribute('gen_ai.conversation.id', conversation_id)
+        if self._session_span_attributes is not None:
+            self._session_span_attributes['gen_ai.conversation.id'] = conversation_id
+
     def _request_config_attributes(self, settings: InstrumentationSettings) -> dict[str, Any]:
         """OTel attribute *values* for the request config the session was opened with.
 

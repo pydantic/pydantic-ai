@@ -9,6 +9,7 @@ import wave
 import weakref
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from copy import copy
 from dataclasses import dataclass, replace
 from time import time_ns
 from types import TracebackType
@@ -28,6 +29,8 @@ from .._tool_execution import (
     cancelled_sub_agent_return,
 )
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
+from .._uuid import uuid7
+from ..conversation import Conversation
 from ..exceptions import ApprovalRequired, CallDeferred, RunCancelled, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
@@ -1247,6 +1250,30 @@ class RealtimeSession:
     def new_messages(self) -> list[ModelMessage]:
         """A snapshot of the messages created during this session (excluding the seeded history)."""
         return list(self._history)
+
+    @property
+    def conversation(self) -> Conversation:
+        """This session's [`Conversation`][pydantic_ai.conversation.Conversation], ready to hand to a text run.
+
+        The same bundle [`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation]
+        produces, so a spoken conversation can be continued by
+        [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] and handed back again, carrying its usage
+        rather than restarting the budget each time it changes modality.
+
+        A session opened without a `conversation_id` mints one here and keeps it, so every bundle
+        taken from the session — and every message it records from then on — shares one identity to
+        store the conversation under.
+        """
+        if self._conversation_id is None:
+            self._conversation_id = str(uuid7())
+            # The session span was opened before this id existed, so hand it over: the messages
+            # recorded from here on carry it, and the span has to agree for the two to correlate.
+            self._session_instrumentation.set_conversation_id(self._conversation_id)
+        return Conversation(
+            messages=self.all_messages(),
+            usage=copy(self.usage),
+            conversation_id=self._conversation_id,
+        )
 
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
         """Create a request carrying the framework-managed session metadata."""
