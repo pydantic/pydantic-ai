@@ -5,9 +5,10 @@ from textwrap import dedent
 from typing import Any
 
 from pydantic import BaseModel, Field
+from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, UserContent, models
+from pydantic_ai import Agent, StructuredDict, UserContent, models
 from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
 from pydantic_ai.settings import ModelSettings
 
@@ -29,11 +30,51 @@ _default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
 class GradingOutput(BaseModel, populate_by_name=True):
     """The output of a grading operation."""
 
-    reason: str = Field(
+    reason: str | None = Field(
         description='A concise 1-2 sentence justification for the verdict.',
     )
     pass_: bool = Field(validation_alias='pass', serialization_alias='pass')
     score: float
+
+
+class _BinaryGradingOutput(BaseModel, populate_by_name=True):
+    """Judge an output against a rubric."""
+
+    pass_: bool = Field(
+        validation_alias='pass',
+        serialization_alias='pass',
+        description=(
+            'Is the statement in <Rubric> true for <Output>, taking <Input> and <ExpectedOutput> into account '
+            'when present?'
+        ),
+    )
+
+
+_non_text_judge_agent = Agent(name='judge_without_text', output_type=_BinaryGradingOutput)
+
+
+async def _resolve_judge_model(model: models.Model | models.KnownModelName | str | None) -> models.Model:
+    model = model or _default_model
+    if isinstance(model, models.Model):
+        return model
+    return models.infer_model(model)
+
+
+async def _run_grading_agent(
+    agent: Agent[None, GradingOutput],
+    user_prompt: str | Sequence[str | UserContent],
+    model: models.Model | models.KnownModelName | str | None,
+    model_settings: ModelSettings | None,
+) -> GradingOutput:
+    resolved_model = await _resolve_judge_model(model)
+    if not resolved_model.profile.get('supports_text_output', True):
+        result = await _non_text_judge_agent.run(
+            user_prompt,
+            model=resolved_model,
+            model_settings=model_settings,
+        )
+        return GradingOutput(reason=None, pass_=result.output.pass_, score=float(result.output.pass_))
+    return (await agent.run(user_prompt, model=resolved_model, model_settings=model_settings)).output
 
 
 _JUDGE_REASON_INSTRUCTION = (
@@ -77,9 +118,7 @@ async def judge_output(
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric)
-    return (
-        await _judge_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
-    ).output
+    return await _run_grading_agent(_judge_output_agent, user_prompt, model, model_settings)
 
 
 _judge_input_output_agent = Agent(
@@ -120,9 +159,7 @@ async def judge_input_output(
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric)
 
-    return (
-        await _judge_input_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
-    ).output
+    return await _run_grading_agent(_judge_input_output_agent, user_prompt, model, model_settings)
 
 
 _judge_input_output_expected_agent = Agent(
@@ -166,11 +203,7 @@ async def judge_input_output_expected(
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
 
-    return (
-        await _judge_input_output_expected_agent.run(
-            user_prompt, model=model or _default_model, model_settings=model_settings
-        )
-    ).output
+    return await _run_grading_agent(_judge_input_output_expected_agent, user_prompt, model, model_settings)
 
 
 _judge_output_expected_agent = Agent(
@@ -210,11 +243,7 @@ async def judge_output_expected(
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)
-    return (
-        await _judge_output_expected_agent.run(
-            user_prompt, model=model or _default_model, model_settings=model_settings
-        )
-    ).output
+    return await _run_grading_agent(_judge_output_expected_agent, user_prompt, model, model_settings)
 
 
 def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:
@@ -291,12 +320,42 @@ def _build_prompt(
 class GEvalOutput(BaseModel):
     """The output of a G-Eval grading operation.
 
-    G-Eval asks the judge to emit a short chain-of-thought `reason` followed by an
+    G-Eval asks a text-generating judge to emit a short chain-of-thought `reason` followed by an
     integer `score` in a user-specified range (see [`judge_g_eval`][pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval]).
+    A judge that cannot write text returns the score with `reason=None`.
     """
 
-    reason: str
+    reason: str | None
     score: int
+
+
+def _g_eval_output_type(score_range: tuple[int, int]) -> type[JsonSchemaValue]:
+    """A normalized integer rubric for a judge that cannot write the reasoning trace."""
+    minimum, maximum = score_range
+    levels = []
+    for score in range(minimum, maximum + 1):
+        if score == minimum:
+            description = f'{score}: the worst score according to the evaluation criteria.'
+        elif score == maximum:
+            description = f'{score}: the best score according to the evaluation criteria.'
+        else:
+            description = f'{score}: an intermediate score between the worst and best.'
+        levels.append({'const': score - minimum, 'description': description})
+    return StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'score': {
+                    'description': 'What score does the output earn according to the criteria and evaluation steps?',
+                    'anyOf': levels,
+                }
+            },
+            'required': ['score'],
+            'additionalProperties': False,
+        },
+        name='GEvalScore',
+        description='Grade the output using the evaluation criteria and steps.',
+    )
 
 
 _judge_g_eval_agent = Agent(
@@ -370,9 +429,23 @@ async def judge_g_eval(
         ]
     )
     user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
-    result = (
-        await _judge_g_eval_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
-    ).output
+    resolved_model = await _resolve_judge_model(model)
+    if not resolved_model.profile.get('supports_text_output', True):
+        normalized = (
+            await _non_text_judge_agent.run(
+                user_prompt,
+                model=resolved_model,
+                model_settings=model_settings,
+                output_type=_g_eval_output_type(score_range),
+            )
+        ).output.get('score')
+        if not isinstance(normalized, int) or isinstance(normalized, bool):
+            raise ValueError(f'Judge returned an invalid score: {normalized!r}')
+        result = GEvalOutput(reason=None, score=normalized + score_range[0])
+    else:
+        result = (
+            await _judge_g_eval_agent.run(user_prompt, model=resolved_model, model_settings=model_settings)
+        ).output
     if not score_range[0] <= result.score <= score_range[1]:
         raise ValueError(f'Judge returned score {result.score}, outside the requested `score_range` {score_range!r}')
     return result

@@ -29,7 +29,7 @@ with try_import() as imports_successful:
         MaxDuration,
         OutputConfig,
     )
-    from pydantic_evals.evaluators.llm_as_a_judge import GEvalOutput
+    from pydantic_evals.evaluators.llm_as_a_judge import GEvalOutput, GradingOutput
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanQuery
 
@@ -358,6 +358,16 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
 
+async def test_llm_judge_omits_an_unavailable_reason(mocker: MockerFixture):
+    mocker.patch(
+        'pydantic_evals.evaluators.llm_as_a_judge.judge_output',
+        return_value=GradingOutput(reason=None, pass_=True, score=1.0),
+    )
+    evaluator = LLMJudge(rubric='Content contains a greeting')
+
+    assert to_jsonable_python(await evaluator.evaluate(MockContext(output='Hello'))) == snapshot({'LLMJudge': True})
+
+
 @pytest.mark.anyio
 async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
     """Test LLMJudge evaluator with specific model_settings."""
@@ -547,6 +557,18 @@ async def test_g_eval_evaluator(mocker: MockerFixture):
     evaluator = GEval(criteria='fluency', evaluation_steps=['Check grammar.'])
     await evaluator.evaluate(ctx)
     assert mock_judge_g_eval.call_args.kwargs['inputs'] is None
+
+
+async def test_g_eval_preserves_an_unavailable_reason(mocker: MockerFixture):
+    mocker.patch(
+        'pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval',
+        return_value=GEvalOutput(reason=None, score=4),
+    )
+    evaluator = GEval(criteria='clarity', evaluation_steps=['Read it.'])
+
+    assert to_jsonable_python(await evaluator.evaluate(MockContext(output='Clear.'))) == snapshot(
+        {'value': 4, 'reason': None}
+    )
 
 
 def test_g_eval_validates_arguments_at_construction():

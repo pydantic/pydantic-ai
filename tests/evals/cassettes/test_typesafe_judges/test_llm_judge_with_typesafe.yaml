@@ -1,0 +1,53 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '400'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        pass:
+          instructions:
+            field: pass
+            goal: Judge an output against a rubric.
+            question: Is the statement in <Rubric> true for <Output>, taking <Input> and <ExpectedOutput> into account when
+              present?
+          type: noul
+      state: |-
+        <Output>
+        Checkout returns a 500 for every customer right now.
+        </Output>
+        <Rubric>
+        The ticket is urgent.
+        </Rubric>
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '129'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        pass:
+          noul: 0.86
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 358
+        output_tokens: 20
+    status:
+      code: 200
+      message: OK
+version: 1

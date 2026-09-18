@@ -227,6 +227,9 @@ class LLMJudge(Evaluator[object, object, object]):
 
     If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    A judge whose profile has `supports_text_output=False` returns only the typed pass/fail verdict. Its reason is
+    unavailable, and its score is `1.0` for pass or `0.0` for fail.
     """
 
     rubric: str
@@ -296,6 +299,8 @@ class GEval(Evaluator[object, object, object]):
 
     If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    A judge whose profile has `supports_text_output=False` returns the same integer score scale without a reason.
 
     !!! note "Simplified G-Eval"
         The paper computes a probability-weighted expectation over score tokens using log-probs.

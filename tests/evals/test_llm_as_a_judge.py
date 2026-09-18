@@ -12,6 +12,7 @@ with try_import() as imports_successful:
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.models.test import TestModel
     from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GEvalOutput,
@@ -30,6 +31,12 @@ with try_import() as imports_successful:
     )
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
+
+@pytest.fixture(autouse=True)
+def _default_judge_model(monkeypatch: pytest.MonkeyPatch):
+    """Keep mocked judge tests independent of provider credentials."""
+    monkeypatch.setattr('pydantic_evals.evaluators.llm_as_a_judge._default_model', TestModel())
 
 
 def test_grading_output():
@@ -85,6 +92,86 @@ async def test_judge_prompts_constrain_reason():
     for system_prompt in captured:
         assert 'concise 1-2 sentence justification' in system_prompt
         assert 'Do not include your reasoning process' in system_prompt
+
+
+async def test_judge_output_without_text_support():
+    """A verdict-only judge gets one boolean question and reports no invented reason."""
+    schemas: list[dict[str, object]] = []
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        schemas.append(output_tool.parameters_json_schema)
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, {'pass': True})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    result = await judge_output('Hello world', 'Content contains a greeting', model=model)
+
+    assert result == GradingOutput(reason=None, pass_=True, score=1.0)
+    assert schemas == snapshot(
+        [
+            {
+                'properties': {
+                    'pass': {
+                        'description': 'Is the statement in <Rubric> true for <Output>, taking <Input> and '
+                        '<ExpectedOutput> into account when present?',
+                        'type': 'boolean',
+                    },
+                },
+                'required': ['pass'],
+                'title': '_BinaryGradingOutput',
+                'type': 'object',
+            }
+        ]
+    )
+
+
+async def test_judge_g_eval_without_text_support():
+    """A reason-less G-Eval judge gets a normalized rubric and returns the requested integer scale."""
+    schemas: list[dict[str, object]] = []
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        schemas.append(output_tool.parameters_json_schema)
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, {'score': 3})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    result = await judge_g_eval('Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model)
+
+    assert result == GEvalOutput(reason=None, score=4)
+    assert schemas == snapshot(
+        [
+            {
+                'type': 'object',
+                'properties': {
+                    'score': {
+                        'description': 'What score does the output earn according to the criteria and evaluation steps?',
+                        'anyOf': [
+                            {'const': 0, 'description': '1: the worst score according to the evaluation criteria.'},
+                            {'const': 1, 'description': '2: an intermediate score between the worst and best.'},
+                            {'const': 2, 'description': '3: an intermediate score between the worst and best.'},
+                            {'const': 3, 'description': '4: an intermediate score between the worst and best.'},
+                            {'const': 4, 'description': '5: the best score according to the evaluation criteria.'},
+                        ],
+                    }
+                },
+                'required': ['score'],
+                'additionalProperties': False,
+                'title': 'GEvalScore',
+            }
+        ]
+    )
+
+
+async def test_judge_g_eval_without_text_support_rejects_an_invalid_score():
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'score': 'high'})])
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    with pytest.raises(ValueError, match="Judge returned an invalid score: 'high'"):
+        await judge_g_eval('Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model)
 
 
 def test_stringify():
