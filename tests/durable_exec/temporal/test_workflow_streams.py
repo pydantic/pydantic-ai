@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator
@@ -873,48 +874,93 @@ async def test_the_publisher_passes_a_wrapped_handler_the_stream_outside_an_acti
 
 
 # --- Driving a UI protocol over the workflow boundary ---------------------------------------------
+#
+# The shape the Temporal docs document: the HTTP handler turns the request into a protocol stream,
+# and the workflow rebuilds the run arguments from the same request body. These tests run that code
+# rather than a hand-built run input, so the documented flow is the thing under test.
+
+with workflow.unsafe.imports_passed_through():
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+
+def _request_body(text: str = 'Hello') -> bytes:
+    """What a Vercel AI frontend POSTs to a chat endpoint."""
+    return json.dumps(
+        {
+            'trigger': 'submit-message',
+            'id': 'chat-1',
+            'messages': [{'id': 'msg-1', 'role': 'user', 'parts': [{'type': 'text', 'text': text}]}],
+        }
+    ).encode()
+
+
+@workflow.defn
+class ChatWorkflow:
+    @workflow.init
+    def __init__(self, body: bytes) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, body: bytes) -> str:
+        adapter = VercelAIAdapter(agent=_agent, run_input=VercelAIAdapter.build_run_input(body))
+        async with self.events:
+            result = await _agent.run(
+                message_history=adapter.messages,
+                deferred_tool_results=adapter.deferred_tool_results,
+                conversation_id=adapter.conversation_id,
+            )
+        return result.output
+
+
+def _chat_adapter(body: bytes) -> VercelAIAdapter[Any, Any]:
+    """What the HTTP handler builds, from the same body it hands the workflow."""
+    return VercelAIAdapter(agent=_agent, run_input=VercelAIAdapter.build_run_input(body))
 
 
 async def test_the_events_drive_a_ui_adapter(client: Client) -> None:
     """The point of the terminal event: the stream is what a `UIAdapter` already consumes.
 
-    An HTTP handler can start the workflow and serve the protocol stream straight from the topic,
-    with `on_complete` receiving the run result exactly as it would for an in-process run.
+    The handler starts the workflow and serves the protocol stream straight from the topic, with
+    `on_complete` receiving the run result exactly as it would for an in-process run.
     """
-    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
-    from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage
-
     completed: list[str] = []
 
     async def on_complete(result: Any) -> None:
         completed.append(result.output)
 
+    body = _request_body()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[StreamingWorkflow],
+        workflows=[ChatWorkflow],
         plugins=[AgentPlugin(_agent)],
         workflow_runner=UnsandboxedWorkflowRunner(),
     ):
         handle = await client.start_workflow(
-            StreamingWorkflow.run,
-            args=['Hello'],
-            id=f'{StreamingWorkflow.__name__}-{uuid.uuid4()}',
+            ChatWorkflow.run,
+            args=[body],
+            id=f'{ChatWorkflow.__name__}-{uuid.uuid4()}',
             task_queue=TASK_QUEUE,
         )
-        adapter = VercelAIAdapter(agent=_agent, run_input=SubmitMessage(id='chat-1', messages=[]))
         chunks = await _collect(
-            adapter.transform_stream(
-                _durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50)),
+            _chat_adapter(body).transform_stream(
+                _durability.stream_agent_events(
+                    client, handle, output_type=str, poll_cooldown=timedelta(milliseconds=50)
+                ),
                 on_complete=on_complete,
             )
         )
-        await handle.result()
+        output = await handle.result()
 
+    # The workflow received the frontend's message, not the raw bytes.
     assert 'TextDeltaChunk' in _kinds(chunks)
     assert 'ToolInputAvailableChunk' in _kinds(chunks)
     assert 'ToolOutputAvailableChunk' in _kinds(chunks)
-    assert completed == ['Streamed response']
+    assert completed == [output] == ['Streamed response']
+
+    # `transform_stream` needs the terminal event to close the protocol out; without it the stream
+    # would end mid-message and the frontend would never see the run finish.
+    assert _kinds(chunks)[-2:] == ['FinishChunk', 'DoneChunk']
 
 
 async def test_a_reattached_ui_replays_the_whole_run(client: Client) -> None:
@@ -922,51 +968,46 @@ async def test_a_reattached_ui_replays_the_whole_run(client: Client) -> None:
 
     The stream is the workflow's own state, so a consumer that reattaches from offset 0 replays
     every event the run has produced so far and keeps going from there. That is what lets a browser
-    refresh, or a crashed HTTP process, resume a run it did not start.
+    refresh, or a crashed HTTP process, resume a run it did not start: the reattaching endpoint has
+    only the workflow ID and the stored request body, never a handle on the run itself.
     """
-    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
-    from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage
-
     completed: list[str] = []
 
     async def on_complete(result: Any) -> None:
         completed.append(result.output)
 
-    def adapter() -> VercelAIAdapter[Any, Any]:
-        return VercelAIAdapter(agent=_agent, run_input=SubmitMessage(id='chat-1', messages=[]))
-
+    body = _request_body()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[StreamingWorkflow],
+        workflows=[ChatWorkflow],
         plugins=[AgentPlugin(_agent)],
         workflow_runner=UnsandboxedWorkflowRunner(),
     ):
-        handle = await client.start_workflow(
-            StreamingWorkflow.run,
-            args=['Hello'],
-            id=f'{StreamingWorkflow.__name__}-{uuid.uuid4()}',
-            task_queue=TASK_QUEUE,
-        )
+        workflow_id = f'{ChatWorkflow.__name__}-{uuid.uuid4()}'
+        await client.start_workflow(ChatWorkflow.run, args=[body], id=workflow_id, task_queue=TASK_QUEUE)
 
         # The first connection drops after a couple of chunks, the way a closed browser tab does.
         dropped: list[Any] = []
         async with _durability.stream_agent_events(
-            client, handle, poll_cooldown=timedelta(milliseconds=50)
+            client, client.get_workflow_handle(workflow_id), output_type=str, poll_cooldown=timedelta(milliseconds=50)
         ) as interrupted:
-            async for chunk in adapter().transform_stream(interrupted):
+            async for chunk in _chat_adapter(body).transform_stream(interrupted):
                 dropped.append(chunk)
                 if len(dropped) == 2:
                     break
 
-        # Reconnecting from the start replays what was missed and finishes the run.
+        # The reattaching endpoint holds only the workflow ID and the stored body.
+        reattached_handle = client.get_workflow_handle(workflow_id)
         reattached = await _collect(
-            adapter().transform_stream(
-                _durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50)),
+            _chat_adapter(body).transform_stream(
+                _durability.stream_agent_events(
+                    client, reattached_handle, output_type=str, poll_cooldown=timedelta(milliseconds=50)
+                ),
                 on_complete=on_complete,
             )
         )
-        output = await handle.result()
+        output = await reattached_handle.result()
 
     assert len(dropped) == 2
     assert _kinds(reattached[: len(dropped)]) == _kinds(dropped)
