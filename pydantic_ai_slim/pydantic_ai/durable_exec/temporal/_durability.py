@@ -677,10 +677,6 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None  # not spec-constructible: it only exists as `TemporalDurability`'s companion
-
     async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
         self._durability._publish_terminal_event(result)  # pyright: ignore[reportPrivateUsage]
         return result
