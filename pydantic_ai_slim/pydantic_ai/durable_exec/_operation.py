@@ -5,6 +5,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass
 from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
 
+from typing_extensions import TypeForm
+
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
@@ -321,7 +323,7 @@ class NoCacheIdentity(CacheIdentity[ParamsT], Generic[ParamsT]):
 class TypedResultCodec(ResultCodec[ResultT], Generic[ResultT]):
     """Encode and validate results using a declared runtime result type."""
 
-    def __init__(self, result_type: object, *, mode: Literal['json', 'identity'] = 'json') -> None:
+    def __init__(self, result_type: TypeForm[Any], *, mode: Literal['json', 'identity'] = 'json') -> None:
         self._result_type = result_type
         self._codec: DurabilityCodec = JSON_CODEC if mode == 'json' else IDENTITY_CODEC
 

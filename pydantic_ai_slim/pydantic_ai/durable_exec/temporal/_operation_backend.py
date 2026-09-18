@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, Generic, Literal, Protocol, TypeVar, cast
+from typing import Any, Generic, Literal, Optional, Protocol, TypeVar, cast
 
 from temporalio import activity
 from temporalio.workflow import ActivityConfig
+from typing_extensions import TypeForm
 
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
@@ -36,7 +37,7 @@ ResultT = TypeVar('ResultT')
 
 class TemporalParameterTransport(ParameterTransport[ParamsT, WireT], Protocol[ParamsT, WireT]):
     wire_type: object
-    result_type: object
+    result_type: TypeForm[Any]
 
     @abstractmethod
     def dump(self, params: ParamsT) -> WireT: ...
@@ -152,7 +153,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         self,
         *,
         agent_name: str,
-        deps_type: type[Any],
+        deps_type: TypeForm[Any],
         model_config: ActivityConfig,
         event_config: ActivityConfig,
         tool_config: ActivityConfig,
@@ -193,7 +194,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         # registered callable, so patch the exact function that the SDK will inspect.
         activity_handler.__annotations__ = {
             'params': transport.wire_type,
-            'deps': self._deps_type | None,
+            'deps': Optional[self._deps_type],  # noqa: UP045
             'return': transport.result_type,
         }
         registration = activity.defn(name=name)(activity_handler)

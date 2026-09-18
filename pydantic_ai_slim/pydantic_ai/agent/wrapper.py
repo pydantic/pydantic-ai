@@ -4,6 +4,8 @@ from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, overload
 
+from typing_extensions import TypeForm
+
 from .. import (
     _instructions,
     _utils,
@@ -80,7 +82,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.wrapped.description = value
 
     @property
-    def deps_type(self) -> type:
+    def deps_type(self) -> TypeForm[AgentDepsT]:
         return self.wrapped.deps_type
 
     @property

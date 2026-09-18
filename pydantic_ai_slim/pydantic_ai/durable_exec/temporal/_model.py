@@ -5,11 +5,12 @@ from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from pydantic import ConfigDict, PydanticSchemaGenerationError, TypeAdapter, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
+from typing_extensions import TypeForm
 
 from pydantic_ai import ModelMessage, ModelResponse, models
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
@@ -67,7 +68,7 @@ class TemporalModel(WrapperModel):
         *,
         activity_name_prefix: str,
         activity_config: ActivityConfig,
-        deps_type: type[AgentDepsT],
+        deps_type: TypeForm[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         event_stream_handler: EventStreamHandler[Any] | None = None,
         models: Mapping[str, Model] | None = None,
@@ -116,7 +117,7 @@ class TemporalModel(WrapperModel):
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         # Union with None for backward compatibility with activity payloads created before deps was added
-        request_activity.__annotations__['deps'] = deps_type | None
+        request_activity.__annotations__['deps'] = Optional[deps_type]  # noqa: UP045
 
         self.request_activity = activity.defn(name=f'{activity_name_prefix}__model_request')(request_activity)
 
@@ -145,12 +146,13 @@ class TemporalModel(WrapperModel):
 
         # Set type hint explicitly so that Temporal can take care of serialization and deserialization
         # Union with None for backward compatibility with activity payloads created before deps was added
-        request_stream_activity.__annotations__['deps'] = deps_type | None
+        request_stream_activity.__annotations__['deps'] = Optional[deps_type]  # noqa: UP045
 
         self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
             request_stream_activity
         )
 
+        deps_type_adapter: TypeAdapter[AgentDepsT]
         try:
             deps_type_adapter = TypeAdapter(deps_type)
         except PydanticSchemaGenerationError:

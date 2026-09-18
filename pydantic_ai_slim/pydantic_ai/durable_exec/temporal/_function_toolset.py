@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
+from typing_extensions import TypeForm
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai.durable_exec._toolset import (
@@ -37,7 +38,7 @@ def temporalize_function_toolset(
     activity_name_prefix: str,
     activity_config: ActivityConfig,
     tool_activity_config: dict[str, ActivityConfig | Literal[False]],
-    deps_type: type[AgentDepsT],
+    deps_type: TypeForm[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
 ) -> DurableFunctionToolset[AgentDepsT]:

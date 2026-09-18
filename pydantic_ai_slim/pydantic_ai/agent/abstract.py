@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypedDict, TypeIs, TypeVar
+from typing_extensions import Self, TypedDict, TypeForm, TypeIs, TypeVar
 
 from pydantic_graph import End
 
@@ -381,7 +381,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @property
     @abstractmethod
-    def deps_type(self) -> type:
+    def deps_type(self) -> TypeForm[AgentDepsT]:
         """The type of dependencies used by the agent."""
         raise NotImplementedError
 
