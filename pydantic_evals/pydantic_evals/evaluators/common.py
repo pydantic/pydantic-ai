@@ -246,7 +246,7 @@ class LLMJudge(Evaluator[object, object, object]):
     ) -> EvaluatorOutput:
         if self.include_input:
             if self.include_expected_output:
-                from .llm_as_a_judge import _judge_input_output_expected
+                from .llm_as_a_judge import _judge_input_output_expected  # pyright: ignore[reportPrivateUsage]
 
                 grading_output = await _judge_input_output_expected(
                     ctx.inputs,
@@ -258,7 +258,7 @@ class LLMJudge(Evaluator[object, object, object]):
                     allow_reasonless=True,
                 )
             else:
-                from .llm_as_a_judge import _judge_input_output
+                from .llm_as_a_judge import _judge_input_output  # pyright: ignore[reportPrivateUsage]
 
                 grading_output = await _judge_input_output(
                     ctx.inputs,
@@ -270,7 +270,7 @@ class LLMJudge(Evaluator[object, object, object]):
                 )
         else:
             if self.include_expected_output:
-                from .llm_as_a_judge import _judge_output_expected
+                from .llm_as_a_judge import _judge_output_expected  # pyright: ignore[reportPrivateUsage]
 
                 grading_output = await _judge_output_expected(
                     ctx.output,
@@ -281,7 +281,7 @@ class LLMJudge(Evaluator[object, object, object]):
                     allow_reasonless=True,
                 )
             else:
-                from .llm_as_a_judge import _judge_output
+                from .llm_as_a_judge import _judge_output  # pyright: ignore[reportPrivateUsage]
 
                 grading_output = await _judge_output(
                     ctx.output, self.rubric, self.model, self.model_settings, allow_reasonless=True
@@ -342,7 +342,7 @@ class GEval(Evaluator[object, object, object]):
             raise ValueError('`evaluation_steps` must contain at least one step')
 
     async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
-        from .llm_as_a_judge import _judge_g_eval
+        from .llm_as_a_judge import _judge_g_eval  # pyright: ignore[reportPrivateUsage]
 
         g_eval_output = await _judge_g_eval(
             ctx.output,

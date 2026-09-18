@@ -230,7 +230,7 @@ async def test_judge_g_eval_without_text_support_rejects_too_many_score_levels()
     async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal request_made
         request_made = True
-        return ModelResponse()
+        return ModelResponse(parts=[])
 
     model = FunctionModel(answer, profile={'supports_text_output': False})
     with pytest.raises(
@@ -254,7 +254,7 @@ async def test_public_judge_helpers_require_a_reason():
     async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal request_made
         request_made = True
-        return ModelResponse()
+        return ModelResponse(parts=[])
 
     model = FunctionModel(answer, profile={'supports_text_output': False})
     with pytest.raises(UserError, match='Use the `LLMJudge` evaluator'):
