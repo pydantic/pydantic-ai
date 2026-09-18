@@ -5234,7 +5234,12 @@ def test_enum_member_docstrings_describe_options():
     assert json_schema['parameters_json_schema']['$defs'] == snapshot(
         {
             'Priority': {
-                'enum': ['low', 'high', 'unknown', 'annotated'],
+                'anyOf': [
+                    {'const': 'low', 'description': 'Can wait a week.'},
+                    {'const': 'high', 'description': 'Needs attention today.'},
+                    {'const': 'unknown'},
+                    {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+                ],
                 'description': 'How urgent the ticket is.',
                 'title': 'Priority',
                 'type': 'string',
@@ -5286,8 +5291,14 @@ def test_a_none_member_keeps_the_enum_in_its_plain_form():
     assert seen[0]['$defs']['Settled'] == snapshot({'enum': ['yes', None], 'title': 'Settled'})
 
 
-def test_enum_member_docstrings_follow_the_models_docstring_switch():
-    """An output model reads them on `use_attribute_docstrings`, like a field docstring; a bare enum is described."""
+def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
+    """Wherever Pydantic AI describes an enum to a model, the docstrings under its options are read.
+
+    An earlier shape gated this on the enclosing model's `use_attribute_docstrings`. That config is pushed
+    while the core schema is built and never while the JSON schema is generated, so an enum reached from a
+    tool's parameters was silently left bare even though `_function_schema` sets it — a rule that held in
+    three places out of four, with nothing to tell the user which one they were in.
+    """
 
     class Quiet(BaseModel):
         level: Level
@@ -5312,7 +5323,15 @@ def test_enum_member_docstrings_follow_the_models_docstring_switch():
         return seen[0]
 
     assert defs(Quiet)['$defs']['Level'] == snapshot(
-        {'enum': ['low', 'high', 'annotated'], 'title': 'Level', 'type': 'string'}
+        {
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high'},
+                {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+            ],
+            'title': 'Level',
+            'type': 'string',
+        }
     )
     assert defs(Described)['$defs']['Level'] == snapshot(
         {

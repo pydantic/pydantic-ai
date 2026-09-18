@@ -3757,7 +3757,10 @@ async def test_mistral_enum_member_docstrings_reach_the_wire(
         {
             '$defs': {
                 'TicketPriority': {
-                    'enum': ['low', 'high'],
+                    'anyOf': [
+                        {'const': 'low', 'description': 'Can wait a week.'},
+                        {'const': 'high', 'description': 'Needs attention today.'},
+                    ],
                     'description': 'How urgent the ticket is.',
                     'title': 'TicketPriority',
                     'type': 'string',

@@ -7455,7 +7455,11 @@ async def test_google_enum_member_docstrings_reach_the_wire(
                 'type': 'object',
                 '$defs': {
                     'TicketPriority': {
-                        'description': 'How urgent the ticket is.',
+                        'description': """\
+How urgent the ticket is.
+low: Can wait a week.
+high: Needs attention today.\
+""",
                         'type': 'string',
                         'enum': ['low', 'high'],
                     }

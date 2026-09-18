@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Annotated, Any, ClassVar, Concatenate, Generic, Literal, TypeAlias, Union, cast
+from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
 from pydantic import AliasChoices, Field
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -271,17 +271,18 @@ A = TypeVar('A')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
-    describe_enum_members: ClassVar[bool] = False
-    """Read the docstring under each `Enum` member even when the enclosing model does not opt in."""
-
     def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
         # A docstring under an enum member describes that option, as `anyOf` of `const`s with descriptions
-        # (the JSON Schema way to describe single values), so models can tell the options apart. Read on the
-        # same switch as a docstring under a field, `use_attribute_docstrings` on the enclosing model, which a
-        # tool's parameters set; a model of the user's own opts in, and a bare output is described for it.
+        # (the JSON Schema way to describe single values), so models can tell the options apart.
+        #
+        # This is read wherever Pydantic AI describes an enum to a model, and not gated on the enclosing
+        # model's `use_attribute_docstrings`. That config is pushed while the *core* schema is built, and
+        # nothing pushes it while the JSON schema is generated, so an enum reached from a tool's parameters
+        # never saw it even though `_function_schema` sets it — the option descriptions were dropped with
+        # no way for the user to notice. A rule that works in three places out of four is worse than either
+        # answer, so the docstrings a user wrote under their options are read in all four.
         json_schema = super().enum_schema(schema)
-        read = self.describe_enum_members or self._config.use_attribute_docstrings
-        docstrings = _utils.enum_member_docstrings(schema['cls']) if read else {}
+        docstrings = _utils.enum_member_docstrings(schema['cls'])
         # A `None` member has no `const` a schema can carry: `{'const': None}` reads as "no const" to anything
         # that looks the key up with a default, and the option silently loses its constraint. Such an enum keeps
         # the plain `enum` list, which states every value including the null.
