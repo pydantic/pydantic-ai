@@ -1,0 +1,20 @@
+# Evaluation-judge benchmark
+
+120 support tickets; concurrency 8. LLMJudge latency is per ticket for the urgency and area judges together.
+GEval correlation is Pearson correlation against urgent → 4 and non-urgent → 0.
+
+## LLMJudge
+
+| judge | urgency agreement | area agreement | both labels | median | p95 | wall time (120) | cost |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `typesafe:jev-latest` | 105/120 | 109/120 | 96/120 | 203 ms | 405 ms | 3.7 s | not reported |
+| `openai:gpt-5.6-sol` | 112/120 | 116/120 | 109/120 | 3241 ms | 5160 ms | 53.5 s | $0.7382 |
+| `anthropic:claude-opus-5` | 103/120 | 107/120 | 91/120 | 3202 ms | 6005 ms | 62.1 s | $2.4348 |
+
+## GEval (urgency, 0–4)
+
+| judge | score correlation | median | p95 | wall time (120) | cost |
+|---|---:|---:|---:|---:|---:|
+| `typesafe:jev-latest` | 0.898 | 175 ms | 354 ms | 3.5 s | not reported |
+| `openai:gpt-5.6-sol` | 0.849 | 2767 ms | 4312 ms | 45.7 s | $0.4175 |
+| `anthropic:claude-opus-5` | 0.940 | 4633 ms | 6486 ms | 72.8 s | $1.4202 |
