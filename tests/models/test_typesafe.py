@@ -2195,9 +2195,13 @@ async def test_a_union_below_the_threshold_fills_the_likeliest_output_type(allow
     assert list(seen[1]['questions']) == ['security']
 
 
-async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None, typesafe_model: TypeSafeModel):
+async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None):
     """One instruction cannot describe two different routes, so each member says what it is for itself."""
-    agent = Agent(typesafe_model, output_type=[Ticket, WithOptional], instructions='Handle the ticket.')
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a union member without a docstring must be refused before any request')
+
+    agent = Agent(mock_model(unreachable), output_type=[Ticket, WithOptional], instructions='Handle the ticket.')
     with pytest.raises(UserError, match="'final_result_WithOptional' says nothing about itself"):
         await agent.run('anything')
 
