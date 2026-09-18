@@ -361,7 +361,10 @@ def terminal_width(stream: IO[str]) -> int | None:
         pass
 
     columns = os.environ.get('COLUMNS', '')
-    if columns.isdigit():
+    # `isdecimal` rather than `isdigit`, which also accepts the likes of `²` — a width `int` then
+    # refuses, and the banner would be lost to the `except` that a failed measurement lands in
+    # rather than simply falling back to the width it was designed for.
+    if columns.isdecimal():
         width = int(columns)
     # A terminal that reports zero columns is one that doesn't know, not one with no room.
     return width or None

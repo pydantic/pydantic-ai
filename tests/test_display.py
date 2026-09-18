@@ -560,6 +560,23 @@ def test_the_banner_is_laid_out_for_the_terminal_it_is_written_to(monkeypatch: p
     assert max(map(len, stderr.getvalue().splitlines())) <= 70
 
 
+@pytest.mark.parametrize('columns', ['²', '⅓', '', '0', 'eighty', '-1', ' 70 '])
+def test_a_columns_that_is_not_a_width_costs_only_the_measurement(
+    columns: str, monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """`'²'.isdigit()` is True and `int('²')` is not, and the banner is what a raise here would cost.
+
+    A failed measurement lands in the `except` around the whole display, so the user would lose the
+    banner outright over a `COLUMNS` nobody can read — rather than get it at the default width.
+    """
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('COLUMNS', columns)
+
+    display_banner()
+
+    assert 'agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0' in stderr.getvalue()
+
+
 @pytest.mark.skipif(not imports_successful(), reason='pseudo-terminals are POSIX-only')
 def test_the_banner_asks_the_terminal_itself_how_wide_it_is(monkeypatch: pytest.MonkeyPatch):
     """`COLUMNS` is unset in most shells, so the size has to come from the terminal on the far end.
