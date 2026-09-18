@@ -301,7 +301,7 @@ print(result.output)
 #> True
 ```
 
-The whole history goes, so trim it to what the question is about — `message_history=conversation.all_messages()[-4:]`, or a [history processor](../message-history.md#processing-message-history). Accuracy falls as the state grows with detail the question does not need, and `jev-1.13` takes 64k tokens for the state and questions together, with 32k for the state plus the longest question.
+The whole history goes, so trim it to what the question is about — `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability such as the [harness](https://github.com/pydantic/pydantic-ai-harness)'s `SlidingWindow`, `ClearToolResults` and `SummarizingCompaction`, which work on a Jev agent as on any other; a summary they write arrives as a `system` entry in the history, which is what it is. Accuracy falls as the state grows with detail the question does not need, and `jev-1.13` takes 64k tokens for the state and questions together, with 32k for the state plus the longest question. Compact earlier than a language model would need, since Jev is being asked to *judge* the whole of it, not to continue from it.
 
 !!! note "A system prompt is judged, not asked"
     Jev is told what a conversation said and asked what the agent's `instructions` ask. A
@@ -322,7 +322,9 @@ Everything below returns an answer rather than an error, which is what makes it 
 - **Arithmetic, counting and dates.** Jev is not a calculator, does not count reliably, and reads dates as text rather than as ordered quantities. Compute these in Python and ask Jev about the result.
 - **Several judgements in one question.** See [above](#ask-one-thing-per-field).
 - **Indirection.** A question about a property of a property, or one needing several hops, costs accuracy.
-- **Context it does not need.** Accuracy falls as the state grows with detail unrelated to the question, so filter before you send rather than after.
+- **Context it does not need.** Accuracy falls as the state grows with detail unrelated to the question, so filter before you send rather than after, and compact a long conversation before judging it.
+- **A tool call that repeats.** With a tool's call and result in the history, the text usually still calls for it, so Jev picks it again. A tool with no arguments is therefore offered once per run; a tool with arguments is proposed to the model behind Jev, which decides. Put a `UsageLimits(request_limit=...)` on a Jev agent with tools all the same, as on any agent that loops.
+- **Deciding what it cannot see.** A tool that needs an argument the text does not state — a refund amount, a date — is one Jev will propose and a language model may decline to call; the two judge the same option differently, and language models disagree with each other on such picks about as often. Compare Jev with the model behind it on your own tickets before trusting either's hand-off rate.
 - **Adversarial text.** Jev treats the state as data, not as hostile: text written to steer the answer — an injected instruction, a misleading framing, an argument for its own classification — can move it. TypeSafe say they expect to improve this. A guard built on Jev belongs alongside deterministic checks, not instead of them, and is worth testing against your own adversarial inputs.
 - **Option order.** The order of a `Literal`'s options or an `Enum`'s members is part of what Jev sees, and reordering them can move the answer. If a classification matters, test it with the options in more than one order.
 
