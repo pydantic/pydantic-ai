@@ -266,28 +266,21 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
             )
 
-            # Resolve the per-run operation first, then the agent-bound fallback.
-            handler = target.__get__(self, type(self))
+            # The run installs one dispatcher per bound operation on every context it builds. A
+            # context without them was never prepared by a run (or was rebuilt worker-side, past
+            # the boundary already), so the call belongs inline.
             operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
-            operation = (
+            dispatcher = (
                 operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
             )
-            if operation is not None:
-                result = await operation(*args, **kwargs)
+            if dispatcher is None:
+                result = await target.__get__(self, type(self))(*args, **kwargs)
             else:
-                dispatcher = (
-                    self._get_durable_operation_bindings().get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
-                    if ctx.agent is not None
-                    else None
+                result = await dispatcher(
+                    ctx,
+                    cast(tuple[object, ...], args),
+                    cast(dict[str, object], kwargs),
                 )
-                if dispatcher is None:
-                    result = await handler(*args, **kwargs)
-                else:
-                    result = await dispatcher(
-                        ctx,
-                        cast(tuple[object, ...], args),
-                        cast(dict[str, object], kwargs),
-                    )
 
             # Apply worker-side model-request mutations back to the live context.
             if request_context is not None and isinstance(result, _ResolvedModelRequestContext):
@@ -455,6 +448,24 @@ def bind_arguments(
     return cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
 
 
+def bind_declaration_body(
+    declaration: CapabilityMethodDeclaration, capability: AbstractCapability[Any]
+) -> Callable[..., Awaitable[Any]]:
+    """Bind the operation body the run's capability actually implements.
+
+    The declaration was collected from the class the engine bound at construction, but a `for_run`
+    replacement may be a specialized subclass, and its override is the implementation the run asked
+    for. A decorated override is reached through its marker, which carries the undecorated target so
+    binding it doesn't re-enter dispatch; an override of a `base_hook_durable_operation` hook carries
+    no marker of its own and is bound as it stands. A replacement that doesn't carry the method at
+    all falls back to the declared one, which is also what the lookup's default resolves to.
+    """
+    member = getattr(type(capability), declaration.function.__name__, declaration.function)
+    marker = get_durable_operation_marker(member)
+    function = marker.function if marker is not None else member
+    return function.__get__(capability, type(capability))
+
+
 async def call_declaration(
     declaration: CapabilityMethodDeclaration,
     capability: AbstractCapability[Any],
@@ -462,7 +473,7 @@ async def call_declaration(
     params: CapabilityOperationParams,
     model_request_context: ModelRequestContext | None = None,
 ) -> Any:
-    bound = declaration.function.__get__(capability, type(capability))
+    bound = bind_declaration_body(declaration, capability)
     # The operation body runs as the capability, so name it on the context the way the hook chain
     # does: a context that crossed a durable boundary was rebuilt without the emitting capability,
     # and `RunContext.emit` resolves a `CapabilityEvent`'s owner through it.

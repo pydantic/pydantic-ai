@@ -6,7 +6,6 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequ
 from dataclasses import KW_ONLY, dataclass
 from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
-from weakref import WeakValueDictionary
 
 from pydantic import ValidationError
 from typing_extensions import deprecated
@@ -99,10 +98,6 @@ WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]
 RawOutput: TypeAlias = str | dict[str, Any]
 """Type alias for raw output data (text or tool args)."""
 
-DurableOperationDispatcher: TypeAlias = Callable[
-    [RunContext[object], tuple[object, ...], dict[str, object]], Awaitable[object]
-]
-
 WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 """Handler type for wrap_output_validate."""
 
@@ -178,37 +173,6 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
-class _DurableOperationBindings:
-    """Agent-identity bindings that do not retain unhashable agent instances."""
-
-    def __init__(self) -> None:
-        self._agents: WeakValueDictionary[int, AbstractAgent[Any, Any]] = WeakValueDictionary()
-        self._bindings: dict[int, dict[str, DurableOperationDispatcher]] = {}
-
-    def get(
-        self, agent: AbstractAgent[Any, Any], default: dict[str, DurableOperationDispatcher]
-    ) -> dict[str, DurableOperationDispatcher]:
-        self._prune()
-        agent_id = id(agent)
-        return self._bindings.get(agent_id, default) if self._agents.get(agent_id) is agent else default
-
-    def setdefault(self, agent: AbstractAgent[Any, Any]) -> dict[str, DurableOperationDispatcher]:
-        self._prune()
-        agent_id = id(agent)
-        if self._agents.get(agent_id) is not agent:
-            self._agents[agent_id] = agent
-            self._bindings[agent_id] = {}
-        return self._bindings[agent_id]
-
-    def __len__(self) -> int:
-        self._prune()
-        return len(self._bindings)
-
-    def _prune(self) -> None:
-        live_ids = set(self._agents)
-        self._bindings = {agent_id: bindings for agent_id, bindings in self._bindings.items() if agent_id in live_ids}
-
-
 @dataclass(init=False)
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
@@ -234,15 +198,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     YAML/JSON specs (via `Agent.from_spec`); they have
     sensible defaults and typically don't need to be overridden.
     """
-
-    def _get_durable_operation_bindings(
-        self,
-    ) -> _DurableOperationBindings:
-        bindings = self.__dict__.get('_pydantic_ai_durable_operation_bindings')
-        if not isinstance(bindings, _DurableOperationBindings):
-            bindings = _DurableOperationBindings()
-            object.__setattr__(self, '_pydantic_ai_durable_operation_bindings', bindings)
-        return bindings
 
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
@@ -1480,16 +1435,16 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
         # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
         last_layer = max(duplicate.layer_index for duplicate in duplicates)
         surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
-        # Transparent wrappers name the same capability across layers, not the same mergeable
-        # class within a layer. Explicitly renamed wrappers keep their own identity.
+        # Transparent wrappers name the same capability across layers, not the same mergeable class
+        # within a layer, so a group confined to one layer is compared as written: there, a wrapper
+        # and what it wraps are two capabilities claiming one id. Across layers they are one
+        # capability named twice, so the wrappers come off and the comparison is between what they
+        # hold. Explicitly renamed wrappers keep their own identity either way.
+        spans_layers = last_layer != duplicates[0].layer_index
         identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
         for duplicate in duplicates:
             identity = duplicate.capability
-            while (
-                last_layer != duplicates[0].layer_index
-                and isinstance(identity, WrapperCapability)
-                and identity.id == identity.wrapped.id
-            ):
+            while spans_layers and isinstance(identity, WrapperCapability) and identity.id == identity.wrapped.id:
                 identity = identity.wrapped
             identity_types.add(type(identity))
         _reject_class_crossing_id(capability_id, identity_types)

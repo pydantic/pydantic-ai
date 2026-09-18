@@ -60,6 +60,8 @@ async def main():
         async for event in session:
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
+        # Let the speaker consume every generated chunk before closing the session.
+        await session.wait_for_playback()
 
     # Leaving the `async with` block closes the session, which ends every live view.
     await asyncio.gather(audio_task, transcript_task)
@@ -67,9 +69,28 @@ async def main():
 
 Each view is independently bounded; a slow consumer drops its oldest item rather than stalling
 tools, turn tracking, or other consumers.
-Subscriptions begin when iteration starts, so unused views do not buffer.
+A subscription begins when `stream_audio()` or `stream_transcripts()` is called, so a view handed to
+a task with `asyncio.create_task` misses nothing while it waits for its first turn on the event loop,
+up to its buffer bound. Call the method where the task is created and pass the iterator in, as
+above: an `async for chunk in session.stream_audio()` inside the task body subscribes only once the
+task first runs, so audio emitted before then is never seen.
+An unconsumed view buffers up to its bound, dropping the oldest item when full, until it is collected.
 [`close()`][pydantic_ai.realtime.RealtimeSession.close] discards pending items and ends every live
 iterator; [`closed`][pydantic_ai.realtime.RealtimeSession.closed] reports the state.
+
+If nothing is iterating the session, the session keeps the most recent 512 part delta events
+(audio, transcript, and text) and the most recent 512 structural events for a late `async for`;
+older ones are discarded. Discarding a part's start discards the rest of that part with it, so a late
+iterator never receives a delta it cannot attach to a part. A failure parked for the consumer is
+never discarded.
+
+After a reply finishes generating, await
+[`wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback] before closing the
+session or opening the microphone. It returns once the single `stream_audio()` consumer has accounted
+for all audio emitted so far: played, using the same one-chunk-lag accounting as
+[`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes], or never played at
+all — discarded by a barge-in or by the view's buffer overflowing, or emitted before the view
+subscribed. It requires exactly one audio view and also returns if that view or the session closes.
 
 ### Live captions
 
@@ -105,6 +126,10 @@ configured with `google_input_transcription`: a pinned model ID in the shared se
 (native transcription stays on), and only `None` turns it off. Provider-specific defaults and
 deployment constraints live on the provider pages.
 
+The user transcript is a separate transcription pass, not a readout of what the realtime model
+heard directly from the audio. It can be less accurate or simply differ, so treat it as a caption
+and history record rather than ground truth for why the model responded as it did.
+
 Disabling transcription changes what a spoken turn contributes to history, replay, and text-agent
 handoff; see [History and handoff](history.md#retaining-audio) before relying on it. A
 [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) receives no audio bytes to retain, so without input
@@ -115,7 +140,8 @@ transcription its user turns contain no spoken text.
 Beyond audio and text, a session accepts the same image content as
 [multimodal input](../input.md#image-input) to a standard run. Send an image as context with
 [`send()`][pydantic_ai.realtime.RealtimeSession.send]. An image does not trigger a response by
-itself; the model uses it on the next voice, text, or manually-created turn.
+itself; the model uses it on the next voice, text, or manually-created turn. Pass `respond=True` to
+ask for a response to the image; see [Text turns](turns.md#text-turns) for the `respond` behavior.
 
 ```python
 from pydantic_ai import BinaryContent
@@ -129,12 +155,15 @@ async def send_image(session):
 Streaming images continuously approximates live video: the
 [camera example](../examples/realtime-camera.md) sends one camera frame per second alongside
 microphone audio. For continuous streams like that, use the session's image-retention controls to
-bound local history; see [Retaining images](history.md#retaining-images). Gemini-specific live-video
-settings belong on the [Gemini provider page](gemini.md#settings).
+bound local history; they do not change which frames the provider receives. See
+[Retaining images](history.md#retaining-images). Gemini-specific live-video settings belong on the
+[Gemini provider page](gemini.md#settings).
 
 ## Edge cases
 
 - Audio and transcript iterators deliberately drop old buffered items when consumers fall behind.
   [Logfire attributes](observability.md#logfire-instrumentation) report those drops.
+- Session failures have different propagation paths when only these views are consumed; see
+  [Errors](lifecycle.md#errors).
 - Provider speech/interruption signals differ. Use the profile flags and the
   [turns guide](turns.md#barge-in) rather than branching on provider names.

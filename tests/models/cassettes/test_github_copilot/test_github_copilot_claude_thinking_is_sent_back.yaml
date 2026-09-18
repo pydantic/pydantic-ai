@@ -1,0 +1,186 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '218'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: Factor 3599 into two primes. Show only the answer.
+        role: user
+      model: claude-sonnet-5
+      reasoning_effort: medium
+      stream: false
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    headers:
+      content-length:
+      - '1871'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        message:
+          content: 3599 = 59 × 61
+          reasoning_opaque: JimIaWXckWMVsjiwpBzSWuEFA9uFMBEQQ4qTof0PnPYkbFW2wdY6BWkpnOs+ibDYh2eI+RaMX44YpNYAO7DxMfyVFYH0dPArs9Yw0ATJU60ZPPMexJUKtlefti6n2kwzIgyEXW++CfD/BF1my/O2w2EoduzK8+48aOfFOJsB9JhXZaWJAXh29/kje5eMn25mrfXuFOZKHmZimx4ya9ryRsIjqg7VzDI23r6VNWFgU8LW6gcsrWkB6HQeYqwYRjedt0SCts553HC8nV30QWMYtPyd1lq0zOK4UugCDUHoGkQCIBAQQ3DUlZTgltpYMieotJJ1VQUyvOUjfuQt2k0N0Ur3NwXXepmBL+WNsduQn+3s1aoQgyJ1zaE/w1LAOURMUrVRnxKG2S9R1lkjduMLYtrauUzUUJEfGOWSNgc1wNApqSC4kfl3O79E8pdjT+067rm/h0trJC+spiumLLextn0BLPSG9qM85LZJvbyknWe9i61cbKXP5UHhfugDj3gIZp3K2yFqhJ/6DWr4ChRETwIAb3AmyFfBl9xg8uy2b0gZQ51feU5KvfcNcC+EEVxHrZTVxbb/7Z3jAswQ0RjdOoLgJa+1Uc6VlOtKF+Uaa7MhIwbwZEv2tyaYKshg7DdCaupWpFZaZf+PQBl+3G+ZptgjezGvx8UKTJTGtgCkxBKx5luk/BZhxP48jSKmG1jmue3/v8leRD6K66Zf9bLHn0yfXQ7DDN3EhmOTMcs0mAMAahhI9fUZg7IgkHObS8iMVe4dJ/LakzlRVhew9//k+oCbIP9C/kX+MQFHP64BBLlnItjjoMp0NaRSYbqMqyWT3xwTpA3985AozIpEfeWlRT8LBCOWmGQ2FM8h2JxzpnW6gmhl9l1e4yU=
+          reasoning_text: |+
+            3599 factors as 59 times 61.
+
+          role: assistant
+      copilot_usage:
+        token_details:
+        - batch_size: 1000000
+          cost_per_batch: 200000000000
+          model: claude-sonnet-5
+          token_count: 31
+          token_type: input
+        - batch_size: 1000000
+          cost_per_batch: 20000000000
+          model: claude-sonnet-5
+          token_count: 0
+          token_type: cache_read
+        - batch_size: 1000000
+          cost_per_batch: 250000000000
+          model: claude-sonnet-5
+          token_count: 0
+          token_type: cache_write
+        - batch_size: 1000000
+          cost_per_batch: 1000000000000
+          model: claude-sonnet-5
+          token_count: 24
+          token_type: output
+        total_nano_aiu: 30200000
+      created: 1788836907
+      id: msg_011CeqEeUJwmKDQ79q2bncZV
+      model: claude-sonnet-5
+      usage:
+        completion_tokens: 24
+        prompt_tokens: 31
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 55
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '391'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: Factor 3599 into two primes. Show only the answer.
+        role: user
+      - content: 3599 = 59 × 61
+        reasoning_text: |+
+          3599 factors as 59 times 61.
+
+        role: assistant
+      - content: Now factor 5183 the same way.
+        role: user
+      model: claude-sonnet-5
+      reasoning_effort: medium
+      stream: false
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    headers:
+      content-length:
+      - '2021'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        message:
+          content: 5183 = 71 × 73
+          reasoning_opaque: vljix7vRvJa8GYq1ABhGt2Qch7sBdcbGMtq6Bu2f1phJntmKv5rDklvbb8AgUgN6x8NDkwZoot4GVKtaeAfdSvXa8aEgNL4jDAUp79rct51zNaEqOsOKATqH/D/RWb0vA1CaqNJcqIo2yMtFi7uFBi/wuLBaDeMH+y+ObV8RwdqPYgiEfs4SMEl9ulC5x2cx0wolCpnUxOFCTseyVj9zXLXCU7Apj6SAcuN0ZbKwBFkgQ1wRfqlwL/ye0hOv2t4Y6PaDxoAaKa/TT7NQh6FVQcS2Z6wYbuRyhIQXqfxBvEWAagC+QuDI74W/CCokKTkdRiYbCYh6+RpVeCLKh/N+xXECCn4e316UGUboglQ4ROAE4MwTHaMmURzuji1nzMjjyUZG2EpI6aHYS4uYJ8QmPDYNZmv23k6ZVI1NNxZdJRHWbb7J/RCIFpsNxE7pWwOVQyOBGDJsrmdQThkx1HP29o/2uvDtm7iHq5UOMEBXSzAwsIUdRdxjqRpv2+g2nBfxp9mHTUf0LrT4wbD91Icm0vVib2ZrJMB+4OvxOUYExxlDaMEWZIxscYXxaEK9UAv8IFOwWr0i5DAEwLRp9qxvIldWpRnjCR2pnBscsoMHKHIFS/KZUz2llyXZSHf4uA9OJhrgLguhwr57Je9Pg2Mr7KBRvXinbZ5Snh8adamjO/zeMVc8UEw5rGJxQ4Gy7oK2e4g3AqzwhlVtxhnZ2K3t6LbJ8Mfxs6cT4OAiOhf4daJ8ZuzFNq4Tef8iJ/rEKYqSlk0ej6s2v4VuCgF2c9BdQjD+dvH1+ZHQKq7thE6U+Cdzf3iYD0Gwrn+BYBqM8hVsXwo2ibHG+kJLT9KRMoo2NQ76gw26mj6TsfIpdH6NafidkmICcg1BYa+8+76zHNle4hZEQfLkQZ8zWbVguEOwZiwVPAeY0E0eNDLPXX1R9BRVVE0LNfE0G0VO1g0yPuXTKvsPqBdLu2Cm0DlgXw==
+          reasoning_text: |+
+            Trying to factor 5183 - checking near the square root, 71 times 73 works out to 5183.
+
+          role: assistant
+      copilot_usage:
+        token_details:
+        - batch_size: 1000000
+          cost_per_batch: 200000000000
+          model: claude-sonnet-5
+          token_count: 57
+          token_type: input
+        - batch_size: 1000000
+          cost_per_batch: 20000000000
+          model: claude-sonnet-5
+          token_count: 0
+          token_type: cache_read
+        - batch_size: 1000000
+          cost_per_batch: 250000000000
+          model: claude-sonnet-5
+          token_count: 0
+          token_type: cache_write
+        - batch_size: 1000000
+          cost_per_batch: 1000000000000
+          model: claude-sonnet-5
+          token_count: 54
+          token_type: output
+        total_nano_aiu: 65400000
+      created: 1788836909
+      id: msg_011CeqEeahAaMB3hqmGfRsEk
+      model: claude-sonnet-5
+      usage:
+        completion_tokens: 54
+        prompt_tokens: 57
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 111
+    status:
+      code: 200
+      message: OK
+version: 1
+...
