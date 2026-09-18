@@ -273,43 +273,96 @@ Write the output type's docstring as the action it is — "Triage a support tick
     They say the mappings work, not how Jev will do on your task. Measure accuracy, the hand-off rate and any
     threshold on labelled examples of your own before relying on them.
 
-## Two places Jev fits in an agent loop
+## Jev inside an agent run
 
-Jev's speed is worth most where a decision sits *between* the expensive steps, not where it replaces them. Two patterns need no new API.
+Everything above asks Jev a question and uses the answer. The same question is worth as much *inside* a run as
+outside one: a decision that sits between the expensive steps — which model answers, whether a call should run,
+which tools are worth offering — is a classification, and a classification at 180 ms is cheap enough to make every
+time rather than once at the top.
 
-### Pick the model for the run
+Each of these is an existing [capability](../capabilities/overview.md) hook. None of them needs new API, and none
+of them is specific to Jev: they take any model, and a language model will do the same job more slowly and more
+expensively. What Jev changes is that the decision stops being something you ration.
 
-One question decides which model answers, and the run is made on that model. The agent is built without one, so the pick is the only thing that chooses:
+### Classify, then act
+
+The simplest shape is two runs: one to decide, one to do. An [output function](../output.md#output-functions) makes
+the decision a signature rather than a string to map afterwards, so the routing table is the function and the
+options are its argument:
 
 ```python {title="route_to_a_model.py"}
 from typing import Literal
 
 from pydantic_ai import Agent
 
-router = Agent(
-    'typesafe:jev-latest',
-    output_type=Literal['fast', 'capable'],
-    instructions=(
-        'Which model should answer this request? Answer `fast` for a lookup, an '
-        'extraction, or a change confined to one place. Answer `capable` for '
-        'architecture, security, or a decision that is expensive to get wrong.'
-    ),
-)
-agent = Agent(instructions='You are a helpful engineering assistant.')
-
 MODELS = {'fast': 'openai:gpt-5.6-luna', 'capable': 'openai:gpt-5.6-sol'}
+
+
+def route(tier: Literal['fast', 'capable']) -> str:
+    """Route the request to a model.
+
+    Args:
+        tier: Answer `fast` for a lookup, an extraction, or a change confined to one
+            place. Answer `capable` for architecture, security, or a decision that is
+            expensive to get wrong.
+    """
+    return MODELS[tier]
+
+
+router = Agent('typesafe:jev-latest', output_type=route)
+assistant = Agent(instructions='You are a helpful engineering assistant.')
 
 
 async def answer(question: str) -> str:
     picked = await router.run(question)
-    return (await agent.run(question, model=MODELS[picked.output])).output
+    return (await assistant.run(question, model=picked.output)).output
 ```
 
-The whole routing decision costs one Jev request. The pick's confidence is in `provider_details['confidence']`, so an unsure route can go to the capable model rather than the cheap one, which is the conservative direction when a wrong route is expensive.
+The argument's `Literal` becomes the pick-one question and its `Args:` entry becomes the wording, so the whole
+routing decision costs one Jev request. The pick's confidence is in `provider_details['confidence']`, so an unsure
+route can go to the capable model rather than the cheap one, which is the conservative direction when a wrong route
+is expensive.
+
+### Decide again on every step
+
+A run is not one decision. [`SelectModel`][pydantic_ai.capabilities.SelectModel] is evaluated before each step, so
+the same question can be asked of the conversation as it stands rather than of the first prompt alone — a run that
+starts simple and turns hard moves up when it turns:
+
+```python {title="select_the_model_per_step.py"}
+from typing import Literal
+
+from pydantic_ai import Agent, ModelSelectionContext
+from pydantic_ai.capabilities import SelectModel
+
+router = Agent(
+    'typesafe:jev-latest',
+    output_type=Literal['fast', 'capable'],
+    instructions=(
+        'Which model should take the next step of this conversation? Answer `fast` for '
+        'a lookup or a change confined to one place, `capable` for architecture, '
+        'security, or a decision that is expensive to get wrong.'
+    ),
+)
+
+
+async def select_model(ctx: ModelSelectionContext[None]) -> str:
+    picked = await router.run(message_history=ctx.messages)
+    return 'openai:gpt-5.6-sol' if picked.output == 'capable' else 'openai:gpt-5.6-luna'
+
+
+agent = Agent(capabilities=[SelectModel(select_model)])
+```
+
+The router is given the history rather than a prompt, which is the whole state Jev reads. Asking on every step is
+only affordable because the question is cheap; with a language model in the selector, the routing costs as much as
+the work it routes.
 
 ### Judge a tool call before it runs
 
-A tool marked `requires_approval=True` stops before its body runs and arrives as an approval request, which a [deferred tool handler](../deferred-tools.md) resolves. Jev is fast enough to sit in that loop, so every call is judged in about the time a network hop takes:
+A tool marked `requires_approval=True` stops before its body runs and arrives as an approval request, which a
+[deferred tool handler](../deferred-tools.md) resolves. That handler is a decision per call, which is the shape Jev
+answers:
 
 ```python {title="judge_a_tool_call.py"}
 from pydantic import BaseModel, Field
@@ -360,7 +413,27 @@ def run_shell(command: str) -> str:
     return f'ran {command!r}'
 ```
 
-This judges the call the model proposed, not the model's intent, so it is a check on what is about to happen rather than on what was said. Denying a call sends the message back to the model, which can try something else. Keep a human in the loop for the calls that matter most: a judgement at 180 ms is cheap enough to run on everything, which is exactly why it should not be the only thing standing between an agent and an irreversible action.
+This judges the call the model proposed, not the model's intent, so it is a check on what is about to happen rather
+than on what was said. Denying a call sends the message back to the model, which can try something else. Keep a
+human in the loop for the calls that matter most: a judgement at 180 ms is cheap enough to run on everything, which
+is exactly why it should not be the only thing standing between an agent and an irreversible action.
+
+`typesafe_boolean_threshold` matters here more than anywhere else on this page. The default rounds at the coin
+flip, and for a guard the two mistakes rarely cost the same: see [what `True` has to mean](#what-true-has-to-mean).
+
+### The same shape elsewhere
+
+Any hook that takes a decision rather than a generation fits this way.
+[`PrepareTools`][pydantic_ai.capabilities.PrepareTools] can ask which of a large toolset this request calls for
+before the tools go on the wire; a [history processor](../capabilities/process-history.md) can ask which parts of a
+long conversation still matter before it is compacted. Both are classifications over text, both run on every step,
+and both are questions you would not ask a language model on every step.
+
+Two things to hold on to. A classifier in the loop is a component like any other, so it needs the same
+[measurement](#measure-on-your-own-data) as the classifier you would deploy on its own — a router that is right 80%
+of the time sends one request in five to the wrong model, and nothing in the run will tell you. And Jev reads the
+state as data rather than as instructions, so text written to steer it can move it: a guard built this way belongs
+alongside deterministic checks, not instead of them.
 
 ## Ask one thing per field
 
