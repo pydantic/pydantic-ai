@@ -359,7 +359,7 @@ async def test_prepared_toolset_applies_prepared_timeout():
 
     @toolset.tool_plain(timeout=10)
     async def slow() -> None:
-        await anyio.sleep(1)  # pragma: no cover
+        await anyio.sleep(1)
 
     def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         return [replace(tool_def, timeout=0.01) for tool_def in tool_defs]
