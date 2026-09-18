@@ -64,6 +64,8 @@ async def main():
         async for event in session:
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
+        # Let the speaker consume every generated chunk before closing the session.
+        await session.wait_for_playback()
 
     # Leaving the `async with` block closes the session, which ends every live view.
     await asyncio.gather(audio_task, transcript_task)
@@ -83,6 +85,14 @@ If nothing is iterating the session, the session keeps the most recent 512 part 
 older ones are discarded. Discarding a part's start discards the rest of that part with it, so a late
 iterator never receives a delta it cannot attach to a part. A failure parked for the consumer is
 never discarded.
+
+After a reply finishes generating, await
+[`wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback] before closing the
+session or opening the microphone. It returns once the single `stream_audio()` consumer has accounted
+for all audio emitted so far: played, using the same one-chunk-lag accounting as
+[`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes], or never played at
+all — discarded by a barge-in or by the view's buffer overflowing, or emitted before the view
+subscribed. It requires exactly one audio view and also returns if that view or the session closes.
 
 ### Live captions
 
