@@ -381,6 +381,10 @@ router = Agent(
 
 
 async def select_model(ctx: ModelSelectionContext[None]) -> str:
+    if ctx.step == 1:
+        # `ctx.messages` is the history *before* this step, so on the first one there is
+        # nothing to read yet: the run's own prompt has not been added.
+        return 'openai:gpt-5.6-luna'
     picked = await router.run(message_history=ctx.messages)
     return 'openai:gpt-5.6-sol' if picked.output == 'capable' else 'openai:gpt-5.6-luna'
 
@@ -388,9 +392,13 @@ async def select_model(ctx: ModelSelectionContext[None]) -> str:
 agent = Agent(capabilities=[SelectModel(select_model)])
 ```
 
-The router is given the history rather than a prompt, which is the whole state Jev reads. Asking on every step is
-only affordable because the question is cheap; with a language model in the selector, the routing costs as much as
-the work it routes.
+The router is given the history rather than a prompt, which is the whole state Jev reads. That history is what
+existed *before* the step being selected, so the first step has nothing to classify and takes a default — this
+routes a run that turns hard partway through, which is what a per-step hook is for. To route the very first step
+from the user's own question, ask before the run instead, as in the section above.
+
+Asking on every step is only affordable because the question is cheap; with a language model in the selector, the
+routing costs as much as the work it routes.
 
 ### Judge a tool call before it runs
 
@@ -452,9 +460,9 @@ than on what was said. Denying a call sends the message back to the model, which
 human in the loop for the calls that matter most: a judgement at 180 ms is cheap enough to run on everything, which
 is exactly why it should not be the only thing standing between an agent and an irreversible action.
 
-`typesafe_boolean_threshold` matters here more than anywhere else on this page. The default rounds at the coin
-flip, and for a guard the two mistakes rarely cost the same: a missed irreversible command costs more than a
-second look at a safe one.
+A yes/no is Jev's probability rounded at the coin flip, and for a guard the two mistakes rarely cost the same: a
+missed irreversible command costs more than a second look at a safe one. Read `provider_details['confidence']` and
+pick your own bar rather than taking the rounded answer, until a threshold is configurable.
 
 ### Choose from a set built at run time
 
@@ -495,6 +503,11 @@ Two things this gets right that are easy to lose. Jev can only answer with an op
 step where a made-up action has to be validated away. And `reobserve` and `abstain` are options like any other, so
 declining is something Jev can *choose* rather than something you infer from a low confidence — the difference
 between an agent that stops and one that acts on a coin flip.
+
+Jev picks from at most 255 options in one question, and the two reserved ones count, so a set built at run time
+needs a ceiling of 253 candidates and a plan for what to do above it — rank and offer the best few, or narrow by
+some cheaper filter first. An observation that produces hundreds of equally plausible actions is usually a sign
+the candidates are too fine-grained, not that the limit is too low.
 
 The probabilities over every candidate are in `provider_details['tool']['probabilities']`, which is what to watch:
 a decision loop that abstains on most steps, or spreads its probability evenly, is telling you the candidates are
