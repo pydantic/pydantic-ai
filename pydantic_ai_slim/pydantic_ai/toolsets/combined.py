@@ -13,7 +13,6 @@ from ..exceptions import UserError
 from ..messages import InstructionPart
 from ._instruction_collection import flatten_instruction_contributions
 from .abstract import AbstractToolset, ToolsetTool
-from .function import FunctionToolsetTool
 
 
 @dataclass(kw_only=True)
@@ -22,7 +21,6 @@ class _CombinedToolsetTool(ToolsetTool[AgentDepsT]):
 
     source_toolset: AbstractToolset[AgentDepsT]
     source_tool: ToolsetTool[AgentDepsT]
-    original_combined_tool: _CombinedToolsetTool[AgentDepsT] | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -83,7 +81,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 if tool_def.toolset_id is None and tool_toolset.id is not None:
                     tool_def = replace(tool_def, toolset_id=tool_toolset.id)
 
-                combined_tool = _CombinedToolsetTool(
+                all_tools[name] = _CombinedToolsetTool(
                     toolset=tool_toolset,
                     tool_def=tool_def,
                     max_retries=tool.max_retries,
@@ -92,21 +90,19 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     source_toolset=toolset,
                     source_tool=tool,
                 )
-                combined_tool.original_combined_tool = combined_tool
-                all_tools[name] = combined_tool
         return all_tools
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, _CombinedToolsetTool)
-        source_tool = tool.source_tool
-        if tool is not tool.original_combined_tool:
-            source_tool_def = replace(tool.tool_def, toolset_id=source_tool.tool_def.toolset_id)
-            source_tool = replace(source_tool, tool_def=source_tool_def)
-            if isinstance(source_tool, FunctionToolsetTool) and source_tool.timeout != source_tool_def.timeout:
-                source_tool = replace(source_tool, timeout=source_tool_def.timeout)
-        return await tool.source_toolset.call_tool(name, tool_args, ctx, source_tool)
+        # Dispatch with the `tool_def` from the tool we were handed, not the one `source_tool` cached at
+        # `get_tools()` time: a toolset wrapping this one (like `PreparedToolset`) may have changed it since.
+        # The `toolset_id` on our outward-facing `tool_def` is ours to set, so the source toolset gets its own back.
+        source_tool_def = replace(tool.tool_def, toolset_id=tool.source_tool.tool_def.toolset_id)
+        return await tool.source_toolset.call_tool(
+            name, tool_args, ctx, replace(tool.source_tool, tool_def=source_tool_def)
+        )
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:

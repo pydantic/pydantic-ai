@@ -35,12 +35,6 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
-    timeout: float | None = None
-    """Timeout in seconds for tool execution.
-
-    If the tool takes longer than this, a retry prompt is returned to the model.
-    Defaults to None (no timeout).
-    """
     original_name: str | None = None
     """The name the toolset holds this tool under, which a `prepare` function may have renamed in `tool_def.name`.
 
@@ -690,7 +684,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             args_validator_func=tool.args_validator,
             call_func=tool.function_schema.call,
             is_async=tool.function_schema.is_async,
-            timeout=tool_def.timeout,
             original_name=original_name,
         )
 
@@ -699,8 +692,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
 
-        # Per-tool timeout takes precedence over toolset timeout
-        timeout = tool.timeout if tool.timeout is not None else self.timeout
+        # Per-tool timeout takes precedence over toolset timeout. Read it off the tool definition, which a
+        # `prepare` function may have changed since `_tool_for` built the tool.
+        timeout = tool.tool_def.timeout if tool.tool_def.timeout is not None else self.timeout
         if timeout is not None:
             try:
                 with anyio.fail_after(timeout), _utils.abandon_threads_on_cancel():
