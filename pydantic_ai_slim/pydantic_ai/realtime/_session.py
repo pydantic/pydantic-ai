@@ -730,10 +730,11 @@ class RealtimeSession:
         self._pending_response_usage = RequestUsage()
         self._response_limit_checked = False
         self._pending_response_requests = 0
-        # Whether the model still owes the caller speech: set when a response is solicited or starts,
-        # cleared at the exchange boundary that `RealtimeTurnCompleteEvent` marks. A tool-calling turn
-        # spans several responses, so the per-response flags above would read as "done" in the gaps.
-        self._exchange_active = False
+        # Whether a response has actually begun, cleared at the exchange boundary that
+        # `RealtimeTurnCompleteEvent` marks. A tool-calling turn spans several responses, so the
+        # per-response flags above would read as "done" in the gaps. Reads pair with
+        # `_pending_response_requests` for the solicited-but-not-started half — see `_reply_outstanding`.
+        self._response_active = False
         self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
@@ -1245,16 +1246,28 @@ class RealtimeSession:
         """
         self._ensure_streamable()
         self._start_pump()
-        while self._exchange_active and not self._closed:
+        while self._reply_outstanding():
             # Cleared before the check, so a boundary reached between the check and the wait still
             # wakes us rather than leaving this parked until the turn after it.
             self._exchange_progress.clear()
-            if not self._exchange_active or self._closed:
+            if not self._reply_outstanding():
                 return
             await self._exchange_progress.wait()
 
+    def _reply_outstanding(self) -> bool:
+        """Whether the model still owes speech.
+
+        Derived rather than tracked, so no failure path can leave `wait_for_reply()` parked on a reply
+        that can no longer arrive: once receiving has ended nothing more will be said, a reservation
+        rolled back by a failed send stops counting, and several `respond=True` sends in flight are all
+        waited for rather than just the first to reach its boundary.
+        """
+        if self._closed or self._pump_finished:
+            return False
+        return self._response_active or bool(self._pending_response_requests)
+
     def _release_exchange(self) -> None:
-        self._exchange_active = False
+        self._response_active = False
         self._exchange_progress.set()
 
     def _single_audio_tap(self, method: str, purpose: str) -> _AudioTap:
@@ -1420,6 +1433,7 @@ class RealtimeSession:
         except BaseException:
             if respond:
                 self._pending_response_requests -= 1
+                self._exchange_progress.set()
             self._remove_sent_request(request)
             raise
         return request
@@ -1628,6 +1642,7 @@ class RealtimeSession:
             await self._send_frame(CreateResponse())
         except BaseException:
             self._pending_response_requests -= 1
+            self._exchange_progress.set()
             raise
 
     @overload
@@ -2532,6 +2547,9 @@ class RealtimeSession:
         # The response the provider was cancelling on speech onset is one of the things being
         # settled here, so interrupting whatever comes next is the client's job again.
         self._server_cancelled_the_response_on_speech = False
+        # Whatever the model still owed is being settled here rather than spoken, on both the reconnect
+        # and the close path, so a `wait_for_reply()` waiting on it is waiting on nothing.
+        self._release_exchange()
         events = self._finalize_user()
         for item_id, turn in list(self._user_turns.items()):
             if item_id is not None and not turn.finalized:
@@ -2782,6 +2800,7 @@ class RealtimeSession:
             )
         except BaseException:
             self._pending_response_requests -= 1
+            self._exchange_progress.set()
             raise
 
     # --- streaming --------------------------------------------------------------------------------
@@ -2861,7 +2880,6 @@ class RealtimeSession:
             )
             self._usage_limits.check_before_request(projected)
         self._pending_response_requests += 1
-        self._exchange_active = True
 
     def _begin_response(self) -> None:
         """Take the reservation for the response that's starting, or make the check now if it has none.
@@ -2877,7 +2895,7 @@ class RealtimeSession:
         elif self._usage_limits is not None:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
-        self._exchange_active = True
+        self._response_active = True
 
     def _accumulate_response_usage(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
@@ -3146,6 +3164,7 @@ class RealtimeSession:
             self._pump_error = e
         finally:
             self._pump_finished = True
+            self._exchange_progress.set()
             if not self._closed:
                 self._finish_taps()
             self._queue_put(self._queue_changed)
