@@ -60,7 +60,7 @@ agent = Agent(
 )
 ```
 
-[Skills](skills.md) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](/ai/capabilities/web-fetch/), [Guardrails](guardrails.md), and [Dynamic Workflow](dynamic-workflow.md) slot in the same way; the [Coder page](coder.md#not-included-by-default) lists what pairs well.
+[Skills](skills.md) (your `SKILL.md` procedures, loaded on demand; point it at a `skills/` directory and add the `skills` extra), [Web Fetch](/ai/capabilities/web-fetch/), [Guardrails](guardrails.md), and [Dynamic Workflow](dynamic-workflow.md) slot in the same way; the [Coder page](coder.md#composition) lists what pairs well.
 
 ## No magic: it's capabilities all the way down
 

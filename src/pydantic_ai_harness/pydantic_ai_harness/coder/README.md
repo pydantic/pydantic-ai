@@ -55,17 +55,20 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
 
 `Coder(workspace)` is these capabilities, in this order:
 
-1. [`RepairToolArguments`](../repair_tool_arguments/) repairs malformed JSON tool arguments before normal validation (see below).
-2. A `Capability` carrying the default instructions, plus any `instructions=` you pass.
-3. [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/)`(root_dir=workspace, content_hashes=False, max_read_chars=60000, tools=FILE_TOOL_NAMES)`, where
+1. A `Capability` carrying the default instructions, plus any `instructions=` you pass.
+2. [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/)`(root_dir=workspace, content_hashes=False, max_read_chars=60000, tools=FILE_TOOL_NAMES)`, where
    `FILE_TOOL_NAMES` is `read_file`, `write_file`, `edit_file`, `list_files`, and `grep`.
-4. [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)`(cwd=workspace, denied_commands=[], allow_interactive=True, default_timeout=270, denied_env_patterns=LLM_API_KEY_ENV_PATTERNS, tools=['shell'])`.
-5. [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/)`(workspace_dir=workspace, expose_inventory_tool=False)` for repository instructions and structure.
+3. [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)`(cwd=workspace, denied_commands=[], allow_interactive=True, default_timeout=270, denied_env_patterns=LLM_API_KEY_ENV_PATTERNS, tools=['shell'])`.
+4. [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/)`(workspace_dir=workspace, expose_inventory_tool=False)` for repository instructions and structure.
    Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
    instruction files are not loaded twice.
-6. [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)` and [`WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_context_fraction=0.9)`.
-7. A private [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization that truncates any tool result over 64,000 characters
+
+Then the plumbing, which the agent never calls directly:
+
+5. [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_fraction=0.7)` and [`WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/)`(max_context_fraction=0.9)`.
+6. A private [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool.
+7. [`RepairToolArguments`](../repair_tool_arguments/) repairs malformed JSON tool arguments before normal validation (see below).
 
 Every tool comes from `FileSystem` or `Shell`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,

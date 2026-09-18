@@ -43,7 +43,6 @@ def test_coder_unknown_export() -> None:
 def test_coder_members_and_parameters(tmp_path: Path) -> None:
     coder = Coder(tmp_path, instructions='Custom instructions')
     assert [type(capability).__name__ for capability in coder.capabilities] == [
-        'RepairToolArguments',
         'Capability',
         'FileSystem',
         'Shell',
@@ -51,6 +50,7 @@ def test_coder_members_and_parameters(tmp_path: Path) -> None:
         'ClearToolResults',
         'WarnNearLimits',
         '_BoundToolOutputs',
+        'RepairToolArguments',
     ]
     files = next(item for item in coder.capabilities if isinstance(item, FileSystem))
     assert (files.root_dir, files.cwd, files.content_hashes, files.tools) == (tmp_path, None, False, FILE_TOOL_NAMES)
@@ -63,5 +63,6 @@ def test_coder_members_and_parameters(tmp_path: Path) -> None:
     instructions = str(guidance.get_instructions())
     for text in ('Custom instructions', 'DRY', 'YAGNI', 'SOLID', 'Zen of Python'):
         assert text in instructions
-    assert coder.capabilities[-1].id is None
+    limits = next(item for item in coder.capabilities if type(item).__name__ == '_BoundToolOutputs')
+    assert limits.id is None
     assert isinstance(coder.for_agent(Agent(TestModel())), Coder)

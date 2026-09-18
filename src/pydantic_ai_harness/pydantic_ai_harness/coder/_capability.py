@@ -63,7 +63,6 @@ class Coder(CombinedCapability[AgentDepsT]):
     ) -> None:
         root = Path(workspace).resolve()
         capabilities: list[AbstractCapability[AgentDepsT]] = [
-            RepairToolArguments[AgentDepsT](),
             Capability[AgentDepsT](instructions=INSTRUCTIONS + ('\n' + instructions if instructions else '')),
             _file_system(root, unrestricted=unrestricted_filesystem),
             Shell[AgentDepsT](
@@ -83,5 +82,6 @@ class Coder(CombinedCapability[AgentDepsT]):
             _BoundToolOutputs[AgentDepsT](
                 id=None, bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))]
             ),
+            RepairToolArguments[AgentDepsT](),
         ]
         super().__init__(capabilities)
