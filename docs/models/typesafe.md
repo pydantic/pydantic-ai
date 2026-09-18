@@ -340,13 +340,42 @@ Everything below returns an answer rather than an error, which is what makes it 
 - **Adversarial text.** Jev treats the state as data, not as hostile: text written to steer the answer — an injected instruction, a misleading framing, an argument for its own classification — can move it. TypeSafe say they expect to improve this. A guard built on Jev belongs alongside deterministic checks, not instead of them, and is worth testing against your own adversarial inputs.
 - **Option order.** The order of a `Literal`'s options or an `Enum`'s members is part of what Jev sees, and reordering them can move the answer. If a classification matters, test it with the options in more than one order.
 
+## Files
+
+Jev reads text only. To ask about a document, image or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
+
+```python
+from enum import Enum
+
+from pydantic_ai import Agent, DocumentUrl
+from pydantic_ai.capabilities import FileUnderstanding
+
+
+class DocumentSubject(str, Enum):
+    """What is this document about?"""
+
+    animals = 'animals'
+    vehicles = 'vehicles'
+    other = 'other'
+
+
+agent = Agent(
+    'typesafe:jev-latest',
+    output_type=DocumentSubject,
+    capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6-sol')],
+)
+result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
+print(result.output.value)
+#> animals
+```
+
 ## What Jev cannot do
 
 Jev does not write text, write a tool's arguments or read files. An agent that needs any of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be one structured type made of the field types above, beside any output functions that take no arguments: no `str`, no second type with fields, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 - No native tools. A function tool with arguments is offered to Jev but never called by it: picking one is [proposed](#tools-jev-picks-and-calls-what-it-can) to a model behind it, which is a `ModelAPIError` after the request rather than a refusal before it; with tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
-- No image, audio, video or document in the prompt or the history.
+- No image, audio, video or document in the prompt or the history, unless [File Understanding](../capabilities/file-understanding.md) has described it first.
 
 Jev does not revise an answer the way a language model does. Its previous answer and the validator's complaint both go back in the history, so they are part of what it judges, but the question is unchanged and a confident answer does not move: an output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] usually gets the same answer again, and one that keeps rejecting runs the agent out of retries.
 

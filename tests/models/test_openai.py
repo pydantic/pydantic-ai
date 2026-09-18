@@ -5644,6 +5644,7 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(
         assert model.system == provider_name
         if isinstance(model, OpenAIChatModel):
             assert model.profile.get('openai_chat_supports_document_input') is False
+            assert model.profile.get('supports_document_input') is False
             with pytest.raises(UserError, match="Azure's Chat Completions API does not support document input"):
                 await Agent(model).run([BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
 
