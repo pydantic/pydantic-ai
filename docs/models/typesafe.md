@@ -287,21 +287,21 @@ For a single question an agent's `instructions` do the same job, and Jev answers
 
 ## Judging a conversation
 
-The latest user prompt is the text Jev judges. Everything before it in the message history goes along beside it as `history`: user prompts, answers, tool calls and their results, from whichever model produced them. That makes Jev a cheap judge of another agent's run:
+A run's message history goes to Jev as `history`: user prompts, answers, tool calls and their results, from whichever model produced them. With no new prompt, the conversation is the whole state, so a Jev agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
 
 ```python
 from pydantic_ai import Agent
 
 assistant = Agent('openai:gpt-5.6-sol')
-conversation = assistant.run_sync('hello')
-
 judge = Agent('typesafe:jev-latest', output_type=bool, instructions='Was the assistant polite?')
-result = judge.run_sync('Judge the conversation above.', message_history=conversation.all_messages())
+
+conversation = assistant.run_sync('hello')
+result = judge.run_sync(message_history=conversation.all_messages())
 print(result.output)
 #> True
 ```
 
-The whole history goes, so trim it to what the question is about — `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability such as the [harness](https://github.com/pydantic/pydantic-ai-harness)'s `SlidingWindow`, `ClearToolResults` and `SummarizingCompaction`, which work on a Jev agent as on any other; a summary they write arrives as a `system` entry in the history, which is what it is. Accuracy falls as the state grows with detail the question does not need, and `jev-1.13` takes 64k tokens for the state and questions together, with 32k for the state plus the longest question. Compact earlier than a language model would need, since Jev is being asked to *judge* the whole of it, not to continue from it.
+A new prompt on top of a history is judged as `text` beside it. Either way the whole history goes, so trim it to what the question is about — `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability such as the [harness](https://github.com/pydantic/pydantic-ai-harness)'s `SlidingWindow`, `ClearToolResults` and `SummarizingCompaction`, which work on a Jev agent as on any other; a summary they write arrives as a `system` entry in the history, which is what it is. Accuracy falls as the state grows with detail the question does not need, and `jev-1.13` takes 64k tokens for the state and questions together, with 32k for the state plus the longest question. Compact earlier than a language model would need, since Jev is being asked to *judge* the whole of it, not to continue from it.
 
 !!! note "A system prompt is judged, not asked"
     Jev is told what a conversation said and asked what the agent's `instructions` ask. A

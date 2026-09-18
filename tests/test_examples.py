@@ -493,7 +493,6 @@ class MockMCPServer(AbstractToolset[Any]):
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     # docs/models/typesafe.md
     'rm -rf ./build': ToolCallPart(tool_name='final_result', args={'verdict': 'ask', 'irreversible': True}),
-    'Judge the conversation above.': ToolCallPart(tool_name='final_result', args={'response': True}),
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',
     "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
@@ -773,6 +772,9 @@ tool_responses: dict[tuple[str, str], str] = {
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
+    if not messages[-1].parts:
+        # docs/models/typesafe.md: a run with no new prompt judges the history it was given
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
     m = messages[-1].parts[-1]
     # Handle multimodal tool returns (content directly in ToolReturnPart)
     if (
