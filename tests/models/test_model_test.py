@@ -5,13 +5,14 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import re
-from datetime import timezone
+from datetime import date, datetime, time, timezone
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from anyio import Event
-from pydantic import BaseModel, Field
+from pydantic import AnyUrl, BaseModel, Field
 
 from pydantic_ai import (
     Agent,
@@ -612,6 +613,64 @@ def test_narrow_exclusive_bounds_tool_args():
 
     agent.run_sync('hello', model=TestModel())
     assert calls == snapshot([{'temperature': 0.0}])
+
+
+def test_json_schema_common_string_formats():
+    """`format` must win over `minLength`, otherwise `AnyUrl` (uri + minLength 1) stays `'a'`."""
+
+    class Formatted(BaseModel):
+        day: date
+        when: datetime
+        clock: time
+        id: UUID
+        url: AnyUrl
+
+    json_schema = Formatted.model_json_schema()
+    data = _JsonSchemaTestData(json_schema).generate()
+    assert data == snapshot(
+        {
+            'day': '2024-01-01',
+            'when': '2024-01-01T00:00:00+00:00',
+            'clock': '00:00:00',
+            'id': '00000000-0000-0000-0000-000000000000',
+            'url': 'https://example.com',
+        }
+    )
+    Formatted.model_validate(data)
+
+
+@pytest.mark.parametrize('seed', [-1, 3_000_000, 1 << 128])
+def test_string_formats_unconstrained_seeds_still_validate(seed: int):
+    """`date-time`/`uuid` generators must wrap extreme seeds instead of raising."""
+
+    class Formatted(BaseModel):
+        day: date
+        when: datetime
+        clock: time
+        id: UUID
+
+    data = _JsonSchemaTestData(Formatted.model_json_schema(), seed=seed).generate()
+    Formatted.model_validate(data)
+
+
+def test_string_formats_as_structured_output():
+    """Regression for #8011: TestModel should not retry out on common pydantic string formats."""
+
+    class Out(BaseModel):
+        when: datetime
+        id: UUID
+        clock: time
+        url: AnyUrl
+
+    result = Agent('test', output_type=Out).run_sync('hello', model=TestModel())
+    assert result.output == snapshot(
+        Out(
+            when=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            id=UUID('00000000-0000-0000-0000-000000000000'),
+            clock=time(0, 0),
+            url=AnyUrl('https://example.com/'),
+        )
+    )
 
 
 def test_json_schema_number_generation():
