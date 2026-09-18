@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from textwrap import dedent
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, StructuredDict, UserContent, models
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
@@ -33,17 +36,16 @@ _JUDGE_REASON_DESCRIPTION = 'A concise 1-2 sentence justification for the verdic
 class GradingOutput(BaseModel, populate_by_name=True):
     """The output of a grading operation."""
 
-    reason: str | None = Field(description=_JUDGE_REASON_DESCRIPTION)
+    reason: str = Field(description=_JUDGE_REASON_DESCRIPTION)
     pass_: bool = Field(validation_alias='pass', serialization_alias='pass')
     score: float
 
 
-class _TextGradingOutput(GradingOutput):
-    """The output of a grading operation."""
-
-    model_config = ConfigDict(title='GradingOutput')
-
-    reason: str = Field(description=_JUDGE_REASON_DESCRIPTION)
+@dataclass(frozen=True)
+class _GradingResult:
+    reason: str | None
+    pass_: bool
+    score: float
 
 
 class _BinaryGradingOutput(BaseModel, populate_by_name=True):
@@ -69,22 +71,43 @@ def _resolve_judge_model(model: models.Model | models.KnownModelName | str | Non
     return models.infer_model(model)
 
 
+def _model_supports_text_output(model: models.Model) -> bool:
+    """Whether every model that may handle the request can produce the text judge's output shape."""
+    if isinstance(model, FallbackModel):
+        return all(_model_supports_text_output(candidate) for candidate in model.models)
+    if isinstance(model, WrapperModel):
+        return _model_supports_text_output(model.wrapped)
+    return model.profile.get('supports_text_output', True)
+
+
 async def _run_grading_agent(
-    agent: Agent[None, _TextGradingOutput],
+    agent: Agent[None, GradingOutput],
     user_prompt: str | Sequence[str | UserContent],
     model: models.Model | models.KnownModelName | str | None,
     model_settings: ModelSettings | None,
-) -> GradingOutput:
+    *,
+    allow_reasonless: bool,
+) -> _GradingResult:
     resolved_model = _resolve_judge_model(model)
-    if not resolved_model.profile.get('supports_text_output', True):
+    if not _model_supports_text_output(resolved_model):
+        if not allow_reasonless:
+            raise UserError(
+                'This judge model cannot generate the reason required by the `judge_*` helpers. '
+                'Use the `LLMJudge` evaluator to record a reasonless verdict.'
+            )
         result = await _non_text_judge_agent.run(
             user_prompt,
             model=resolved_model,
             model_settings=model_settings,
         )
-        return GradingOutput(reason=None, pass_=result.output.pass_, score=float(result.output.pass_))
+        return _GradingResult(reason=None, pass_=result.output.pass_, score=float(result.output.pass_))
     output = (await agent.run(user_prompt, model=resolved_model, model_settings=model_settings)).output
-    return GradingOutput(reason=output.reason, pass_=output.pass_, score=output.score)
+    return _GradingResult(reason=output.reason, pass_=output.pass_, score=output.score)
+
+
+def _grading_output_with_reason(result: _GradingResult) -> GradingOutput:
+    assert result.reason is not None
+    return GradingOutput(reason=result.reason, pass_=result.pass_, score=result.score)
 
 
 _JUDGE_REASON_INSTRUCTION = (
@@ -112,8 +135,22 @@ _judge_output_agent = Agent(
         """
     )
     + _JUDGE_REASON_INSTRUCTION,
-    output_type=_TextGradingOutput,
+    output_type=GradingOutput,
 )
+
+
+async def _judge_output(
+    output: Any,
+    rubric: str,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+    *,
+    allow_reasonless: bool,
+) -> _GradingResult:
+    user_prompt = _build_prompt(output=output, rubric=rubric)
+    return await _run_grading_agent(
+        _judge_output_agent, user_prompt, model, model_settings, allow_reasonless=allow_reasonless
+    )
 
 
 async def judge_output(
@@ -127,8 +164,8 @@ async def judge_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(output=output, rubric=rubric)
-    return await _run_grading_agent(_judge_output_agent, user_prompt, model, model_settings)
+    result = await _judge_output(output, rubric, model, model_settings, allow_reasonless=False)
+    return _grading_output_with_reason(result)
 
 
 _judge_input_output_agent = Agent(
@@ -151,8 +188,23 @@ _judge_input_output_agent = Agent(
         """
     )
     + _JUDGE_REASON_INSTRUCTION,
-    output_type=_TextGradingOutput,
+    output_type=GradingOutput,
 )
+
+
+async def _judge_input_output(
+    inputs: Any,
+    output: Any,
+    rubric: str,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+    *,
+    allow_reasonless: bool,
+) -> _GradingResult:
+    user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric)
+    return await _run_grading_agent(
+        _judge_input_output_agent, user_prompt, model, model_settings, allow_reasonless=allow_reasonless
+    )
 
 
 async def judge_input_output(
@@ -167,9 +219,8 @@ async def judge_input_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric)
-
-    return await _run_grading_agent(_judge_input_output_agent, user_prompt, model, model_settings)
+    result = await _judge_input_output(inputs, output, rubric, model, model_settings, allow_reasonless=False)
+    return _grading_output_with_reason(result)
 
 
 _judge_input_output_expected_agent = Agent(
@@ -194,8 +245,24 @@ _judge_input_output_expected_agent = Agent(
         """
     )
     + _JUDGE_REASON_INSTRUCTION,
-    output_type=_TextGradingOutput,
+    output_type=GradingOutput,
 )
+
+
+async def _judge_input_output_expected(
+    inputs: Any,
+    output: Any,
+    expected_output: Any,
+    rubric: str,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+    *,
+    allow_reasonless: bool,
+) -> _GradingResult:
+    user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
+    return await _run_grading_agent(
+        _judge_input_output_expected_agent, user_prompt, model, model_settings, allow_reasonless=allow_reasonless
+    )
 
 
 async def judge_input_output_expected(
@@ -211,9 +278,10 @@ async def judge_input_output_expected(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
-
-    return await _run_grading_agent(_judge_input_output_expected_agent, user_prompt, model, model_settings)
+    result = await _judge_input_output_expected(
+        inputs, output, expected_output, rubric, model, model_settings, allow_reasonless=False
+    )
+    return _grading_output_with_reason(result)
 
 
 _judge_output_expected_agent = Agent(
@@ -236,8 +304,23 @@ _judge_output_expected_agent = Agent(
         """
     )
     + _JUDGE_REASON_INSTRUCTION,
-    output_type=_TextGradingOutput,
+    output_type=GradingOutput,
 )
+
+
+async def _judge_output_expected(
+    output: Any,
+    expected_output: Any,
+    rubric: str,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+    *,
+    allow_reasonless: bool,
+) -> _GradingResult:
+    user_prompt = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)
+    return await _run_grading_agent(
+        _judge_output_expected_agent, user_prompt, model, model_settings, allow_reasonless=allow_reasonless
+    )
 
 
 async def judge_output_expected(
@@ -252,8 +335,10 @@ async def judge_output_expected(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)
-    return await _run_grading_agent(_judge_output_expected_agent, user_prompt, model, model_settings)
+    result = await _judge_output_expected(
+        output, expected_output, rubric, model, model_settings, allow_reasonless=False
+    )
+    return _grading_output_with_reason(result)
 
 
 def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:
@@ -330,25 +415,18 @@ def _build_prompt(
 class GEvalOutput(BaseModel):
     """The output of a G-Eval grading operation.
 
-    G-Eval asks a text-generating judge to emit a short chain-of-thought `reason` followed by an
-    integer `score` in a user-specified range (see [`judge_g_eval`][pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval]).
-    A judge that cannot write text returns the score with `reason=None`.
-    """
-
-    reason: str | None
-    score: int
-
-
-class _TextGEvalOutput(GEvalOutput):
-    """The output of a G-Eval grading operation.
-
     G-Eval asks the judge to emit a short chain-of-thought `reason` followed by an
     integer `score` in a user-specified range (see [`judge_g_eval`][pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval]).
     """
 
-    model_config = ConfigDict(title='GEvalOutput')
-
     reason: str
+    score: int
+
+
+@dataclass(frozen=True)
+class _GEvalResult:
+    reason: str | None
+    score: int
 
 
 def _g_eval_output_type(score_range: tuple[int, int]) -> type[JsonSchemaValue]:
@@ -395,8 +473,71 @@ _judge_g_eval_agent = Agent(
         Do not include any other keys or prose outside the JSON object.
         """
     ),
-    output_type=_TextGEvalOutput,
+    output_type=GEvalOutput,
 )
+
+
+async def _judge_g_eval(
+    output: Any,
+    criteria: str,
+    evaluation_steps: Sequence[str],
+    score_range: tuple[int, int] = (1, 5),
+    inputs: Any | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+    *,
+    allow_reasonless: bool,
+) -> _GEvalResult:
+    if score_range[0] >= score_range[1]:
+        raise ValueError(f'`score_range` must satisfy min < max, got {score_range!r}')
+    if not evaluation_steps:
+        raise ValueError('`evaluation_steps` must contain at least one step')
+
+    numbered_steps = '\n'.join(f'{i}. {step}' for i, step in enumerate(evaluation_steps, start=1))
+    rubric = '\n'.join(
+        [
+            f'Evaluation criteria: {criteria}',
+            '',
+            'Evaluation steps (apply each step in order):',
+            numbered_steps,
+            '',
+            f'Produce a single integer score between {score_range[0]} and {score_range[1]} inclusive,',
+            f'where {score_range[0]} is the worst and {score_range[1]} is the best according to the criteria.',
+        ]
+    )
+    user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
+    resolved_model = _resolve_judge_model(model)
+    if not _model_supports_text_output(resolved_model):
+        if not allow_reasonless:
+            raise UserError(
+                'This judge model cannot generate the reason required by `judge_g_eval`. '
+                'Use the `GEval` evaluator to record a reasonless score.'
+            )
+        score_levels = score_range[1] - score_range[0] + 1
+        if score_levels > _MAX_G_EVAL_SCORE_LEVELS:
+            raise UserError(
+                f'`score_range` can contain at most {_MAX_G_EVAL_SCORE_LEVELS} levels for a judge that does not '
+                f'support text output; got {score_levels} in {score_range!r}.'
+            )
+        normalized = (
+            await _non_text_judge_agent.run(
+                user_prompt,
+                model=resolved_model,
+                model_settings=model_settings,
+                output_type=_g_eval_output_type(score_range),
+            )
+        ).output.get('score')
+        if not isinstance(normalized, int) or isinstance(normalized, bool):
+            raise ValueError(f'Judge returned an invalid score: {normalized!r}')
+        result = _GEvalResult(reason=None, score=normalized + score_range[0])
+    else:
+        output = (
+            await _judge_g_eval_agent.run(user_prompt, model=resolved_model, model_settings=model_settings)
+        ).output
+        result = _GEvalResult(reason=output.reason, score=output.score)
+    if not score_range[0] <= result.score <= score_range[1]:
+        raise ValueError(f'Judge returned score {result.score}, outside the requested `score_range` {score_range!r}')
+    return result
 
 
 async def judge_g_eval(
@@ -420,8 +561,7 @@ async def judge_g_eval(
         output: The output being evaluated.
         criteria: The aspect being evaluated (e.g. "coherence", "fluency").
         evaluation_steps: Explicit chain-of-thought steps the judge should follow.
-        score_range: Inclusive `(min, max)` integer score range. A judge that cannot generate text supports at
-            most 20 score levels.
+        score_range: Inclusive `(min, max)` integer score range.
         inputs: Optional inputs/context to show alongside the output.
         model: The model to use. If not specified, the default judge model is used.
         model_settings: Optional model settings.
@@ -431,52 +571,19 @@ async def judge_g_eval(
         the judge's reasoning and integer score.
 
     Raises:
-        UserError: If a judge that cannot generate text is given more than 20 score levels.
+        UserError: If the judge cannot generate the required reason.
         ValueError: If `score_range` is invalid, `evaluation_steps` is empty, or the judge
             returns a score outside the range.
     """
-    if score_range[0] >= score_range[1]:
-        raise ValueError(f'`score_range` must satisfy min < max, got {score_range!r}')
-    if not evaluation_steps:
-        raise ValueError('`evaluation_steps` must contain at least one step')
-
-    numbered_steps = '\n'.join(f'{i}. {step}' for i, step in enumerate(evaluation_steps, start=1))
-    rubric = '\n'.join(
-        [
-            f'Evaluation criteria: {criteria}',
-            '',
-            'Evaluation steps (apply each step in order):',
-            numbered_steps,
-            '',
-            f'Produce a single integer score between {score_range[0]} and {score_range[1]} inclusive,',
-            f'where {score_range[0]} is the worst and {score_range[1]} is the best according to the criteria.',
-        ]
+    result = await _judge_g_eval(
+        output,
+        criteria,
+        evaluation_steps,
+        score_range,
+        inputs,
+        model,
+        model_settings,
+        allow_reasonless=False,
     )
-    user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
-    resolved_model = _resolve_judge_model(model)
-    if not resolved_model.profile.get('supports_text_output', True):
-        score_levels = score_range[1] - score_range[0] + 1
-        if score_levels > _MAX_G_EVAL_SCORE_LEVELS:
-            raise UserError(
-                f'`score_range` can contain at most {_MAX_G_EVAL_SCORE_LEVELS} levels for a judge that does not '
-                f'support text output; got {score_levels} in {score_range!r}.'
-            )
-        normalized = (
-            await _non_text_judge_agent.run(
-                user_prompt,
-                model=resolved_model,
-                model_settings=model_settings,
-                output_type=_g_eval_output_type(score_range),
-            )
-        ).output.get('score')
-        if not isinstance(normalized, int) or isinstance(normalized, bool):
-            raise ValueError(f'Judge returned an invalid score: {normalized!r}')
-        result = GEvalOutput(reason=None, score=normalized + score_range[0])
-    else:
-        output = (
-            await _judge_g_eval_agent.run(user_prompt, model=resolved_model, model_settings=model_settings)
-        ).output
-        result = GEvalOutput(reason=output.reason, score=output.score)
-    if not score_range[0] <= result.score <= score_range[1]:
-        raise ValueError(f'Judge returned score {result.score}, outside the requested `score_range` {score_range!r}')
-    return result
+    assert result.reason is not None
+    return GEvalOutput(reason=result.reason, score=result.score)

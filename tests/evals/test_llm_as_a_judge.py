@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
+from typing import Literal
 
 import pytest
 from pytest_mock import MockerFixture
@@ -12,15 +13,19 @@ with try_import() as imports_successful:
     from pydantic_ai import Agent
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolCallPart
+    from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.models.test import TestModel
+    from pydantic_ai.models.wrapper import WrapperModel
     from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GEvalOutput,
         GradingOutput,
         _build_prompt,  # pyright: ignore[reportPrivateUsage]
+        _judge_g_eval,  # pyright: ignore[reportPrivateUsage]
         _judge_input_output_agent,  # pyright: ignore[reportPrivateUsage]
         _judge_input_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
+        _judge_output,  # pyright: ignore[reportPrivateUsage]
         _judge_output_agent,  # pyright: ignore[reportPrivateUsage]
         _judge_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
         _stringify,  # pyright: ignore[reportPrivateUsage]
@@ -142,9 +147,11 @@ async def test_judge_output_without_text_support():
         return ModelResponse(parts=[ToolCallPart(output_tool.name, {'pass': True})])
 
     model = FunctionModel(answer, profile={'supports_text_output': False})
-    result = await judge_output('Hello world', 'Content contains a greeting', model=model)
+    result = await _judge_output('Hello world', 'Content contains a greeting', model=model, allow_reasonless=True)
 
-    assert result == GradingOutput(reason=None, pass_=True, score=1.0)
+    assert result.reason is None
+    assert result.pass_ is True
+    assert result.score == 1.0
     assert schemas == snapshot(
         [
             {
@@ -174,9 +181,12 @@ async def test_judge_g_eval_without_text_support():
         return ModelResponse(parts=[ToolCallPart(output_tool.name, {'score': 3})])
 
     model = FunctionModel(answer, profile={'supports_text_output': False})
-    result = await judge_g_eval('Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model)
+    result = await _judge_g_eval(
+        'Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model, allow_reasonless=True
+    )
 
-    assert result == GEvalOutput(reason=None, score=4)
+    assert result.reason is None
+    assert result.score == 4
     assert schemas == snapshot(
         [
             {
@@ -208,7 +218,9 @@ async def test_judge_g_eval_without_text_support_rejects_an_invalid_score():
 
     model = FunctionModel(answer, profile={'supports_text_output': False})
     with pytest.raises(ValueError, match="Judge returned an invalid score: 'high'"):
-        await judge_g_eval('Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model)
+        await _judge_g_eval(
+            'Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model, allow_reasonless=True
+        )
 
 
 async def test_judge_g_eval_without_text_support_rejects_too_many_score_levels():
@@ -228,9 +240,56 @@ async def test_judge_g_eval_without_text_support_rejects_too_many_score_levels()
             'got 21 in (0, 20).'
         ),
     ):
-        await judge_g_eval('Clear output.', 'clarity', ['Read it.'], score_range=(0, 20), model=model)
+        await _judge_g_eval(
+            'Clear output.', 'clarity', ['Read it.'], score_range=(0, 20), model=model, allow_reasonless=True
+        )
 
     assert request_made is False
+
+
+async def test_public_judge_helpers_require_a_reason():
+    """The existing helper result types stay strict; evaluators own reasonless results."""
+    request_made = False
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal request_made
+        request_made = True
+        return ModelResponse()
+
+    model = FunctionModel(answer, profile={'supports_text_output': False})
+    with pytest.raises(UserError, match='Use the `LLMJudge` evaluator'):
+        await judge_output('Clear output.', 'Content is clear.', model=model)
+    with pytest.raises(UserError, match='Use the `GEval` evaluator'):
+        await judge_g_eval('Clear output.', 'clarity', ['Read it.'], model=model)
+
+    assert request_made is False
+
+
+@pytest.mark.parametrize('wrapped', [False, True])
+@pytest.mark.parametrize('judge', ['grading', 'g_eval'])
+async def test_text_judges_support_fallback_models(wrapped: bool, judge: Literal['grading', 'g_eval']):
+    """Composite models without an aggregate profile keep the existing text-judge path."""
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        properties = output_tool.parameters_json_schema['properties']
+        args = (
+            {'reason': 'The output is clear.', 'pass': True, 'score': 1.0}
+            if 'pass' in properties
+            else {'reason': 'The output is clear.', 'score': 4}
+        )
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, args)])
+
+    model = FallbackModel(FunctionModel(answer), FunctionModel(answer))
+    judge_model = WrapperModel(model) if wrapped else model
+
+    if judge == 'grading':
+        result = await judge_output('Clear output.', 'Content is clear.', model=judge_model)
+    else:
+        result = await judge_g_eval('Clear output.', 'clarity', ['Read it.'], model=judge_model)
+
+    assert result.reason == 'The output is clear.'
 
 
 def test_stringify():
