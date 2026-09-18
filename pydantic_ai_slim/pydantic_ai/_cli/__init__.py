@@ -615,7 +615,7 @@ async def ask_agent(
             return agent_run.result.all_messages()
     finally:
         if usage is not None:
-            usage.incr(turn_usage)
+            usage.incr(turn_usage)  # usage-attribution: the CLI's own cross-turn total, not a run's usage
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):

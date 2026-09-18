@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from ._cancel import RunCancellation
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
+    from .durable_exec._toolset import RunHeldToolset
     from .models import AbstractModel
     from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
@@ -272,6 +273,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
     """Per-run capability instances used for durable recovery, for internal use only."""
 
+    _run_held_toolsets: dict[str, RunHeldToolset[Any]] | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    Toolsets the run holds entered, keyed by toolset `id`, attached by the durable-execution toolset
+    wrappers so their durable units reuse the toolset (and the MCP server session) the run already
+    holds instead of entering a fresh one each time. Holds live objects, so it only survives where
+    the durable unit runs in the same process as the durable container; engines that serialize the
+    run context across the boundary (Temporal) leave it `None` and the units fall back to entering
+    their own, which is what they have always done.
+    """
+
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -297,10 +309,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     realtime_session: RealtimeSession | None = field(default=None, repr=False)
     """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
 
-    `None` in classic runs, and during the parts of a realtime run that precede the connection:
-    `before_run`, `wrap_run` before `handler()` starts the session, and instruction resolution.
-    Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
-    stages. Tools and hooks that run during the live session can use it to e.g.
+    `None` in classic runs, during setup (`before_run` and instruction resolution), and throughout
+    `wrap_run`: that hook keeps the context copy captured before the session exists, including after
+    `handler()` returns. Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime
+    run in those stages. Tools and `on_event` hooks that run during the live session can use it to e.g.
     [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
     [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content, or call
     [`close()`][pydantic_ai.realtime.RealtimeSession.close] to hang up.
