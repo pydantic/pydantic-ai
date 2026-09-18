@@ -16,10 +16,10 @@ from __future__ import annotations as _annotations
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, Tag
+from pydantic import Discriminator, StrictBool, Tag
 
 from . import _utils
-from .exceptions import ModelRetry, ToolFailed
+from .exceptions import ModelRetry, ToolFailed, UserError
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 
@@ -165,8 +165,8 @@ class DeferredToolResults:
 
     calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict[str, DeferredToolCallResult | Any])
     """Map of tool call IDs to results for tool calls that required external execution."""
-    approvals: dict[str, bool | DeferredToolApprovalResult] = field(
-        default_factory=dict[str, bool | DeferredToolApprovalResult]
+    approvals: dict[str, StrictBool | DeferredToolApprovalResult] = field(
+        default_factory=dict[str, StrictBool | DeferredToolApprovalResult]
     )
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
@@ -190,6 +190,11 @@ class DeferredToolResults:
                 approval = ToolApproved()
             elif approval is False:
                 approval = ToolDenied()
+            elif not isinstance(approval, (ToolApproved, ToolDenied)):
+                raise UserError(
+                    f'Invalid approval result for tool call {tool_call_id!r}: '
+                    'expected `bool`, `ToolApproved`, or `ToolDenied`'
+                )
             tool_call_results[tool_call_id] = approval
 
         call_result_types = _utils.get_union_args(DeferredToolCallResult)

@@ -1,0 +1,141 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '879'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Reveal alpha_lookup and bravo_lookup using two separate tool searches, one path per search. Then answer "done"
+          without calling the discovered tools.
+        role: user
+      model: gpt-5.6-luna
+      reasoning:
+        context: all_turns
+      stream: true
+      tool_choice: auto
+      tools:
+      - type: tool_search
+      - defer_loading: true
+        description: Look up alpha.
+        name: alpha_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            query:
+              type: string
+          required:
+          - query
+          type: object
+        strict: true
+        type: function
+      - defer_loading: true
+        description: Look up bravo.
+        name: bravo_lookup
+        parameters:
+          additionalProperties: false
+          properties:
+            query:
+              type: string
+          required:
+          - query
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0767fa5f2afca513006aa778172fc487d2960ce435f842c865","object":"response","created_at":1789360151,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-luna","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","defer_loading":true,"description":"Look up alpha.","name":"alpha_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up bravo.","name":"bravo_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true},{"type":"tool_search","description":null,"parameters":null}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0767fa5f2afca513006aa778172fc487d2960ce435f842c865","object":"response","created_at":1789360151,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-luna","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","defer_loading":true,"description":"Look up alpha.","name":"alpha_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up bravo.","name":"bravo_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true},{"type":"tool_search","description":null,"parameters":null}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"rs_0767fa5f2afca513006aa77817dac887d2beba42c32b180a92","type":"reasoning","content":[],"encrypted_content":"gAAAAABqp3gXhJk-IR3a_e1p7NaofCZPYu_StCK_DiiarGOTM1TaMCI-DJZ0Y_GHd7DtIzTrnzXS_frkppw1gvANI_Gj-fU6EgIfaLe-2HPn8tdsPZqlgXG-jLyi0dWFhdxvAjuSvcIkf6jdT5fpqyQOOfnr1ecpbef5j_WIny-zNZo8ruWAOXHWW3xl-rJ-FcUKN1DLfIYQi3iK-i4jBCYDJj3oi4L-BrNMYXSyU2d6uVhWuiPZTThm2mYrcVsu1GaJxOgNm1rPmyy7WtGxcgZSBWU-A0Vxv9P4V0-rH1Iq3YyqCnVr-IvRZ07pcKuIQW989HsEgDSx3FYf6tU-UVn3cEgGU_jLwz3HP6RdV2txcV-OSoOdn1k5Grv0OJP-ILydgNpWQ70fQhFhnZ3rGds0D4sDUeSr81vSt6OFRh6S5wZlb1Sqa2Dl3GuZRYjafb29DJNOigtaTN4DPHDddoOzYSvO2p2bEI-jHDaxLGHQCeJU3uTZ3t8ZGqatq_9iXflx0o6Ch64Y6iuFGzWMOCDJ0-En7-qGwFLJ5w4u2SJqIaWNIUrCxxknJuHIKlSIW0TCvtFDrUHQbUZGIBEYLG1XLJHl5xuOopxOb3Zl8NeWfPFJ8xlIslSVpQ76P3uh2dJ1mBSRe0nWUshAw4a7Khok8iOLlvMzPQwV9Txgh86fKi4DwZ6Fcwuy5bLxuIv32QMImSD6pK68ppPL4Q2cQZI7Nk5c3vv1lMRYx3PC6x_H59ISXFjtTEJtn7Ef5Vu9rsVE402s5lOg1DCou5I2XxSNJihc1vFrf7gBqTUZ1y_ARcxqIFao6UeIch27lpkW4flV2iPZ15R9bXcZHNMYSxzat6tMxdxdSkdP5qCEtsOxK7dlnLXf6gQaFCJgztx7kGSQ7hAwap12VvlgW5NXIiGImD0TQsU2rqOpG9ulL-ziIHTvJB9jHmaA0bn2Gft69VYTJD4PwNHrkWZPdLdbyU2i0gFzm8ih78EXf2icLMcicLEn3nHEvaTaFuvf0xsqQDXV08T7fAebRc9k8mgQE9cVwwjkDviNArms7IfuJtiH2AfC5J56NMY3MChPvZfR0lbdy0F2x4O7TfBzZ6-_opU6-m3LsJZx-uu7GGGe6IhfWeb8IIALr9aVMSdrs59XaVbgpykopsG3yzgCgCrD_-3XcmXB0XakkQ==","summary":[]},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"rs_0767fa5f2afca513006aa77817dac887d2beba42c32b180a92","type":"reasoning","content":[],"encrypted_content":"gAAAAABqp3gYS3p_Py5ZpDGZWnafh2uaDrPnVzz3CaQ7EmLys6SvQ3yXW7F3zk5oYVsGwp6ioyC6gr1VgyfhTG2APTxzVE05hpOzmj2Zg1ZD1PPl5yPbB2VnfxsaF393XdogCQFFSUIL6xCOmZKmuVeO5M_stJRJWI81hTP65CSTvN5YMYJcpHSbo-wIww4TkeiD2TW2b9PBllVXYz6TPqbLEoXuzSVDG5gaNHqlwYX3bKLXzJNnz2J_UpWW2kwh4YldJXSxYkDSZ9KOjL8cHFhwxNS4wAW_vT9mzlNw2g2gewgMemQjNrjjCXJ0QSJ90_OeKKBP6412q3ZgTNJ_RMij4zFcqqL3NC8FFb4nfm4Fno6jrc7Fsw2ltGWbrBmhIjS03Ts1MDF1nMrVIDyoLWuoh6Kg7FY0hzvnRROrhSMRiqh3pWIj8rlLQkKWIMPptaND1O8G4QeskT6tgZN88JkTMtET30_nR9vnWBN-2WsnBVjn8tvGjaMGCgNnnYFHGpTv4NNlrY3yiQOYgRnIUBVe3yd6mWzmi21An-R6UnH-eaS1FstPB_14fnRvWAOTqdnJ2w75I9A4SzYKgscUM8q4-lL_4yRpPmtv0r_2zfntOdwbmHKO8KZhehQwE_I2k41L970GGX4q40p-apInZhI8MNPVDhds8wbJl1ZQB50M7M60HIURetldjL-9qtWqQ0IeltduCdyWGLPL1R6r39LCiSFhMn61_OoAvMvvby_brunYHw8U-lvrawlO_DqWzH1bFxBKC1pt7mJLOOZT16-8rNeGVvdDdKZwcxvE0zN4yJdz2Zy_48Oe_qpVrSCVxVYNOWZYygN-DzdL4hIF-tBxjNJlaoKEK895XPLx57j0zp0fDWB6QDb6lfBvpv_Ie80ZJW59fg-82AXe0yA_IQ1j-7HHpe3EK9KmC97vR_ealQBKzhuR4V0cA_bgKVPSe6cViZvPoj78dU5IKzyqo_7QBSF1umVSRpJN02XDP7uKo8eCffxKb5U3Gndqs_2g_n-jewV_AY5ae99oEbuNV1EJy7o93EOYFVStf6UF1hdTue0znTJ3Wrtd7IlbLtnYeluPciXKJUZPSVbN52BD2OIpvh0d7652pJS-Rwe9YZurgJ-PVaGoy4NLxvByFONE-mRJZVA3VmwrM-E9wqnzQf_A_wyVnS9GG5sBWkBCyu1zslHOytm0eEa4GXWLMUExcWOf_UrgefGsTuIZsNmudgiOWPkbYmytjBEfZhPYPCQEbj_-a3rJDn4IXqg1kWc3ZJQBTvvsRusd-tA5Tumf8GZ4zfIgXUxNRgm5oGqoOQ-rOEZ3nTVjaQA=","summary":[]},"output_index":0,"sequence_number":3}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"tsc_0767fa5f2afca513006aa778181d5087d2b1fbfc51968f5ed1","type":"tool_search_call","status":"in_progress","arguments":{},"call_id":null,"execution":"server"},"output_index":1,"sequence_number":4}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"tsc_0767fa5f2afca513006aa778181d5087d2b1fbfc51968f5ed1","type":"tool_search_call","status":"completed","arguments":{"paths":["alpha_lookup"]},"call_id":null,"execution":"server"},"output_index":1,"sequence_number":5}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"tso_0767fa5f2afca513006aa778183c6c87d2b0b165b8b5fec06f","type":"tool_search_output","status":"in_progress","call_id":null,"execution":"server","tools":[{"type":"function","defer_loading":true,"description":"Look up alpha.","name":"alpha_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true}]},"output_index":2,"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"tso_0767fa5f2afca513006aa778183c6c87d2b0b165b8b5fec06f","type":"tool_search_output","status":"completed","call_id":null,"execution":"server","tools":[{"type":"function","defer_loading":true,"description":"Look up alpha.","name":"alpha_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true}]},"output_index":2,"sequence_number":7}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"tsc_0767fa5f2afca513006aa778187e1487d2868bc5911f8476ac","type":"tool_search_call","status":"in_progress","arguments":{},"call_id":null,"execution":"server"},"output_index":3,"sequence_number":8}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"tsc_0767fa5f2afca513006aa778187e1487d2868bc5911f8476ac","type":"tool_search_call","status":"completed","arguments":{"paths":["bravo_lookup"]},"call_id":null,"execution":"server"},"output_index":3,"sequence_number":9}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"tso_0767fa5f2afca513006aa77818a80c87d2be328369b493b2c0","type":"tool_search_output","status":"in_progress","call_id":null,"execution":"server","tools":[{"type":"function","defer_loading":true,"description":"Look up bravo.","name":"bravo_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true}]},"output_index":4,"sequence_number":10}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"tso_0767fa5f2afca513006aa77818a80c87d2be328369b493b2c0","type":"tool_search_output","status":"completed","call_id":null,"execution":"server","tools":[{"type":"function","defer_loading":true,"description":"Look up bravo.","name":"bravo_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true}]},"output_index":4,"sequence_number":11}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0767fa5f2afca513006aa77818d8f087d29495a8d12934f19c","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":5,"sequence_number":12}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0767fa5f2afca513006aa77818d8f087d29495a8d12934f19c","output_index":5,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":13}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"done","item_id":"msg_0767fa5f2afca513006aa77818d8f087d29495a8d12934f19c","logprobs":[],"obfuscation":"YqzAivhzMBQB","output_index":5,"sequence_number":14}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0767fa5f2afca513006aa77818d8f087d29495a8d12934f19c","logprobs":[],"output_index":5,"sequence_number":15,"text":"done"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0767fa5f2afca513006aa77818d8f087d29495a8d12934f19c","output_index":5,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"done"},"sequence_number":16}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0767fa5f2afca513006aa77818d8f087d29495a8d12934f19c","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"done"}],"phase":"final_answer","role":"assistant"},"output_index":5,"sequence_number":17}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0767fa5f2afca513006aa778172fc487d2960ce435f842c865","object":"response","created_at":1789360151,"status":"completed","background":false,"completed_at":1789360152,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-luna","moderation":null,"output":[{"id":"rs_0767fa5f2afca513006aa77817dac887d2beba42c32b180a92","type":"reasoning","content":[],"encrypted_content":"gAAAAABqp3gYkOrKvop-kkC-KxSx4FjhIXDGdRw9Cq5SWD6D3DLXQijCRBSbx8W0ejGr2wd4TPdou83Ps1s9bDOfndlT2nqcZqzY9EfzbdnXSn6EesEX4IyPJ09Q_TIMnA7l5EUguTW95sERm0Fcphw33fv063WjOVkKX1F6G7Chp77i_g8DMm_AQGALMQXPux_dk95Zz_inNRPoyVLJ71lCzw1e9u0RBVs5RuD59Try40p1ZlILJ2mdUGDQv_HE6k19pp4osdHilOmy5YZQp1p232KPzv2HBzdL4_5R4eBUe1PB5tSq4_2vZhuNBnqFn-FbZC9-g7LIdACzcQLhaTDiSZ7DAbPVVdISsIev4GBwUnIus1XgGK-zQWBmp4hLV7NIX8PXPSpKlpJ7UcPB9fOmUcqsLXlE3Ba69lLn_Hq7GZZSleZFCgzHB9z3p16lNXj6i6ZD7TYsZVtNB75JNW7JhTljvAvkJfhkVJcMs3qE3tpMdI5M23SYTJCnDh9T-vxJHnI8fV-lTH4O5fgQikXbSI6kRg0VusyE69D6e8nA_7WEPk3_B2iIbGjEKg7uYKV8svMR-qmJU7k6Oby9tPAgYcEJGCl5ZYVCLGwtRuAJ5Fgq_LN5sBt0brrLXJUpfcCGphvwttSeXNVEDQTgKISi6ZTjO8yXisDCPFx6Y6EiYdO2I2i2RlqhM7nqfi6EYUgLn8DLdkkF-Ow9AOUYH7Q6aiIyuAwYo4OEUFUfgY2FSVedi8S4CbSZ3BKdm4M3inY0HGefnBN4mGz_H3bncsnqPL1Nprqv5sLjmp9J_QT16e3eg_-ZmjZDjmF1G6SbtqdcDhAf1sFN9s_ghqyl-IHTHp45GcLnFV_e-8lwXHtAe7OZjNpC1n2TSFf01xiyFaCBfzH3PCpMWwzz6LfUnguhdr4uX9Ef3eT4abJewmQev3wcKFdm27VT7c0zsODVXrPqj2jNUqx0SxUuTbhVJU6Sn0Flv3IiEV7O5glCn-pVFwOownFgZD9x1xUe07CKz_oNpNzrrbIJKAbJv_-yU1tChEJsePrJOk6gqt_ChszoLw4qsJttCclFqm5IX6PeJXtMOz24qYTg4NqfJGan9twXe8ycPd5yMJmguYET9NbE_y-XwOqYQx16nFLrWKw4up3CqXSFLO7njeGGArtZyQ8vXcbU9FS43hh9noBTAywOA8tdc7JAsVu037x7XKeB_aJlsmhZRlhis4Vl50IM2xE_fN4N4fj07hJxqeGqVy6KbdNczPOHqpBPcBkLZvkctHPNMZrSflMUpoaRrCDws0UkJkREpfeq0MEQCoUwSnlor0dKGwpE_Wk=","summary":[]},{"id":"tsc_0767fa5f2afca513006aa778181d5087d2b1fbfc51968f5ed1","type":"tool_search_call","status":"completed","arguments":{"paths":["alpha_lookup"]},"call_id":null,"execution":"server"},{"id":"tso_0767fa5f2afca513006aa778183c6c87d2b0b165b8b5fec06f","type":"tool_search_output","status":"completed","call_id":null,"execution":"server","tools":[{"type":"function","defer_loading":true,"description":"Look up alpha.","name":"alpha_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true}]},{"id":"tsc_0767fa5f2afca513006aa778187e1487d2868bc5911f8476ac","type":"tool_search_call","status":"completed","arguments":{"paths":["bravo_lookup"]},"call_id":null,"execution":"server"},{"id":"tso_0767fa5f2afca513006aa77818a80c87d2be328369b493b2c0","type":"tool_search_output","status":"completed","call_id":null,"execution":"server","tools":[{"type":"function","defer_loading":true,"description":"Look up bravo.","name":"bravo_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true}]},{"id":"msg_0767fa5f2afca513006aa77818d8f087d29495a8d12934f19c","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"done"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","defer_loading":true,"description":"Look up alpha.","name":"alpha_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true},{"type":"function","defer_loading":true,"description":"Look up bravo.","name":"bravo_lookup","output_schema":null,"parameters":{"additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"],"type":"object"},"strict":true},{"type":"tool_search","description":null,"parameters":null}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":779,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":73,"output_tokens_details":{"reasoning_tokens":68},"total_tokens":852},"user":null,"metadata":{}},"sequence_number":18}
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - '522'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

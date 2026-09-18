@@ -27,6 +27,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
@@ -100,6 +101,11 @@ CASES = [
         'fireworks',
         lambda: FireworksProvider(api_key='test'),
         lambda http_client: FireworksProvider(api_key='test', http_client=http_client),
+    ),
+    Case(
+        'github-copilot',
+        lambda: GitHubCopilotProvider(api_key='test'),
+        lambda http_client: GitHubCopilotProvider(api_key='test', http_client=http_client),
     ),
     Case(
         'heroku',
@@ -183,6 +189,7 @@ IMPORT_GUARD_CASES = [
     ('crusoe', 'use the Crusoe provider'),
     ('deepseek', 'use the DeepSeek provider'),
     ('fireworks', 'use the Fireworks AI provider'),
+    ('github_copilot', 'use the GitHub Copilot provider'),
     ('heroku', 'use the Heroku provider'),
     ('litellm', 'use the LiteLLM provider'),
     ('moonshotai', 'use the MoonshotAI provider'),

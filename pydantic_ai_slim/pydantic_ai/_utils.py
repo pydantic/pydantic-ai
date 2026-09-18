@@ -569,6 +569,15 @@ def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, co
     message.conversation_id = message.conversation_id or conversation_id
 
 
+def validate_uploaded_file_provider(item: _messages.UploadedFile, *, system: str, model_type_name: str) -> None:
+    """Raise `UserError` if an `UploadedFile` references a different provider than the model it was passed to."""
+    if item.provider_name != system:
+        raise UserError(
+            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {model_type_name}. '
+            f'Expected `provider_name` to be `{system!r}`.'
+        )
+
+
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
@@ -1108,3 +1117,15 @@ def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> 
             f'-----END FILE id="{identifier}"-----',
         ]
     )
+
+
+_TOKEN_SPLIT_PATTERN = re.compile(r'[\s",.:]+')
+
+
+def estimate_string_tokens(text: str) -> int:
+    """Roughly estimate the number of tokens in a string by splitting on whitespace and punctuation.
+
+    Shared by the test models, which report a plausible usage count without pulling in a tokenizer.
+    Blank text counts as one token, so a caller that wants zero for it guards the call itself.
+    """
+    return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))

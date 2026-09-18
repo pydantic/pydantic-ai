@@ -22,7 +22,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
@@ -507,7 +507,12 @@ class TestOpenAIResponsesThinkingTranslation:
 
 @pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
 class TestGoogleThinkingTranslation:
-    """Test Google model _translate_thinking translation."""
+    """Test Google model _translate_thinking translation.
+
+    Unit-pinned because cassette matchers aren't sensitive to the request body — asserting the
+    translated config directly is what catches resolution drift; wire-level cases live in
+    `tests/test_thinking_wire_contract.py`.
+    """
 
     @pytest.fixture
     def gemini_3_model(self):
@@ -540,6 +545,30 @@ class TestGoogleThinkingTranslation:
                 supports_thinking=True,
                 google_supports_thinking_level=True,
                 google_supports_minimal_thinking_level=False,
+            ),
+        )
+
+    @pytest.fixture
+    def flash_lite_image_model(self):
+        """`gemini-3.1-flash-lite-image`: documented levels are only `minimal` and `high`."""
+        return FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset({'MINIMAL', 'HIGH'}),
+            ),
+        )
+
+    @pytest.fixture
+    def low_high_model(self):
+        """A model with a non-contiguous level set that skips `medium` (e.g. `gemini-3-pro-preview`)."""
+        return FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset({'LOW', 'HIGH'}),
             ),
         )
 
@@ -603,6 +632,81 @@ class TestGoogleThinkingTranslation:
         settings: ModelSettings = {}
         result = GoogleModel._translate_thinking(gemini_3_no_minimal_model, settings, params)
         assert result == snapshot({'thinking_level': 'LOW'})
+
+    def test_thinking_low_snaps_to_minimal(self, flash_lite_image_model: FunctionModel):
+        """`gemini-3.1-flash-lite-image` documents only `minimal`/`high`, so `low` snaps down."""
+        params = ModelRequestParameters(thinking='low')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'MINIMAL'})
+
+    def test_thinking_medium_snaps_to_high(self, flash_lite_image_model: FunctionModel):
+        """`medium` is unsupported on `gemini-3.1-flash-lite-image` and snaps up to `high`."""
+        params = ModelRequestParameters(thinking='medium')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'HIGH'})
+
+    def test_thinking_xhigh_snaps_to_high(self, flash_lite_image_model: FunctionModel):
+        params = ModelRequestParameters(thinking='xhigh')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'HIGH'})
+
+    def test_thinking_false_maps_to_lowest_supported_level(self, flash_lite_image_model: FunctionModel):
+        """`thinking=False` resolves through the lowest supported level, here `MINIMAL`."""
+        params = ModelRequestParameters(thinking=False)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
+        assert result == snapshot({'thinking_level': 'MINIMAL'})
+
+    def test_thinking_medium_tie_rounds_down(self, low_high_model: FunctionModel):
+        """Equidistant supported levels round down to the cheaper one."""
+        params = ModelRequestParameters(thinking='medium')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(low_high_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'LOW'})
+
+    def test_thinking_empty_levels_rejected(self):
+        """An explicitly empty `google_thinking_levels` is malformed config, not 'no levels'."""
+        model = FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset(),
+            ),
+        )
+        params = ModelRequestParameters(thinking='low')
+        settings: ModelSettings = {}
+        with pytest.raises(UserError, match='must contain at least one level'):
+            GoogleModel._translate_thinking(model, settings, params)
+
+    def test_thinking_snaps_table_derived_levels(self):
+        """The snap applies to a level set derived by `google_model_profile`, not just hand-built ones."""
+        model = FunctionModel(_echo, profile=google_model_profile('gemini-3.7-flash'))
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'LOW'})
+
+        params_false = ModelRequestParameters(thinking=False)
+        assert GoogleModel._translate_thinking(model, settings, params_false) == snapshot({'thinking_level': 'LOW'})
+
+    def test_thinking_unknown_levels_rejected(self):
+        """Levels the resolver can't order (e.g. lowercase misspellings) are rejected as config errors."""
+        model = FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset({'minimal'}),
+            ),
+        )
+        params = ModelRequestParameters(thinking='low')
+        settings: ModelSettings = {}
+        with pytest.raises(UserError, match='unknown levels'):
+            GoogleModel._translate_thinking(model, settings, params)
 
     def test_thinking_false_gemini_25(self, gemini_25_model: FunctionModel):
         """thinking=False on Gemini 2.5 uses thinking_budget=0."""
@@ -790,7 +894,7 @@ class TestAnthropicThinkingOutputToolsConflict:
             model.prepare_request(settings, params)
 
 
-def _bedrock_model(profile: BedrockModelProfile) -> BedrockConverseModel:
+def _bedrock_model(profile: ModelProfile) -> BedrockConverseModel:
     client = MagicMock()
     client.meta.endpoint_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
     return BedrockConverseModel('test-model', provider=BedrockProvider(bedrock_client=client), profile=profile)
@@ -937,6 +1041,29 @@ class TestBedrockThinkingTranslation:
             BedrockModelSettings(), ModelRequestParameters(thinking=level)
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': effort}}
+
+    def test_anthropic_variant_adaptive_xhigh_passes_through_when_profile_supports_it(self):
+        """`xhigh` reaches the wire as `xhigh` when the merged profile carries `anthropic_supports_xhigh_effort`.
+
+        `BedrockProvider.model_profile` merges the downstream Anthropic profile into the Bedrock one, so the
+        flag is present for the same models the direct Anthropic path passes `xhigh` through for. Bedrock accepts
+        `xhigh` on exactly those models and rejects it on the rest, which the `max` fallback above covers.
+        """
+        model = _bedrock_model(
+            merge_profile(
+                BedrockModelProfile(
+                    bedrock_thinking_variant='anthropic',
+                    bedrock_supports_adaptive_thinking=True,
+                    bedrock_supports_effort=True,
+                    supports_thinking=True,
+                ),
+                AnthropicModelProfile(anthropic_supports_xhigh_effort=True),
+            )
+        )
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking='xhigh')
+        )
+        assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'xhigh'}}
 
     def test_anthropic_variant_adaptive_no_effort_when_unsupported(self):
         """Effort is omitted when the profile doesn't advertise bedrock_supports_effort."""

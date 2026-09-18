@@ -229,6 +229,8 @@ def test_model_profile_image_model():
         ('gemini-3.8-flash', False),
         ('gemini-3-pro-preview', False),
         ('gemini-3.1-pro-preview', False),
+        # `gemini-3.1-flash-lite-image` does accept `MINIMAL` — its levels are `minimal, high`.
+        ('gemini-3.1-flash-lite-image', True),
         ('gemini-3-flash-preview', True),
     ],
 )
@@ -242,3 +244,23 @@ def test_model_profile_minimal_thinking_level_matches_model_prefix():
     profile = google_model_profile('gemini-3-pro-preview-variant')
     assert profile is not None
     assert profile.get('google_supports_minimal_thinking_level', True) is False
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
+        ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
+        # Models supporting the full scale carry no level set.
+        ('gemini-3-flash-preview', None),
+        # Budget-based models carry no level set.
+        ('gemini-2.5-flash', None),
+    ],
+)
+def test_model_profile_thinking_levels(model_name: str, expected: frozenset[str] | None):
+    profile = google_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('google_thinking_levels') == expected

@@ -247,7 +247,7 @@ or omit it completely from a step.
 
 Returning `None` omits the tool. The one exception is a
 [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool] capability that routes native configuration
-into a `fallback_model` subagent, where the subagent has already been invoked and cannot omit; see
+into a `fallback_subagent_model` subagent, where the subagent has already been invoked and cannot omit; see
 [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration].
 """
 

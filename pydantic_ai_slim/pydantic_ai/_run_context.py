@@ -21,10 +21,17 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
+_DurableOperationDispatch = Callable[
+    ['RunContext[Any]', tuple[Any, ...], dict[str, Any]],
+    Awaitable[Any],
+]
+"""Dispatches one durable capability operation on behalf of the calling `RunContext`."""
+
 if TYPE_CHECKING:
     from ._cancel import RunCancellation
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
+    from .durable_exec._toolset import RunHeldToolset
     from .models import AbstractModel
     from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
@@ -255,11 +262,27 @@ class RunContext(Generic[RunContextAgentDepsT]):
     )
     """Legacy `hooks.on.event` replacements, shared across the run."""
 
-    _durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] | None = field(default=None, repr=False)
-    """Per-run durable capability operation dispatchers, for internal use only."""
+    _durable_operations: dict[tuple[str, str], _DurableOperationDispatch] | None = field(default=None, repr=False)
+    """Per-run durable capability operation dispatchers, for internal use only.
+
+    Keyed by `(capability id, operation name)`, shared by reference with every other `RunContext`
+    this run and populated in place at run setup, so an operation called from a per-request hook
+    dispatches durably like one called from `before_run`.
+    """
 
     _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
     """Per-run capability instances used for durable recovery, for internal use only."""
+
+    _run_held_toolsets: dict[str, RunHeldToolset[Any]] | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    Toolsets the run holds entered, keyed by toolset `id`, attached by the durable-execution toolset
+    wrappers so their durable units reuse the toolset (and the MCP server session) the run already
+    holds instead of entering a fresh one each time. Holds live objects, so it only survives where
+    the durable unit runs in the same process as the durable container; engines that serialize the
+    run context across the boundary (Temporal) leave it `None` and the units fall back to entering
+    their own, which is what they have always done.
+    """
 
     _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -286,12 +309,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     realtime_session: RealtimeSession | None = field(default=None, repr=False)
     """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
 
-    `None` in classic runs, and during the parts of a realtime run that precede the connection:
-    `before_run`, `wrap_run` before `handler()` starts the session, and instruction resolution.
-    Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
-    stages. Tools and hooks that run during the live session can use it to e.g.
+    `None` in classic runs, during setup (`before_run` and instruction resolution), and throughout
+    `wrap_run`: that hook keeps the context copy captured before the session exists, including after
+    `handler()` returns. Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime
+    run in those stages. Tools and `on_event` hooks that run during the live session can use it to e.g.
     [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
-    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content.
+    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content, or call
+    [`close()`][pydantic_ai.realtime.RealtimeSession.close] to hang up.
     """
 
     root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
@@ -308,7 +332,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
-    """All capabilities registered for the current run, including deferred ones."""
+    """All capabilities registered for the current run, including deferred ones.
+
+    A capability that declares an `id` is keyed by it. One that does not is keyed by a synthetic
+    handle the framework mints for this run — `'<thinking:4f3a9c>'` — which is not an `id`, is not
+    the same from one run to the next, and must not be written down anywhere. Match on the values
+    instead, or give the capability an explicit `id`; a capability that needs a stable name across
+    runs (any `defer_loading=True` one) is already required to have one.
+    """
 
     loaded_capability_ids: set[str] = field(default_factory=set[str])
     """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
@@ -352,7 +383,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _anchored_evidence: AnchoredEvidence = field(default_factory=lambda: AnchoredEvidence(), repr=False)
     """Evidence the serving provider could still see that the conservative window dropped.
 
-    Set at tool-call dispatch and read only by `is_tool_available`. Private because the sets above
+    Set at tool-call dispatch and read only through `_dispatch_active_capability_ids` (plus the
+    reveal half, read by `is_tool_available` directly). Private because the sets above
     stay the answer for everything that feeds a *future* request, whose provider isn't knowable yet;
     this one is the answer for a call the model has already made, where it is. See `AnchoredEvidence`.
     """
@@ -489,6 +521,32 @@ class RunContext(Generic[RunContextAgentDepsT]):
         } | self.loaded_capability_ids
 
     @property
+    def _dispatch_active_capability_ids(self) -> set[str]:
+        """`active_capability_ids`, widened by the anchored evidence for the response being dispatched.
+
+        The single answer to "may this capability act on the call being dispatched right now?", and
+        it has to be single: `is_tool_available` authorizes the call from it, and the `prepare_tools`
+        dispatch gate decides from it whether the owning capability's filter runs over that tool. If
+        only the first consulted the evidence, a tool authorized through a load the conservative
+        window dropped would execute with its owner's `prepare_tools` never having run — the
+        capability is not active, so nothing dispatched to it.
+
+        The evidence is narrowed to the run's configured deferred ids — the shape every load record
+        has, since only a deferred capability can be loaded. Inert for both predicates above, which
+        look up an id that came from a registered capability either way; it is there so that a
+        history naming a capability this run no longer configures doesn't leave a permanent
+        difference in `ToolManager.resolved_capability_ids` and rebuild the tools every dispatch.
+        `_deferred_capability_ids` rather than `capabilities` deliberately: it crosses the Temporal
+        activity boundary, where reading the live registry raises.
+
+        Outside tool-call dispatch `_anchored_evidence` is empty, so this is exactly
+        `active_capability_ids`.
+        """
+        return self.active_capability_ids | (
+            self._anchored_evidence.loaded_capability_ids & self._deferred_capability_ids
+        )
+
+    @property
     @deprecated(
         '`available_capability_ids` is deprecated, use `active_capability_ids` instead: for a '
         'capability, "available" reads as "there for the loading", which is the opposite set.',
@@ -505,8 +563,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def _deferred_capability_ids(self) -> set[str]:
         """IDs of the capabilities configured to load on demand.
 
-        Private, and read only by `is_tool_available`, which needs the *configured* shape rather
-        than the runtime one: `loaded_capability_ids` records what history says was loaded, which
+        Private, and read only by `is_tool_available` and `_dispatch_active_capability_ids`, which
+        need the *configured* shape rather than the runtime one: `loaded_capability_ids` records what history says was loaded, which
         can name a capability that has since been reconfigured as always-on. Overridden in
         `TemporalRunContext` with the snapshot serialized at activity dispatch, since the
         `capabilities` registry this reads does not cross that boundary.
@@ -583,7 +641,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             and capability_id in self._deferred_capability_ids
             and capability_id in self.loaded_capability_ids | evidence.loaded_capability_ids
         ):
-            return capability_id in self.active_capability_ids | evidence.loaded_capability_ids
+            return capability_id in self._dispatch_active_capability_ids
         if tool_def.name not in self.discovered_tool_names | evidence.discovered_tool_names:
             return False
         # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
@@ -591,7 +649,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # never loaded — a history no real run produces, and one that would skip the instructions
         # written to be read first. Checking the owner here keeps this predicate in step with what
         # `ToolManager` will run, so "available" means one thing everywhere it is asked.
-        return capability_id is None or capability_id in (self.active_capability_ids | evidence.loaded_capability_ids)
+        return capability_id is None or capability_id in self._dispatch_active_capability_ids
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:
@@ -715,12 +773,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
-        Safe to call from anywhere a `RunContext` is available — async tools,
-        sync tools (auto-wrapped in a thread executor by Pydantic AI), and
-        capability hooks. The drain only iterates the queue between graph nodes
-        (in `before_model_request` and `after_node_run`), never concurrently
-        with the tool body, so `list.append` from a worker thread doesn't race
-        the drain.
+        Safe to call directly from async tools, sync tools running in another
+        thread, and capability hooks.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -739,7 +793,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
-                    In a realtime session, this means after the next response completes.
+                    In a realtime session, this means after the next response completes. Either way
+                    the model gets a turn on the delivered content, a `SystemPromptPart` included: it
+                    marks provenance, not silence.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
@@ -747,9 +803,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
             delivered, or `None` when there was nothing to enqueue (an empty call).
 
         Raises:
-            UserError: If this `RunContext` isn't backed by a running agent's queue (e.g. the
-                synthetic context from `Agent.system_prompt_parts`), since there'd be nowhere
-                to deliver the message.
+            UserError: If the run or realtime session has ended, or this `RunContext` isn't backed
+                by a running agent's queue (e.g. the synthetic context from
+                `Agent.system_prompt_parts`), since there'd be nowhere to deliver the message.
         """
         if self.pending_messages is None:
             raise UserError(

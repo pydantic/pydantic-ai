@@ -5,7 +5,7 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -23,12 +23,14 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    ImageGenerator,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     MultiModalContent,
     PartDeltaEvent,
     PartStartEvent,
+    PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
     RunContext,
@@ -50,6 +52,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     Capability,
     DynamicCapability,
+    ImageGeneration,
     Instrumentation,
     NativeTool,
     ProcessEventStream,
@@ -66,6 +69,12 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
+)
+from pydantic_ai.images import (
+    ImageGenerationInput,
+    ImageGenerationResult,
+    ImageGenerationSettings,
+    TestImageGenerationModel,
 )
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
@@ -1513,6 +1522,71 @@ async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs
         )
 
 
+async def test_durability_tool_opt_out_without_mcp_extra(monkeypatch: pytest.MonkeyPatch):
+    """A plain tool opting out of activities must not import `pydantic_ai.mcp`.
+
+    Regression test for #8249: the opt-out branch used an unguarded `from pydantic_ai.mcp import
+    MCPToolset`, which raised `ImportError` for every tool with `metadata={'temporal': False}` -- even
+    non-MCP function tools -- when the optional `mcp` extra was not installed. Simulate that install by
+    making `pydantic_ai.mcp` unimportable.
+    """
+
+    async def async_tool() -> str: ...  # pragma: no branch
+
+    toolset = FunctionToolset[None](id='opt_out_without_mcp')
+    toolset.add_function(async_tool, metadata={'temporal': False})
+    agent = Agent(
+        TestModel(),
+        name='opt_out_without_mcp',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await toolset.get_tools(ctx)
+
+    monkeypatch.setitem(sys.modules, 'pydantic_ai.mcp', None)
+    assert (
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('function', toolset_id='opt_out_without_mcp'), tools['async_tool'], 'async_tool'
+        )
+        is False
+    )
+
+
+async def test_durability_mcp_opt_out_identified_by_operation_kind():
+    """An MCP tool's opt-out is rejected via the operation kind, not `tool.toolset` identity.
+
+    `PrefixedToolset` rewrites `ToolsetTool.toolset` to the wrapper, so an `isinstance(tool.toolset,
+    MCPToolset)` check cannot identify an MCP tool once wrapped; the durable operation's `toolset_kind`
+    can, and it also avoids importing the optional `mcp` package in this path (#8249).
+    """
+
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_wrapped')
+    prefixed = PrefixedToolset[Any](mcp_toolset, prefix='wrapped')
+    prefixed_tool = ToolsetTool(
+        toolset=prefixed,
+        tool_def=ToolDefinition(name='wrapped_mcp_tool', metadata={'temporal': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    agent = Agent(
+        TestModel(),
+        name='mcp_wrapped',
+        deps_type=type(None),
+        toolsets=[prefixed],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    with pytest.raises(UserError, match='MCP tools require the use of IO'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('mcp', toolset_id='mcp_wrapped'), prefixed_tool, 'wrapped_mcp_tool'
+        )
+
+
 async def test_durability_mcp_instructions_use_operation_activity_summary(monkeypatch: pytest.MonkeyPatch):
     """The common MCP instructions operation retains Temporal's legacy activity summary."""
     mcp_toolset = MCPToolset(
@@ -2877,6 +2951,90 @@ async def test_durability_dynamic_capability_transparent_outside_workflow():
     result = await agent.run('Call the tool')
     assert result.output == '{"dynamic_tool":"inline result"}'
     assert in_activity_flags == [False]
+
+
+# --- ImageGeneration through a durable run ---
+
+
+class _DurabilityImageGenerationModel(TestImageGenerationModel):
+    """Fails the activity unless the direct generator ran inside one."""
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        assert activity.in_activity()
+        return await super().generate(prompt, images=images, settings=settings)
+
+
+def _durability_image_generation_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('generate_image', {'prompt': 'A tiny test image'})])
+    image = next(
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert isinstance(image, BinaryImage), image
+    return ModelResponse(parts=[TextPart(f'{image.media_type} {len(image.data)}')])
+
+
+_durability_image_generation_agent = Agent(
+    FunctionModel(_durability_image_generation_fn),
+    name='durability_image_generation_agent',
+    capabilities=[
+        ImageGeneration(
+            native=False,
+            local=ImageGenerator(_DurabilityImageGenerationModel()),
+            id='images',
+        ),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalImageGenerationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _durability_image_generation_agent.run('Generate an image')).output
+
+
+async def test_durability_image_generation_capability_runs_in_activity(client: Client):
+    """An `ImageGeneration` capability generates inside an activity, and the bytes cross back.
+
+    The pieces are pinned separately elsewhere — a `BinaryImage` as an activity result payload, the
+    capability toolset resolving activity-side — but not the combination this exercises: an agent
+    carrying `ImageGeneration(id=...)` registering its `generate_image` toolset with the worker and
+    running it in a durable workflow, with the generated image returned as the tool-result payload.
+
+    The tool return is only observable inside `_durability_image_generation_fn`, which is where the
+    `BinaryImage` check lives; the workflow hands back the agent's `str` output, so the projection is
+    how that observation gets out. `67` is the length of the fixed 1x1 PNG `TestImageGenerationModel`
+    returns, so the pair pins that a 67-byte `image/png` crossed the activity boundary intact.
+
+    A generator that ran in workflow code instead trips the `activity.in_activity()` assert above,
+    where an `AssertionError` is a workflow-*task* failure that Temporal retries forever — hence the
+    short `execution_timeout`, so that regression fails the test instead of hanging it.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalImageGenerationWorkflow],
+        plugins=[AgentPlugin(_durability_image_generation_agent)],
+    ):
+        output = await client.execute_workflow(
+            TemporalImageGenerationWorkflow.run,
+            id='test_temporal_image_generation',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == snapshot('image/png 67')
 
 
 # --- ToolReturn metadata round-trip ---

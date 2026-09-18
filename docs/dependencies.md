@@ -6,7 +6,7 @@ Pydantic AI's dependency system follows established Python practices, making dep
 
 ## Defining Dependencies
 
-Dependencies can be any python type. While in simple cases you might be able to pass a single object as a dependency (e.g. an HTTP connection), [dataclasses][] are generally a convenient container when your dependencies included multiple objects.
+Dependencies can be any python type. While in simple cases you might be able to pass a single object as a dependency (e.g. an HTTP connection), [dataclasses][] are generally a convenient container when your dependencies include multiple objects.
 
 Here's an example of defining an agent that requires dependencies.
 

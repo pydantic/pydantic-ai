@@ -26,8 +26,9 @@ class Retries(AbstractCapability[Any]):
 When two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — a fixed default `id` is the wrong shape, because merging them would silently drop one. Derive the `id` from whatever distinguishes them instead: two identities then carry two ids and stay two capabilities, and two under one id are a genuine mistake that is reported. [`MCP`][pydantic_ai.capabilities.MCP] derives one from its server's host and last path segment, so servers that differ only in their port or in an earlier path segment still need distinct explicit `id`s.
 
 Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] only when composing takes more than merging fields — a budget that should take the *smaller* of two values, say.
-The default merge sees dataclass fields only, so a plain class with a fixed default `id` and instance configuration must override `combine`; otherwise repeated instances raise rather than silently dropping that configuration.
-This includes private attributes. Compute derived values with properties, or declare them as fields and recompute them in `combine`: merging does not re-run `__post_init__`.
+The default merge sees dataclass fields only, so a plain class with a fixed default `id` and instance configuration must override `combine`; otherwise repeated instances raise rather than silently dropping that configuration. A leading underscore does not change that: what matters is whether the merge can enumerate the attribute, not whether it is private.
+
+State you *derive* from those fields is the exception, and `cached_property` is how you say so. Merging discards the cached value, so the next read recomputes it against the merged fields — which is the answer `__post_init__` cannot give, since merging deliberately does not re-run it. State that has to be a field instead is recomputed in your own `combine`.
 
 **A capability supplied for a run** overrides its agent-level namesake outright — `agent.run(capabilities=[Thinking(effort='high')])` replaces the agent's `Thinking` rather than merging with it. A run states what *this* run does, so merging would let an agent-level setting the run meant to replace survive, and let an agent-level allow-list widen a restriction the run was passed to impose. `combine` is not consulted across layers.
 Unrelated capability classes cannot share an `id` across layers. A transparent wrapper that retains its wrapped capability's `id`, such as `prefix_tools()`, can replace that capability across layers; this does not allow different wrapper classes to merge within one layer.
@@ -903,6 +904,8 @@ agent = Agent(TestModel(), capabilities=[Summaries()])
 ```
 
 Mark each operation method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names and must remain stable, while the Python method can be freely renamed. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
+
+A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may return a fresh instance — the operation dispatches on whichever instance the run is using, from `before_run` and from per-request hooks alike. The replacement has to keep the capability's `id`, since that is what dispatch and worker-side recovery resolve it by; Pydantic AI raises a `UserError` at the start of the run if a bound capability's ID is no longer present. Dispatch is established once `for_run()` has returned, so an operation called from inside `for_run()` itself runs directly rather than durably.
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 
