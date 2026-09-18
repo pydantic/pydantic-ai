@@ -656,12 +656,12 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> li
     model that makes that call can vary them. The turn is everything since the last user prompt: a call in an
     earlier turn, or in another agent's run being judged, does not withhold the tool from this one.
     """
-    turn = messages
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts):
-            turn = messages[index:]
-            break
+    prompts = [
+        index
+        for index, message in enumerate(messages)
+        if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
+    ]
+    turn = messages[prompts[-1] :] if prompts else messages
     called = {
         part.tool_name
         for message in turn
