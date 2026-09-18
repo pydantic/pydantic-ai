@@ -115,22 +115,6 @@ members = [
 required-version = ">=0.9.25"
 default-groups = ["dev", "lint"]
 exclude-newer = "7 days"
-conflicts = [
-    # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while the dev group
-    # deliberately locks FastMCP 3 (the FastMCP 4 CI job layers `--with` overrides onto the
-    # frozen lock). Lock-side forks only: pip resolves `[mcp,mcp-tasks]` together fine — in the
-    # mcp-tasks fork the extra's pre-release floor opts the shared `fastmcp-slim` range into the
-    # FastMCP 4 betas. Every `--all-extras` invocation in CI and the Makefile carries
-    # `--no-extra mcp-tasks` to stay on the dev side of the fork.
-    [
-        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
-        { group = "dev" },
-    ],
-    [
-        { package = "pydantic-ai", extra = "mcp-tasks" },
-        { group = "dev" },
-    ],
-]
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",

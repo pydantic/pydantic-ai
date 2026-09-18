@@ -51,7 +51,7 @@ The [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-ht
 Before creating the toolset, we need to run a server that supports the Streamable HTTP transport.
 
 ```python {title="streamable_http_server.py" dunder_name="not_main"}
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 app = FastMCP()
 
@@ -293,14 +293,13 @@ How the server reads the injected metadata is MCP server SDK specific. For examp
 ```python {title="mcp_server.py"}
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.session import ServerSession
+from fastmcp import Context, FastMCP
 
 mcp = FastMCP('Pydantic AI MCP Server')
 
 
 @mcp.tool()
-async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
+async def echo_deps(ctx: Context) -> dict[str, Any]:
     """Echo the run context.
 
     Args:
@@ -379,13 +378,13 @@ MCP tools can include metadata that provides additional information about the to
 
 FastMCP 4 uses the newer MCP [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) (SEP-2663), where the server directs task creation. The `task` metadata and `prefer_tasks` client preference above therefore apply to FastMCP 3, not FastMCP 4. An ordinary call drives a task-only tool to completion with nothing extra installed; explicitly selecting the tasks extension with `use_task=True` requires the separate `fastmcp-tasks` package, available via the `mcp-tasks` optional group: `pip install "pydantic-ai-slim[mcp-tasks]"`.
 
-For [FastMCP 3](https://gofastmcp.com/v3/servers/tasks) servers, install the tasks extra with
-`pip install "fastmcp[tasks]>=3,<4"` and declare task support per tool with
-`task=TaskConfig(mode=...)`:
+Declaring task support per tool with `task=TaskConfig(mode=...)` needs fastmcp's tasks extra —
+`pip install "fastmcp[tasks]"`. `TaskConfig` lives in `fastmcp.utilities.tasks` from FastMCP 4 on,
+and in `fastmcp.server.tasks` on [FastMCP 3](https://gofastmcp.com/v3/servers/tasks):
 
 ```python {title="background_task_server.py" dunder_name="not_main"}
 from fastmcp import FastMCP
-from fastmcp.server.tasks import TaskConfig
+from fastmcp.utilities.tasks import TaskConfig
 
 mcp = FastMCP('long_running_server')
 
@@ -426,7 +425,7 @@ Text content is returned as `str`, and binary content as [`BinaryContent`][pydan
 Before consuming resources, we need to run a server that exposes some:
 
 ```python {title="mcp_resource_server.py"}
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 mcp = FastMCP('Pydantic AI MCP Server')
 
@@ -611,8 +610,8 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
     import re
     from pathlib import Path
 
+    from fastmcp import Context, FastMCP
     from mcp import SamplingMessage
-    from mcp.server.fastmcp import Context, FastMCP
     from mcp.types import TextContent
 
     app = FastMCP()
@@ -691,7 +690,7 @@ This allows for a more interactive and user-friendly experience, especially for 
 To enable elicitation, provide an `elicitation_handler` when creating your `MCPToolset`:
 
 ```python {title="restaurant_server.py"}
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
 mcp = FastMCP(name='Restaurant Booking')

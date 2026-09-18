@@ -1507,6 +1507,12 @@ def _counting_mcp_server() -> tuple[Any, dict[str, int]]:
     class Counter(Middleware):
         async def on_message(self, context: MiddlewareContext[Any], call_next: Any) -> Any:
             method = context.method or '<unknown>'
+            # What these tests count is how many times a run hands the server a fresh session, not
+            # what the handshake is called: FastMCP 3 opens one with `initialize`, and FastMCP 4's
+            # modern session with `server/discover`. Counting both under one key keeps the numbers
+            # below about session reuse rather than about the generation installed.
+            if method in ('initialize', 'server/discover'):
+                method = 'handshake'
             counts[method] = counts.get(method, 0) + 1
             return await call_next(context)
 
@@ -1559,7 +1565,7 @@ async def test_run_resolved_dynamic_toolset_is_entered_once_per_run() -> None:
     """
     counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=False)
 
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     assert resolutions == snapshot(1)
 
 
@@ -1572,7 +1578,7 @@ async def test_per_run_step_dynamic_toolset_still_resolves_per_unit() -> None:
     """
     counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=True)
 
-    assert counts == snapshot({'initialize': 5, 'tools/list': 5, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 5, 'tools/list': 5, 'tools/call': 2})
     assert resolutions == snapshot(5)
 
 
@@ -1603,7 +1609,7 @@ async def test_dynamic_unit_resolves_its_own_toolset_when_the_run_context_cannot
 
     # Each call stands on its own: it built, entered and tore down its own toolset.
     assert resolutions == snapshot(2)
-    assert counts == snapshot({'initialize': 2, 'tools/list': 2, 'tools/call': 1})
+    assert counts == snapshot({'handshake': 2, 'tools/list': 2, 'tools/call': 1})
 
 
 async def test_run_resolved_toolset_closes_only_what_a_unit_entered() -> None:
@@ -1671,7 +1677,7 @@ async def test_parallel_tool_call_units_share_one_session() -> None:
 
     assert result.output == 'done'
     assert resolutions == snapshot(1)
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
 
 
 async def test_closing_the_wrapper_passes_on_how_it_was_exited() -> None:
