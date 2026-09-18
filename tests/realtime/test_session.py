@@ -8867,7 +8867,9 @@ async def test_provider_output_reaches_a_view_subscribed_after_entry() -> None:
     emitted after they subscribe.
     """
     chunks = [b'g1', b'g2', b'g3']
-    conn = FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks] + [ResponseDone()])
+    frames: list[RealtimeCodecEvent] = [AudioDelta(chunk) for chunk in chunks]
+    frames.append(ResponseDone())
+    conn = FakeRealtimeConnection(frames)
     played: list[bytes] = []
 
     async with RealtimeSession(conn) as session:
