@@ -97,6 +97,8 @@ agent = Agent(
 
 When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://pydantic.dev/docs/ai/mcp/client/) directly and pass it via `toolsets=[...]`. Its `tool_error_behavior` controls how a tool error from the server surfaces: `'retry'` (default) raises `ModelRetry`, `'failed'` raises `ToolFailed` (recorded as `outcome='failed'`), and `'error'` raises the raw `fastmcp` `ToolError`. For SEP-1686 tools with optional task support, set `prefer_tasks=False` to use normal calls; required tasks still use task-augmented execution.
 
+An agent inside an MCP server can use `MCPSamplingModel(ctx.session)` to request inference from the connected client. It accepts prior function tool calls, results, and retries via `message_history` using the MCP 2025-11-25 sampling format. This preserves completed tool exchanges; it does not enable new tool calls or multimodal tool results. See [MCP sampling](https://pydantic.dev/docs/ai/mcp/server/#mcp-sampling).
+
 ## Search with DuckDuckGo, Tavily, or Exa
 
 Use common tools when the user wants explicit search tools rather than provider-adaptive capabilities.
