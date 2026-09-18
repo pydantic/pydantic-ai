@@ -26,9 +26,10 @@ agent = Agent(instructions='You are a helpful voice assistant.')
 
 async def main():
     async with agent.realtime('azure:my-realtime-deployment').session() as session:
+        transcripts = session.stream_transcripts()  # subscribe before prompting
         await session.send('Say hello.')
 
-        async for part in session.stream_transcripts():
+        async for part in transcripts:
             print(f'{part.speaker}: {part.transcript}')
             #> assistant: Hello from the realtime assistant.
             if part.speaker == 'assistant':
@@ -157,6 +158,7 @@ mixture of the two.
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
 provider = AzureProvider(
@@ -177,7 +179,8 @@ async def main():
     async with agent.realtime(model).session() as session:
         await session.send('Say hello.')
         async for event in session:
-            ...
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break  # keep listening in a real call; we stop after one reply
 ```
 
 Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.
