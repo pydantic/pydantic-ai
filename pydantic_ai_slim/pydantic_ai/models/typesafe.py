@@ -99,12 +99,13 @@ class TypeSafeModelSettings(ModelSettings, total=False):
     # ALL FIELDS MUST BE `typesafe_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     typesafe_tool_call_threshold: float
-    """How likely Jev has to find a tool call before it is proposed, from 0 to 1. Default: 0.8.
+    """How likely Jev has to find a tool call before it is proposed, from 0 to 1. Default: 0.6.
 
     With tools attached, one more question asks which tool the text calls for, the output tool among them. A tool
     picked below this probability is a lean, and the output is filled as usual; one at or above it is raised as
-    [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] for a model behind Jev to call. Tune it on
-    labelled examples of your own: higher hands off less, and is right more often when it does.
+    [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] for a model behind Jev to call. At 0.6, on
+    labelled support tickets, Jev's picks agree with a frontier model as often as two frontier models agree with each
+    other; higher hands off less, and is right more often when it does. Tune it on labelled examples of your own.
     """
 
 
@@ -302,7 +303,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         if output_tool:
             parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
         if tool_key is not None:
-            threshold = settings.get('typesafe_tool_call_threshold', 0.8)
+            threshold = settings.get('typesafe_tool_call_threshold', 0.6)
             if call := _tool_call(
                 self._model_name, response.answers.get(tool_key), output_tool, tools, threshold, provider_details
             ):

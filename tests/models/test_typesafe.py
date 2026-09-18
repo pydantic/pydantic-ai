@@ -554,7 +554,7 @@ async def test_a_fallback_model_takes_the_proposed_step(allow_model_requests: No
 @pytest.mark.parametrize(
     'probability,settings',
     [
-        pytest.param(0.79, None, id='below the default threshold'),
+        pytest.param(0.59, None, id='below the default threshold'),
         pytest.param(0.9, {'typesafe_tool_call_threshold': 0.95}, id='below a raised threshold'),
     ],
 )
