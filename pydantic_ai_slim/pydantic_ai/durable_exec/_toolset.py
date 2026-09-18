@@ -23,6 +23,7 @@ from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -244,7 +245,10 @@ async def _dynamic_tool(
         ) from e
     if tool_def is None:
         return tool
-    return replace(tool, tool_def=tool_def)
+    tool = replace(tool, tool_def=tool_def)
+    if isinstance(tool, FunctionToolsetTool):
+        tool = replace(tool, timeout=tool_def.timeout)
+    return tool
 
 
 async def call_dynamic_tool(

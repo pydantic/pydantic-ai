@@ -35,6 +35,11 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
+    timeout: float | None = None
+    """Timeout in seconds the tool was built with.
+
+    The timeout that's enforced comes from `tool_def.timeout`, which a `prepare` function may have changed since.
+    """
     original_name: str | None = None
     """The name the toolset holds this tool under, which a `prepare` function may have renamed in `tool_def.name`.
 
@@ -684,6 +689,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             args_validator_func=tool.args_validator,
             call_func=tool.function_schema.call,
             is_async=tool.function_schema.is_async,
+            timeout=tool_def.timeout,
             original_name=original_name,
         )
 
