@@ -259,7 +259,13 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tool, hand_offs = _output_tools(model_request_parameters)
-        tools = _tools_left(messages, [*hand_offs, *model_request_parameters.function_tools])
+        # A withheld tool is not on any wire; one revealed through the history is, and Jev sees the whole history.
+        function_tools = [
+            tool
+            for tool in model_request_parameters.function_tools
+            if model_request_parameters.visibility_of(tool.name) != 'withheld'
+        ]
+        tools = _tools_left(messages, [*hand_offs, *function_tools])
         properties = _fields(output_tool) if output_tool else {}
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
@@ -433,14 +439,16 @@ def _tool_call(
     With nothing to fill, the pick is the answer. Otherwise a tool picked below the threshold is a lean, and the
     output is filled. A tool taken that needs arguments is raised as `ToolCallProposed` for a model behind Jev.
     """
-    if not isinstance(answer, ChoiceAnswer):
+    if not isinstance(answer, ChoiceAnswer) or answer.choice not in answer.probabilities:
         raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for the tool question: {answer!r}')
     probability = answer.probabilities[answer.choice]
     # The pick and its probabilities are reported either way, so the hand-off rate can be watched.
     provider_details['tool'] = {'choice': answer.choice, 'probabilities': answer.probabilities}
     if output_tool is not None and (answer.choice == output_tool.name or probability < threshold):
         return None
-    tool = next(tool for tool in tools if tool.name == answer.choice)
+    tool = next((tool for tool in tools if tool.name == answer.choice), None)
+    if tool is None:
+        raise UnexpectedModelBehavior(f'TypeSafe picked a tool it was not offered: {answer.choice!r}')
     if tool.parameters_json_schema.get('properties'):
         raise ToolCallProposed(model_name, answer.choice, probability)
     # Nothing to write, so Jev makes the call itself.
@@ -465,13 +473,20 @@ def _output_tools(
     with_fields: list[ToolDefinition] = []
     hand_offs: list[ToolDefinition] = []
     for tool in model_request_parameters.output_tools:
-        (with_fields if tool.parameters_json_schema.get('properties') else hand_offs).append(tool)
+        (with_fields if _properties(tool.parameters_json_schema) else hand_offs).append(tool)
     if len(with_fields) > 1:
         raise UserError(
             f'Multiple output types with fields are not supported by this model; got {len(with_fields)}. '
             'Give the agent one structured `output_type`, beside any output functions that take no arguments.'
         )
     return (with_fields[0] if with_fields else None), hand_offs
+
+
+def _properties(schema: dict[str, Any]) -> dict[str, Any]:
+    """A schema's properties, through the top-level `$ref` Pydantic renders a model that refers to itself as."""
+    if ref := schema.get('$ref'):
+        schema = schema['$defs'][ref.removeprefix('#/$defs/')]
+    return schema.get('properties', {})
 
 
 def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
@@ -502,7 +517,7 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
                 fields[f'{prefix}{name}'] = prop
         return fields
 
-    return flatten(schema['properties'], '')
+    return flatten(_properties(schema), '')
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:

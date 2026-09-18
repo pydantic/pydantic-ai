@@ -492,7 +492,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     # docs/models/typesafe.md
-    'rm -rf ./build': ToolCallPart(tool_name='final_result', args={'verdict': 'ask', 'irreversible': False}),
+    'rm -rf ./build': ToolCallPart(tool_name='final_result', args={'verdict': 'ask', 'irreversible': True}),
     'Judge the conversation above.': ToolCallPart(tool_name='final_result', args={'response': True}),
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',

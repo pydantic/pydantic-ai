@@ -614,10 +614,43 @@ async def test_the_tool_question_stays_clear_of_a_field_named_tool(allow_model_r
     assert list(seen[0]['questions']) == ['tool', 'tool_']
 
 
-async def test_an_unexpected_tool_answer(allow_model_requests: None):
-    jev = mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': 0.9}, tool={'type': 'noul', 'noul': 0.9}))
-    with pytest.raises(UnexpectedModelBehavior, match='Unexpected answer from TypeSafe for the tool question'):
+@pytest.mark.parametrize(
+    'tool,match',
+    [
+        pytest.param(
+            {'type': 'noul', 'noul': 0.9}, 'Unexpected answer from TypeSafe for the tool question', id='not a choice'
+        ),
+        pytest.param(
+            {'type': 'choice', 'choice': 'refund', 'confidence': 0.8, 'probabilities': {'final_result': 0.1}},
+            'Unexpected answer from TypeSafe for the tool question',
+            id='no probability for the choice',
+        ),
+        pytest.param(
+            {'type': 'choice', 'choice': 'cancel', 'confidence': 0.8, 'probabilities': {'cancel': 0.9}},
+            "TypeSafe picked a tool it was not offered: 'cancel'",
+            id='a tool that was not offered',
+        ),
+    ],
+)
+async def test_an_unexpected_tool_answer(allow_model_requests: None, tool: dict[str, object], match: str):
+    jev = mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': 0.9}, tool=tool))
+    with pytest.raises(UnexpectedModelBehavior, match=match):
         await Agent(jev, output_type=Ticket, tools=[refund]).run('anything')
+
+
+async def test_a_withheld_tool_is_not_offered(allow_model_requests: None):
+    """A tool hidden until revealed is not on any wire, so it is not among Jev's options either."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return tool_answers('final_result', 0.9)
+
+    agent = Agent(mock_model(record), output_type=Ticket, tools=[approve])
+    agent.tool_plain(defer_loading=True)(reject)
+    await agent.run('Fine by me.')
+    criteria = seen[0]['questions']['tool']['criteria']
+    assert 'approve' in criteria and 'reject' not in criteria
 
 
 def test_tool_call_proposed_pickles():
@@ -874,6 +907,17 @@ async def test_unsupported_richer_fields(
     Richer = type('Richer', (BaseModel,), {'__annotations__': {'value': eval(annotation)}})
     with pytest.raises(UserError, match=match):
         await Agent(typesafe_model, output_type=Richer, instructions='Judge it.').run('anything')
+
+
+async def test_a_model_that_refers_to_itself_is_refused_on_that_field(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    class Comment(BaseModel):
+        spam: bool
+        replies: list[Comment] = []
+
+    with pytest.raises(UserError, match="Output field 'replies' is not supported"):
+        await Agent(typesafe_model, output_type=Comment).run('anything')
 
 
 async def test_a_nested_field_jev_cannot_answer_is_named_in_full(

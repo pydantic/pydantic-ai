@@ -55,7 +55,7 @@ class Handling(BaseModel):
 agent = Agent('typesafe:jev-latest', output_type=Handling)
 result = agent.run_sync('rm -rf ./build')
 print(result.output)
-#> verdict=<Verdict.ask: 'ask'> irreversible=False
+#> verdict=<Verdict.ask: 'ask'> irreversible=True
 ```
 
 Or initialise the model directly with just the model name:
