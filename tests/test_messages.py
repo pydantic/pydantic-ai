@@ -2752,6 +2752,37 @@ def test_stripped_tool_kind_part_survives_roundtrip():
     assert type(reloaded[0].parts[0]) is ToolReturnPart
 
 
+def test_untyped_tool_search_return_survives_json_roundtrip():
+    """A tool-search marker with non-tool-search content falls back to its base part."""
+    messages = [
+        ModelResponse(
+            parts=[
+                NativeToolReturnPart(
+                    tool_name='tool_search',
+                    tool_call_id='c1',
+                    content='provider error',
+                    tool_kind='tool-search',
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search_tools',
+                    tool_call_id='c2',
+                    content='provider error',
+                    tool_kind='tool-search',
+                )
+            ]
+        ),
+    ]
+    reloaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    assert type(reloaded[0].parts[0]) is NativeToolReturnPart
+    assert type(reloaded[1].parts[0]) is ToolReturnPart
+    assert reloaded[0].parts[0].tool_kind is None
+    assert reloaded[1].parts[0].tool_kind is None
+
+
 def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     """`narrow_message_parts` promotes shape-valid claims to their typed subclass and leaves parts
     without a `tool_kind` untouched (same object), so callers can hand it a whole history."""

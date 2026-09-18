@@ -2668,6 +2668,25 @@ from ._tool_search import (  # noqa: E402  (intentional late import: typed subcl
 )
 
 
+def _typed_part_tag(v: dict[str, Any], kind: str, tool_kind: str) -> str:
+    tag = _TYPED_PART_TAGS.get((kind, tool_kind))
+    if tag is None:
+        return kind
+
+    # The discriminator runs before Pydantic validates the selected union member. A
+    # serialized base part can still carry a framework tool_kind after a typed
+    # payload has been lost (for example, a plain-text tool-search result). Let the
+    # typed class validate the shape here so those histories fall back to the base
+    # member, matching the narrow_type contract used for Python objects.
+    typed_cls = next((cls for cls, cls_tag in _TYPED_PART_TAGS_BY_TYPE.items() if cls_tag == tag), None)
+    if typed_cls is not None:
+        try:
+            typed_cls(**v)
+        except pydantic.ValidationError:
+            return kind
+    return tag
+
+
 def _model_request_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
 
@@ -2685,9 +2704,7 @@ def _model_request_part_discriminator(v: Any) -> str | None:
         kind = v_dict.get('part_kind')
         tool_kind = v_dict.get('tool_kind')
         if isinstance(kind, str) and isinstance(tool_kind, str):
-            tag = _TYPED_PART_TAGS.get((kind, tool_kind))
-            if tag is not None:
-                return tag
+            return _typed_part_tag(v_dict, kind, tool_kind)
         return kind if isinstance(kind, str) else None
     for cls, tag in _TYPED_PART_TAGS_BY_TYPE.items():
         if isinstance(v, cls):
@@ -2735,9 +2752,7 @@ def _model_response_part_discriminator(v: Any) -> str | None:
         kind = v_dict.get('part_kind')
         tool_kind = v_dict.get('tool_kind')
         if isinstance(kind, str) and isinstance(tool_kind, str):
-            tag = _TYPED_PART_TAGS.get((kind, tool_kind))
-            if tag is not None:
-                return tag
+            return _typed_part_tag(v_dict, kind, tool_kind)
         return kind if isinstance(kind, str) else None
     for cls, tag in _TYPED_PART_TAGS_BY_TYPE.items():
         if isinstance(v, cls):
