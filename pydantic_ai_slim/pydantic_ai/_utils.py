@@ -1154,8 +1154,14 @@ def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
             isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
         ):
             continue
-        if not isinstance(previous, ast.Assign):
+        # A member is a plain or an annotated assignment; a string after anything else describes no option,
+        # and neither does one after a name that is not a member, such as `_ignore_`.
+        if isinstance(previous, ast.Assign):
+            targets = previous.targets
+        elif isinstance(previous, ast.AnnAssign):
+            targets = [previous.target]
+        else:
             continue
-        for name in [target.id for target in previous.targets if isinstance(target, ast.Name)]:
+        for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
             docstrings[name] = inspect.cleandoc(node.value.value)
     return docstrings

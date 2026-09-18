@@ -2366,6 +2366,12 @@ def test_generate_user_output_format_complex(mistral_api_key: str):
             'prop_object_object': {'type': 'object', 'additionalProperties': {'type': 'object'}},
             'prop_object_unknown': {'type': 'object', 'additionalProperties': {'type': 'someUnknownType'}},
             'prop_unrecognized_type': {'type': 'customSomething'},
+            # An `Enum` with member docstrings renders as `anyOf` of described `const`s: still one typed value
+            'prop_described_options': {
+                'type': 'string',
+                'anyOf': [{'const': 'low', 'description': 'Can wait.'}, {'const': 'high'}],
+            },
+            'prop_described_ints': {'anyOf': [{'const': 1}, {'const': 2}]},
         }
     }
     m = MistralModel('', json_mode_schema_prompt='{schema}', provider=MistralProvider(api_key=mistral_api_key))
@@ -2379,7 +2385,9 @@ def test_generate_user_output_format_complex(mistral_api_key: str):
         "'prop_object_array': 'dict[str, list[int]]', "
         "'prop_object_object': 'dict[str, dict[str, Any]]', "
         "'prop_object_unknown': 'dict[str, Any]', "
-        "'prop_unrecognized_type': 'Any'}"
+        "'prop_unrecognized_type': 'Any', "
+        "'prop_described_options': 'str', "
+        "'prop_described_ints': 'int'}"
     )
 
 

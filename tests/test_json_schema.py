@@ -277,6 +277,19 @@ def test_described_options_fold_into_one_enum_google():
     assert GoogleJsonSchemaTransformer(deepcopy(typed_apart)).walk() == snapshot(
         {'anyOf': [{'enum': ['low'], 'type': 'string'}, {'enum': [1], 'type': 'integer'}]}
     )
+    # A parent with its own `enum`, or typed differently from its options, is left alone: folding would widen it.
+    own_enum = {'type': 'string', 'enum': ['low'], 'anyOf': [{'const': 'low'}, {'const': 'high'}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(own_enum)).walk() == snapshot(
+        {
+            'type': 'string',
+            'enum': ['low'],
+            'anyOf': [{'enum': ['low'], 'type': 'string'}, {'enum': ['high'], 'type': 'string'}],
+        }
+    )
+    typed_parent = {'type': 'string', 'anyOf': [{'const': 1}, {'const': 2}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(typed_parent)).walk() == snapshot(
+        {'type': 'string', 'anyOf': [{'enum': [1], 'type': 'integer'}, {'enum': [2], 'type': 'integer'}]}
+    )
     # Options with no descriptions and no type fold into a bare `enum`, with nothing added to the description.
     bare = {'anyOf': [{'enum': ['a']}, {'enum': ['b']}]}
     assert GoogleJsonSchemaTransformer(deepcopy(bare)).walk() == snapshot({'enum': ['a', 'b']})

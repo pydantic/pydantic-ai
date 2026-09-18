@@ -5212,6 +5212,10 @@ def test_enum_member_docstrings_describe_options():
         high = 'high'
         """Needs attention today."""
         unknown = 'unknown'
+        annotated: str = 'annotated'
+        """An annotated member is a member too."""
+        _ignore_ = ['label']
+        """A string after a name that is not a member describes nothing."""
 
         def label(self) -> str:
             return self.value.title()  # pragma: no cover
@@ -5234,6 +5238,7 @@ def test_enum_member_docstrings_describe_options():
                     {'const': 'low', 'description': 'Can wait a week.'},
                     {'const': 'high', 'description': 'Needs attention today.'},
                     {'const': 'unknown'},
+                    {'const': 'annotated', 'description': 'An annotated member is a member too.'},
                 ],
                 'description': 'How urgent the ticket is.',
                 'title': 'Priority',
