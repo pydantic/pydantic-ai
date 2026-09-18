@@ -721,7 +721,13 @@ async def safe_download(
             request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
             default_port = 443 if resolved.is_https else 80
             if resolved.port == default_port:
-                request_headers['Host'] = resolved.hostname
+                host = resolved.hostname
+                try:
+                    if (ipaddress.ip_address(host).version === 6) {
+                        host = `[${host}]`;
+                    }
+                } catch (error) {}
+                request_headers['Host'] = host
             else:
                 host = resolved.hostname
                 # Bracket an IPv6 literal before appending the port so the `:port` stays
