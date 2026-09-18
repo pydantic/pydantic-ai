@@ -168,7 +168,15 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 * **Caching**: Tool results are cached based on their inputs
 * **Observability**: Tool execution is tracked in the Prefect UI
 
-For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], tool discovery and each tool call run as Prefect tasks. Each task resolves and enters the toolset independently, so task retries re-resolve it and flow retries replay recorded discovery and tool results.
+For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], tool discovery and each tool call run as Prefect tasks, and flow retries replay recorded discovery and tool results. When the factory is built with `per_run_step=False`, the run resolves the toolset once and each task reuses it, entering it the first time a task needs it and leaving it entered for the rest of the run. Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is entered — so connecting happens inside a task, where it is retried like any other task failure. The factory itself runs in flow code and re-runs whenever that replays, so like the capability factory below it must be deterministic given the run's `deps`: build the toolset in the factory and leave its I/O to the tasks. This is the lifecycle a non-durable run gives the toolset, so a toolset's own caching — such as [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] on an `MCPToolset` the factory returns — works as it does outside a flow, instead of being discarded between tasks. A `per_run_step=True` factory is re-resolved inside each task, as it asks to be.
+
+For an [`MCPToolset`][pydantic_ai.mcp.MCPToolset], tool discovery and each tool call run as Prefect
+tasks, and the server is connected inside the first task that needs it rather than in flow code, so a
+failed connection is covered by that task's retry policy. The flow then holds the session until the
+run ends, so the server is connected once per run and its own
+[`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] answers the later discovery tasks. Concurrent
+runs in one process share a server's session, as they do outside a flow, and it is closed once the
+last of them ends.
 
 A tool with an [`args_validator`](../tools-advanced.md#args-validator) gets a `Validate Tool Args: {name}` task, so the validator's I/O is checkpointed like the tool call's. A tool without one gets no extra task, and a tool with `metadata={'prefect': False}` is validated in flow code alongside its call. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. Validators can also defer from inside the task; resuming with approval runs validation again with `tool_call_approved` set.
 

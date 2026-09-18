@@ -49,6 +49,17 @@ cancellation, message compaction, event handling, discovery, validation, calls, 
 same backend and config resolver as framework operations, so do not maintain a second registration
 path for them.
 
+A toolset the run holds reaches the durable unit through the run context, so an engine that
+serializes it (or dispatches the unit elsewhere) sees none and the unit enters its own, as every unit
+did before. When a unit does reach one, it enters that toolset on first use and leaves it entered for
+the run, which the durable container closes: that is the deliberate exception to the rule below, and
+it is what lets an `MCPToolset` hold one session per run instead of one per unit. Declare it with the
+`'enter-in-durable-unit'` lifecycle, which is only for engines whose units run in the container's own
+process; connecting still happens inside a unit, so the engine retries it. A `DynamicToolset` built
+with `per_run_step=False` is held the same way, except that the run resolves it first: that factory
+runs in container code, so it carries the same determinism requirement as every other factory that
+runs there.
+
 Assume a durable unit may execute more than once if the process fails after the side effect but
 before its checkpoint commits. Document the engine's guarantees and require idempotency or expose
 an engine-native at-most-once option where available. Keep workflow-side code deterministic. Enter
