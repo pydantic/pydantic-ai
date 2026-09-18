@@ -468,11 +468,6 @@ def _output_tools(
     would be a second set of questions with no way to choose between them, and is a `UserError`, like everything
     else this agent could ask for that Jev cannot do.
     """
-    if model_request_parameters.allow_text_output:
-        raise UserError(
-            'Text output is not supported by this model. Give the agent one structured `output_type`, '
-            'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
-        )
     with_fields: list[ToolDefinition] = []
     hand_offs: list[ToolDefinition] = []
     for tool in model_request_parameters.output_tools:

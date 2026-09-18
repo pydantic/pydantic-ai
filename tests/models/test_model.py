@@ -17,7 +17,15 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models import DEFAULT_PROFILE, AbstractModel, Model, infer_model, infer_model_profile, parse_model_id
+from pydantic_ai.models import (
+    DEFAULT_PROFILE,
+    AbstractModel,
+    Model,
+    ModelRequestParameters,
+    infer_model,
+    infer_model_profile,
+    parse_model_id,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 
@@ -465,6 +473,16 @@ def test_infer_model_profile_fills_default_profile_with_context_window():
         profile = infer_model_profile('openai:gpt-5')
 
     assert profile == {**DEFAULT_PROFILE, 'context_window': 123}
+
+
+def test_prepare_request_rejects_unsupported_text_output():
+    params = ModelRequestParameters()
+
+    with pytest.raises(UserError, match='Text output is not supported by this model'):
+        TestModel(profile={'supports_text_output': False}).prepare_request(None, params)
+
+    _, prepared = TestModel().prepare_request(None, params)
+    assert prepared.allow_text_output is True
 
 
 def test_custom_provider_instance_method_model_profile():

@@ -91,6 +91,7 @@ with try_import() as openrouter_google_imports:
 _CANONICAL_DEFAULTS: dict[str, Any] = {
     # Top-level `ModelProfile` defaults
     'supports_tools': True,
+    'supports_text_output': True,
     'supports_tool_return_schema': False,
     'supports_json_schema_output': False,
     'supports_json_object_output': False,

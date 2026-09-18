@@ -19,6 +19,7 @@ def typesafe_model_profile(model_name: str) -> ModelProfile | None:
         # https://docs.typesafe.ai/model-jaggedness/jev-1.13
         context_window=64_000,
         supports_tools=True,
+        supports_text_output=False,
         supports_inline_system_prompts=True,
         supports_tool_return_schema=False,
         supports_json_schema_output=False,

@@ -688,6 +688,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             raise UserError('Native structured output is not supported by this model.')
         if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
             raise UserError('Tool output is not supported by this model.')
+        if params.allow_text_output and not self.profile.get('supports_text_output', True):
+            raise UserError(
+                'Text output is not supported by this model. Give the agent one structured `output_type`, '
+                'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
+            )
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
