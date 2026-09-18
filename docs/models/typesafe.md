@@ -469,9 +469,12 @@ async def judge_order(order: dict[str, object]) -> float:
                 criteria={'low': None, 'high': 'The customer has prior chargebacks.'},
             ),
         },
+        model=model.model_name,
     )
     return response.answers['refundable'].noul
 ```
+
+Pass `model=` yourself. The client does not know which model the `TypeSafeModel` around it was built with, so without it the SDK falls back to its own default, which `TYPESAFE_DEFAULT_MODEL` can change underneath you.
 
 Nothing else in Pydantic AI sees a call made this way: no agent run, no message history, no usage on a run's total, no fallback to another model, and the span the rest of an agent's work appears under is not opened. It is the escape hatch, not the main road. Reach for it when the question genuinely will not fit an output type, and go back to an `output_type` as soon as it will.
 
