@@ -959,6 +959,36 @@ async def test_below_the_threshold_with_no_hand_off_left_the_pick_stands(allow_m
     assert (exc_info.value.tool_name, exc_info.value.probability) == ('refund', 0.55)
 
 
+async def test_a_field_with_more_options_than_jev_picks_from_is_refused(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """Jev takes at most 255 options in one question; a 256th is a 400, so it is refused before the request."""
+
+    class Routed(BaseModel):
+        """Route the ticket."""
+
+        area: Literal[tuple(f'area_{i:03d}' for i in range(256))] = Field(description='Which team owns it?')  # type: ignore[valid-type]
+
+    with pytest.raises(UserError, match='picks from at most 255 options, and this one has 256'):
+        await Agent(typesafe_model, output_type=Routed).run('anything')
+
+
+async def test_more_routes_than_jev_picks_from_are_refused(allow_model_requests: None, typesafe_model: TypeSafeModel):
+    """The output type is one route beside the tools, so 255 tools is already one too many."""
+    tools = [_named_tool(f'tool_{i:03d}') for i in range(255)]
+    with pytest.raises(UserError, match='being offered 256 routes'):
+        await Agent(typesafe_model, output_type=Ticket, tools=tools).run('anything')
+
+
+def _named_tool(name: str) -> Callable[[], str]:
+    def tool() -> str:
+        return 'done'  # pragma: no cover
+
+    tool.__name__ = name
+    tool.__doc__ = f'Handle {name}.'
+    return tool
+
+
 async def test_a_tool_with_arguments_is_proposed_even_with_nothing_to_fill(allow_model_requests: None):
     jev = mock_model(
         lambda _: answers(
