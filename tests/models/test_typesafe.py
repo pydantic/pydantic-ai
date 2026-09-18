@@ -26,6 +26,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     PromptedOutput,
     RetryPromptPart,
+    RunContext,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -369,7 +370,9 @@ async def test_fallback_on_low_confidence(allow_model_requests: None, noul: floa
     [
         pytest.param(str, 'Text output is not supported', id='text'),
         pytest.param([Handling, str], 'Text output is not supported', id='text-in-union'),
-        pytest.param([Handling, EnumAndProbability], 'Multiple output types are not supported.*got 2', id='union'),
+        pytest.param(
+            [Handling, EnumAndProbability], 'Multiple output types with fields are not supported.*got 2', id='union'
+        ),
         pytest.param(NativeOutput(Handling), 'Native structured output is not supported', id='native'),
         pytest.param(PromptedOutput(Handling), 'Text output is not supported', id='prompted'),
         pytest.param(Empty, 'no fields is not supported', id='empty'),
@@ -625,6 +628,103 @@ async def test_an_unexpected_tool_answer(allow_model_requests: None):
 def test_tool_call_proposed_pickles():
     exc = pickle.loads(pickle.dumps(ToolCallProposed('jev-latest', 'refund', 0.9)))
     assert (exc.model_name, exc.tool_name, exc.probability) == ('jev-latest', 'refund', 0.9)
+
+
+def approve() -> str:
+    """Approve the request as it stands."""
+    return 'approved'
+
+
+def reject() -> str:
+    """Turn the request down."""
+    return 'rejected'  # pragma: no cover
+
+
+async def escalate(ctx: RunContext[None]) -> str:
+    """Hand the ticket to a person on the support team."""
+    return f'escalated after {len(ctx.messages)} messages'
+
+
+@pytest.mark.vcr
+async def test_an_output_function_is_a_hand_off_jev_picks(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """An output function that takes only the run context is an option beside the output type, and Jev can pick it."""
+    agent = Agent(typesafe_model, output_type=[Ticket, escalate])
+    result = await agent.run('I have explained this to your bot four times. I want a person to call me back today.')
+    assert result.output == snapshot('escalated after 2 messages')
+    assert result.response.provider_details['tool'] == snapshot(
+        {
+            'choice': 'final_result_escalate',
+            'probabilities': {'final_result_escalate': 1.0, 'final_result_Ticket': 0.0},
+        }
+    )
+    assert request_capture.body('/v1/systemone')['questions']['tool']['criteria'] == snapshot(
+        {
+            'final_result_Ticket': 'Triage a support ticket.',
+            'final_result_escalate': 'Hand the ticket to a person on the support team.',
+        }
+    )
+
+
+async def test_an_arg_less_tool_is_called_by_jev_itself(allow_model_requests: None):
+    """A tool with no arguments has nothing for Jev to write, so Jev calls it and judges the result next request."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        choice, other = ('approve', 'final_result') if len(seen) == 1 else ('final_result', 'approve')
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.9},
+            tool={'type': 'choice', 'choice': choice, 'confidence': 0.8, 'probabilities': {choice: 0.9, other: 0.1}},
+        )
+
+    result = await Agent(mock_model(record), output_type=Ticket, tools=[approve]).run('Fine by me.')
+    assert result.output == Ticket(urgent=True)
+    assert seen[1]['state'] == snapshot(
+        {
+            'history': [
+                {'user': 'Fine by me.'},
+                {'tool_call': {'name': 'approve', 'args': {}}},
+                {'tool_return': {'name': 'approve', 'content': 'approved'}},
+            ]
+        }
+    )
+
+
+async def test_with_nothing_to_fill_the_pick_is_the_answer(allow_model_requests: None):
+    """Output functions and no output type: the tool question is the whole question, taken at any probability."""
+    probabilities = {'final_result_approve': 0.55, 'final_result_reject': 0.45}
+    jev = mock_model(
+        lambda _: answers(
+            tool={'type': 'choice', 'choice': 'final_result_approve', 'confidence': 0.1, 'probabilities': probabilities}
+        )
+    )
+    result = await Agent(jev, output_type=[approve, reject]).run('Looks fine.')
+    assert result.output == 'approved'
+
+
+async def test_a_tool_with_arguments_is_proposed_even_with_nothing_to_fill(allow_model_requests: None):
+    jev = mock_model(
+        lambda _: answers(
+            tool={
+                'type': 'choice',
+                'choice': 'refund',
+                'confidence': 0.2,
+                'probabilities': {'refund': 0.6, 'final_result_approve': 0.4},
+            }
+        )
+    )
+    with pytest.raises(ToolCallProposed) as exc_info:
+        await Agent(jev, output_type=[approve], tools=[refund]).run('Give me my money back.')
+    assert exc_info.value.probability == 0.6
+
+
+async def test_one_output_function_alone_leaves_nothing_to_ask(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    with pytest.raises(UserError, match='nothing to ask Jev'):
+        await Agent(typesafe_model, output_type=[approve]).run('anything')
 
 
 async def test_native_tools_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
