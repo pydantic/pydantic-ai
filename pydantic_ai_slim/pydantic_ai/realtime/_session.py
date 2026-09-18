@@ -30,7 +30,15 @@ from .._tool_execution import (
     cancelled_sub_agent_return,
 )
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
-from ..exceptions import ApprovalRequired, CallDeferred, RunCancelled, ToolFailedError, ToolRetryError, UserError
+from ..exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    RunCancelled,
+    ToolFailedError,
+    ToolRetryError,
+    UsageLimitExceeded,
+    UserError,
+)
 from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
     BinaryAudio,
@@ -2037,11 +2045,29 @@ class RealtimeSession:
         self._pending_provider_response_id = None
         self._pending_finish_reason = None
         self._response_limit_checked = False
-        # Not while closing: a response settled by `close()` is the last thing this session will ever
-        # spend, and raising from teardown would mask the reason the session is closing. Its cost is
-        # still accumulated above, so a shared `usage` object carries it into whatever runs next.
-        if response is not None and not self._closed:
+        if response is not None:
+            self._check_response_boundary_limits()
+
+    def _check_response_boundary_limits(self) -> None:
+        """Check the usage limits against a response that has just been finalized.
+
+        A response settled by `close()` is the last thing the session will ever spend, but it is real
+        spend: a caller who set a `cost_limit` and hung up mid-reply asked to be told it was passed, and
+        the price of that reply is only known here. Skipping the check while closing let an over-budget
+        teardown exit cleanly.
+        """
+        if not self._closed:
             self._check_usage_limits()
+            return
+        try:
+            self._check_usage_limits()
+        except UsageLimitExceeded as exceeded:
+            # Surfaced from `close()` on the same terms as every other teardown failure: only when the
+            # stream was never consumed, so a caller that already saw the limit from iteration is not
+            # told twice, and only when nothing else is ending the session — the reason a session is
+            # closing outranks a limit discovered while it closes.
+            if self._closing_error is None and self._close_error is None and not self._stream_consumed:
+                self._close_error = exceeded
 
     def _ensure_chat_span(self) -> None:
         """Begin assembling a response and open its `chat {model}` span if not already open.

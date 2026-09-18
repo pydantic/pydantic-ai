@@ -8657,3 +8657,27 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
         assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
         assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
         assert len(conn.sent) == 1
+
+
+async def test_cost_limit_passed_by_a_reply_settled_at_close_is_reported() -> None:
+    """Hanging up mid-reply must not let an over-budget session exit cleanly.
+
+    The reply never reaches `ResponseDone`, so `close()` is what settles *and* prices it — the moment
+    its cost is first known. A taps-only caller never iterates, so this is the only place it can be
+    told the `cost_limit` it asked for was passed.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='over budget', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=1000, output_tokens=500)),
+        ]
+    )
+    agent: Agent[None, str] = Agent()
+    with pytest.raises(UsageLimitExceeded, match=r'Exceeded the `cost_limit` of 0.0001'):
+        async with agent.realtime(
+            FakeRealtimeModel(conn, model_name='gpt-realtime', system='openai'),
+            usage_limits=UsageLimits(cost_limit=Decimal('0.0001')),
+        ).session() as session:
+            _ = [part async for part in session.stream_transcripts()]
+            # Still in flight: the price that passes the limit is not known until close settles it.
+            assert session.usage.cost is None
