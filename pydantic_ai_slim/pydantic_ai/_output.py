@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
-from pydantic import BaseModel, ConfigDict, Json, TypeAdapter, ValidationError, create_model
+from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import SchemaValidator
 from typing_extensions import Self, TypedDict, TypeVar
 
@@ -69,6 +69,14 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
+
+
+class _GenerateBareOutputJsonSchema(GenerateToolJsonSchema):
+    """The schema of a bare output, such as `output_type=Priority`: an `Enum`'s members are described without a model to opt in."""
+
+    describe_enum_members = True
+
+
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
@@ -882,9 +890,6 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                     'response_data_typed_dict',
                     {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
                 )
-                # A bare output has no model of its own to opt in, so its wrapper reads docstrings for it:
-                # the members of an `Enum` output are described the way a tool's parameters are.
-                response_data_typed_dict.__pydantic_config__ = ConfigDict(use_attribute_docstrings=True)  # pyright: ignore[reportAttributeAccessIssue]
                 json_schema_type_adapter = TypeAdapter(response_data_typed_dict)
 
                 # More lenient validator: allow either the native type or a JSON string containing it
@@ -898,8 +903,10 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
+            # A bare output has no model of its own to opt into docstrings, so its members are described for it.
+            generator = _GenerateBareOutputJsonSchema if self.outer_typed_dict_key else GenerateToolJsonSchema
             json_schema = _utils.check_object_json_schema(
-                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+                json_schema_type_adapter.json_schema(schema_generator=generator)
             )
 
             if self.outer_typed_dict_key:
