@@ -115,6 +115,29 @@ print(result.response.provider_details)
 #> {'confidence': {'response': 0.95}, 'probabilities': {}, 'scores': {}}
 ```
 
+## Falling back on low confidence
+
+[`FallbackModel`](overview.md#fallback-model) falls back on API errors by default, and its `fallback_on` also takes a handler that looks at the response. Jev's confidence is on the response, so a language model can take over exactly the requests Jev was unsure about — the cheap model answers what it can, the expensive one only the rest:
+
+```python
+from pydantic_ai import Agent, ModelAPIError, ModelResponse
+from pydantic_ai.models.fallback import FallbackModel
+
+
+def unsure(response: ModelResponse) -> bool:
+    confidence = (response.provider_details or {}).get('confidence', {})
+    return any(value < 0.8 for value in confidence.values())
+
+
+model = FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol', fallback_on=[ModelAPIError, unsure])
+agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
+...
+```
+
+The handler runs on every model in the chain, and a language model reports no `confidence`, so its answers pass through. A response handler on its own replaces the default exception fallback, which is why `ModelAPIError` is listed alongside it.
+
+Watch how often the fallback fires, not only how accurate the pair is. A chain that hands off nearly everything is accurate and costs full price, and the rate is the only number that shows it.
+
 ## Ask one thing per field
 
 TypeSafe call this "probably the most important concept" in their guide, and it is the one habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible number with low confidence, and you find out later.

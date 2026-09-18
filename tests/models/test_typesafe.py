@@ -341,6 +341,24 @@ async def test_fallback_on_http_error(allow_model_requests: None):
     assert result.response.model_name == 'test'
 
 
+@pytest.mark.parametrize(
+    'noul,answered_by',
+    [pytest.param(0.55, 'test', id='unsure'), pytest.param(0.95, 'jev-latest', id='sure')],
+)
+async def test_fallback_on_low_confidence(allow_model_requests: None, noul: float, answered_by: str):
+    """A response handler reads Jev's confidence off the response, so only an unsure answer moves to the next model."""
+    jev = mock_model(lambda _: answers(response={'type': 'noul', 'noul': noul}))
+
+    def unsure(response: ModelResponse) -> bool:
+        confidence = (response.provider_details or {}).get('confidence', {})
+        return any(value < 0.8 for value in confidence.values())
+
+    agent = Agent(FallbackModel(jev, TestModel(), fallback_on=unsure), output_type=bool, instructions='Is this fine?')
+    result = await agent.run('anything')
+    # `TestModel` reports no confidence, so the same handler passes its answer through.
+    assert result.response.model_name == answered_by
+
+
 # The tests below never reach the network: each one pins a guard that runs before a request is built, or a
 # transport failure that no cassette can record.
 
