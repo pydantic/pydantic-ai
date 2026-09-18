@@ -124,6 +124,7 @@ except ImportError:  # pragma: lax no cover
 try:
     from fastmcp.client.transports import StdioTransport
 
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -1323,6 +1324,8 @@ _mcp_task_agent = Agent(
     ],
 )
 
+_OPTIONAL_TASK_ROUTING = 'optional_task' if is_mcp_sdk_v2() else 'optional_sync'
+
 _mcp_task_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     _mcp_task_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
@@ -1337,7 +1340,11 @@ class MCPTaskSupportWorkflow:
 
 
 async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
-    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
+    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities.
+
+    Which way the optional tool routes is the installed generation's call: FastMCP 3 speaks
+    SEP-1686, where the client asks and `prefer_tasks` is off, so it runs inline; FastMCP 4 speaks
+    SEP-2663, where the server directs task creation and takes it up."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -1351,7 +1358,7 @@ async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
             task_queue=TASK_QUEUE,
         )
 
-    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    assert output == f'{{"required_task_tool":"required_completed","optional_task_tool":"{_OPTIONAL_TASK_ROUTING}"}}'
 
 
 nested_multimodal_tool_return_agent = Agent(TestModel(), name='nested_multimodal_tool_return_agent')

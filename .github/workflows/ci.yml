@@ -873,24 +873,17 @@ jobs:
       - run: mkdir .coverage
 
       # Keep the normal matrix locked to FastMCP 3 while `--with` gives these tests an isolated
-      # FastMCP 4 environment without mutating the project environment.
-      # TODO: Drop these package-specific cutoffs after 2026-08-14, when the pinned artifacts clear
-      # the workspace's seven-day cooldown. Unrelated dependencies remain subject to the cooldown.
-      # uv only opts direct requirements into prereleases, so the two beta distributions that
-      # FastMCP pins transitively must also be named as direct requirements.
+      # FastMCP 4 environment without mutating the project environment. Stable now, so no
+      # prerelease opt-in and no package-specific cutoffs: what resolves here is what a fresh
+      # `pydantic-ai-slim[mcp]` install gets.
       - run: >-
           uv run
           --all-extras
           --no-extra mcp-tasks
           --all-packages
-          --with "fastmcp[tasks]==4.0.0b2"
-          --with "fastmcp-slim==4.0.0b2"
-          --with "fastmcp-tasks==4.0.0b2"
-          --exclude-newer-package "fastmcp=2026-08-08T00:00:00Z"
-          --exclude-newer-package "fastmcp-slim=2026-08-08T00:00:00Z"
-          --exclude-newer-package "fastmcp-tasks=2026-08-08T00:00:00Z"
-          --exclude-newer-package "mcp=2026-08-08T00:00:00Z"
-          --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
+          --with "fastmcp[tasks]>=4,<5"
+          --with "fastmcp-slim>=4,<5"
+          --with "fastmcp-tasks>=4,<5"
           coverage run -m pytest
           tests/test_mcp.py
           tests/models/test_mcp_sampling.py
