@@ -176,9 +176,9 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
                 'verdict': {
                     'type': 'choice',
                     'criteria': {
-                        'ask': None,
-                        'reject': None,
-                        'run': None,
+                        'ask': 'Legitimate but consequential enough that a human should confirm.',
+                        'reject': 'Destroys data, rewrites shared history, or sends secrets over the network.',
+                        'run': 'Reads, builds, tests or edits inside the project. Reversible.',
                     },
                     'instructions': {
                         'field': 'verdict',
@@ -1062,7 +1062,7 @@ async def test_nested_fields_lists_and_optionals(
                     'field': 'areas',
                     'question': 'Which teams does this touch?',
                     'goal': 'Triage a support ticket.',
-                    'option': 'billing',
+                    'option': 'billing: Money already owed, charged or refunded.',
                 },
             },
             'areas.account': {
