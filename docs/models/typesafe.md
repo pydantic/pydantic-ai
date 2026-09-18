@@ -35,14 +35,11 @@ from pydantic_ai import Agent
 
 
 class Verdict(str, Enum):
-    """How to handle this command."""
+    """Run it, reject it, or ask a human: reversible work runs, destructive or secret-leaking work is rejected."""
 
     run = 'run'
-    """Reads, builds, tests or edits inside the project. Reversible."""
     reject = 'reject'
-    """Destroys data, rewrites shared history, or sends secrets over the network."""
     ask = 'ask'
-    """Legitimate but consequential enough that a human should confirm."""
 
 
 class Handling(BaseModel):
@@ -119,20 +116,19 @@ Every field of the output type is one question, and all of them go out in a sing
 | `bool` | yes or no | `True` when Jev's probability is at least 0.5 |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
 | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
-| `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the score rounded to the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
 | a nested model of these | its fields, asked as `outer.inner` | the model |
 | `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or `None` |
 
-The field description is the question text; an `Enum` field without one uses the enum's class docstring. The output type's docstring and the agent's instructions are context, so put the framing there and the per-field wording in the descriptions — see [where the question goes](#where-the-question-goes). A docstring under an `Enum` member, as in the example above, describes that option. A `Literal` has nowhere to put descriptions, so Jev only sees its option names.
+The field description is the question text; an `Enum` field without one uses the enum's class docstring. The output type's docstring and the agent's instructions are context, so put the framing there and the per-field wording in the descriptions — see [where the question goes](#where-the-question-goes). Jev sees an option by its name, so name `Literal` and `Enum` options for what they mean.
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the example below.
 
 A `list` of options is TypeSafe's fan-out: one yes/no per option, all in the same request, and the answer is the options Jev said yes to. An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. A nested model is its fields, asked as `outer.inner` and put back in place; the parent field's description is not sent, so put the context each question needs on the field that asks it. The round trip of lists and nested models is tested; their accuracy against labels is not measured, so check them on your own data before relying on either.
 
-Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field, so one threshold reads the same way across an output type. It is a margin, not a probability that the answer is right. For a yes/no it is how far Jev's probability sits from the coin flip, doubled — a `False` answered from a probability of 0.01 reports 0.98, one answered from 0.45 reports 0.10. For a pick-one or a rubric it is Jev's own number, from how its probabilities are spread; for a list of options it is the least sure option's. `provider_details['probabilities']` holds the whole distribution of each pick-one and rubric field, and each option's probability for a list; `['scores']` the unrounded position of each rubric field.
+Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field, so one threshold reads the same way across an output type. It is a margin, not a probability that the answer is right. For a yes/no it is how far Jev's probability sits from the coin flip, doubled — a `False` answered from a probability of 0.01 reports 0.98, one answered from 0.45 reports 0.10. For a pick-one it is Jev's own number, from how its probabilities are spread; for a list of options it is the least sure option's. `provider_details['probabilities']` holds the whole distribution of each pick-one field, and each option's probability for a list.
 
-A `float` field has no entry. The probability *is* its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement — and `0.5` means Jev is undecided, not that the answer is middling. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give; when you want a magnitude, use a rubric.
+A `float` field has no entry. The probability *is* its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement — and `0.5` means Jev is undecided, not that the answer is middling. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give.
 
 Pick the threshold from what the answer is used for rather than once for the whole system — acting automatically deserves a higher bar than flagging something for review — and calibrate it against labelled examples of your own. `jev-latest` moves when TypeSafe ship a release, which can shift the numbers under you; once you have tuned a threshold, pin the version it was tuned against (`typesafe:jev-1.13.0`) and move deliberately.
 
@@ -298,47 +294,6 @@ class Pitch(BaseModel):
 ```
 
 Extra fields are close to free: every field goes out in the same request, and Jev answers them in parallel branches over one shared copy of the text, so a field you only need on some inputs costs tokens rather than time.
-
-## Scoring against a rubric
-
-Jev's third primitive scores a text against an ordered rubric. An `IntEnum` whose members are `0`, `1`, `2`, … is that rubric, and the docstring under each member says what that score means, so the levels are written where they are declared:
-
-```python
-from enum import IntEnum
-
-from pydantic import BaseModel
-
-from pydantic_ai import Agent
-
-
-class Clarity(IntEnum):
-    """How clearly does the text explain itself?"""
-
-    unclear = 0
-    """Leaves a reader who did not already know none the wiser."""
-    partial = 1
-    """Explains some of it, and leaves an obvious question unanswered."""
-    clear = 2
-    """A reader who did not already know could act on it."""
-
-
-class Review(BaseModel):
-    """Grade a piece of writing."""
-
-    clarity: Clarity
-
-
-agent = Agent('typesafe:jev-latest', output_type=Review)
-result = agent.run_sync('Jevantic gives Python programs typed, probabilistic decisions from Jev.')
-print(result.output)
-#> clarity=<Clarity.unclear: 0>
-print(result.response.provider_details['scores'])
-#> {'clarity': 0.16}
-```
-
-The answer is the expected score rounded to the nearest level, which is what TypeSafe's own docs do when code needs one outcome, so it is always one of yours. `provider_details['scores']` keeps the unrounded position along the rubric — `0.16` here, not `0` — which is what to rank or threshold on; TypeSafe warn it is weakly calibrated, so don't read the gap between two levels as a precise magnitude. `probabilities` holds the whole distribution, keyed by level.
-
-Every level needs a docstring: a rubric whose levels are unexplained is not a rubric, so one without them is a [`UserError`][pydantic_ai.exceptions.UserError]. The levels must also start at `0` and run upwards without gaps, which is the shape Jev scores against.
 
 ## Judging a conversation
 

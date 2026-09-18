@@ -3,12 +3,11 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
 import pydantic_core
 import pytest
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, ValidationError, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -5199,90 +5198,3 @@ def test_tool_return_part_serializes_with_serialization_alias():
     # The wire output keys agree with the advertised return schema properties.
     assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
     assert set(serialized_obj) == set(return_schema.get('properties', {}))
-
-
-def test_enum_member_docstrings_describe_options():
-    """A docstring under an enum member becomes that option's description, as `anyOf` of `const`s."""
-
-    class Priority(str, Enum):
-        """How urgent the ticket is."""
-
-        low = 'low'
-        """Can wait a week."""
-        high = 'high'
-        """Needs attention today."""
-        unknown = 'unknown'
-        annotated: str = 'annotated'
-        """An annotated member is a member too."""
-        _ignore_ = ['label']
-        """A string after a name that is not a member describes nothing."""
-
-        def label(self) -> str:
-            return self.value.title()  # pragma: no cover
-
-        """A string that follows no member describes nothing."""
-
-    Undocumented = Enum('Undocumented', {'a': 'a', 'b': 'b'})  # no source to read, so a plain enum
-
-    agent = Agent(FunctionModel(get_json_schema))
-
-    @agent.tool_plain
-    def triage(priority: Priority, other: Undocumented) -> None: ...  # pragma: no cover
-
-    result = agent.run_sync('Hello')
-    json_schema = json.loads(result.output)
-    assert json_schema['parameters_json_schema']['$defs'] == snapshot(
-        {
-            'Priority': {
-                'enum': ['low', 'high', 'unknown', 'annotated'],
-                'description': 'How urgent the ticket is.',
-                'title': 'Priority',
-                'type': 'string',
-            },
-            'Undocumented': {'enum': ['a', 'b'], 'title': 'Undocumented', 'type': 'string'},
-        }
-    )
-
-
-class Level(str, Enum):
-    low = 'low'
-    """Can wait a week."""
-    high = 'high'
-
-
-def test_enum_member_docstrings_follow_the_models_docstring_switch():
-    """An output model reads them on `use_attribute_docstrings`, like a field docstring; a bare enum is described."""
-
-    class Quiet(BaseModel):
-        level: Level
-
-    class Described(BaseModel):
-        model_config = ConfigDict(use_attribute_docstrings=True)
-        level: Level
-
-    def defs(output_type: Any) -> dict[str, Any]:
-        seen: list[dict[str, Any]] = []
-
-        def capture(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            seen.append(info.output_tools[0].parameters_json_schema)
-            args = {'level': 'low'} if output_type is not Level else {'response': 'low'}
-            return ModelResponse(parts=[ToolCallPart('final_result', args, 'call_1')])
-
-        Agent(FunctionModel(capture), output_type=output_type).run_sync('Hello')
-        return seen[0]
-
-    assert defs(Quiet)['$defs']['Level'] == snapshot({'enum': ['low', 'high'], 'title': 'Level', 'type': 'string'})
-    assert defs(Described)['$defs']['Level'] == snapshot(
-        {
-            'anyOf': [{'const': 'low', 'description': 'Can wait a week.'}, {'const': 'high'}],
-            'title': 'Level',
-            'type': 'string',
-        }
-    )
-    assert defs(Level)['$defs']['Level'] == snapshot(
-        {
-            'anyOf': [{'const': 'low', 'description': 'Can wait a week.'}, {'const': 'high'}],
-            'title': 'Level',
-            'type': 'string',
-        }
-    )

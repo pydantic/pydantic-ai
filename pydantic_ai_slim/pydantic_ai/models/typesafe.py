@@ -88,8 +88,9 @@ TypeSafeModelName = str | LatestTypeSafeModelNames
 """Possible TypeSafe model names."""
 
 _UNSUPPORTED_FIELD_HINT = (
-    'Use `bool`, a `Literal` or `Enum` of two or more strings, an `IntEnum` whose members are 0 upwards with a '
-    'docstring each, a `float` bounded with `ge=0` and `le=1`, a `list` of a `Literal` or `Enum`, or a model of these.'
+    'Use `bool`, a `Literal` or `Enum` of two or more strings, a `float` bounded with `ge=0` and `le=1`, a `list` of '
+    'a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its schema, or a model '
+    'of these.'
 )
 
 
@@ -168,15 +169,15 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     | `bool` | yes or no | `True` when Jev's probability is at least 0.5 |
     | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
     | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
-    | `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the score rounded to a level |
+    | whole numbers 0, 1, 2, … with a description per level in the schema | score against a rubric | the nearest level |
     | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
     | a nested model of these | its fields, named `outer.inner` | the model |
     | `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or `None` |
 
     The field description is the question. The output type's docstring and the agent's instructions go along
-    as context. A docstring under an `Enum` member describes that option, see the [docs](../../models/typesafe.md);
-    without one Jev only sees its name. A bare `bool`, `Literal` or `float` output has no field to describe, so
-    there the agent's instructions are the question.
+    as context. An option is described by a description on its value in the schema, and by its name without one.
+    A bare `bool`, `Literal` or `float` output has no field to describe, so there the agent's instructions are the
+    question.
     Confidence per field, from 0 for undecided to 1, is in
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `confidence`,
     the full distribution of each pick-one and rubric field under `probabilities`, and each rubric field's
@@ -787,7 +788,7 @@ def _score_question(name: str, options: dict[int, str | None], asked: JSONConten
         missing = ', '.join(str(level) for level in levels if not options[level])
         raise UserError(
             f'Output field {name!r} is a rubric, so every level needs to say what it means, and {missing} does not. '
-            f'Give each member of the `IntEnum` a docstring describing that score.'
+            f'Give each level a description in the schema.'
         )
     return Score(instructions=asked, criteria=cast('list[JSONContent]', criteria))
 

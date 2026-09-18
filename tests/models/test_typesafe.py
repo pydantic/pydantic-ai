@@ -3,12 +3,12 @@ from __future__ import annotations as _annotations
 import json
 import pickle
 from collections.abc import Callable
-from enum import Enum, IntEnum
-from typing import Any, Literal, cast
+from enum import Enum
+from typing import Annotated, Any, Literal, cast
 
 import httpx2
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import (
     Agent,
@@ -92,15 +92,21 @@ class EnumAndProbability(BaseModel):
     p_harmful: float = Field(ge=0, le=1, description='Is this request harmful?')
 
 
-class Clarity(IntEnum):
-    """How clearly does the text explain itself?"""
+def rubric(*levels: tuple[int, str]) -> WithJsonSchema:
+    """A rubric's levels with a description each, as the schema an `IntEnum` with member docstrings will render."""
+    return WithJsonSchema(
+        {'type': 'integer', 'anyOf': [{'const': level, 'description': meaning} for level, meaning in levels]}
+    )
 
-    unclear = 0
-    """Leaves a reader who did not already know none the wiser."""
-    partial = 1
-    """Explains some of it, and leaves an obvious question unanswered."""
-    clear = 2
-    """A reader who did not already know could act on it."""
+
+Clarity = Annotated[
+    Literal[0, 1, 2],
+    rubric(
+        (0, 'Leaves a reader who did not already know none the wiser.'),
+        (1, 'Explains some of it, and leaves an obvious question unanswered.'),
+        (2, 'A reader who did not already know could act on it.'),
+    ),
+]
 
 
 class Review(BaseModel):
@@ -170,9 +176,9 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
                 'verdict': {
                     'type': 'choice',
                     'criteria': {
-                        'ask': 'Legitimate but consequential enough that a human should confirm.',
-                        'reject': 'Destroys data, rewrites shared history, or sends secrets over the network.',
-                        'run': 'Reads, builds, tests or edits inside the project. Reversible.',
+                        'ask': None,
+                        'reject': None,
+                        'run': None,
                     },
                     'instructions': {
                         'field': 'verdict',
@@ -256,7 +262,7 @@ async def test_rubric_output(
     result = await agent.run('Jevantic gives Python programs typed, probabilistic decisions from Jev.')
 
     # Jev put 0.84 on the lowest level for a single sentence out of context, so that is the answer.
-    assert result.output == snapshot(Review(clarity=Clarity.unclear))
+    assert result.output == snapshot(Review(clarity=0))
     # The answer is the level Jev thought most likely; `scores` keeps the expectation across the rubric,
     # which falls between levels and is the number to average over a dataset.
     assert result.response.provider_details == snapshot(
@@ -278,7 +284,6 @@ async def test_rubric_output(
                 ],
                 'instructions': {
                     'field': 'clarity',
-                    'question': 'How clearly does the text explain itself?',
                     'goal': 'Grade a piece of writing.',
                 },
             }
@@ -403,15 +408,10 @@ class WithUndescribedLevels(BaseModel):
     level: Literal[0, 1, 2]
 
 
-class OutOfOrder(IntEnum):
-    """Declared out of level order; the numbers are what count."""
-
-    clear = 2
-    """Top of the rubric."""
-    unclear = 0
-    """Bottom of the rubric."""
-    partial = 1
-    """The middle."""
+# Declared out of level order; the numbers are what count.
+OutOfOrder = Annotated[
+    Literal[2, 0, 1], rubric((2, 'Top of the rubric.'), (0, 'Bottom of the rubric.'), (1, 'The middle.'))
+]
 
 
 class WithOutOfOrderRubric(BaseModel):
@@ -465,7 +465,7 @@ async def test_rubric_levels_are_read_in_level_order(allow_model_requests: None)
         )
 
     result = await Agent(mock_model(record), output_type=WithOutOfOrderRubric).run('anything')
-    assert result.output.level is OutOfOrder.clear
+    assert result.output.level == 2
     assert seen[0]['questions']['level']['criteria'] == snapshot(
         ['Bottom of the rubric.', 'The middle.', 'Top of the rubric.']
     )
@@ -990,7 +990,7 @@ async def test_nested_fields_lists_and_optionals(
                     'field': 'areas',
                     'question': 'Which teams does this touch?',
                     'goal': 'Triage a support ticket.',
-                    'option': 'billing: Money already owed, charged or refunded.',
+                    'option': 'billing',
                 },
             },
             'areas.account': {

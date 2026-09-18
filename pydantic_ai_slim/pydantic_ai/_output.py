@@ -69,14 +69,6 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
-
-
-class _GenerateBareOutputJsonSchema(GenerateToolJsonSchema):
-    """The schema of a bare output, such as `output_type=Priority`: an `Enum`'s members are described without a model to opt in."""
-
-    describe_enum_members = True
-
-
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
@@ -903,10 +895,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
-            # A bare output has no model of its own to opt into docstrings, so its members are described for it.
-            generator = _GenerateBareOutputJsonSchema if self.outer_typed_dict_key else GenerateToolJsonSchema
             json_schema = _utils.check_object_json_schema(
-                json_schema_type_adapter.json_schema(schema_generator=generator)
+                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
             )
 
             if self.outer_typed_dict_key:

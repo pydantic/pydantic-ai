@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from enum import Enum
 from functools import cached_property
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -42,7 +41,7 @@ from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -2367,12 +2366,6 @@ def test_generate_user_output_format_complex(mistral_api_key: str):
             'prop_object_object': {'type': 'object', 'additionalProperties': {'type': 'object'}},
             'prop_object_unknown': {'type': 'object', 'additionalProperties': {'type': 'someUnknownType'}},
             'prop_unrecognized_type': {'type': 'customSomething'},
-            # An `Enum` with member docstrings renders as `anyOf` of described `const`s: still one typed value
-            'prop_described_options': {
-                'type': 'string',
-                'anyOf': [{'const': 'low', 'description': 'Can wait.'}, {'const': 'high'}],
-            },
-            'prop_described_ints': {'anyOf': [{'const': 1}, {'const': 2}]},
         }
     }
     m = MistralModel('', json_mode_schema_prompt='{schema}', provider=MistralProvider(api_key=mistral_api_key))
@@ -2386,9 +2379,7 @@ def test_generate_user_output_format_complex(mistral_api_key: str):
         "'prop_object_array': 'dict[str, list[int]]', "
         "'prop_object_object': 'dict[str, dict[str, Any]]', "
         "'prop_object_unknown': 'dict[str, Any]', "
-        "'prop_unrecognized_type': 'Any', "
-        "'prop_described_options': 'str', "
-        "'prop_described_ints': 'int'}"
+        "'prop_unrecognized_type': 'Any'}"
     )
 
 
@@ -3718,54 +3709,3 @@ async def test_parallel_tool_calls_stream(allow_model_requests: None) -> None:
         text = await result.get_output()
     assert text == 'hello'
     assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is True
-
-
-class TicketPriority(str, Enum):
-    """How urgent the ticket is."""
-
-    low = 'low'
-    """Can wait a week."""
-    high = 'high'
-    """Needs attention today."""
-
-
-@pytest.mark.vcr()
-async def test_mistral_enum_member_docstrings_reach_the_wire(
-    allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture
-):
-    """A documented enum goes to Mistral as `anyOf` of `const`s with descriptions, and the model calls with one."""
-    provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
-    agent = Agent(
-        MistralModel('mistral-small-latest', provider=provider), instructions='Set the priority of the ticket.'
-    )
-
-    @agent.tool_plain
-    def set_priority(priority: TicketPriority) -> str:
-        return f'Priority set to {priority.value}.'
-
-    result = await agent.run('Production is down for every customer.')
-    calls = [
-        part
-        for message in result.all_messages()
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, ToolCallPart)
-    ]
-    assert calls[0].args_as_dict() == {'priority': 'high'}
-    body = request_capture.body('/chat/completions')
-    assert cast(list[dict[str, Any]], body['tools'])[0]['function']['parameters'] == snapshot(
-        {
-            '$defs': {
-                'TicketPriority': {
-                    'enum': ['low', 'high'],
-                    'description': 'How urgent the ticket is.',
-                    'title': 'TicketPriority',
-                    'type': 'string',
-                }
-            },
-            'additionalProperties': False,
-            'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
-            'required': ['priority'],
-            'type': 'object',
-        }
-    )
