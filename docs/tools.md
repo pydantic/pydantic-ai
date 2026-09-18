@@ -266,6 +266,10 @@ first entry of the returns section. Other sections Griffe can parse, such as `Ra
 `Warnings` and `Yields`, are dropped, so anything the model needs to act on belongs in the
 leading description, a parameter description, or the first returns entry.
 
+A docstring under an `Enum` member reaches the model too, as the description of that value, so the model sees
+what each option means and not only its name. Such an enum renders as `anyOf` of `const` values instead of a
+plain `enum` list; members without docstrings, and `Literal`s, render as before.
+
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
 ```python {title="tool_schema.py"}
