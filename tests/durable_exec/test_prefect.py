@@ -2440,6 +2440,9 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
         '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
+        # Toolsets the run holds entered, built from `deps`, which is projected: they carry no
+        # input the task's own resolution wouldn't reach, so they must not fork the key.
+        '_run_held_toolsets',
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -4719,3 +4722,37 @@ async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_mcp_server_keeps_one_session_per_flow(blockbuster_enabled: bool) -> None:
+    """A statically attached `MCPToolset` connects inside a task, once per flow (#8458).
+
+    The traffic is what it always was — flow code held the session open around the whole run — but
+    the connection now happens in the first task that needs the server, where a failed connection is
+    covered by the task's retry policy instead of failing the flow. Not a VCR test: an in-process
+    server is what makes the round trips countable server-side, which is what attributes the MCP
+    SDK's own pre-call listing correctly.
+    """
+    assert blockbuster_enabled is False
+    from .counting_mcp import counting_mcp_server, two_echo_calls_model
+
+    server, counts = counting_mcp_server()
+    toolset = MCPToolset(server, id='session_mcp')
+    agent = Agent(
+        two_echo_calls_model(),
+        name='prefect_mcp_session',
+        toolsets=[toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_flow() -> str:
+        # The flow doesn't connect the server; the first task that needs it does.
+        assert not toolset.is_running
+        return (await agent.run('go')).output
+
+    assert await run_flow() == 'done'
+    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    # The run closed the session it held; nothing keeps the server connected between runs.
+    assert not toolset.is_running

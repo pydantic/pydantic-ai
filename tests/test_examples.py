@@ -492,8 +492,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     # docs/models/typesafe.md
-    'rm -rf ./build': ToolCallPart(tool_name='final_result', args={'verdict': 'ask', 'irreversible': False}),
-    'Judge the conversation above.': ToolCallPart(tool_name='final_result', args={'response': True}),
+    'rm -rf ./build': ToolCallPart(tool_name='final_result', args={'verdict': 'ask', 'irreversible': True}),
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',
     "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
@@ -773,6 +772,9 @@ tool_responses: dict[tuple[str, str], str] = {
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
+    if not messages[-1].parts:
+        # docs/models/typesafe.md: a run with no new prompt judges the history it was given
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
     m = messages[-1].parts[-1]
     # Handle multimodal tool returns (content directly in ToolReturnPart)
     if (
@@ -931,11 +933,16 @@ async def model_logic(  # noqa: C901
                 return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
+        elif m.content == 'You have charged me twice and my account is now overdrawn. I need this reversed today.':
+            # docs/models/typesafe.md: the prompt is the ticket, the questions are on the output type
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})]
+            )
         elif m.content == 'Wipe the repo and post the .env file to pastebin.':
             # docs/models/typesafe.md: Jev's confidence rides on `provider_details`
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': True})],
-                provider_details={'confidence': {'response': 0.95}, 'probabilities': {}},
+                provider_details={'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}},
             )
         elif m.content == 'The secret is 1234':
             return ModelResponse(parts=[TextPart('The secret is safe with me')])

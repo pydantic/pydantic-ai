@@ -1944,7 +1944,7 @@ class RealtimeSession:
             )
             fill_run_metadata(response, run_id=self._run_id, conversation_id=self._conversation_id)
             self._history.append(response)
-            self.usage.requests += 1
+            self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
             self._tool_run_step += 1
             for part in parts:
                 if isinstance(part, ToolCallPart):
@@ -2792,7 +2792,7 @@ class RealtimeSession:
     async def _handle_usage_event(self, event: SessionUsage) -> None:
         if event.response_scoped:
             self._begin_response()
-        self.usage.incr(event.usage)
+        self.usage.incr(event.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
         self._check_usage_limits()
         if event.response_scoped:
             if self._usage_limits is not None:

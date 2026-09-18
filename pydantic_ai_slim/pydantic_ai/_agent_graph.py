@@ -47,6 +47,7 @@ from . import (
     _enqueue,
     _output,
     _system_prompt,
+    _usage_attribution,
     exceptions,
     messages as _messages,
     models,
@@ -960,7 +961,7 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
     """
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
-        provisional.incr(continuation_usage)
+        provisional.incr(continuation_usage)  # usage-attribution: a provisional copy, for a check only
         run_context.usage_limits.check_tokens(provisional)
         if continuation_usage.cost is not None:
             # Continuation usage is provisional, so only warn after the run successfully finishes.
@@ -1257,7 +1258,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
             skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
             skip_sr = CompletedStreamedResponse(e.response, model_request_parameters=skip_mrp)
@@ -1298,7 +1299,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # separate request steps.
             async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
                 self._did_stream = True
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                 agent_stream_holder.append(agent_stream)
                 stream_ready.set()
@@ -1383,7 +1384,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await agent_stream.aclose_events()
                 return
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=model_request_parameters,
@@ -1427,7 +1428,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             conversation_id=ctx.state.conversation_id,
                         )
                         fill_response_cost(partial_response)
-                        ctx.state.usage.incr(partial_response.usage)
+                        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
                         ctx.state.message_history.append(partial_response)
                 else:
                     try:
@@ -1495,7 +1496,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             return await self._finish_handling(ctx, e.response)
 
         _handler_response: _messages.ModelResponse | None = None
@@ -1550,11 +1551,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, e)
         self.last_request_context = request_context
-        ctx.state.usage.requests += 1
+        _usage_attribution.record_request(ctx.state.usage)
 
         return await self._finish_handling(ctx, model_response)
 
@@ -1775,7 +1776,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 provider_name=model.system,
             )
             counted_usage.cost = counted_price.total_price if counted_price is not None else None
-            usage.incr(counted_usage)
+            usage.incr(counted_usage)  # usage-attribution: a deepcopy, to check a limit before the request
 
             ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
 
@@ -1963,7 +1964,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         fill_response_cost(response)
-        ctx.state.usage.incr(response.usage)
+        _usage_attribution.record_usage(ctx.state.usage, response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.
