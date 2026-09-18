@@ -104,6 +104,19 @@ class TypeSafeModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `typesafe_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
+    typesafe_boolean_threshold: float
+    """How likely a yes has to be before a `bool` field is `True`, from 0 to 1. Default: 0.5.
+
+    Jev answers a yes/no with the probability of yes, and the default rounds it: what the framework cannot know is
+    what `True` has to mean for you. Raise it where a false positive is the expensive mistake and a `True` should
+    be earned, lower it where a false negative is. It applies to every `bool` field and to each option of a `list`
+    of a `Literal` or `Enum`, which is one yes/no per option; a `float` bounded with `ge=0` and `le=1` returns the
+    probability itself and is not thresholded.
+
+    Reported confidence is the distance from the threshold rather than from the probability, scaled to run from 0
+    at the threshold to 1 at certainty, so a yes at 0.8 under a threshold of 0.75 reports the narrow margin it is.
+    """
+
     typesafe_tool_call_threshold: float
     """How likely Jev has to find a tool call before it is proposed, from 0 to 1. Default: 0.6.
 
@@ -285,18 +298,19 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         settings = cast(TypeSafeModelSettings, model_settings or {})
+        # Both bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding
+        # out from a rejected answer would mean paying for the request that carried the prompt and history.
+        threshold = _threshold(settings, 'typesafe_tool_call_threshold', 0.6)
+        boolean_threshold = _threshold(settings, 'typesafe_boolean_threshold', 0.5)
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
-            return await self._forced_with_arguments(forced_tool, state, instructions, settings)
+            return await self._forced_with_arguments(forced_tool, state, instructions, settings, boolean_threshold)
         questions = _questions(properties, output_tool, instructions) if output_tool else {}
         tool_key = _tool_question(questions, output_tool, tools, instructions)
-        threshold = settings.get('typesafe_tool_call_threshold', 0.6)
-        if not 0 <= threshold <= 1:
-            raise UserError(f'`typesafe_tool_call_threshold` must be between 0 and 1; got {threshold!r}.')
 
         response = await self._system_one(state, questions, settings)
         response_usage = _request_usage(response)
-        args, provider_details = _answers(response.answers, properties, questions)
+        args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
         parts: list[ModelResponsePart] = []
         if output_tool:
             parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
@@ -314,7 +328,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             elif picked is not None and picked is not output_tool:
                 probability = provider_details['tool']['probabilities'][picked.name]
                 response, args, argument_details = await self._tool_arguments(
-                    picked, probability, state, instructions, settings
+                    picked, probability, state, instructions, settings, boolean_threshold
                 )
                 response_usage += _request_usage(response)
                 provider_details.update(argument_details)
@@ -371,6 +385,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         state: JSONContent,
         instructions: str | None,
         settings: TypeSafeModelSettings,
+        boolean_threshold: float,
     ) -> tuple[SystemOneResponse, dict[str, Any], dict[str, Any]]:
         """Ask only a selected tool's arguments, or propose it when Jev cannot express them."""
         try:
@@ -381,7 +396,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
 
         try:
             response = await self._system_one(state, questions, settings)
-            args, provider_details = _answers(response.answers, properties, questions)
+            args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
             # could silently choose another route, so an argument-fill failure is terminal and names that tool.
@@ -396,10 +411,13 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         state: JSONContent,
         instructions: str | None,
         settings: TypeSafeModelSettings,
+        boolean_threshold: float,
     ) -> ModelResponse:
         """Fill the arguments of the one route left, without a choice request."""
         details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
-        response, args, argument_details = await self._tool_arguments(tool, 1.0, state, instructions, settings)
+        response, args, argument_details = await self._tool_arguments(
+            tool, 1.0, state, instructions, settings, boolean_threshold
+        )
         details.update(argument_details)
         return ModelResponse(
             parts=[ToolCallPart(tool.name, args, _utils.generate_tool_call_id())],
@@ -479,8 +497,37 @@ class TypeSafeStreamedResponse(StreamedResponse):
         return self._response.timestamp
 
 
+def _threshold(settings: TypeSafeModelSettings, name: str, default: float) -> float:
+    """A probability setting, which is only meaningful inside the range Jev answers in."""
+    threshold = cast(float, settings.get(name, default))
+    if not 0 <= threshold <= 1:
+        raise UserError(f'`{name}` must be between 0 and 1; got {threshold!r}.')
+    return threshold
+
+
+def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
+    """Whether Jev's probability of yes clears the bar, and how far from the bar it landed.
+
+    Jev reports no confidence for a yes/no: `noul` is the probability of yes, and what is lost in rounding it to
+    an answer is how sure that answer is. That is the distance from the bar, scaled to run 0 to 1 on whichever
+    side of it the answer fell — like the confidence Jev reports for the other two kinds of question. Under the
+    default bar of 0.5 this is the distance from the coin flip, doubled: a no returned at 0.01 reports 0.98.
+    """
+    if not 0 <= probability <= 1:
+        # Both scalings divide by the room left on their side of the bar, which a probability outside the
+        # range Jev answers in can make zero. A malformed answer is the model's to report, not a crash.
+        raise UnexpectedModelBehavior(f'Unexpected probability from TypeSafe: {probability!r}')
+    if probability >= threshold:
+        # An answer exactly at the bar is the least sure one there is, including when the bar is certainty.
+        return True, (probability - threshold) / (1 - threshold) if threshold < 1 else 0.0
+    return False, (threshold - probability) / threshold
+
+
 def _answers(
-    answers: Mapping[str, object], properties: dict[str, dict[str, Any]], questions: dict[str, Noul | Choice | Score]
+    answers: Mapping[str, object],
+    properties: dict[str, dict[str, Any]],
+    questions: dict[str, Noul | Choice | Score],
+    boolean_threshold: float,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The output's arguments and `provider_details` from Jev's answers to the field questions."""
     args: dict[str, Any] = {}
@@ -499,8 +546,9 @@ def _answers(
                         f'Unexpected answer from TypeSafe for output field {name!r}, option {option!r}: {answer!r}'
                     )
                 labelled[option] = answer.noul
-            _set(args, name, [option for option, p in labelled.items() if p >= 0.5])
-            confidence[name] = min(abs(p - 0.5) * 2 for p in labelled.values())
+            verdicts = {option: _verdict(p, boolean_threshold) for option, p in labelled.items()}
+            _set(args, name, [option for option, (chosen, _) in verdicts.items() if chosen])
+            confidence[name] = min(sureness for _, sureness in verdicts.values())
             probabilities[name] = labelled
             continue
         answer = answers.get(name)
@@ -510,12 +558,9 @@ def _answers(
                 # that asks for the number would otherwise get it back twice under two names.
                 _set(args, name, answer.noul)
             else:
-                # Jev reports no confidence for a yes/no: `noul` is the probability of yes, and what is
-                # lost in rounding it to an answer is how sure that answer is. That is the distance from
-                # the coin flip, doubled so it runs 0 to 1 like the confidence Jev reports for the other
-                # two kinds of question — a no returned at 0.01 is a confident no, and reports 0.98.
-                _set(args, name, answer.noul >= 0.5)
-                confidence[name] = abs(answer.noul - 0.5) * 2
+                chosen, sureness = _verdict(answer.noul, boolean_threshold)
+                _set(args, name, chosen)
+                confidence[name] = sureness
         elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
             _set(args, name, None if answer.choice == none_key else answer.choice)
             confidence[name] = answer.confidence
