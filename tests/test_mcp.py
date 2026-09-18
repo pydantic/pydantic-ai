@@ -2260,6 +2260,14 @@ def as_legacy_mcp_session(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Client, 'initialize_result', property(lambda self: init_result))
 
 
+# FastMCP 4 moved task execution into the optional `fastmcp-tasks` package, which only the
+# `mcp-tasks` extra installs — and a server declaring task tools refuses to start without it. Install
+# shapes that leave the extra out skip the integration below; the FastMCP 3 ones still run it,
+# because that generation serves task tools itself.
+_TASKS_UNAVAILABLE = MCP_SDK_V2 and TasksExtension is None
+
+
+@pytest.mark.skipif(_TASKS_UNAVAILABLE, reason='fastmcp-tasks not installed')
 class TestMCPToolsetBackgroundTasks:
     """Task-augmented execution across both generations.
 
@@ -2272,13 +2280,6 @@ class TestMCPToolsetBackgroundTasks:
 
     @pytest.fixture
     async def task_server(self) -> FastMCP[None]:
-        if MCP_SDK_V2 and TasksExtension is None:
-            # FastMCP 4 moved task execution into the optional `fastmcp-tasks` package, which only
-            # the `mcp-tasks` extra installs — and a server declaring task tools refuses to start
-            # without it. Install shapes that leave the extra out skip the integration; the FastMCP
-            # 3 ones still run it, because that generation serves task tools itself.
-            pytest.skip('fastmcp-tasks not installed')
-
         server: FastMCP[None] = FastMCP('task_server')
         if MCP_SDK_V2:
             assert TasksExtension is not None
