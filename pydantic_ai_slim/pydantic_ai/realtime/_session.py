@@ -1246,7 +1246,7 @@ class RealtimeSession:
         """
         self._ensure_streamable()
         self._start_pump()
-        while self._reply_outstanding():
+        while True:
             # Cleared before the check, so a boundary reached between the check and the wait still
             # wakes us rather than leaving this parked until the turn after it.
             self._exchange_progress.clear()

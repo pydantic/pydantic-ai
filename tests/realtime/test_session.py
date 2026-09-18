@@ -7282,7 +7282,7 @@ async def test_realtime_session_explains_a_declaratively_external_tool() -> None
         toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='lookup', kind='external')])]
     )
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='lookup', args='{}'), ResponseDone()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='get_weather', args='{}'), ResponseDone()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         events = [e async for e in session]
@@ -7960,7 +7960,7 @@ async def test_agent_realtime_session_capability_recovers_tool_error_for_taps_on
     def lookup() -> str:
         raise ValueError('service unavailable')
 
-    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='lookup', args='{}'), ResponseDone()])
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='get_weather', args='{}'), ResponseDone()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, capabilities=[RecoverToolError()]).session() as session:
         audio = asyncio.create_task(_collect(session.stream_audio()))
@@ -8150,13 +8150,16 @@ async def test_wait_for_reply_spans_a_tool_calling_turn() -> None:
 
     class _AnswersAfterTheTool(FakeRealtimeConnection):
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-            yield ToolCall(tool_call_id='c1', tool_name='lookup', args='{}')
+            yield ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}')
             yield ResponseDone()
             await answer_sent.wait()
             yield OutputTranscript(text='it is sunny', is_final=True)
             yield ResponseDone()
 
+    tool_started = asyncio.Event()
+
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        tool_started.set()
         await release_tool.wait()
         return 'sunny'
 
@@ -8164,9 +8167,10 @@ async def test_wait_for_reply_spans_a_tool_calling_turn() -> None:
     async with session:
         await session.send('What is the weather?')
         waiting = asyncio.create_task(session.wait_for_reply())
-        # Let the tool-call response finalize while the tool itself is still running.
-        for _ in range(20):
-            await asyncio.sleep(0)
+        # Wait for the tool to be running rather than for a fixed number of loop turns, so the gap this
+        # is about — the tool-call response finalized, the answer not yet begun — is actually reached.
+        with anyio.fail_after(5):
+            await tool_started.wait()
         assert not waiting.done(), 'returned at the tool-call response instead of the answer'
 
         release_tool.set()
