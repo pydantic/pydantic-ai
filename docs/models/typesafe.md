@@ -539,14 +539,25 @@ def run_shell(command: str) -> str:
 
 [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution] stops the call and sends its message back as the
 tool's result, so the model learns what was refused and can try something else. Nothing is marked
-`requires_approval`, and no tool opts in: the hook sits on every call the agent can make, including ones added
-later, which is what you want from a guard.
+`requires_approval` and no tool opts in, so the hook sits on every *function tool* the agent can call, including
+ones added later.
+
+!!! warning "Output functions do not fire tool hooks"
+    An [output function](../output.md#output-functions) is an internal tool, and tool-execution hooks are
+    deliberately not run for it — the same way `prepare_tools` and toolset wrappers exclude output tools. So a
+    guard written this way does not see an output function, including the ones
+    [built at run time](#choose-from-a-set-built-at-run-time) further down this page. Put the side effect in a
+    function tool if it needs to pass this guard, or validate it inside the output function itself.
 
 The alternative is [deferred tools](../deferred-tools.md): mark a tool `requires_approval=True` and resolve the
 approval request with [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. Use that when
 the decision has to leave the process — a person approving in another system, a queue, a run that is resumed later.
 Use the hook when the decision is made in-process, as it is here. Both see validated arguments; only the deferral
 can outlive the run.
+
+The arguments go to TypeSafe before the verdict comes back, so a call is disclosed to a third party even when it is
+then refused. Send the judge what it needs to decide — the tool name and the fields that bear on safety — rather
+than the whole argument dict, when those arguments can carry credentials or customer data.
 
 This judges the call the model proposed, not the model's intent, so it is a check on what is about to happen rather
 than on what was said. Keep a human in the loop for the calls that matter most: a judgement at 180 ms is cheap
@@ -566,6 +577,7 @@ and **the one Jev picks is the one that runs**:
 
 ```python {title="choose_a_candidate.py"}
 from dataclasses import dataclass
+from functools import partial
 
 from pydantic_ai import Agent, ToolOutput
 
@@ -590,7 +602,9 @@ def candidates(screen: Screen, targets: dict[str, str]) -> list[ToolOutput[str]]
         raise ValueError(f'action IDs clash with the reserved ones: {sorted(clashing)}')
 
     outputs = [
-        ToolOutput(lambda target=target: screen.click(target), name=target, description=description)
+        # `partial` binds the target away; a default argument would stay in the schema for the
+        # model to override, so the picked candidate could act on a target never offered.
+        ToolOutput(partial(screen.click, target), name=target, description=description)
         for target, description in targets.items()
     ]
     outputs.append(
