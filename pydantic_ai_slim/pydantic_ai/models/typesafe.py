@@ -272,8 +272,11 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         questions = _questions(properties, output_tool, instructions) if output_tool else {}
-        tool_key = _tool_question(questions, output_tool, tools)
+        tool_key = _tool_question(questions, output_tool, tools, instructions)
         settings = cast(TypeSafeModelSettings, model_settings or {})
+        threshold = settings.get('typesafe_tool_call_threshold', 0.6)
+        if not 0 <= threshold <= 1:
+            raise UserError(f'`typesafe_tool_call_threshold` must be between 0 and 1; got {threshold!r}.')
 
         timeout = settings.get('timeout')
         try:
@@ -303,7 +306,6 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         if output_tool:
             parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
         if tool_key is not None:
-            threshold = settings.get('typesafe_tool_call_threshold', 0.6)
             if call := _tool_call(
                 self._model_name, response.answers.get(tool_key), output_tool, tools, threshold, provider_details
             ):
@@ -417,8 +419,8 @@ def _answers(
         elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
             # `score` is a position along the rubric and falls between levels. The answer has to be one
             # of them, and TypeSafe's way to get one is to "round it to the nearest level"; the mode
-            # would throw away the ordering that makes a rubric a rubric.
-            _set(args, name, round(answer.score))
+            # would throw away the ordering that makes a rubric a rubric. A half goes up, unlike `round`.
+            _set(args, name, min(int(answer.score + 0.5), max(answer.probabilities)))
             confidence[name] = answer.confidence
             probabilities[name] = {str(level): p for level, p in answer.probabilities.items()}
             scores[name] = answer.score
@@ -511,6 +513,11 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
     def flatten(properties: dict[str, Any], prefix: str) -> dict[str, dict[str, Any]]:
         fields: dict[str, dict[str, Any]] = {}
         for name, prop in properties.items():
+            if '.' in name:
+                raise UserError(
+                    f'Output field {prefix + name!r} is not supported by this model: a dot in a field name is how '
+                    'a nested field is named. Rename it.'
+                )
             prop = resolve(prop)
             if prop.get('type') == 'object' and prop.get('properties'):
                 fields.update(flatten(prop['properties'], f'{prefix}{name}.'))
@@ -641,15 +648,22 @@ def _questions(
 
 
 def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> list[ToolDefinition]:
-    """The tools still on offer: one with no arguments is offered once per run.
+    """The tools still on offer: one with no arguments is offered once per turn.
 
-    Once it has been called, its result is in the history, and the same call could only return the same result;
-    left on offer, Jev keeps picking it, since the text still calls for it. A tool with arguments stays, because
-    the model that makes that call can vary them.
+    Jev has no notion of having made a call. With a call and its result in view, the text still calls for the
+    tool, so left on offer it is picked again until the usage limit. A tool with arguments stays, because the
+    model that makes that call can vary them. The turn is everything since the last user prompt: a call in an
+    earlier turn, or in another agent's run being judged, does not withhold the tool from this one.
     """
+    turn = messages
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts):
+            turn = messages[index:]
+            break
     called = {
         part.tool_name
-        for message in messages
+        for message in turn
         if isinstance(message, ModelResponse)
         for part in message.parts
         if isinstance(part, ToolCallPart)
@@ -658,7 +672,10 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> li
 
 
 def _tool_question(
-    questions: dict[str, Noul | Choice | Score], output_tool: ToolDefinition | None, tools: list[ToolDefinition]
+    questions: dict[str, Noul | Choice | Score],
+    output_tool: ToolDefinition | None,
+    tools: list[ToolDefinition],
+    instructions: str | None,
 ) -> str | None:
     """With tools attached, one more question: which tool the text calls for, the output tool among them.
 
@@ -666,7 +683,8 @@ def _tool_question(
     when there are none to write or leave the call to a model behind it. The output tool is the first option,
     described by what the agent is for, so that filling the output is an action weighed against the others. Asked
     instead whether it *can* answer, Jev hands off nearly everything: that is a question about the question, not
-    about the text.
+    about the text. Only what the user wrote describes the output: the output type's docstring, or failing that the
+    agent's instructions; the stock output tool description says nothing Jev could weigh a tool against.
     """
     if output_tool is None and len(tools) < 2:
         raise UserError(
@@ -678,7 +696,15 @@ def _tool_question(
     key = 'tool'
     while key in questions:
         key += '_'
-    criteria: dict[str, str | None] = {output_tool.name: output_tool.description} if output_tool else {}
+    criteria: dict[str, str | None] = {}
+    if output_tool:
+        described = output_tool.description if output_tool.description != DEFAULT_OUTPUT_TOOL_DESCRIPTION else None
+        if not (described or instructions):
+            raise UserError(
+                'With tools attached, Jev weighs filling the output type against calling a tool by what each is '
+                'for. Give the output type a docstring that says what filling it does, or the agent `instructions`.'
+            )
+        criteria[output_tool.name] = described or instructions
     criteria.update((tool.name, tool.description) for tool in tools)
     questions[key] = Choice(instructions='Which of these does this call for?', criteria=criteria)
     return key

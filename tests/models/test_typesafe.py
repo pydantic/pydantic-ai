@@ -471,6 +471,26 @@ async def test_rubric_levels_are_read_in_level_order(allow_model_requests: None)
     )
 
 
+@pytest.mark.parametrize(
+    'score,level',
+    [pytest.param(0.5, 1, id='a half goes up'), pytest.param(2.4, 2, id='past the last level stays on it')],
+)
+async def test_a_score_between_levels_lands_on_the_nearest(allow_model_requests: None, score: float, level: int):
+    jev = mock_model(
+        lambda _: answers(
+            level={
+                'type': 'score',
+                'score': score,
+                'confidence': 0.9,
+                'legend': {},
+                'probabilities': {'0': 0.3, '1': 0.4, '2': 0.3},
+            }
+        )
+    )
+    result = await Agent(jev, output_type=WithOutOfOrderRubric).run('anything')
+    assert result.output.level == level
+
+
 async def test_unencodable_extra_body_is_a_user_error(allow_model_requests: None):
     """The SDK refusing to send what it was given is the caller's to fix, not a model failure."""
 
@@ -653,6 +673,41 @@ async def test_a_withheld_tool_is_not_offered(allow_model_requests: None):
     assert 'approve' in criteria and 'reject' not in criteria
 
 
+@pytest.mark.parametrize('threshold', [-0.1, 1.5, float('nan')])
+async def test_a_threshold_outside_zero_to_one_is_refused_before_the_request(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, threshold: float
+):
+    agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
+    with pytest.raises(UserError, match='`typesafe_tool_call_threshold` must be between 0 and 1'):
+        await agent.run('anything', model_settings={'typesafe_tool_call_threshold': threshold})
+
+
+class Undescribed(BaseModel):
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+async def test_an_output_type_with_nothing_said_about_it_cannot_be_weighed_against_tools(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    with pytest.raises(UserError, match='Give the output type a docstring'):
+        await Agent(typesafe_model, output_type=Undescribed, tools=[refund]).run('anything')
+
+
+async def test_the_instructions_describe_an_output_type_without_a_docstring(allow_model_requests: None):
+    """The stock output tool description never goes to Jev; what the user wrote does."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return tool_answers('final_result', 0.9)
+
+    agent = Agent(mock_model(record), output_type=Undescribed, tools=[refund], instructions='Triage the ticket.')
+    await agent.run('anything')
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result': 'Triage the ticket.', 'refund': 'Return a payment to the customer.'}
+    )
+
+
 def test_tool_call_proposed_pickles():
     exc = pickle.loads(pickle.dumps(ToolCallProposed('jev-latest', 'refund', 0.9)))
     assert (exc.model_name, exc.tool_name, exc.probability) == ('jev-latest', 'refund', 0.9)
@@ -719,6 +774,29 @@ async def test_an_arg_less_tool_is_called_by_jev_itself(allow_model_requests: No
             ]
         }
     )
+
+
+async def test_a_tool_called_in_an_earlier_turn_is_offered_again(allow_model_requests: None):
+    """Once per turn: a new user prompt is a new turn, and a call in another agent's run is not this one's."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(urgent={'type': 'noul', 'noul': 0.9}, tool=tool_answers_for('final_result'))
+
+    agent = Agent(mock_model(record), output_type=Ticket, tools=[approve])
+    first = await agent.run('Fine by me.')
+    earlier = [
+        *first.all_messages(),
+        ModelResponse(parts=[ToolCallPart('approve', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('approve', 'approved', 'call_1')]),
+    ]
+    await agent.run('And this one?', message_history=earlier)
+    assert 'approve' in seen[-1]['questions']['tool']['criteria']
+
+
+def tool_answers_for(choice: str) -> dict[str, object]:
+    return {'type': 'choice', 'choice': choice, 'confidence': 0.8, 'probabilities': {choice: 0.9}}
 
 
 async def test_with_nothing_to_fill_the_pick_is_the_answer(allow_model_requests: None):
@@ -918,6 +996,14 @@ async def test_a_model_that_refers_to_itself_is_refused_on_that_field(
 
     with pytest.raises(UserError, match="Output field 'replies' is not supported"):
         await Agent(typesafe_model, output_type=Comment).run('anything')
+
+
+async def test_a_dot_in_a_field_name_is_refused(allow_model_requests: None, typesafe_model: TypeSafeModel):
+    class Dotted(BaseModel):
+        urgent: bool = Field(alias='is.urgent')
+
+    with pytest.raises(UserError, match=r"Output field 'is\.urgent' is not supported by this model: a dot"):
+        await Agent(typesafe_model, output_type=Dotted).run('anything')
 
 
 async def test_a_nested_field_jev_cannot_answer_is_named_in_full(

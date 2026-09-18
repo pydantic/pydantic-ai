@@ -69,6 +69,37 @@ agent = Agent(model, output_type=bool)
 ...
 ```
 
+## Where the question goes
+
+Jev takes two separate things: the material to judge, and the questions to ask about it. TypeSafe's own guidance is that the state holds "the content and supporting facts" and the questions hold "the judgments the model should make about that material", so **the prompt is only what is being judged, and the question belongs on the output type**.
+
+That is the opposite habit to the one a language model teaches, where the question and the material go into one prompt together and the model sorts them out. Jev will not: a question written into the prompt is text to be judged, and Jev judges it. Only the case that can be seen is refused before a request is sent — a bare `bool` output with no field description and no instructions carries no question at all, and is a [`UserError`][pydantic_ai.exceptions.UserError] — so do not count on an error to catch a question in the wrong place.
+
+Put the question on the field, and the prompt carries the ticket alone:
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+    area: Literal['billing', 'bug', 'account', 'other'] = Field(description='Which team owns it?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=Ticket)
+result = agent.run_sync('My card was charged twice.')
+print(result.output)
+#> urgent=True area='billing'
+```
+
+For a single question an agent's `instructions` do the same job, and Jev answers the two spellings alike. Prefer the output type anyway: each field carries its own question, so several questions can be asked in one request, which is the thing Jev is fast at. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
+
 ## Model names
 
 `jev-latest` and `jev-preview` are aliases that move when TypeSafe ship a release; `jev-preview` runs ahead when there is a preview build. A versioned id is accepted too, whether or not it is listed:
@@ -97,17 +128,13 @@ The field description is the question text; an `Enum` field without one uses the
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the example below.
 
-A `list` of options is TypeSafe's fan-out: one yes/no per option, all in the same request, and the answer is the options Jev said yes to. An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it; on labelled tickets that reads as well as an `other` member the user wrote, and better than turning low confidence into `None`, which is what the field's confidence is for. A nested model is its fields, asked as `outer.inner` and put back in place.
+A `list` of options is TypeSafe's fan-out: one yes/no per option, all in the same request, and the answer is the options Jev said yes to. An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it; on labelled tickets that reads as well as an `other` member the user wrote, and better than turning low confidence into `None`, which is what the field's confidence is for. A nested model is its fields, asked as `outer.inner` and put back in place; the parent field's description is not sent, so put the context each question needs on the field that asks it. The round trip of lists and nested models is tested; their accuracy against labels is not measured, so check them on your own data before relying on either.
 
-Confidence in each answer is on the response, so you can act on how sure the model was, for example by asking a human below a threshold. It runs 0 to 1, where 0 is undecided, and means the same thing for every field, so one threshold reads the same way across an output type.
+Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field, so one threshold reads the same way across an output type. It is a margin, not a probability that the answer is right. For a yes/no it is how far Jev's probability sits from the coin flip, doubled — a `False` answered from a probability of 0.01 reports 0.98, one answered from 0.45 reports 0.10. For a pick-one or a rubric it is Jev's own number, from how its probabilities are spread; for a list of options it is the least sure option's. `provider_details['probabilities']` holds the whole distribution of each pick-one and rubric field, and each option's probability for a list; `['scores']` the unrounded position of each rubric field.
 
-For a pick-one or a rubric field it is Jev's own number, computed from how its probabilities are spread. Jev reports none for a yes/no, because there the probability *is* the answer before we round it: what is lost in the rounding is how sure the answer is, so that field's confidence is how far the probability sits from the coin flip, doubled onto the same scale. A `False` answered from a probability of 0.01 is a confident no and reports 0.98; one answered from 0.45 reports 0.10.
+A `float` field has no entry. The probability *is* its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement — and `0.5` means Jev is undecided, not that the answer is middling. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give; when you want a magnitude, use a rubric.
 
-Pick the threshold from what the answer is used for rather than once for the whole system: acting automatically deserves a higher bar than flagging something for review, and the right numbers depend on your data, so calibrate against labelled examples of your own. Note that `jev-latest` moves when TypeSafe ship a release, which can shift the numbers under you — once you have tuned a threshold, pin the version it was tuned against (`typesafe:jev-1.13.0`) and move deliberately.
-
-A `float` field has no entry at all. It keeps the probability as its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement, and repeating it under `confidence` would invite a threshold that filters out the low-risk customers rather than the uncertain ones. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give.
-
-A `float` is still a yes/no question underneath, so `0.5` means Jev is undecided, not that the answer is middling. When you want a magnitude, use a rubric.
+Pick the threshold from what the answer is used for rather than once for the whole system — acting automatically deserves a higher bar than flagging something for review — and calibrate it against labelled examples of your own. `jev-latest` moves when TypeSafe ship a release, which can shift the numbers under you; once you have tuned a threshold, pin the version it was tuned against (`typesafe:jev-1.13.0`) and move deliberately.
 
 ```python
 from pydantic_ai import Agent
@@ -145,19 +172,47 @@ Watch how often the fallback fires, not only how accurate the pair is. A chain t
 
 ## Tools: Jev picks, and calls what it can
 
-Jev cannot write a tool's arguments, but it can tell which tool a text calls for. With tools attached, every request carries one more question — which of these does the text call for — with the output type first among the options and every tool after it, each described by its docstring, and Jev answers it like any other question. What happens next depends on the pick:
+Jev cannot write a tool's arguments, but it can tell which tool a text calls for. With tools attached, every request carries one more question — which of these does the text call for — with the output type first among the options and every tool after it. Each tool is described by its docstring, and the output type by its own docstring or, without one, by the agent's instructions; with tools attached one of the two is required, since it is what filling the output is weighed against. Jev answers the question like any other, and the pick decides which path the request takes:
 
-- **The output type.** The fields are filled as usual.
-- **A tool that takes no arguments** — a function tool, or an output function that takes nothing or only the run context. There is nothing to write, so Jev calls it itself. A function tool runs and its result comes back as history for the next request, so Jev can work through a sequence of them — each offered once per run, since the same call could only return the same result; an output function ends the run, which makes it a hand-off Jev chooses, to a person, a queue or another agent.
-- **A tool with arguments.** Jev cannot fill them, so the request ends in a [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed]. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind Jev hands that model the whole step, tools and all, and only the requests Jev handed off cost a language model call. Without a model behind Jev, the proposal is the error, and it says which tool Jev wanted and how sure it was.
+| Jev picks | What runs | Language model call |
+|---|---|---|
+| the output type | Jev fills the fields, in the same request | none |
+| a tool with no arguments | your function, then Jev again with its result in view | none |
+| an output function with no arguments | your function, and the run ends | only if the function makes one |
+| a tool with arguments | the model behind Jev takes the whole step, tools and all | one |
+| any tool, below the threshold | Jev fills the fields; the lean is reported in `provider_details['tool']` | none |
 
-A tool is only taken at or above `typesafe_tool_call_threshold` (0.6 by default, where Jev's picks agree with a frontier model as often as two of them agree with each other; higher hands off less, and is right more often when it does). Below that the pick is a lean: the output is filled, and the pick and its probabilities are reported in `provider_details['tool']`, so the hand-off rate can be watched alongside accuracy. When there is no output type to fill, only output functions, the pick is the answer whatever its probability.
+A tool is only taken at or above `typesafe_tool_call_threshold`. The default of 0.6 was fitted on one set of 120 labelled support tickets, where it put Jev's picks in agreement with GPT-5.6 Sol as often as Claude Opus 5 was; it is a starting point, not a general threshold, and higher hands off less and is right more often when it does. When there is no output type to fill, only output functions, the pick is the answer whatever its probability. A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool with no arguments that sends mail or charges an account is one Jev can set off, and approval and limits are the agent's job here as anywhere.
+
+**A tool with no arguments: Jev alone.** There is nothing to write, so the call is made on Jev's pick, and its result comes back as history for the next request. Jev can work through a sequence of such tools; each is offered once per turn, because Jev has no notion of having made a call and picks it again with the result in view. Every request here is a Jev request:
+
+```python
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+def escalate_to_human() -> str:
+    """Hand the ticket to a person on the support team."""
+    return 'Escalated: case #4821 opened.'
+
+
+agent = Agent('typesafe:jev-latest', output_type=Ticket, tools=[escalate_to_human])
+...
+```
+
+**An output function with no arguments: a hand-off that ends the run.** An output function that takes nothing, or only the run context, is picked the same way, and the run ends with what it returns — to a person, a queue, or another agent. The language model runs only inside the hand-off, so only the requests Jev handed off pay for one:
 
 ```python
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.fallback import FallbackModel
 
 
 class Ticket(BaseModel):
@@ -169,10 +224,34 @@ class Ticket(BaseModel):
 support = Agent('openai:gpt-5.6-sol', instructions='Reply to the customer.')
 
 
-async def escalate(ctx: RunContext[None]) -> str:
-    """Hand the ticket to the support assistant."""
+async def reply(ctx: RunContext[None]) -> str:
+    """Write the customer a reply."""
     result = await support.run(message_history=ctx.messages)
     return result.output
+
+
+agent = Agent('typesafe:jev-latest', output_type=[Ticket, reply])
+...
+```
+
+**A tool with arguments: the model behind Jev.** Jev cannot fill them, so the request ends in a [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed]. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind Jev hands that model the whole step, tools and all; the rest of the requests never leave Jev. Without a model behind Jev, the proposal is the error, and it says which tool Jev wanted and how sure it was. The Jev request that proposed the call is not on the fallback response's usage.
+
+```python
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.models.fallback import FallbackModel
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+def escalate_to_human() -> str:
+    """Hand the ticket to a person on the support team."""
+    return 'Escalated: case #4821 opened.'
 
 
 def refund(amount: float) -> str:
@@ -181,13 +260,19 @@ def refund(amount: float) -> str:
 
 
 model = FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol')
-agent = Agent(model, output_type=[Ticket, escalate], tools=[refund])
+agent = Agent(model, output_type=Ticket, tools=[escalate_to_human, refund])
 ...
 ```
 
-Here Jev triages what it can, hands a ticket to `support` when that is what it calls for, and leaves a refund, which needs an amount, to the language model behind it.
+Here Jev triages what it can, opens a case itself when the ticket calls for one and triages again with the case number in view, and leaves a refund, which needs an amount, to the language model behind it. On labelled support tickets, 115 of 120 requests never left Jev.
 
-Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what Jev weighs the tools against. Asked whether it *can* answer rather than what the text calls for, Jev hands off nearly everything. Tune the threshold on labelled examples of your own: higher hands off less, and is right more often when it does.
+Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what Jev weighs the tools against; asked whether it *can* answer rather than what the text calls for, it hands off nearly everything. Tune the threshold on labelled examples of your own.
+
+!!! note "What the numbers on this page rest on"
+    One set of 120 support tickets, labelled by a routing rule the maintainers wrote, and used to shape the
+    wording and pick the threshold as well as to report them: one domain, no held-out set. They show the mappings
+    work and roughly how well on that task, not how Jev will do on yours. Measure on your own labelled examples
+    before trusting a threshold, a hand-off rate or an accuracy figure.
 
 ## Ask one thing per field
 
@@ -254,37 +339,6 @@ The answer is the expected score rounded to the nearest level, which is what Typ
 
 Every level needs a docstring: a rubric whose levels are unexplained is not a rubric, so one without them is a [`UserError`][pydantic_ai.exceptions.UserError]. The levels must also start at `0` and run upwards without gaps, which is the shape Jev scores against.
 
-## Where the question goes
-
-Jev takes two separate things: the material to judge, and the questions to ask about it. TypeSafe's own guidance is that the state holds "the content and supporting facts" and the questions hold "the judgments the model should make about that material", so **the prompt is only what is being judged, and the question belongs on the output type**.
-
-That is the opposite habit to the one a language model teaches, where the question and the material go into one prompt together and the model sorts them out. Jev will not. `Agent('typesafe:jev-latest', output_type=bool)` with the question written into the prompt asks Jev nothing, and is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent — Jev rejects a yes/no question that carries neither instructions nor criteria.
-
-Put the question on the field, and the prompt carries the ticket alone:
-
-```python
-from typing import Literal
-
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent
-
-
-class Ticket(BaseModel):
-    """Triage a support ticket."""
-
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-    area: Literal['billing', 'bug', 'account', 'other'] = Field(description='Which team owns it?')
-
-
-agent = Agent('typesafe:jev-latest', output_type=Ticket)
-result = agent.run_sync('My card was charged twice.')
-print(result.output)
-#> urgent=True area='billing'
-```
-
-For a single question an agent's `instructions` do the same job, and Jev answers the two spellings alike. Prefer the output type anyway: each field carries its own question, so several questions can be asked in one request, which is the thing Jev is fast at. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
-
 ## Judging a conversation
 
 A run's message history goes to Jev as `history`: user prompts, answers, tool calls and their results, from whichever model produced them. With no new prompt, the conversation is the whole state, so a Jev agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
@@ -301,7 +355,7 @@ print(result.output)
 #> True
 ```
 
-A new prompt on top of a history is judged as `text` beside it. Either way the whole history goes, so trim it to what the question is about — `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability such as the [harness](https://github.com/pydantic/pydantic-ai-harness)'s `SlidingWindow`, `ClearToolResults` and `SummarizingCompaction`, which work on a Jev agent as on any other; a summary they write arrives as a `system` entry in the history, which is what it is. Accuracy falls as the state grows with detail the question does not need, and `jev-1.13` takes 64k tokens for the state and questions together, with 32k for the state plus the longest question. Compact earlier than a language model would need, since Jev is being asked to *judge* the whole of it, not to continue from it.
+A new prompt on top of a history is judged as `text` beside it. Either way everything in the history goes to TypeSafe's API — system prompts, tool arguments and tool results included — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a Jev agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness](https://github.com/pydantic/pydantic-ai-harness)'s compaction does. Accuracy falls as the state grows with detail the question does not need, and `jev-1.13` takes 64k tokens for the state and questions together, with 32k for the state plus the longest question; past that the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (`max_tokens_exceeded`), which a `FallbackModel` hands to the model behind Jev like any API error, so an over-long conversation quietly becomes a language model call. Compact earlier than a language model would need, since Jev is being asked to *judge* the whole of it, not to continue from it.
 
 !!! note "A system prompt is judged, not asked"
     Jev is told what a conversation said and asked what the agent's `instructions` ask. A
@@ -313,7 +367,7 @@ A new prompt on top of a history is judged as `text` beside it. Either way the w
 
 ## Streaming
 
-Jev answers in one piece, so there is nothing to stream, and nothing that stops working: `run_stream`, an `event_stream_handler`, and the AG-UI and Vercel AI adapters get the whole answer as a single event.
+Jev answers in one piece, so there is nothing to stream, and nothing that stops working: `run_stream`, an `event_stream_handler`, and the AG-UI and Vercel AI adapters get the whole answer as a single event. There are no partial results and no earlier first token — it is compatibility, not streaming.
 
 ## What Jev answers badly
 
@@ -333,7 +387,7 @@ Everything below returns an answer rather than an error, which is what makes it 
 Jev does not write text, write a tool's arguments or read files. An agent that needs any of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be one structured type made of the field types above, beside any output functions that take no arguments: no `str`, no second type with fields, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
-- No native tools. A function tool with arguments is not called by Jev either, but [proposed](#tools-jev-picks-and-calls-what-it-can) for a model behind it.
+- No native tools. A function tool with arguments is not called by Jev either, but [proposed](#tools-jev-picks-and-calls-what-it-can) for a model behind it; with tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
 
 Jev does not revise an answer either. An output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] gets the same answer again, so a validator that keeps rejecting runs the agent out of retries.
