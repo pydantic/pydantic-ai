@@ -76,7 +76,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   natural unit; nothing rebuilds the agent.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
   `_app.py` lists what CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
-  `compaction`). The loader treats them like drop-ins with the lowest
+  `compaction`, `persistence`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
   anywhere else; the agent from `create_agent()` has no coding tools of its
@@ -170,7 +170,9 @@ the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
 |---|---|
 | `_cli.py` | argument parsing, startup, `--agent` |
 | `_app.py` | the prompt loop and built-in `/commands` |
-| `_session.py` | conversation state; `agent.run` with per-run plugins |
+| `_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
+| `sessions.py` | resume command and background namer ownership; built-in step capture |
+| `session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `_rendering.py` | streaming Markdown and thinking |
 | `plugins.py` | `PluginHost`, hook names, event dataclasses |
 | `plugin_loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
@@ -220,3 +222,10 @@ uv run --no-sync pytest -p no:cacheprovider tests
 `README.md` is the tour, `PLUGINS.md` is the plugin contract, this file is for
 agents. A user-facing change updates the first two in the same PR. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
+
+The resume browser is a focused exception to the single `MenuBuilder` convention:
+it needs independently focused projects/sessions and two-line cards. Keep its
+frame pure, inject keys/size/IO, use Termflow terminal ownership and layout, and
+run through `menu_worker`. Metadata refreshes must preserve selection by ID.
+History-changing plugins use `await conversation.commit_messages`, not the legacy
+in-memory `replace_messages`, so exiting immediately after `/compact` is durable.

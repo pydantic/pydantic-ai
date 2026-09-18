@@ -8,6 +8,7 @@ module stays usable without `pymongo` installed.
 from typing import TYPE_CHECKING
 
 from pydantic_ai_harness.step_persistence._capability import StepPersistence
+from pydantic_ai_harness.step_persistence._events import SnapshotSaved
 from pydantic_ai_harness.step_persistence._helpers import (
     annotate_tool_effect,
     continue_run,
@@ -40,6 +41,7 @@ __all__ = [
     'InMemoryStepStore',
     'MongoStepStore',
     'RunRecord',
+    'SnapshotSaved',
     'SnapshotState',
     'SqliteStepStore',
     'StepEvent',

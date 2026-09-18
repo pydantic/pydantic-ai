@@ -70,7 +70,7 @@ Plugins are trusted code running as you. Only install what you trust.
 
 The coding tools are a plugin too, and so are asking you multiple-choice
 questions mid-run, reading the repository's instruction file, and keeping the
-conversation inside the context window. `/plugins list` shows all four, marked
+conversation inside the context window. `/plugins list` shows all five, marked
 `(built-in)` and enabled unless you say otherwise:
 
 | Id | Backed by | Settings | Does |
@@ -78,6 +78,7 @@ conversation inside the context window. `/plugins list` shows all four, marked
 | `coder` | `pydantic_ai_harness.coder:Coder` | `{"unrestricted_filesystem": true, "repo_context": false}` | the file and shell tools |
 | `ask_user` | `pydantic_clai2.ask_user_menu:activate` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
 | `repo_context` | `pydantic_clai2.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
+| `persistence` | `pydantic_clai2.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
@@ -438,7 +439,7 @@ Bad or missing values fail at startup with a message naming your plugin.
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
 `host.conversation` is the retained history: `messages` is a snapshot,
-`replace_messages(...)` swaps it between turns, and `resolved_model()` is the
+`await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
 model the next prompt will use. `host.status` is the footer's state; set
 `context_alert` to paint the context figure in the warning colour. The built-in
 `compaction` plugin uses both. A host built outside the shell gets an in-memory
@@ -538,3 +539,37 @@ for the next prompt. `/model` is a flat picker of added models, and `/model NAME
 selects one without the menu. Its Tab suggestions contain only added models.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
+
+### Persisting conversation changes
+
+Use `await host.conversation.commit_messages(messages)` for between-turn history
+changes. It commits to storage before replacing the live history, and rejects
+changes while an operation is running. `replace_messages(...)` remains an
+in-memory compatibility API; it does not save by itself. `Transcript` implements
+`commit_messages` without disk IO for headless plugin tests.
+
+`host.conversation.step_store` is the configured Harness `StepStore`, or `None`
+for an in-memory host. The built-in `persistence` plugin binds
+`StepPersistence(capture_frontier=True)` to it. Do not register a second recorder
+for the same store and run. Removing the plugin removes step capture on subsequent
+turns; conversation-head saving is owned by `Session` and continues independently.
+
+Harness exports `SnapshotSaved` from `pydantic_ai_harness.step_persistence`.
+Subscribe through `@host.on(SnapshotSaved)` to observe committed checkpoints.
+It carries `persistence_run_id`, `conversation_id`, `step_index`, and `state`.
+This is a notification, not the durable source of truth or permission to replay a
+tool. A durable replay may notify again. An observer failure cannot roll back the
+already committed snapshot. No new CLAI lifecycle hooks are introduced.
+
+Session naming is a shell-owned background service over Harness's `SessionNamer`.
+It never writes into the agent transcript or loads plugin code. `/resume` does
+not fire plugin load/unload hooks or restore previous plugin approvals. Cross-project
+resume keeps the current working directory and the saved conversation's original
+project grouping. The
+project/session browser is a dedicated Termflow widget: unlike a single-pane
+`MenuBuilder`, it has two independently navigable panes and two-line cards. Its
+pure frame and scripted-key tests follow the same headless menu conventions.
+
+The resume transcript preview displays at most 24,000 characters of the newest-first
+text, with a truncation notice for longer histories. Search is Unicode
+case-insensitive and includes text instructions in multimodal prompts.

@@ -46,6 +46,7 @@ from pydantic_ai.capabilities.hooks import (
 )
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
+from pydantic_ai_harness.step_persistence import StepStore
 from rich.console import Console, RenderableType
 from typing_extensions import TypeVar as DefaultTypeVar
 
@@ -63,6 +64,12 @@ TurnOutcome = Literal['completed', 'failed', 'cancelled']
 
 class Conversation(Protocol):
     """The retained history as a plugin sees it. The shell's `Session` is one; `Transcript` is the plain one."""
+
+    step_store: StepStore | None
+
+    async def commit_messages(self, messages: Sequence[ModelMessage]) -> None:
+        """Persist and publish a between-turn history replacement."""
+        ...
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -84,6 +91,7 @@ class Transcript:
     def __init__(self, *, messages: Sequence[ModelMessage] = (), model: Model | str | None = None) -> None:
         """Start with `messages` retained and `model` as what `resolved_model` reports."""
         self._messages = list(messages)
+        self.step_store: StepStore | None = None
         self.model = model
 
     @property
@@ -94,6 +102,10 @@ class Transcript:
     def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
         """Swap the retained history."""
         self._messages = list(messages)
+
+    async def commit_messages(self, messages: Sequence[ModelMessage]) -> None:
+        """Publish an in-memory history replacement."""
+        self.replace_messages(messages)
 
     async def resolved_model(self) -> Model | str | None:
         """The `model` given at construction."""

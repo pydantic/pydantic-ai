@@ -1448,25 +1448,20 @@ class TestCapabilityHookBranches:
         assert [e.kind for e in events] == ['run_completed']
 
     async def test_after_run_saves_fallback_snapshot_when_no_node_snapshot(self) -> None:
-        """With no `CallToolsNode` snapshot taken, `after_run` saves the final valid history."""
+        """The fallback and its committed notification execute inside a real agent run."""
+
+        class FinalOnly(StepPersistence[None]):
+            async def after_node_run(
+                self, ctx: RunContext[None], *, node: AgentNode[None], result: NodeResult[None]
+            ) -> NodeResult[None]:
+                return result
+
         store = InMemoryStepStore()
-        cap: StepPersistence[object] = StepPersistence(store=store)
-        ctx = build_run_context(deps=None, run_id='r1', run_step=3)
-
-        valid: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart(content='hi')]),
-            ModelResponse(parts=[TextPart(content='done')]),
-        ]
-        result: AgentRunResult[str] = AgentRunResult(
-            output='out',
-            _state=GraphAgentState(message_history=valid, run_id='r1'),
-        )
-
-        await cap.after_run(ctx, result=result)
-
+        agent = Agent(TestModel(custom_output_text='done'), deps_type=type(None), capabilities=[FinalOnly(store=store)])
+        result = await agent.run('hi', run_id='r1')
         snap = await store.latest_snapshot(run_id='r1')
         assert snap is not None
-        assert snap.step_index == 3
+        assert snap.messages == result.all_messages()
         assert len(snap.messages) == 2
 
     async def test_on_model_request_error_records_event_and_reraises(self) -> None:

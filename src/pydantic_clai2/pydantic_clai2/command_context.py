@@ -58,7 +58,9 @@ class CommandContext:
     def validate(self, key: str, raw: str) -> tuple[JsonValue, Settings]:
         """Parse typed text for `key` and check it against the whole settings model; nothing is saved."""
         adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
-        value: JsonValue = raw if key == 'model' else adapter.validate_json(raw)
+        value: JsonValue = (
+            raw if key == 'model' or (key == 'sessions.naming_model' and raw != 'null') else adapter.validate_json(raw)
+        )
         updated = self.settings.model_dump()
         updated[SETTING_FIELDS[key]] = value
         return value, Settings.model_validate(updated)

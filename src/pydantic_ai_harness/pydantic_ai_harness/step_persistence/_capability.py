@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -19,8 +20,8 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness.step_persistence._context import (
     current_run_id,
     live_run_history,
-    snapshot_saved,
 )
+from pydantic_ai_harness.step_persistence._events import SnapshotSaved
 from pydantic_ai_harness.step_persistence._helpers import is_provider_valid
 from pydantic_ai_harness.step_persistence._store import InMemoryStepStore, StepStore
 from pydantic_ai_harness.step_persistence._types import (
@@ -135,8 +136,17 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     metadata: dict[str, str] = field(default_factory=_empty_metadata)
     """Free-form metadata stored on the `RunRecord` and on each event."""
 
+    capture_frontier: bool = False
+    """Also checkpoint accepted inputs and model tool-call frontiers before execution.
+
+    These additional writes make first-request failures and process kills before a
+    settled tool cycle inspectable. They do not make side effects safe to replay.
+    """
+
     _event_sequence: int = field(default=0, init=False, repr=False)
     _snapshot_sequence: int = field(default=0, init=False, repr=False)
+    _last_snapshot_messages: list[ModelMessage] | None = field(default=None, init=False, repr=False)
+    _last_snapshot_step: int | None = field(default=None, init=False, repr=False)
 
     @classmethod
     def from_spec(cls, *args: Any, **kwargs: Any) -> StepPersistence[Any]:
@@ -327,7 +337,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
             ContinuableSnapshot(
                 run_id=run_id,
                 step_index=step_index,
-                messages=messages,
+                messages=deepcopy(messages),
                 conversation_id=conversation_id,
                 parent_run_id=parent_run_id,
                 agent_name=agent_name,
@@ -366,6 +376,10 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
             state=state,
             snapshot_index=snapshot_index,
         )
+        # Rebuilt on durable replay even when the operation body is journaled. Reading
+        # the external store here would make replay take different save branches.
+        self._last_snapshot_messages = deepcopy(messages)
+        self._last_snapshot_step = step_index
 
     @durable_operation('record_tool_effect')
     async def _record_tool_effect(self, run_id: str, tool_call_id: str, tool_name: str) -> None:
@@ -407,13 +421,11 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         """Push this run's id onto the contextvar so nested delegates can read it."""
         token = current_run_id.set(self._effective_run_id(ctx))
-        saved_token = snapshot_saved.set(0)
         history_token = live_run_history.set(None)
         try:
             return await handler()
         finally:
             live_run_history.reset(history_token)
-            snapshot_saved.reset(saved_token)
             current_run_id.reset(token)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -449,7 +461,9 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         `after_node_run` it carries the correct `step_index`, whereas by
         `after_run` `ctx.run_step` is reset to 0 -- so re-saving would both
         duplicate the tail and stamp a misleading `step_index`. We save only
-        when the run ended past the newest boundary snapshot.
+        when the final content differs from the newest boundary snapshot,
+        including same-length rewrites. The comparison uses per-run copied
+        state, not an external store read which could change under durable replay.
 
         That covers a run which reached no provider-valid boundary at all, and
         `Agent.run_stream`, which ends through `SetFinalResult` rather than a
@@ -457,16 +471,9 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         boundary -- leaving `after_run` the only hook that sees the full run.
         """
         messages = result.all_messages()
-        if len(messages) > snapshot_saved.get():
-            if is_provider_valid(messages):
-                await self._save_snapshot(
-                    run_id=self._effective_run_id(ctx),
-                    step_index=ctx.run_step,
-                    messages=list(messages),
-                    conversation_id=ctx.conversation_id,
-                    parent_run_id=self.parent_run_id,
-                    agent_name=self.agent_name,
-                )
+        if self._last_snapshot_messages != messages and is_provider_valid(messages):
+            step = self._last_snapshot_step if self._last_snapshot_step is not None else ctx.run_step
+            await self._save_continuable_snapshot(ctx, list(messages), step)
         await self._record_event(ctx, kind='run_completed')
         return result
 
@@ -509,6 +516,14 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
             agent_name=self.agent_name,
             state=state,
         )
+        await ctx.emit(
+            SnapshotSaved(
+                persistence_run_id=self._effective_run_id(ctx),
+                conversation_id=ctx.conversation_id,
+                step_index=step_index,
+                state=state,
+            )
+        )
 
     async def on_run_error(
         self,
@@ -537,7 +552,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         if stashed is not None:
             messages, step_index = stashed
             captured = list(messages)
-            if _has_model_response(captured):
+            if _has_model_response(captured) or (self.capture_frontier and captured):
                 state: SnapshotState = 'complete' if is_provider_valid(captured) else 'interrupted'
                 await self._save_continuable_snapshot(ctx, captured, step_index, state)
         await self._record_event(ctx, kind='run_failed', error=repr(error))
@@ -548,6 +563,14 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
+        if self.capture_frontier:
+            self._stash_live_history(ctx)
+            await self._save_continuable_snapshot(
+                ctx,
+                list(ctx.messages),
+                ctx.run_step,
+                'complete' if is_provider_valid(ctx.messages) else 'interrupted',
+            )
         await self._record_event(ctx, kind='model_request_started')
         return request_context
 
@@ -650,9 +673,9 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         `ctx.messages`, so its request is folded in before validation --
         without it a worker killed right after a completed tool call would
         leave no resume point at all (#373). `is_provider_valid` doubles as a
-        defense in case a custom node reshapes history, and the saved count
-        goes to `snapshot_saved` so `after_run` can tell whether the run ended
-        past this boundary.
+        defense in case a custom node reshapes history. `after_run` compares the
+        saved content with the final history, including same-length rewrites
+        by other capabilities.
 
         This save is the durable one: it lands in the store while the run is
         still healthy, so it survives a hard kill that fires no hook. The
@@ -669,6 +692,10 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         """
         self._stash_live_history(ctx)
         messages = list(ctx.messages)
+        if self.capture_frontier and isinstance(node, ModelRequestNode):
+            await self._save_continuable_snapshot(
+                ctx, messages, ctx.run_step, 'complete' if is_provider_valid(messages) else 'interrupted'
+            )
         if isinstance(node, CallToolsNode):
             if isinstance(result, ModelRequestNode):
                 messages = [*messages, result.request]
@@ -681,5 +708,12 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
                     parent_run_id=self.parent_run_id,
                     agent_name=self.agent_name,
                 )
-                snapshot_saved.set(len(messages))
+                await ctx.emit(
+                    SnapshotSaved(
+                        persistence_run_id=self._effective_run_id(ctx),
+                        conversation_id=ctx.conversation_id,
+                        step_index=ctx.run_step,
+                        state='complete',
+                    )
+                )
         return result

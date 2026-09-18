@@ -83,6 +83,8 @@ async def test_chat_boundaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, 
         )
     if mode == 'error':
         assert 'broken provider' in output.getvalue()
+        assert 'Retained history may include partial progress' in output.getvalue()
+        assert 'Turn not saved' not in output.getvalue()
     elif mode == 'cancel':
         assert 'Turn cancelled' in output.getvalue()
     elif mode == 'interrupt':

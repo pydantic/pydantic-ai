@@ -102,7 +102,7 @@ def activate(host: PluginHost[None]) -> None:
         after = await compact_now(chain, before, model=model, focus=' '.join(args) or None)
         if after == before:
             return f'Nothing to compact: the last {config.protected_tokens:,} tokens are always kept.'
-        host.conversation.replace_messages(after)
+        await host.conversation.commit_messages(after)
         saved = max(estimate_token_count(before) - estimate_token_count(after), 0)
         return f'Compacted {len(before)} messages down to {len(after)}; about {saved:,} tokens saved.'
 

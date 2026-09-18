@@ -59,8 +59,8 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 `~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
-`/new` clears model conversation history, not input recall. Model responses and
-tool results are not saved to this file.
+`/new` starts a new saved conversation, without deleting the previous one or
+input recall. Model responses and tool results are not saved to this file.
 
 ## CI coverage
 
@@ -247,13 +247,111 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set`, `/model`, `/add_model`, `/help`, `/new`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set`, `/model`, `/add_model`, `/help`, `/new`, `/resume`, `/exit`, `/config`,
 `/plugins`, `/usage`, `/cost`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall saved prompt
 history. Ctrl-D exits. Ctrl-C at input clears the line; during a run it cancels
 the turn and returns to input. No cancelled run is automatically retried.
+
+
+## Saved sessions and `/resume`
+
+CLAI saves accepted prompts before the first model request and saves the retained
+history after successful, failed, and cancelled turns. `/compact` commits its
+replacement immediately, even if you exit before another prompt. `/new` switches
+to a fresh session ID; it does not delete the previous session.
+
+```bash
+clai2 --resume                 # browse saved sessions
+clai2 --resume SESSION-ID      # restore one session
+```
+
+Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
+session directly. Opening or restoring a session does not call the coding model
+or execute pending tools. Background naming may make a separate, tool-free model
+request. Your current model, working directory, credentials, and approved plugins
+remain in effect. The saved model name is shown for reference.
+
+The browser follows Code Puppy's project/session design:
+
+- Projects on the left, with session counts. The current directory is preselected.
+- Two-line session cards on the right: time, title, subtitle, tags, message and
+  token counts. Recent sorting groups cards by local calendar date.
+- Enter opens a project or resumes a session. Right opens a scrollable transcript,
+  with newer messages first. Left returns to projects.
+- `/` searches across projects, including saved user/assistant text. `s` cycles
+  recent, message-count, and token-count sorting. `m` loads another 200 summaries.
+- `r` sets a manual title, which the namer will not overwrite. `d` asks for
+  confirmation before deletion. The active session cannot be deleted.
+- Esc goes back; Ctrl-C closes. Narrow screens show one focused pane at a time.
+- Selecting a session from another directory asks for confirmation. It does not
+  change directories or move the saved conversation out of its original project
+  group. Direct cross-directory resume asks you to use the browser.
+
+The browser counts loaded summaries, not a separate unbounded catalog. Search
+runs against the full catalog before pagination. It does not index tool output,
+reasoning, or content removed by compaction.
+
+The resume transcript preview displays at most 24,000 characters of the newest-first
+text, with a truncation notice for longer histories. Search is Unicode
+case-insensitive and includes text instructions in multimodal prompts.
+
+### Background names
+
+A saved session immediately gets a fallback title from its first prompt. A
+single background worker can replace it with a short title, subtitle, and up to
+four topic tags. The browser refreshes names while idle without moving selection.
+
+The worker uses the previous summary plus up to 2,400 characters of recent
+user/assistant text. It refreshes generated names after 16 content revisions;
+revisions, unlike message offsets, survive compaction. This is a bounded current
+summary, not a lossless incremental transcript archive. Opening the browser
+backfills up to ten eligible sessions. Queue length, request count, output size,
+and a 60-second deadline bound the work. Exiting cancels and joins the worker.
+
+```text
+/set sessions.naming false
+/set sessions.naming_model openai:gpt-5-mini
+/set sessions.naming_model null
+```
+
+Naming is enabled by default and uses the current model unless overridden.
+It sends conversation excerpts to that model's provider and incurs additional
+usage. It has no tools and does not inherit coding plugins. Missing credentials,
+timeouts, invalid output, or stale results leave the existing name usable and do
+not interrupt foreground work. `/usage` and the browser preview show persisted
+naming token counts separately; `/cost` remains retained foreground-history cost.
+
+### Storage and recovery limits
+
+Conversations, metadata, and step records live in `sessions.db` beside the settings
+database. `--database` therefore also selects the directory for saved sessions.
+New conversation databases use owner-only file permissions where supported. The
+contents are **not encrypted**: prompts, replies, tool results, and media may
+contain secrets. Do not share the database between machines. An unfinished run
+whose recorded process is still alive is treated as busy; revision checks reject
+stale writers instead of overwriting another process's work.
+
+The built-in `persistence` plugin records additional Harness checkpoints before
+model requests, after model responses, and at settled tool-cycle boundaries.
+`/plugins disable persistence` disables that extra step capture, not conversation
+saving. Without it, a hard kill recovers the accepted prompt and preceding saved
+history, not the in-flight turn's progress.
+
+An interrupted session is marked `!`. If a process died mid-run, resume loads its
+newest available step checkpoint and warns you to inspect external effects. A
+completed tool in a partially completed parallel batch may still have no saved
+result. An older settled checkpoint does not undo later file writes or commands.
+There is no automatic tool replay, side-effect deduplication, workspace rollback,
+or restoration of arbitrary plugin state.
+
+Deletion removes the conversation and associated run records in the same SQLite
+transaction. Shared content-addressed media is retained; deletion is not secure
+erasure. Snapshot retention keeps eight recent checkpoints per run, plus the
+latest settled recovery point when needed. There is no whole-session TTL or media
+garbage collection.
 
 ## Usage and cost
 
