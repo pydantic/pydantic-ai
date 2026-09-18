@@ -282,7 +282,16 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         # no way for the user to notice. A rule that works in three places out of four is worse than either
         # answer, so the docstrings a user wrote under their options are read in all four.
         json_schema = super().enum_schema(schema)
-        docstrings = _utils.enum_member_docstrings(schema['cls'])
+        # A docstring is read under the name it was declared under, but an alias (`urgent = 'high'` beside
+        # `high = 'high'`) is the same member, so the schema only ever names the canonical one. Resolve the
+        # declared names through `__members__` so an alias's docstring describes the option it was written
+        # for; `setdefault` keeps the canonical name's own docstring when both have one, since `__members__`
+        # lists a member before its aliases.
+        declared = _utils.enum_member_docstrings(schema['cls'])
+        docstrings: dict[str, str] = {}
+        for name, member in schema['cls'].__members__.items():
+            if (docstring := declared.get(name)) is not None:
+                docstrings.setdefault(member.name, docstring)
         # A `None` member has no `const` a schema can carry: `{'const': None}` reads as "no const" to anything
         # that looks the key up with a default, and the option silently loses its constraint. Such an enum keeps
         # the plain `enum` list, which states every value including the null.

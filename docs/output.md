@@ -326,7 +326,7 @@ In the default Tool Output mode, the output JSON schema of each output type (or 
 
 If you'd like to change the name of the output tool, pass a custom description to aid the model, or turn on or off [strict mode](tools-advanced.md#strict-mode), you can wrap the type(s) in the [`ToolOutput`][pydantic_ai.output.ToolOutput] marker class and provide the appropriate arguments. Note that by default, the description is taken from the docstring specified on a Pydantic model or output function, so specifying it using the marker class is typically not necessary.
 
-Field descriptions reach the model as in [tool schemas](tools.md), including a docstring under an `Enum` member, which describes that option when the output model sets `use_attribute_docstrings=True`; a bare `Enum` as the `output_type` is described without it.
+Field descriptions reach the model as in [tool schemas](tools.md), including a docstring under an `Enum` member, which describes that option wherever the enum appears — in an output model, in a tool parameter, or as a bare `Enum` `output_type`.
 
 When using output tools, each tool gets its own retry counter — the output side of the agent retry budget (set with [`AgentRetries`][pydantic_ai.agent.AgentRetries] via `Agent(retries={'output': N})`, or per-run via `agent.run(retries={'output': N})`) is the *default per-tool limit*. To override the limit for an individual output tool, pass [`max_retries`][pydantic_ai.output.ToolOutput.max_retries] on `ToolOutput`: `ToolOutput(Fruit, max_retries=2)`. See [How output retries are enforced](agent.md#how-output-retries-are-enforced) for the relationship to the text-output path's global budget.
 

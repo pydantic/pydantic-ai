@@ -2346,6 +2346,25 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 #####################
 
 
+@pytest.mark.parametrize(
+    'any_of,expected',
+    [
+        pytest.param([{'type': 'number', 'const': 0.5}, {'type': 'number', 'const': 1.5}], 'float', id='floats'),
+        pytest.param([{'const': 0.5}, {'const': 1.5}], 'float', id='floats without a declared type'),
+        pytest.param([{'type': 'integer', 'const': 0}, {'type': 'integer', 'const': 1}], 'int', id='integers'),
+        pytest.param([{'const': True}, {'const': False}], 'bool', id='booleans'),
+        pytest.param([{'const': 'low', 'description': 'Can wait.'}, {'const': 'high'}], 'str', id='strings'),
+    ],
+)
+def test_described_options_keep_the_type_their_constants_have(any_of: list[dict[str, Any]], expected: str):
+    """An `Enum` with member docstrings renders as `anyOf` of `const`s, which Mistral's JSON mode describes.
+
+    Inferring the type from the first constant treated a `float` as a `str`, because it is neither a `bool`
+    nor an `int`, so the generated prompt asked for the wrong type and the answer failed validation.
+    """
+    assert MistralModel._get_python_type({'anyOf': any_of}) == expected  # pyright: ignore[reportPrivateUsage]
+
+
 def test_generate_user_output_format_complex(mistral_api_key: str):
     """
     Single test that includes properties exercising every branch

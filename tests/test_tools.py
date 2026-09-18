@@ -43,6 +43,7 @@ from pydantic_ai.tools import (
     DeferredToolCallResult,
     DeferredToolRequests,
     DeferredToolResults,
+    GenerateToolJsonSchema,
     ToolApproved,
     ToolDefinition,
     ToolDenied,
@@ -5289,6 +5290,41 @@ def test_a_none_member_keeps_the_enum_in_its_plain_form():
 
     Agent(FunctionModel(capture), output_type=Verdict).run_sync('Hello')
     assert seen[0]['$defs']['Settled'] == snapshot({'enum': ['yes', None], 'title': 'Settled'})
+
+
+class Aliased(str, Enum):
+    """How urgent the ticket is."""
+
+    high = 'high'
+    urgent = 'high'
+    """Same as high, under the name the ticketing system uses."""
+    low = 'low'
+    """Can wait a week."""
+
+
+def test_an_enum_alias_describes_the_option_it_was_written_for():
+    """A docstring is read under the name it was declared under, but an alias is the same member.
+
+    `Aliased.urgent is Aliased.high`, so the schema only ever names `high`; looking the docstring up by
+    the member's own name found nothing and dropped it silently.
+    """
+
+    class Ticket(BaseModel):
+        priority: Aliased
+
+    schema = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)
+    assert schema['$defs']['Aliased'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'high', 'description': 'Same as high, under the name the ticketing system uses.'},
+                {'const': 'high', 'description': 'Same as high, under the name the ticketing system uses.'},
+                {'const': 'low', 'description': 'Can wait a week.'},
+            ],
+            'description': 'How urgent the ticket is.',
+            'title': 'Aliased',
+            'type': 'string',
+        }
+    )
 
 
 def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():

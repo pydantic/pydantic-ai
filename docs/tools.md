@@ -268,9 +268,10 @@ leading description, a parameter description, or the first returns entry.
 
 A docstring under an `Enum` member reaches the model too, as the description of that value, so the model sees
 what each option means and not only its name. Such an enum renders as `anyOf` of `const` values instead of a
-plain `enum` list; members without docstrings, and `Literal`s, render as before. Tool parameters always read
-them; an `Enum` inside a model of your own is read on the same switch as a docstring under a field, Pydantic's
-`model_config = ConfigDict(use_attribute_docstrings=True)`.
+plain `enum` list; members without docstrings, and `Literal`s, render as before. This needs no configuration:
+wherever Pydantic AI describes an enum to a model — a tool parameter, an output type, a field of a model of your
+own — the docstrings under its members are read. An alias is the same member, so a docstring under either name
+describes that option.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
