@@ -445,7 +445,7 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 ## What Jev cannot do
 
-Jev does not write text or read files, and it only fills tool arguments that map to the typed questions above. An agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
+Jev does not write text or read files, and it only fills tool arguments that map to the typed questions above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and shared request preparation refuses any agent that asks such a model for text. An agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be made of the field types above, beside any output functions that take no arguments: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. A [union](#a-union-of-output-types) of structured types is supported.
 - No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.

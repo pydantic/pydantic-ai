@@ -60,6 +60,8 @@ async def main():
         async for event in session:
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
+        # Let the speaker consume every generated chunk before closing the session.
+        await session.wait_for_playback()
 
     # Leaving the `async with` block closes the session, which ends every live view.
     await asyncio.gather(audio_task, transcript_task)
@@ -69,7 +71,9 @@ Each view is independently bounded; a slow consumer drops its oldest item rather
 tools, turn tracking, or other consumers.
 A subscription begins when `stream_audio()` or `stream_transcripts()` is called, so a view handed to
 a task with `asyncio.create_task` misses nothing while it waits for its first turn on the event loop,
-up to its buffer bound.
+up to its buffer bound. Call the method where the task is created and pass the iterator in, as
+above: an `async for chunk in session.stream_audio()` inside the task body subscribes only once the
+task first runs, so audio emitted before then is never seen.
 An unconsumed view buffers up to its bound, dropping the oldest item when full, until it is collected.
 [`close()`][pydantic_ai.realtime.RealtimeSession.close] discards pending items and ends every live
 iterator; [`closed`][pydantic_ai.realtime.RealtimeSession.closed] reports the state.
@@ -79,6 +83,14 @@ If nothing is iterating the session, the session keeps the most recent 512 part 
 older ones are discarded. Discarding a part's start discards the rest of that part with it, so a late
 iterator never receives a delta it cannot attach to a part. A failure parked for the consumer is
 never discarded.
+
+After a reply finishes generating, await
+[`wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback] before closing the
+session or opening the microphone. It returns once the single `stream_audio()` consumer has accounted
+for all audio emitted so far: played, using the same one-chunk-lag accounting as
+[`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes], or never played at
+all — discarded by a barge-in or by the view's buffer overflowing, or emitted before the view
+subscribed. It requires exactly one audio view and also returns if that view or the session closes.
 
 ### Live captions
 

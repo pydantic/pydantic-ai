@@ -616,13 +616,9 @@ def _output_tools(
 
     An output function that takes nothing, or only the run context, is a hand-off Jev can pick without writing
     anything. Several output types with fields are a union: Jev picks which one the text calls for, then fills
-    that one's fields in a second request, the same two steps a selected tool's arguments take.
+    that one's fields in a second request, the same two steps a selected tool's arguments take. Text output is
+    refused earlier, by the shared request preparation, on the profile's `supports_text_output`.
     """
-    if model_request_parameters.allow_text_output:
-        raise UserError(
-            'Text output is not supported by this model. Give the agent one structured `output_type`, '
-            'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
-        )
     with_fields: list[ToolDefinition] = []
     hand_offs: list[ToolDefinition] = []
     for tool in model_request_parameters.output_tools:
