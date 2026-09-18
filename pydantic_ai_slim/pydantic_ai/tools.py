@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
+from typing import Annotated, Any, ClassVar, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
 from pydantic import AliasChoices, Field
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -271,13 +271,17 @@ A = TypeVar('A')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
+    describe_enum_members: ClassVar[bool] = False
+    """Read the docstring under each `Enum` member even when the enclosing model does not opt in."""
+
     def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
         # A docstring under an enum member describes that option, as `anyOf` of `const`s with descriptions
         # (the JSON Schema way to describe single values), so models can tell the options apart. Read on the
-        # same switch as a docstring under a field, `use_attribute_docstrings` on the enclosing model, which
-        # a tool's parameters and a bare output's wrapper set; a model of the user's own opts in.
+        # same switch as a docstring under a field, `use_attribute_docstrings` on the enclosing model, which a
+        # tool's parameters set; a model of the user's own opts in, and a bare output is described for it.
         json_schema = super().enum_schema(schema)
-        docstrings = _utils.enum_member_docstrings(schema['cls']) if self._config.use_attribute_docstrings else {}
+        read = self.describe_enum_members or self._config.use_attribute_docstrings
+        docstrings = _utils.enum_member_docstrings(schema['cls']) if read else {}
         if docstrings:
             json_schema['anyOf'] = [
                 {'const': value, **({'description': docstrings[member.name]} if member.name in docstrings else {})}
