@@ -1799,9 +1799,14 @@ def _exit_immediately(mocker: MockerFixture, inp: Any) -> None:
     mocker.patch('pydantic_ai._cli.PromptSession', return_value=PromptSession[Any](input=inp, output=DummyOutput()))
 
 
-def _chat_console() -> tuple[Console, StringIO]:
+def _chat_console(width: int | None = None) -> tuple[Console, StringIO]:
+    """A console for a session that believes it owns a terminal, at `width` columns if it says.
+
+    Left unsaid, rich answers 80 for a terminal it can't measure, which is what the banner then
+    lays itself out for — a narrower column than the one a wide terminal gets.
+    """
     io = StringIO()
-    return Console(file=io, force_terminal=True), io
+    return Console(file=io, force_terminal=True, width=width), io
 
 
 def test_run_chat_shows_banner_for_a_users_own_agent(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):
@@ -1818,7 +1823,25 @@ def test_run_chat_shows_banner_for_a_users_own_agent(mocker: MockerFixture, tmp_
     # A user's own agent gets the same banner a script does, not clai's.
     assert 'Pydantic AI CLI' not in output
     assert f'pydantic-ai v{__version__}' in output
-    assert 'agent: support_agent • model: test:test • tools: 0 • capabilities: 0' in output
+    # The console reports 80 columns, so the details take the two lines that fit in them.
+    assert 'agent: support_agent • model: test:test • tools: 0' in output
+    assert 'capabilities: 0' in output
+
+
+def test_run_chat_lays_the_banner_out_for_the_terminal_it_has(
+    mocker: MockerFixture, tmp_path: Path, terminal_clai: None
+):
+    """A pane the banner outruns is one the terminal breaks itself, straight through the logo."""
+    console, io = _chat_console(width=64)
+    agent = Agent(TestModel(), name='support_agent')
+
+    with create_pipe_input() as inp:
+        _exit_immediately(mocker, inp)
+        anyio.run(run_chat, True, agent, console, 'monokai', 'pydantic-ai', tmp_path)
+
+    banner = _plain(io.getvalue()).partition('Exiting')[0]
+    assert LOGO_MARKER in banner
+    assert max(map(len, banner.splitlines())) <= 64
 
 
 def test_run_chat_without_a_model_shows_no_banner(mocker: MockerFixture, tmp_path: Path, terminal_clai: None):
