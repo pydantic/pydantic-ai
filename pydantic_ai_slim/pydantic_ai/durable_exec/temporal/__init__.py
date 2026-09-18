@@ -126,6 +126,11 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # sandbox. Safe to pass through: the call only happens once at module init.
             'fastmcp',
             'mcp',
+            # `fastmcp_tasks` builds a `pydantic_settings` object at import time, which reads dotenv
+            # files and so calls `Path.expanduser` too. `MCPToolset` imports it on the MCP SDK v2
+            # path, so a toolset constructed inside a workflow reaches it. Same reasoning as above:
+            # the call happens once at module init.
+            'fastmcp_tasks',
             # The `anthropic` SDK (>=0.99.0) calls `Path.home()` during client construction to
             # resolve its credentials/profile config directory (`~/.config/anthropic`) — restricted
             # by the workflow sandbox. This trips when a model is constructed inside the workflow,

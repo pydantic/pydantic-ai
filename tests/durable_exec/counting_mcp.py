@@ -30,6 +30,12 @@ def counting_mcp_server(*, instructions: str | None = None) -> tuple[FastMCP[Non
     class Counter(Middleware):
         async def on_message(self, context: MiddlewareContext[Any], call_next: Any) -> Any:
             method = context.method or '<unknown>'
+            # What callers count is how many times a run hands the server a fresh session, not what
+            # the handshake is called: FastMCP 3 opens one with `initialize`, and FastMCP 4's modern
+            # session with `server/discover`. Counting both under one key keeps those numbers about
+            # session reuse rather than about the generation installed.
+            if method in ('initialize', 'server/discover'):
+                method = 'handshake'
             counts[method] = counts.get(method, 0) + 1
             return await call_next(context)
 
