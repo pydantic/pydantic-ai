@@ -4314,6 +4314,63 @@ async def test_run_span_reports_its_subtree_usage_under_concurrent_delegation(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_nested_delegation_spans_sum_to_the_runs_total(capfire: CaptureLogfire) -> None:
+    """Every run in a three-deep tree reports its own requests, so the spans still sum to the total.
+
+    Depth is what separates reporting a run's own usage from reporting its subtree: a leaf's tokens
+    belong to one span, not to that span and to each of the runs above it. Both agents here fan out
+    to two concurrent children sharing one `RunUsage`, so a leaf's tokens would otherwise be counted
+    on the leaf, on both middle runs, and on the top.
+    """
+
+    def leaf_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('leaf')], usage=RequestUsage(input_tokens=1))
+
+    leaf = Agent(FunctionModel(leaf_fn), name='leaf', capabilities=[Instrumentation()])
+
+    async def middle_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=10)
+        if len(messages) == 1:
+            calls = [ToolCallPart('ask_leaf', {'n': n}, tool_call_id=f'm{n}') for n in (1, 2)]
+            return ModelResponse(parts=calls, usage=usage)
+        return ModelResponse(parts=[TextPart('middle')], usage=usage)
+
+    middle = Agent(FunctionModel(middle_fn), name='middle', capabilities=[Instrumentation()])
+
+    @middle.tool
+    async def ask_leaf(ctx: RunContext[Any], n: int) -> str:
+        return (await leaf.run('x', usage=ctx.usage)).output
+
+    async def top_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = RequestUsage(input_tokens=100)
+        if len(messages) == 1:
+            calls = [ToolCallPart('ask_middle', {'n': n}, tool_call_id=str(n)) for n in (1, 2)]
+            return ModelResponse(parts=calls, usage=usage)
+        return ModelResponse(parts=[TextPart('top')], usage=usage)
+
+    top = Agent(FunctionModel(top_fn), name='top', capabilities=[Instrumentation()])
+
+    @top.tool
+    async def ask_middle(ctx: RunContext[Any], n: int) -> str:
+        return (await middle.run('x', usage=ctx.usage)).output
+
+    result = await top.run('go')
+
+    reported: dict[str, list[int]] = {}
+    for span in capfire.exporter.exported_spans_as_dict():
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent':
+            name = span['attributes']['gen_ai.agent.name']
+            reported.setdefault(name, []).append(span['attributes']['gen_ai.aggregated_usage.input_tokens'])
+
+    # Each run's own requests: four leaf runs of one, two middle runs of two-by-ten, one top run of
+    # two-by-a-hundred. Reporting subtrees instead would put 22 on each middle and 244 on the top.
+    assert reported == snapshot({'leaf': [1, 1, 1, 1], 'middle': [20, 20], 'top': [200]})
+    assert sum(tokens for tokens_per_run in reported.values() for tokens in tokens_per_run) == snapshot(244)
+    assert result.usage.input_tokens == snapshot(244)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
 def test_model_request_exception_events_honor_include_content(capfire: CaptureLogfire, include_content: bool) -> None:
     """The model request span follows the same rule as the tool and agent run spans.
