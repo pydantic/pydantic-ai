@@ -25,6 +25,10 @@ pip/uv-add "pydantic-ai-slim[mcp]"
     [`http_client`](#custom-tls-ssl-configuration) objects you pass it straight to FastMCP without
     inspecting them, so build them with `httpx2` — or with legacy `httpx` if you've pinned FastMCP 3.
 
+    `[mcp]` installs `fastmcp-slim[client]`, which is the client half only. The server examples on
+    this page — the ones that build a `FastMCP` and run it — need the full package alongside it:
+    `pip install fastmcp`.
+
 ## Usage
 
 An [`MCPToolset`][pydantic_ai.mcp.MCPToolset] accepts any of the following as its first positional argument:
@@ -385,8 +389,10 @@ and in `fastmcp.server.tasks` on [FastMCP 3](https://gofastmcp.com/v3/servers/ta
 ```python {title="background_task_server.py" dunder_name="not_main"}
 from fastmcp import FastMCP
 from fastmcp.utilities.tasks import TaskConfig
+from fastmcp_tasks import TasksExtension
 
 mcp = FastMCP('long_running_server')
+mcp.add_extension(TasksExtension())  # (1)!
 
 
 @mcp.tool(task=TaskConfig(mode='optional'))
@@ -399,6 +405,10 @@ async def deep_research(topic: str) -> str:
 if __name__ == '__main__':
     mcp.run(transport='streamable-http')
 ```
+
+1. FastMCP 4 refuses to start a server that declares task tools without the tasks extension
+   registered. On FastMCP 3, drop this line and the `fastmcp_tasks` import — that generation serves
+   task-augmented tools itself.
 
 By default, [`MCPToolset`][pydantic_ai.mcp.MCPToolset] uses task-augmented execution when a tool supports it. A client that prefers normal calls for tools where task support is optional can set [`prefer_tasks=False`][pydantic_ai.mcp.MCPToolset.prefer_tasks]. This setting does not affect tools where task support is required:
 
@@ -600,6 +610,23 @@ toolset = MCPToolset(
 
 Pydantic AI supports sampling as both a client and server. See the [server](./server.md#mcp-sampling) documentation for details on how to use sampling within a server.
 
+!!! warning "Server-initiated requests need a legacy session on FastMCP 4"
+    Sampling and elicitation are requests the *server* makes back to the client, and FastMCP 4's
+    default modern session has no back-channel for them — the server's call fails with
+    `NoBackChannelError`. A legacy session still has one, but `MCPToolset` can only negotiate it
+    through a pre-built client, which rules out the `sampling_model` and `elicitation_handler`
+    shortcuts below:
+
+    ```python {title="legacy_session.py" test="skip" lint="skip"}
+    from fastmcp.client import Client
+
+    client = Client(transport, mode='legacy', sampling_handler=sampling_handler)
+    toolset = MCPToolset(client)
+    ```
+
+    The shortcuts work as written on FastMCP 3. Tracking the gap in
+    [#8477](https://github.com/pydantic/pydantic-ai/issues/8477).
+
 To use sampling as a client, an `MCPToolset` needs to have a [`sampling_model`][pydantic_ai.mcp.MCPToolset.sampling_model] set. This can be done either directly on the toolset using the `sampling_model=` constructor keyword argument, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.agent.Agent.set_mcp_sampling_model] to use the agent's model (or one specified as an argument) as the sampling model on all `MCPToolset`s registered with the agent.
 
 Let's say we have an MCP server that wants to use sampling (in this case to generate an SVG as per the tool arguments):
@@ -688,6 +715,8 @@ This allows for a more interactive and user-friendly experience, especially for 
 ### Setting up elicitation
 
 To enable elicitation, provide an `elicitation_handler` when creating your `MCPToolset`:
+
+(On FastMCP 4 this needs a legacy session — see the warning under [MCP Sampling](#mcp-sampling).)
 
 ```python {title="restaurant_server.py"}
 from fastmcp import Context, FastMCP
