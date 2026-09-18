@@ -8113,3 +8113,111 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
         assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
         assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
         assert len(conn.sent) == 1
+
+
+async def test_wait_for_reply_returns_at_the_turn_boundary() -> None:
+    conn = FakeRealtimeConnection(
+        [OutputTranscript(text='hello there', is_final=True), ResponseDone()],
+    )
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Say hello.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        assert session.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())], timestamp=IsDatetime()
+                ),
+                ModelResponse(
+                    parts=[SpeechPart(speaker='assistant', transcript='hello there')],
+                    timestamp=IsDatetime(),
+                    finish_reason='stop',
+                ),
+            ]
+        )
+
+
+async def test_wait_for_reply_spans_a_tool_calling_turn() -> None:
+    """The response that calls a tool is not the reply: the answer after the tool results is.
+
+    The tool is held open so the waiter genuinely observes the gap between the tool-call response
+    finalizing and the answer starting — releasing at that first response boundary would return here
+    with nothing said yet.
+    """
+    release_tool = asyncio.Event()
+    answer_sent = asyncio.Event()
+
+    class _AnswersAfterTheTool(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='lookup', args='{}')
+            yield ResponseDone()
+            await answer_sent.wait()
+            yield OutputTranscript(text='it is sunny', is_final=True)
+            yield ResponseDone()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release_tool.wait()
+        return 'sunny'
+
+    session = RealtimeSession(_AnswersAfterTheTool([]), runner)
+    async with session:
+        await session.send('What is the weather?')
+        waiting = asyncio.create_task(session.wait_for_reply())
+        # Let the tool-call response finalize while the tool itself is still running.
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'returned at the tool-call response instead of the answer'
+
+        release_tool.set()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'returned before the model answered'
+
+        answer_sent.set()
+        with anyio.fail_after(5):
+            await waiting
+    assert any(
+        isinstance(part, SpeechPart) and part.transcript == 'it is sunny'
+        for message in session.all_messages()
+        for part in message.parts
+    )
+
+
+async def test_wait_for_reply_returns_immediately_when_nothing_is_owed() -> None:
+    """A reply that finished before the call is not waited for all over again."""
+    conn = FakeRealtimeConnection([OutputTranscript(text='hi', is_final=True), ResponseDone()])
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Say hi.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        # Nothing is owed now, so a second wait must not block until some later turn.
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+
+
+async def test_wait_for_reply_runs_alongside_session_iteration() -> None:
+    """The point of the method: it does not need to take over the event stream to find the boundary."""
+    conn = FakeRealtimeConnection([OutputTranscript(text='hello', is_final=True), ResponseDone()])
+    session = RealtimeSession(conn)
+    seen: list[RealtimeEvent] = []
+    async with session:
+        waiting = asyncio.create_task(session.wait_for_reply())
+        await session.send('Say hello.')
+        async for event in session:
+            seen.append(event)
+        with anyio.fail_after(5):
+            await waiting
+    assert any(isinstance(event, RealtimeTurnCompleteEvent) for event in seen)
+
+
+async def test_wait_for_reply_returns_when_the_session_closes() -> None:
+    """A never-answered reply must not park the caller forever."""
+    session = RealtimeSession(FakeRealtimeConnection([]))
+    async with session:
+        await session.send('Say hello.')
+        closing = asyncio.create_task(session.close())
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        await closing

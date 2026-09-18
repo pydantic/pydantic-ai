@@ -730,6 +730,11 @@ class RealtimeSession:
         self._pending_response_usage = RequestUsage()
         self._response_limit_checked = False
         self._pending_response_requests = 0
+        # Whether the model still owes the caller speech: set when a response is solicited or starts,
+        # cleared at the exchange boundary that `RealtimeTurnCompleteEvent` marks. A tool-calling turn
+        # spans several responses, so the per-response flags above would read as "done" in the gaps.
+        self._exchange_active = False
+        self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
@@ -906,6 +911,7 @@ class RealtimeSession:
             self._pending_messages.close()
             self._closed = True
             self._finish_taps(discard_pending=True)
+            self._release_exchange()
             if self._pump_task is not None:
                 # Cancelled before state is settled below so the pump can't mutate it mid-settlement;
                 # the task is awaited together with the rest afterwards.
@@ -1205,6 +1211,51 @@ class RealtimeSession:
             if buffer_empty and playhead >= self._emitted_audio_bytes:
                 return
             await tap.progress.wait()
+
+    async def wait_for_reply(self) -> None:
+        """Wait until the model has finished the reply it owes, if any.
+
+        Returns once the exchange in progress reaches the boundary
+        [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] marks — after a
+        tool-calling turn, that is the answer that follows the tool results, not the response that
+        called them. Returns immediately when the model owes nothing, so a reply that finished between
+        the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
+        over; it also returns if the session closes.
+
+        This is the wait `async for event in session` would otherwise be written out to perform, and
+        unlike that loop it can run while something else is iterating the session, so a caller that
+        only wants the turn boundary does not have to take over the event stream to find it:
+
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+        async def main():
+            async with agent.realtime('openai:gpt-realtime').session() as session:
+                await session.send('Say hello.')
+                await session.wait_for_reply()
+        ```
+
+        Waiting for the model to stop *generating* is not the same as waiting for the speaker to stop
+        *playing*: pair it with
+        [`wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback] before opening
+        the microphone, so the reply is not cut off and the model does not hear itself.
+        """
+        self._ensure_streamable()
+        self._start_pump()
+        while self._exchange_active and not self._closed:
+            # Cleared before the check, so a boundary reached between the check and the wait still
+            # wakes us rather than leaving this parked until the turn after it.
+            self._exchange_progress.clear()
+            if not self._exchange_active or self._closed:
+                return
+            await self._exchange_progress.wait()
+
+    def _release_exchange(self) -> None:
+        self._exchange_active = False
+        self._exchange_progress.set()
 
     def _single_audio_tap(self, method: str, purpose: str) -> _AudioTap:
         if len(self._audio_taps) != 1:
@@ -2087,6 +2138,7 @@ class RealtimeSession:
         self._pending_interrupted_at_ms = None
         if not more_expected:
             events.append(RealtimeTurnCompleteEvent())
+            self._release_exchange()
             # Only the exchange boundary is marked: each response is already a `chat` span, so a marker
             # per response would say nothing the trace doesn't show, while the turn boundary — where the
             # model is actually done — has no span of its own.
@@ -2809,6 +2861,7 @@ class RealtimeSession:
             )
             self._usage_limits.check_before_request(projected)
         self._pending_response_requests += 1
+        self._exchange_active = True
 
     def _begin_response(self) -> None:
         """Take the reservation for the response that's starting, or make the check now if it has none.
@@ -2824,6 +2877,7 @@ class RealtimeSession:
         elif self._usage_limits is not None:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
+        self._exchange_active = True
 
     def _accumulate_response_usage(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
