@@ -84,6 +84,12 @@ def test_ovhcloud_model_profile(mocker: MockerFixture):
     harmony_mock.assert_called_with('gpt-oss-120b')
     assert profile is not None
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert profile.get('supports_thinking') is True
+    assert profile.get('thinking_always_enabled') is True
+
+    profile = provider.model_profile('gpt-4o')
+    assert profile is not None
+    assert profile.get('thinking_always_enabled', False) is False
 
     # Test meta provider
     meta_profile = provider.model_profile('Llama-3.3-70B-Instruct')
