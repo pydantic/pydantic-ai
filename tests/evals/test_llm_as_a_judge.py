@@ -174,34 +174,34 @@ async def test_judge_output_without_text_support():
 
 
 @pytest.mark.parametrize(
-    'judge,kwargs,expected_question',
+    'variant,kwargs,expected_question',
     [
         pytest.param(
-            _judge_output,
+            'output',
             {'output': 'O', 'rubric': 'R'},
             'Is the statement in <Rubric> true for <Output>?',
             id='output',
         ),
         pytest.param(
-            _judge_input_output,
+            'input_output',
             {'inputs': 'I', 'output': 'O', 'rubric': 'R'},
             'Is the statement in <Rubric> true for <Output>, taking <Input> into account?',
             id='input and output',
         ),
         pytest.param(
-            _judge_output_expected,
+            'output_expected',
             {'output': 'O', 'expected_output': 'E', 'rubric': 'R'},
             'Is the statement in <Rubric> true for <Output>, taking <ExpectedOutput> into account?',
             id='output and expected output',
         ),
         pytest.param(
-            _judge_input_output_expected,
+            'input_output_expected',
             {'inputs': 'I', 'output': 'O', 'expected_output': 'E', 'rubric': 'R'},
             'Is the statement in <Rubric> true for <Output>, taking <Input> and <ExpectedOutput> into account?',
             id='input, output and expected output',
         ),
         pytest.param(
-            _judge_input_output_expected,
+            'input_output_expected',
             {'inputs': None, 'output': 'O', 'expected_output': None, 'rubric': 'R'},
             'Is the statement in <Rubric> true for <Output>?',
             id='the helper takes both but the caller passed neither',
@@ -209,9 +209,17 @@ async def test_judge_output_without_text_support():
     ],
 )
 async def test_the_verdict_question_names_only_the_sections_the_prompt_carries(
-    judge: Any, kwargs: dict[str, Any], expected_question: str
+    variant: str, kwargs: dict[str, Any], expected_question: str
 ):
     """A judge that cannot write a reason is asked about the sections it was given, and no others."""
+    # Resolve the helper inside the test body so the module-level skip applies when the optional
+    # `pydantic-evals` dependency is missing: a name in a `parametrize` is read at collection time.
+    judge: Any = {
+        'output': _judge_output,
+        'input_output': _judge_input_output,
+        'output_expected': _judge_output_expected,
+        'input_output_expected': _judge_input_output_expected,
+    }[variant]
     questions: list[str] = []
 
     async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
