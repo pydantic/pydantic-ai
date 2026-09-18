@@ -381,9 +381,9 @@ router = Agent(
 
 
 async def select_model(ctx: ModelSelectionContext[None]) -> str:
-    if ctx.step == 1:
-        # `ctx.messages` is the history *before* this step, so on the first one there is
-        # nothing to read yet: the run's own prompt has not been added.
+    if not ctx.messages:
+        # `ctx.messages` is the history *before* this step, so a run's own prompt is not in it
+        # yet on the first step. A run given `message_history` does have something to read.
         return 'openai:gpt-5.6-luna'
     picked = await router.run(message_history=ctx.messages)
     return 'openai:gpt-5.6-sol' if picked.output == 'capable' else 'openai:gpt-5.6-luna'
@@ -393,9 +393,11 @@ agent = Agent(capabilities=[SelectModel(select_model)])
 ```
 
 The router is given the history rather than a prompt, which is the whole state Jev reads. That history is what
-existed *before* the step being selected, so the first step has nothing to classify and takes a default — this
-routes a run that turns hard partway through, which is what a per-step hook is for. To route the very first step
-from the user's own question, ask before the run instead, as in the section above.
+existed *before* the step being selected, so a fresh run's first step has nothing to classify and takes a default
+— this routes a run that turns hard partway through, which is what a per-step hook is for. A run continuing an
+earlier conversation does have a history on its first step, which is why the guard reads `ctx.messages` rather
+than `ctx.step`. To route the very first step of a fresh run from the user's own question, ask before the run
+instead, as in the section above.
 
 Asking on every step is only affordable because the question is cheap; with a language model in the selector, the
 routing costs as much as the work it routes.
@@ -491,6 +493,8 @@ def candidates(actions: dict[str, str]) -> list[ToolOutput[str]]:
 
         return act
 
+    if clashing := RESERVED.keys() & actions.keys():
+        raise ValueError(f'action IDs clash with the reserved ones: {sorted(clashing)}')
     return [ToolOutput(take(i), name=i, description=d) for i, d in {**actions, **RESERVED}.items()]
 
 
@@ -498,6 +502,10 @@ async def decide(observation: str, actions: dict[str, str]) -> str:
     result = await agent.run(observation, output_type=candidates(actions))
     return result.output
 ```
+
+The reserved IDs are the caller's to keep free: an action of your own called `abstain` would otherwise be
+overwritten by the reserved one, and a pick of `abstain` would then be ambiguous between doing that action and
+doing nothing.
 
 Two things this gets right that are easy to lose. Jev can only answer with an option it was given, so there is no
 step where a made-up action has to be validated away. And `reobserve` and `abstain` are options like any other, so
