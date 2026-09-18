@@ -1,11 +1,11 @@
 ---
 title: Warn On Cache Busts
-description: Warn when a run's prompt-cache hit collapses between model requests, so a moved prefix or an expired cache surfaces instead of silently re-charging tokens.
+description: Warn when a conversation's prompt-cache hit collapses between model requests, within a run or across turns, so a moved prefix or an expired cache surfaces instead of silently re-charging tokens.
 ---
 
 # Warn On Cache Busts
 
-Warn when a run's prompt cache hit collapses between model requests, so a moved cacheable prefix or an expired provider cache surfaces instead of quietly re-charging tokens it could have served from cache.
+Warn when a conversation's prompt cache hit collapses between model requests, within a run or across the runs that continue it, so a moved cacheable prefix or an expired provider cache surfaces instead of quietly re-charging tokens it could have served from cache.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -13,7 +13,7 @@ Warn when a run's prompt cache hit collapses between model requests, so a moved 
 
 Prompt caching pays off only while the cacheable prefix (tools, then system instructions, then message history) stays byte-stable across a run's consecutive requests. When something moves that prefix -- reordered tools, a timestamp injected into instructions, a serialization-level block hop -- the provider re-charges tokens it could have served from cache.
 
-This is the **observe** signal: it reads the provider's own verdict rather than guessing from the structured request. On each response it reads `usage.cache_read_tokens` and tracks the largest cacheable prefix the run has established (`cache_read_tokens + cache_write_tokens`, a high-water mark), keyed by the response's `(provider_name, model_name)`. Because message history is append-only, a stable prefix means each request for that model reads back at least what the previous one cached; a large drop is the observable signature of a collapse.
+This is the **observe** signal: it reads the provider's own verdict rather than guessing from the structured request. On each response it reads `usage.cache_read_tokens` and tracks the largest cacheable prefix the conversation has established (`cache_read_tokens + cache_write_tokens`, a high-water mark), keyed by the response's `(provider_name, model_name)`. Because message history is append-only, a stable prefix means each request for that model reads back at least what the previous one cached; a large drop is the observable signature of a collapse.
 
 When a request reads back less than `collapse_ratio` of the established prefix, the monitor emits a `CacheBustWarning` once and latches that key, staying quiet about the collapse until a healthy read-back re-stabilizes the cache. A sustained collapse -- caching toggled off mid-run (`read == 0, write == 0`), or a prefix that moves every request so the provider keeps writing a cache nothing reads back -- therefore warns once, not on every request.
 
@@ -22,7 +22,9 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import WarnOnCacheBusts
 
 agent = Agent('anthropic:claude-sonnet-4-5', capabilities=[WarnOnCacheBusts()])
-await agent.run('...')  # a CacheBustWarning fires if a cached prefix collapses mid-run
+result = await agent.run('...')  # a CacheBustWarning fires if a cached prefix collapses mid-run
+# ...and on the next turn, if the prefix the first turn cached no longer reads back:
+await agent.run('...', message_history=result.all_messages())
 ```
 
 The verdict is cross-provider for free -- pyai normalizes every provider into the `cache_read_tokens` / `cache_write_tokens` fields on `RequestUsage`.
@@ -33,11 +35,17 @@ Keying per provider and model means a mid-run model switch does not warn: a `Fal
 
 A collapse has two shapes the monitor cannot tell apart, so the warning names both: the cacheable prefix moved, or the provider's cache expired under an unchanged prefix (a gap between requests longer than the cache TTL -- Anthropic's default is 5 minutes, refreshed on each hit). When the gap since the same model's previous request exceeds `cache_ttl_seconds`, the message reports the gap so a long tool or approval pause isn't mistaken for a moved prefix. The gap is timed per model, so switching away and back measures the returning model's own idle time, not whatever ran in between.
 
+## Conversations
+
+Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run that continues an earlier one via `message_history` -- including history that was serialized and loaded back, which carries the conversation id with it -- is judged against the prefix the earlier run established, so the first request of the next turn is checked against what the previous turn cached. That is where a moved prefix most often hides: history rewritten between turns, or a tool or instruction that differs from one turn to the next. A run that starts a new conversation (no history, or `conversation_id='new'`) starts from a clean mark.
+
+A conversation idle for longer than `cache_ttl_seconds` is forgotten: the provider cache has expired by then, so a low read-back at the start of its next run is an expiry, not a bust, and would only be noise. The warning says whether the mark it compared against came from this run or from an earlier run of the conversation.
+
 ## Options
 
 - `collapse_ratio` (default `0.5`): warn when a request reads back less than this fraction of the established prefix. Conservative by default so ordinary rounding or a partial miss does not fire; raise toward `1.0` to warn on smaller regressions. It must be greater than `0.0` -- a ratio of `0.0` could never warn, so it is rejected rather than treated as a silent disable switch.
 - `min_prefix_tokens` (default `1024`): only judge collapse once the established prefix reaches this many tokens. Below a provider's minimum cacheable size (Anthropic's is 1024) `cache_read_tokens` is noisy or zero.
-- `cache_ttl_seconds` (default `300`): the assumed provider cache TTL. Message-only -- when the gap since the same model's previous request exceeds it, the warning notes the collapse may be a cache expiry rather than a moved prefix. It does not change whether a warning fires. Lower it for providers with a shorter cache lifetime.
+- `cache_ttl_seconds` (default `300`): the assumed provider cache TTL. Within a run it is message-only -- when the gap since the same model's previous request exceeds it, the warning notes the collapse may be a cache expiry rather than a moved prefix, without changing whether it fires. Between runs it bounds memory: a conversation idle for longer than this is forgotten, so its next run starts from a clean mark instead of warning about a cache the provider has already dropped. Lower it for providers with a shorter cache lifetime; raise it when the model is configured for a longer one (e.g. Anthropic's 1-hour cache).
 
 ## Silencing and escalation
 
@@ -76,13 +84,14 @@ The monitor's signal is the `CacheBustWarning`; routing it through `logging` is 
 ## Composition
 
 - The monitor only implements `for_run` and `after_model_request`; it adds no tools, instructions, or model settings, so it composes with any other capability, toolset, or `ToolSearch` setup without interference.
-- Per-run state (the per-key marks and timing) is materialized in `for_run`, so one `WarnOnCacheBusts` instance can be reused across many `Agent.run` calls -- each run is judged independently.
+- The marks live on the `WarnOnCacheBusts` instance the agent was built with, keyed by conversation; `for_run` binds each run to its conversation's marks. Reuse one instance across many `Agent.run` calls: runs of the same conversation share a mark, runs of different conversations are judged apart.
 
 ## Scope
 
 - **Observational only.** It reports that a cached prefix collapsed, not why -- a moved prefix and a provider-side cache expiry look the same from the token counts, so the warning names both. The structural explanation ("what moved the prefix this turn") is a separate job.
 - **Fires only when caching is enabled and reported.** A run that never establishes a cache never warns.
 - **A mid-run model switch does not warn.** Marks are per `(provider_name, model_name)`, so a `FallbackModel` failover starts a fresh mark rather than collapsing the previous model's.
+- **Marks are in-process memory.** They are held on the capability instance, so a conversation continued through a different instance, a different process, or a different worker starts from a clean mark; nothing is persisted or shared.
 
 ## API reference
 
