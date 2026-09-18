@@ -312,6 +312,7 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
                     schema['type'] = 'number'
         schema.pop('discriminator', None)
         schema.pop('examples', None)
+        _fold_described_options(schema)
 
         # Remove 'title' due to https://github.com/googleapis/python-genai/issues/1732
         schema.pop('title', None)
@@ -400,3 +401,32 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
                 schema.setdefault('maxItems', len(prefix_items))
 
         return schema
+
+
+def _fold_described_options(schema: JsonSchema) -> None:
+    """Fold an `anyOf` of single-value options back into one `enum`, their descriptions into the parent's.
+
+    An `Enum` whose members carry docstrings renders as `anyOf` of `const`s with descriptions, which the `const`
+    handling above has already turned into one-value `enum`s. Gemini takes that shape, but does not hold the
+    model to it the way it holds it to a plain `enum`: recorded against `gemini-2.5-flash`, a tool declared this
+    way was called with a value outside the options. So the options go back into one `enum`, and what each one
+    means goes into the description, where the model still reads it.
+    """
+    options = cast(list[JsonSchema], schema.get('anyOf', []))
+    if not options or not all(
+        isinstance(option, dict)
+        and len(cast(list[Any], option.get('enum', []))) == 1
+        and option.keys() <= {'enum', 'type', 'description'}
+        for option in options
+    ):
+        return
+    types = {option.get('type') for option in options}
+    if len(types) != 1:
+        return
+    schema.pop('anyOf')
+    schema['enum'] = [option['enum'][0] for option in options]
+    if (type_ := types.pop()) is not None:
+        schema['type'] = type_
+    described = [f'{option["enum"][0]}: {option["description"]}' for option in options if option.get('description')]
+    if described:
+        schema['description'] = '\n'.join([*filter(None, [schema.get('description')]), *described])

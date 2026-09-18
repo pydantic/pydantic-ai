@@ -171,7 +171,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     | `IntEnum` of 0, 1, 2, … with a docstring each | score against a rubric | the score rounded to a level |
     | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
     | a nested model of these | its fields, named `outer.inner` | the model |
-    | `Literal[...] | None` or `Enum | None` | pick one, or none of these | the option, or `None` |
+    | `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or `None` |
 
     The field description is the question. The output type's docstring and the agent's instructions go along
     as context. A docstring under an `Enum` member describes that option, see the [docs](../../models/typesafe.md);
@@ -187,9 +187,10 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     and their results, and retry prompts.
 
     Jev cannot write a tool's arguments, but it can tell which tool the text calls for. With tools attached, one
-    more question asks which, the output type first among the options. A tool that takes no arguments, or an
-    output function that takes nothing but the run context, Jev calls itself, so it can run a loop of such tools
-    and hand a run off to an output function on its own. A tool with arguments, picked at or above
+    more question asks which, the output type first among the options, described by its docstring or the agent's
+    instructions. A tool that takes no arguments, or an output function that takes nothing but the run context,
+    is called on Jev's pick, so it can run a loop of such tools and hand a run off to an output function on its
+    own. A tool with arguments, picked at or above
     `typesafe_tool_call_threshold`, is raised as [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed],
     which a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands
     that model, tools and all.
@@ -650,12 +651,12 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> li
     model that makes that call can vary them. The turn is everything since the last user prompt: a call in an
     earlier turn, or in another agent's run being judged, does not withhold the tool from this one.
     """
-    turn = messages
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts):
-            turn = messages[index:]
-            break
+    prompts = [
+        index
+        for index, message in enumerate(messages)
+        if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
+    ]
+    turn = messages[prompts[-1] :] if prompts else messages
     called = {
         part.tool_name
         for message in turn

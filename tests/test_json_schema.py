@@ -9,6 +9,8 @@ import pytest
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 
+from ._inline_snapshot import snapshot
+
 
 class _PassthroughTransformer(JsonSchemaTransformer):
     def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
@@ -239,6 +241,38 @@ def test_typed_schema_anyof_member_is_recursed_openai_strict():
     assert member['type'] == 'object'
     assert member['additionalProperties'] is False
     assert member['required'] == ['q']
+
+
+def test_described_options_fold_into_one_enum_google():
+    """An `Enum` with member docstrings renders as `anyOf` of described `const`s; Gemini gets one `enum` again.
+
+    Gemini does not hold the model to an `anyOf` of one-value `enum`s the way it holds it to a plain `enum`,
+    so the options fold back together and each description moves into the parent's.
+    """
+    from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+
+    schema = {
+        'type': 'string',
+        'description': 'How urgent the ticket is.',
+        'anyOf': [
+            {'const': 'low', 'description': 'Can wait a week.'},
+            {'const': 'high', 'description': 'Needs attention today.'},
+            {'const': 'unknown'},
+        ],
+    }
+
+    assert GoogleJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {
+            'type': 'string',
+            'enum': ['low', 'high', 'unknown'],
+            'description': 'How urgent the ticket is.\nlow: Can wait a week.\nhigh: Needs attention today.',
+        }
+    )
+    # A union of real alternatives is left alone.
+    mixed = {'anyOf': [{'const': 'low'}, {'type': 'integer'}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(mixed)).walk() == snapshot(
+        {'anyOf': [{'enum': ['low'], 'type': 'string'}, {'type': 'integer'}]}
+    )
 
 
 def test_typeless_anyof_member_still_recursed():

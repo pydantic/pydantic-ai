@@ -240,8 +240,9 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Whether this model is served by the Bedrock Converse API. Default: `True`.
 
     Set to `False` for models that Bedrock serves only through the Mantle OpenAI-compatible API (today,
-    the proprietary OpenAI GPT models); `BedrockConverseModel` raises at construction so the user gets an
-    actionable pointer to `BedrockMantleProvider` instead of an opaque Converse error at request time.
+    the proprietary OpenAI GPT models other than GPT-5.6 Sol/Luna/Terra); `BedrockConverseModel` raises
+    at construction so the user gets an actionable pointer to `BedrockMantleProvider` instead of an
+    opaque Converse error at request time.
     """
 
 
@@ -451,10 +452,8 @@ def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
 
 
 # MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
-# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an
-# upstream profile via `_strip_builtin_tools(<upstream>_model_profile(model_name))` like the
-# other `bedrock_<vendor>_model_profile` fns do. The inline `'openai'` lambda in
-# `BedrockProvider.model_profile` follows the same from-scratch pattern for the same reason.
+# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an upstream
+# profile. OpenAI is handled separately because Converse support differs between its model families.
 
 
 def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
@@ -497,14 +496,15 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
-    # Only the open-weight GPT-OSS family is served on Converse; every proprietary GPT model (GPT-5.4+
-    # today, and future GPT-6/7/… tomorrow) is Bedrock Mantle-only. Flag those as unsupported so
-    # `BedrockConverseModel` raises an actionable error at construction rather than failing later with an
-    # opaque Converse error.
+    # Exact names: GPT-5.6 Cyber is Mantle-only, unlike Sol/Luna/Terra.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
+    if model_name in {'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'}:
+        # AWS serves GPT-5.6 Sol/Luna/Terra on Converse, but no Pydantic AI profile overrides have been
+        # verified for them, so they keep the default profile.
+        return None
+    # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)
-    # TODO(v3): default `bedrock:` to Bedrock Mantle (with a deprecation warning steering users who want
-    # Converse to a `bedrock-converse:` prefix), mirroring the OpenAI Responses transition.
     # Converse rejects `reasoning_effort='none'` — mark always-on.
     return BedrockModelProfile(
         bedrock_thinking_variant='openai',
