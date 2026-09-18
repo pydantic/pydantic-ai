@@ -294,11 +294,84 @@ class FileUrl(ABC):
         _identifier: str | None = None,
     ) -> None: ...  # pragma: no cover
 
-    @pydantic.computed_field
     @property
     def media_type(self) -> str:
-        """Return the media type of the file, based on the URL or the provided `media_type`."""
+        """Return the media type of the file, based on the URL or the provided `media_type`.
+
+        Raises:
+            ValueError: If the media type can't be inferred from the URL and wasn't provided.
+        """
         return self._media_type or self._infer_media_type()
+
+    def _media_type_or_none(self) -> str | None:
+        """The media type `media_type` would return, or `None` where that would raise.
+
+        Serialization and the UI adapters read the media type through this instead of
+        [`media_type`][pydantic_ai.messages.FileUrl.media_type], so that a URL Pydantic AI cannot read
+        a media type out of is dumped rather than raised over. Everything that hands the file to a
+        provider keeps reading `media_type`, and keeps raising.
+        """
+        try:
+            return self.media_type
+        except ValueError:
+            return None
+
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize(
+        self, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.SerializationInfo
+    ) -> dict[str, Any]:
+        """Write `media_type` without letting a URL it cannot be inferred from fail the dump.
+
+        `media_type` used to be a `computed_field`, which pydantic evaluates on every dump, so a URL
+        with no usable extension raised where the value was never needed: a run that had completed could
+        no longer be persisted or sent to a frontend ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+        It is written here instead, as `null` when it cannot be inferred.
+
+        The key is written literally rather than aliased off the private `_media_type` field, because a
+        serialization alias only applies when dumping `by_alias`, and `model_dump(by_alias=False)` would
+        then hand users a `_media_type` key naming a private field they never set. Writing it by hand does
+        mean applying the arguments the dump was asked for — `exclude_none`, `include`, `exclude` — that
+        pydantic would have applied to a field of its own.
+        """
+        data = handler(self)
+        media_type = self._media_type_or_none()
+        include, exclude = info.include, info.exclude
+        if (
+            (media_type is None and info.exclude_none)
+            or (include is not None and 'media_type' not in include)
+            or (exclude is not None and 'media_type' in exclude)
+        ):
+            return data
+        # `identifier` is a computed field and so sorts last; keep `media_type` ahead of it, where it has
+        # always been written, so a history dumped before this change compares equal to one dumped after.
+        identifier = data.pop('identifier', None)
+        data['media_type'] = media_type
+        if identifier is not None:
+            data['identifier'] = identifier
+        return data
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: pydantic_core.CoreSchema, handler: pydantic.GetJsonSchemaHandler
+    ) -> pydantic.json_schema.JsonSchemaValue:
+        """Describe the fields `_serialize` writes, rather than the bare object it returns.
+
+        Pydantic reads a model serializer's return type as the serialization schema, so without this the
+        type would advertise nothing but an open object to whatever generates a contract from it — a
+        tool's return schema and [`Agent.output_json_schema()`][pydantic_ai.agent.AbstractAgent.output_json_schema]
+        among them. Render the schema as if the serializer weren't there, and name the `media_type` it
+        writes, which the private field holding it is excluded from the dump — and so from the schema —
+        to leave to it.
+        """
+        # `CoreSchema` is a union of `TypedDict`s, which can't express "this schema minus a key", so the
+        # copy the serializer is dropped from is handed back to the handler as the schema it still is.
+        without_serializer = {k: v for k, v in core_schema.items() if k != 'serialization'}
+        schema = handler.resolve_ref_schema(handler(cast('pydantic_core.CoreSchema', without_serializer)))
+        properties: dict[str, Any] = schema.setdefault('properties', {})
+        if 'media_type' not in properties:  # The validation schema already has it, under the field's alias.
+            properties['media_type'] = {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Media Type'}
+            schema.setdefault('required', []).append('media_type')
+        return schema
 
     @pydantic.computed_field
     @property

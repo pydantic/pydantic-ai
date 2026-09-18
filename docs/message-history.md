@@ -377,9 +377,11 @@ _(This example is complete, it can be run "as is")_
     A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
     as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
     mapping, including one whose own keys happen to look like ours. A URL-based item is
-    reconstructed only when its mapping carries `media_type`, which every history Pydantic AI dumps
-    does; without one it stays the plain mapping your tool returned, so a URL Pydantic AI cannot
-    read a media type out of never becomes a file that then fails to dump. A
+    reconstructed only when its mapping carries a `media_type` string. A URL whose media type
+    Pydantic AI can't infer from the URL is serialized with `media_type: null`, which validates
+    back into the URL part's default (no media type) and dumps `null` again, so such a URL
+    round-trips instead of failing to dump. In a tool return that `null` doesn't count as
+    carrying `media_type`, so the item stays the plain mapping your tool returned. A
     [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
     [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
     requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and

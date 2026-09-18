@@ -8283,6 +8283,20 @@ def test_custom_output_type_invalid() -> None:
         agent.run_sync('Hello', output_type=int)
 
 
+def test_history_with_extensionless_image_url_dumps_after_run() -> None:
+    """An extensionless `ImageUrl` in history runs fine and the resulting history serializes."""
+    agent = Agent(FunctionModel(lambda messages, agent_info: ModelResponse(parts=[TextPart('ok')])))
+    result = agent.run_sync(
+        'hello',
+        message_history=[ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/image')])])],
+    )
+    dumped = json.loads(result.all_messages_json())
+    content = dumped[0]['parts'][0]['content'][0]
+    assert content['media_type'] is None
+    # The dumped history validates back into URL parts and can be run again.
+    agent.run_sync('again', message_history=ModelMessagesTypeAdapter.validate_python(dumped))
+
+
 def test_binary_content_serializable():
     agent = Agent('test')
 
