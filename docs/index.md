@@ -294,7 +294,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ```
 
     ```bash
-    clai -a research:agent
+    uvx clai -a research:agent
     ```
 
     Tool calls appear as they run, `/usage` prints what the session cost, and [`clai web`](web.md) serves the same agent as a browser chat. Any agent can open its own session instead, with [`agent.to_cli_sync()`](cli.md#custom-agents).
