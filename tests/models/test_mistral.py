@@ -31,6 +31,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     VideoUrl,
 )
@@ -3739,7 +3740,9 @@ async def test_parallel_tool_calls_stream(allow_model_requests: None) -> None:
     assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is True
 
 
-class TicketPriority(str, Enum):
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
     """How urgent the ticket is."""
 
     low = 'low'

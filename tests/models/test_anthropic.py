@@ -52,6 +52,7 @@ from pydantic_ai import (
     ToolFailed,
     ToolReturnPart,
     UsageLimitExceeded,
+    UseEnumMemberDocstrings,
     UserPromptPart,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
@@ -14428,7 +14429,9 @@ How can I help you today?\
     )
 
 
-class TicketPriority(str, Enum):
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
     """How urgent the ticket is."""
 
     low = 'low'

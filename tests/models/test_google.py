@@ -57,6 +57,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     VideoUrl,
     capture_run_messages,
@@ -7408,7 +7409,9 @@ async def test_google_model_armor_config_is_sent_in_request(
     assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
 
 
-class TicketPriority(str, Enum):
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
     """How urgent the ticket is."""
 
     low = 'low'

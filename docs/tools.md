@@ -266,13 +266,6 @@ first entry of the returns section. Other sections Griffe can parse, such as `Ra
 `Warnings` and `Yields`, are dropped, so anything the model needs to act on belongs in the
 leading description, a parameter description, or the first returns entry.
 
-A docstring under an `Enum` member reaches the model too, as the description of that value, so the model sees
-what each option means and not only its name. Such an enum renders as `anyOf` of `const` values instead of a
-plain `enum` list; members without docstrings, and `Literal`s, render as before. This needs no configuration:
-wherever Pydantic AI describes an enum to a model — a tool parameter, an output type, a field of a model of your
-own — the docstrings under its members are read. An alias is the same member, so a docstring under either name
-describes that option.
-
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
 ```python {title="tool_schema.py"}
@@ -376,6 +369,87 @@ print(test_model.last_model_request_parameters.function_tools)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Enum options {#enum-options}
+
+An `Enum` parameter reaches the model as the list of its values, which says what the options are but not what
+they mean. Mix [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] into the enum to send the
+docstring written under each member as that option's description. Such an enum renders as `anyOf` of `const`
+values instead of a plain `enum` list:
+
+```python {title="enum_options.py"}
+from enum import Enum
+
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    UseEnumMemberDocstrings,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+class Urgency(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+agent = Agent()
+
+
+@agent.tool_plain
+def set_urgency(urgency: Urgency) -> str:
+    """Set the urgency of the ticket."""
+    return f'Urgency set to {urgency.value}.'
+
+
+def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    print(info.function_tools[0].parameters_json_schema)
+    """
+    {
+        '$defs': {
+            'Urgency': {
+                'anyOf': [
+                    {'const': 'low', 'description': 'Can wait a week.'},
+                    {'const': 'high', 'description': 'Needs attention today.'},
+                ],
+                'description': 'How urgent the ticket is.',
+                'title': 'Urgency',
+                'type': 'string',
+            }
+        },
+        'additionalProperties': False,
+        'properties': {'urgency': {'$ref': '#/$defs/Urgency'}},
+        'required': ['urgency'],
+        'type': 'object',
+    }
+    """
+    return ModelResponse(parts=[TextPart('done')])
+
+
+agent.run_sync('hello', model=FunctionModel(print_schema))
+```
+
+_(This example is complete, it can be run "as is")_
+
+This is the enum counterpart to Pydantic's
+[`use_attribute_docstrings`](https://docs.pydantic.dev/latest/api/config/#pydantic.config.ConfigDict.use_attribute_docstrings)
+model config. The two are expressed differently because an `Enum` has no `model_config` to carry a flag, and
+cannot carry a plain class attribute either — annotated or not, any assigned value becomes a member — so a base
+class is the only marker left.
+
+Without the mix-in the docstrings are ignored and the schema is exactly the one Pydantic generates on its own,
+so opting an enum in is the only thing that changes what a model sees. Members without a docstring keep a bare
+`const`, and a docstring under an alias (`urgent = 'high'` beside `high = 'high'`) describes the option it was
+written for. A `Literal` has nowhere to write a docstring, so it is unaffected.
+
+Wherever Pydantic AI describes an opted-in enum to a model — a tool parameter, an [output type](output.md), or
+a field of a model of your own — the descriptions come along.
 
 
 !!! tip "Debugging Tool Calls"

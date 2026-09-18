@@ -275,13 +275,15 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         # A docstring under an enum member describes that option, as `anyOf` of `const`s with descriptions
         # (the JSON Schema way to describe single values), so models can tell the options apart.
         #
-        # This is read wherever Pydantic AI describes an enum to a model, and not gated on the enclosing
-        # model's `use_attribute_docstrings`. That config is pushed while the *core* schema is built, and
-        # nothing pushes it while the JSON schema is generated, so an enum reached from a tool's parameters
-        # never saw it even though `_function_schema` sets it — the option descriptions were dropped with
-        # no way for the user to notice. A rule that works in three places out of four is worse than either
-        # answer, so the docstrings a user wrote under their options are read in all four.
+        # Opted into by mixing in `UseEnumMemberDocstrings`, rather than by the enclosing model's
+        # `use_attribute_docstrings` config: that config is pushed while the *core* schema is built and nothing
+        # pushes it while the JSON schema is generated, so an enum reached from a tool's parameters never sees it
+        # even though `_function_schema` sets it. A base class is also the only marker an `Enum` can carry — a
+        # plain class attribute, annotated or not, becomes a member — so the marker is read off the class rather
+        # than passed in.
         json_schema = super().enum_schema(schema)
+        if not getattr(schema['cls'], '__use_enum_member_docstrings__', False):
+            return json_schema
         # A docstring is read under the name it was declared under, but an alias (`urgent = 'high'` beside
         # `high = 'high'`) is the same member, so the schema only ever names the canonical one. Resolve the
         # declared names through `__members__` so an alias's docstring describes the option it was written

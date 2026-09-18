@@ -43,6 +43,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UseEnumMemberDocstrings,
     UserError,
     UserPromptPart,
 )
@@ -6506,7 +6507,9 @@ def test_model_construction_preloads_lazy_dependencies():
     assert process.returncode == 0, f'lazy-dependency preload check failed:\n{process.stderr}'
 
 
-class TicketPriority(str, Enum):
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
     """How urgent the ticket is."""
 
     low = 'low'

@@ -69,8 +69,6 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
-
-
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 

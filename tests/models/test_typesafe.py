@@ -33,6 +33,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     WebSearchTool,
 )
@@ -64,7 +65,9 @@ pytestmark = [
 ]
 
 
-class Verdict(str, Enum):
+# Opted in, and the cassettes were recorded with the described options in the request, so Jev answered
+# knowing what each verdict means.
+class Verdict(UseEnumMemberDocstrings, str, Enum):
     """How to handle this command."""
 
     run = 'run'
@@ -1481,7 +1484,8 @@ class Customer(BaseModel):
     angry: bool = Field(description='Is the customer angry?')
 
 
-class Area(str, Enum):
+# Opted in, and the cassette was recorded with the description on the `billing` option.
+class Area(UseEnumMemberDocstrings, str, Enum):
     billing = 'billing'
     """Money already owed, charged or refunded."""
     account = 'account'
