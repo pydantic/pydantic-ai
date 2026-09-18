@@ -439,6 +439,44 @@ Jev does not write text, write a tool's arguments or read files. An agent that n
 
 Jev does not revise an answer the way a language model does. Its previous answer and the validator's complaint both go back in the history, so they are part of what it judges, but the question is unchanged and a confident answer does not move: an output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] usually gets the same answer again, and one that keeps rejecting runs the agent out of retries.
 
+## Asking Jev directly
+
+An `output_type` is the question in almost every case, and it is what makes the same agent run on a language model later. Two things it cannot carry: a state that is a record rather than prose, and a question whose wording has nowhere to live, such as spelling out what counts as `true` and what counts as `false` for a yes/no.
+
+The TypeSafe SDK client is on the model for those, configured with the same API key, base URL and HTTP client:
+
+```python {title="ask_jev_directly.py"}
+from typesafe_sdk import Choice, Noul, NoulCriteria
+
+from pydantic_ai.models.typesafe import TypeSafeModel
+
+model = TypeSafeModel('jev-latest')
+
+
+async def judge_order(order: dict[str, object]) -> float:
+    response = await model.client.system_one(
+        {'order': order, 'policy': 'Refunds are allowed within 30 days.'},
+        {
+            'refundable': Noul(
+                instructions='The order can still be refunded under the policy.',
+                criteria=NoulCriteria(
+                    true='The order is inside the refund window.',
+                    false='The order is outside it, or was refunded already.',
+                ),
+            ),
+            'risk': Choice(
+                instructions='How risky is refunding anyway?',
+                criteria={'low': None, 'high': 'The customer has prior chargebacks.'},
+            ),
+        },
+    )
+    return response.answers['refundable'].noul
+```
+
+Nothing else in Pydantic AI sees a call made this way: no agent run, no message history, no usage on a run's total, no fallback to another model, and the span the rest of an agent's work appears under is not opened. It is the escape hatch, not the main road. Reach for it when the question genuinely will not fit an output type, and go back to an `output_type` as soon as it will.
+
+Passing a record as a mapping rather than as text is a convenience, not an accuracy setting. Jev reads a rendered sentence at least as well as the object it came from, so there is no need to restructure a prompt to get at this.
+
 ## `provider` argument
 
 You can provide a custom `Provider` via the `provider` argument:
