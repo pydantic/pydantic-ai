@@ -421,7 +421,9 @@ def _fold_described_options(schema: JsonSchema) -> None:
     ):
         return
     types = {option.get('type') for option in options}
-    if len(types) != 1:
+    if len(types) != 1 or 'enum' in schema or schema.get('type', next(iter(types))) != next(iter(types)):
+        # Options of different types, a parent with its own `enum`, or a parent typed differently from its
+        # options are not one described enum, and folding them would widen what the model may answer.
         return
     schema.pop('anyOf')
     schema['enum'] = [option['enum'][0] for option in options]

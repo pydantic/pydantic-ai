@@ -273,9 +273,11 @@ A = TypeVar('A')
 class GenerateToolJsonSchema(GenerateJsonSchema):
     def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
         # A docstring under an enum member describes that option, as `anyOf` of `const`s with descriptions
-        # (the JSON Schema way to describe single values), so models can tell the options apart.
+        # (the JSON Schema way to describe single values), so models can tell the options apart. Read on the
+        # same switch as a docstring under a field, `use_attribute_docstrings` on the enclosing model, which
+        # a tool's parameters and a bare output's wrapper set; a model of the user's own opts in.
         json_schema = super().enum_schema(schema)
-        docstrings = _utils.enum_member_docstrings(schema['cls'])
+        docstrings = _utils.enum_member_docstrings(schema['cls']) if self._config.use_attribute_docstrings else {}
         if docstrings:
             json_schema['anyOf'] = [
                 {'const': value, **({'description': docstrings[member.name]} if member.name in docstrings else {})}

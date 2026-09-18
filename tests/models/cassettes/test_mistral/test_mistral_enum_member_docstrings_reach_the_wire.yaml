@@ -1,0 +1,208 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '802'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      frequency_penalty: null
+      messages:
+      - content: Set the priority of the ticket.
+        role: system
+      - content: Production is down for every customer.
+        role: user
+      model: mistral-small-latest
+      n: 1
+      presence_penalty: null
+      stop: null
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: set_priority
+          parameters:
+            $defs:
+              TicketPriority:
+                anyOf:
+                - const: low
+                  description: Can wait a week.
+                - const: high
+                  description: Needs attention today.
+                description: How urgent the ticket is.
+                title: TicketPriority
+                type: string
+            additionalProperties: false
+            properties:
+              priority:
+                $ref: '#/$defs/TicketPriority'
+            required:
+            - priority
+            type: object
+        type: function
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '536'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a0b29a-09ea-772d-a5f8-08ab6fca62f4
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"priority": "high"}'
+              name: set_priority
+            id: 7hzk3g6j3
+            index: 0
+            type: function
+      created: 1789702834
+      id: b3273b5edf044cb6a8571b9176a0cbda
+      model: mistral-small-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 12
+        prompt_tokens: 167
+        prompt_tokens_details:
+          cached_tokens: 0
+        service_tier: standard
+        total_tokens: 179
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1088'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      frequency_penalty: null
+      messages:
+      - content: Set the priority of the ticket.
+        role: system
+      - content: Production is down for every customer.
+        role: user
+      - content: []
+        prefix: false
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"priority": "high"}'
+            name: set_priority
+          id: 7hzk3g6j3
+          index: 0
+          type: function
+      - content: Priority set to high.
+        role: tool
+        tool_call_id: 7hzk3g6j3
+      model: mistral-small-latest
+      n: 1
+      presence_penalty: null
+      stop: null
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: set_priority
+          parameters:
+            $defs:
+              TicketPriority:
+                anyOf:
+                - const: low
+                  description: Can wait a week.
+                - const: high
+                  description: Needs attention today.
+                description: How urgent the ticket is.
+                title: TicketPriority
+                type: string
+            additionalProperties: false
+            properties:
+              priority:
+                $ref: '#/$defs/TicketPriority'
+            required:
+            - priority
+            type: object
+        type: function
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '542'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 01a0b29a-0bb3-7204-95b4-c0d209028ee1
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: The priority of the ticket has been set to **high** due to the production outage affecting all customers.
+            Immediate attention is required.
+          role: assistant
+          tool_calls: null
+      created: 1789702835
+      id: c0e04efa4b444a79b9d8757b147cee56
+      model: mistral-small-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 29
+        prompt_tokens: 186
+        prompt_tokens_details:
+          cached_tokens: 144
+        service_tier: standard
+        total_tokens: 215
+    status:
+      code: 200
+      message: OK
+version: 1
