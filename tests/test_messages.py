@@ -1736,6 +1736,32 @@ def test_url_media_type_is_written_under_its_public_name(url: str) -> None:
     assert 'media_type' not in nested[0]
 
 
+def test_url_serialization_schema_describes_the_fields_it_writes() -> None:
+    """Writing `media_type` from a model serializer must not cost the type its serialization schema.
+
+    Pydantic reads a model serializer's return type as the serialization schema, and that schema is what
+    a tool's return schema and [`Agent.output_json_schema()`][pydantic_ai.agent.AbstractAgent.output_json_schema]
+    are generated from, so a bare object there would reach users as a contract that describes nothing.
+    """
+    schema = TypeAdapter(ImageUrl).json_schema(mode='serialization')
+    assert list(schema['properties']) == snapshot(
+        ['url', 'force_download', 'vendor_metadata', 'kind', 'identifier', 'media_type']
+    )
+    assert schema['properties']['media_type'] == snapshot(
+        {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Media Type'}
+    )
+    assert schema['required'] == snapshot(['url', 'identifier', 'media_type'])
+
+    # The validation schema takes `media_type` from the field's alias and must not gain a second one.
+    assert list(TypeAdapter(ImageUrl).json_schema(mode='validation')['properties']) == snapshot(
+        ['url', 'force_download', 'vendor_metadata', 'media_type', 'identifier', 'kind']
+    )
+
+    # Nested, the type is rendered behind a `$ref`, which the schema has to be resolved through.
+    nested = ModelMessagesTypeAdapter.json_schema(mode='serialization')['$defs']['ImageUrl']
+    assert nested['properties'] == schema['properties']
+
+
 def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():
     """A mapping that spells one of our items out in full is that item, extra keys and all.
 

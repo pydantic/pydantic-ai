@@ -350,6 +350,26 @@ class FileUrl(ABC):
             data['identifier'] = identifier
         return data
 
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: pydantic_core.CoreSchema, handler: pydantic.GetJsonSchemaHandler
+    ) -> pydantic.json_schema.JsonSchemaValue:
+        """Describe the fields `_serialize` writes, rather than the bare object it returns.
+
+        Pydantic reads a model serializer's return type as the serialization schema, so without this the
+        type would advertise nothing but an open object to whatever generates a contract from it — a
+        tool's return schema and [`Agent.output_json_schema()`][pydantic_ai.agent.AbstractAgent.output_json_schema]
+        among them. Render the schema as if the serializer weren't there, and name the `media_type` it
+        writes, which the private field holding it is excluded from the dump — and so from the schema —
+        to leave to it.
+        """
+        schema = handler.resolve_ref_schema(handler({k: v for k, v in core_schema.items() if k != 'serialization'}))
+        properties: dict[str, Any] = schema.setdefault('properties', {})
+        if 'media_type' not in properties:  # The validation schema already has it, under the field's alias.
+            properties['media_type'] = {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Media Type'}
+            schema.setdefault('required', []).append('media_type')
+        return schema
+
     @pydantic.computed_field
     @property
     def identifier(self) -> str:
