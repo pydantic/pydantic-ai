@@ -24,6 +24,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
     from pydantic_ai.models.snowflake import SnowflakeModelName
+    from pydantic_ai.models.typesafe import TypeSafeModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
@@ -37,6 +38,7 @@ if not imports_successful():  # pragma: lax no cover
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
+    TypeSafeModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -81,6 +83,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
     'snowflake': SnowflakeModelName,
+    'typesafe': TypeSafeModelName,
     'zai': ZaiModelName,
 }
 
