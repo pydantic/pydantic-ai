@@ -749,12 +749,11 @@ async def test_the_boolean_threshold_applies_to_each_option_of_a_list(allow_mode
         channels: list[Literal['email', 'sms']] = Field(description='Which channels should receive updates?')
 
     def record(request: httpx2.Request) -> httpx2.Response:
-        return answers(
-            **{
-                'channels.email': {'type': 'noul', 'noul': 0.7},
-                'channels.sms': {'type': 'noul', 'noul': 0.6},
-            }
-        )
+        options: dict[str, dict[str, object]] = {
+            'channels.email': {'type': 'noul', 'noul': 0.7},
+            'channels.sms': {'type': 'noul', 'noul': 0.6},
+        }
+        return answers(**options)
 
     agent = Agent(mock_model(record), output_type=Routing)
     assert (await agent.run('x')).output == Routing(channels=['email', 'sms'])
@@ -780,7 +779,7 @@ async def test_the_boolean_threshold_leaves_a_probability_field_alone(allow_mode
     result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.95))
 
     assert result.output == Scored(risk=0.7)
-    assert result.response.provider_details['confidence'] == {}
+    assert (result.response.provider_details or {})['confidence'] == {}
 
 
 async def test_an_output_type_with_nothing_said_about_it_cannot_be_weighed_against_tools(

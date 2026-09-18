@@ -424,7 +424,7 @@ class TypeSafeStreamedResponse(StreamedResponse):
 
 def _threshold(settings: TypeSafeModelSettings, name: str, default: float) -> float:
     """A probability setting, which is only meaningful inside the range Jev answers in."""
-    threshold = cast(float, settings.get(name, default))  # pyright: ignore[reportUnknownMemberType]
+    threshold = cast(float, settings.get(name, default))
     if not 0 <= threshold <= 1:
         raise UserError(f'`{name}` must be between 0 and 1; got {threshold!r}.')
     return threshold
