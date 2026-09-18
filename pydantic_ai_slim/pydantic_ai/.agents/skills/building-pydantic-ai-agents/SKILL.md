@@ -289,6 +289,9 @@ Key facts for building realtime agents:
 - **A string sent with `session.send()` solicits a response**: use `respond=False` to add passive
   text context. Images are context-only by default; use `respond=True` to ask for a response to an
   image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
+  A string sent during a reply queues on OpenAI/Azure/xAI and Gemini 2.5, but interrupts the active
+  reply on Gemini 3.1. Gemini speech models reject text output before connect; the Vertex
+  `gemini-live-2.5-flash` half-cascade can opt in with `profile={'supports_text_output': True}`.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
   are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
@@ -316,6 +319,9 @@ Key facts for building realtime agents:
   down. To keep the trigger yourself, `session.interrupt(played_bytes=session.played_audio_bytes)`
   gets the same treatment on your own signal. A playback layer that buffers ahead of the device
   makes `played_audio_bytes` read too far: count real device consumption and pass `played_ms`.
+- **Mute with server VAD**: keep sending zero-valued PCM16 frames at the normal cadence. Sending
+  nothing can leave an open speech segment open; pure tones do not reliably trigger speech VAD.
+  Under manual turn control, stop sending and call `clear_audio()` instead.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
   `google_async_tool_calls=True` on a native-audio model). An unhandled tool exception is raised
@@ -327,8 +333,9 @@ Key facts for building realtime agents:
   the session running. To end the call from a tool, await `ctx.realtime_session.close()` for a clean
   hang-up (the tool does not resume, its call is recorded as interrupted, and a concurrent
   `send_audio()` async iterable returns cleanly at its next chunk), or call `ctx.cancel()` to make
-  the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely: cancelling the watchdog does
-  not interrupt teardown, and the session context waits for teardown before exiting.
+  the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely:
+  cancelling the watchdog does not interrupt teardown, and the session context waits for teardown
+  before exiting. While iteration is running the loop ends cleanly and `session.result` is settled.
 - **Late event consumption is bounded**: while nothing is iterating the session, it retains only the
   most recent 512 `PartDeltaEvent`s and the most recent 512 structural events, so a long call that
   nobody iterates cannot grow without bound. Parts are dropped whole, so a late iterator never sees a
@@ -340,6 +347,9 @@ Key facts for building realtime agents:
   control-plane **sideband** with `.session(provider_session=answer.session)`. The browser owns the
   audio; the sideband session runs tools and builds history (its audio methods raise, and
   `audio_retention` must stay `'transcript_only'`).
+- **Browser WebSocket relays**: `handle_barge_in=True` cannot know browser playback position because
+  forwarded chunks count as played. Have the browser report real playback and pass it to
+  `interrupt(played_bytes=...)`; `played_ms=` does not flush session-queued audio.
 
 See the [Realtime guide](https://pydantic.dev/docs/ai/realtime/overview/) for the full walkthrough.
 
