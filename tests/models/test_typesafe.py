@@ -700,6 +700,89 @@ async def test_a_threshold_outside_zero_to_one_is_refused_before_the_request(
         await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_tool_call_threshold=threshold))
 
 
+@pytest.mark.parametrize('threshold', [-0.1, 1.5, float('nan')])
+async def test_a_boolean_threshold_outside_zero_to_one_is_refused_before_the_request(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, threshold: float
+):
+    agent = Agent(typesafe_model, output_type=Ticket)
+    with pytest.raises(UserError, match='`typesafe_boolean_threshold` must be between 0 and 1'):
+        await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=threshold))
+
+
+@pytest.mark.parametrize(
+    'threshold,expected,expected_confidence',
+    [
+        pytest.param(None, True, 0.3999999999999999, id='the default rounds a 0.7 to yes'),
+        pytest.param(0.5, True, 0.3999999999999999, id='the default, passed explicitly'),
+        pytest.param(0.75, False, 0.06666666666666672, id='a raised bar turns the same answer into a no'),
+        pytest.param(0.7, True, 0.0, id='an answer exactly at the bar is a yes, and the least sure one'),
+        pytest.param(0.0, True, 0.7, id='a bar of zero takes every answer as a yes'),
+        pytest.param(1.0, False, 0.30000000000000004, id='a bar of one takes nothing short of certainty'),
+    ],
+)
+async def test_the_boolean_threshold_decides_what_a_probability_of_yes_rounds_to(
+    allow_model_requests: None, threshold: float | None, expected: bool, expected_confidence: float
+):
+    """What `True` has to mean is the user's to choose, and confidence is the distance from their bar."""
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(urgent={'type': 'noul', 'noul': 0.7})
+
+    settings = None if threshold is None else TypeSafeModelSettings(typesafe_boolean_threshold=threshold)
+    agent = Agent(mock_model(record), output_type=Ticket)
+    result = await agent.run('Is this urgent?', model_settings=settings)
+
+    assert result.output == Ticket(urgent=expected)
+    assert result.response.provider_details == {
+        'confidence': {'urgent': expected_confidence},
+        'probabilities': {},
+        'scores': {},
+    }
+
+
+async def test_the_boolean_threshold_applies_to_each_option_of_a_list(allow_model_requests: None):
+    """A list of options is one yes/no per option, so the same bar decides each of them."""
+
+    class Routing(BaseModel):
+        """Route a support ticket."""
+
+        channels: list[Literal['email', 'sms']] = Field(description='Which channels should receive updates?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            **{
+                'channels.email': {'type': 'noul', 'noul': 0.7},
+                'channels.sms': {'type': 'noul', 'noul': 0.6},
+            }
+        )
+
+    agent = Agent(mock_model(record), output_type=Routing)
+    assert (await agent.run('x')).output == Routing(channels=['email', 'sms'])
+
+    result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.65))
+    assert result.output == Routing(channels=['email'])
+    # The field is as sure as its least sure option, which is the `sms` that only just missed the bar.
+    assert result.response.provider_details['confidence'] == {'channels': snapshot(0.07692307692307698)}
+
+
+async def test_the_boolean_threshold_leaves_a_probability_field_alone(allow_model_requests: None):
+    """A `float` bounded 0 to 1 asks for the probability itself, so there is nothing to round."""
+
+    class Scored(BaseModel):
+        """Score a support ticket."""
+
+        risk: float = Field(ge=0, le=1, description='Is this ticket likely to cause customer harm?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(risk={'type': 'noul', 'noul': 0.7})
+
+    agent = Agent(mock_model(record), output_type=Scored)
+    result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.95))
+
+    assert result.output == Scored(risk=0.7)
+    assert result.response.provider_details['confidence'] == {}
+
+
 async def test_an_output_type_with_nothing_said_about_it_cannot_be_weighed_against_tools(
     allow_model_requests: None, typesafe_model: TypeSafeModel
 ):
