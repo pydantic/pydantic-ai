@@ -13,7 +13,7 @@ from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
-from temporalio.workflow import ActivityConfig
+from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 from typing_extensions import Self, TypedDict
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
@@ -276,6 +276,24 @@ def validate_activity_config(config: ActivityConfig, source: str) -> ActivityCon
         return _activity_config_adapter.validate_python(config)
     except ValidationError as e:
         raise UserError(f'Invalid Temporal `ActivityConfig` in {source}: {e}') from e
+
+
+_ValidatedChildWorkflowConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
+    TypedDict(
+        '_ValidatedChildWorkflowConfig',
+        get_type_hints(ChildWorkflowConfig, include_extras=True),  # pyright: ignore[reportArgumentType]
+        total=ChildWorkflowConfig.__total__,
+    )
+)
+_child_workflow_config_adapter = cast('TypeAdapter[ChildWorkflowConfig]', TypeAdapter(_ValidatedChildWorkflowConfig))
+
+
+def validate_child_workflow_config(config: ChildWorkflowConfig, source: str) -> ChildWorkflowConfig:
+    """Return `config` validated into Temporal's own types, or raise a `UserError`."""
+    try:
+        return _child_workflow_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Invalid Temporal `ChildWorkflowConfig` in {source}: {e}') from e
 
 
 def resolve_tool_activity_config(
