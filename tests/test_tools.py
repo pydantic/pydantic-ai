@@ -5265,7 +5265,8 @@ def test_enum_member_docstrings_follow_the_models_docstring_switch():
 
         def capture(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.append(info.output_tools[0].parameters_json_schema)
-            return ModelResponse(parts=[ToolCallPart('final_result', {'level': 'low'}, 'call_1')])
+            args = {'level': 'low'} if output_type is not Level else {'response': 'low'}
+            return ModelResponse(parts=[ToolCallPart('final_result', args, 'call_1')])
 
         Agent(FunctionModel(capture), output_type=output_type).run_sync('Hello')
         return seen[0]
@@ -5278,7 +5279,7 @@ def test_enum_member_docstrings_follow_the_models_docstring_switch():
             'type': 'string',
         }
     )
-    assert defs(Level)['properties']['response'] == snapshot(
+    assert defs(Level)['$defs']['Level'] == snapshot(
         {
             'anyOf': [{'const': 'low', 'description': 'Can wait a week.'}, {'const': 'high'}],
             'title': 'Level',
