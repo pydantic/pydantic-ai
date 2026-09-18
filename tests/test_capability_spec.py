@@ -202,7 +202,7 @@ def test_agent_from_spec_basic():
 def test_agent_from_spec_no_capabilities():
     """Test Agent.from_spec with no capabilities."""
     agent = Agent.from_spec({'model': 'test'})
-    assert agent.model is not None
+    assert isinstance(agent.model, TestModel)
 
 
 def test_agent_from_spec_image_generation():
@@ -620,8 +620,9 @@ def test_agent_from_spec_metadata_override():
 
 
 def test_agent_from_spec_model_override():
-    agent = Agent.from_spec({'model': 'test'}, model='test')
-    assert agent.model is not None
+    model = TestModel(model_name='override')
+    agent = Agent.from_spec({'model': 'test'}, model=model)
+    assert agent.model is model
 
 
 def test_agent_from_spec_capabilities_merged():
@@ -890,9 +891,14 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:global.anthropic.claude-opus-4-8',
                         'bedrock:global.anthropic.claude-opus-5',
                         'bedrock:global.anthropic.claude-sonnet-5',
+                        'bedrock:global.openai.gpt-5.6-luna',
+                        'bedrock:global.openai.gpt-5.6-sol',
+                        'bedrock:global.openai.gpt-5.6-terra',
                         'bedrock:google.gemma-3-12b-it',
                         'bedrock:google.gemma-3-27b-it',
                         'bedrock:google.gemma-3-4b-it',
+                        'bedrock:in.openai.gpt-5.6-luna',
+                        'bedrock:in.openai.gpt-5.6-terra',
                         'bedrock:meta.llama3-1-405b-instruct-v1:0',
                         'bedrock:meta.llama3-1-70b-instruct-v1:0',
                         'bedrock:meta.llama3-1-8b-instruct-v1:0',
@@ -960,6 +966,9 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:us.meta.llama4-maverick-17b-instruct-v1:0',
                         'bedrock:us.meta.llama4-scout-17b-instruct-v1:0',
                         'bedrock:us.mistral.pixtral-large-2502-v1:0',
+                        'bedrock:us.openai.gpt-5.6-luna',
+                        'bedrock:us.openai.gpt-5.6-sol',
+                        'bedrock:us.openai.gpt-5.6-terra',
                         'bedrock:us.writer.palmyra-x4-v1:0',
                         'bedrock:us.writer.palmyra-x5-v1:0',
                         'bedrock:zai.glm-4.7',
@@ -1023,6 +1032,9 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.anthropic.claude-opus-4-8',
                         'gateway/bedrock:global.anthropic.claude-opus-5',
                         'gateway/bedrock:global.anthropic.claude-sonnet-5',
+                        'gateway/bedrock:global.openai.gpt-5.6-luna',
+                        'gateway/bedrock:global.openai.gpt-5.6-sol',
+                        'gateway/bedrock:global.openai.gpt-5.6-terra',
                         'gateway/bedrock:google.gemma-3-12b-it',
                         'gateway/bedrock:google.gemma-3-27b-it',
                         'gateway/bedrock:google.gemma-3-4b-it',
@@ -1469,6 +1481,8 @@ def test_model_json_schema_with_capabilities():
                         'snowflake:openai-gpt-5.4',
                         'snowflake:openai-gpt-5.5',
                         'snowflake:snowflake-llama-3.3-70b',
+                        'typesafe:jev-latest',
+                        'typesafe:jev-preview',
                         'xai:grok-3',
                         'xai:grok-3-fast',
                         'xai:grok-3-fast-latest',
@@ -2823,10 +2837,32 @@ def test_to_file_with_path_schema_path(tmp_path: str):
 # --- from_spec error cases ---
 
 
-def test_from_spec_no_model_raises():
-    """from_spec() without model raises UserError."""
-    with pytest.raises(UserError, match='`model` must be provided'):
-        Agent.from_spec({'instructions': 'hello'})
+def test_from_spec_without_model_defers_error_until_run():
+    """from_spec() without a model defers the UserError until run time."""
+    agent = Agent.from_spec({'instructions': 'hello'})
+    assert agent.model is None
+
+    with pytest.raises(UserError, match='`model` must either be set on the agent or included when calling it'):
+        agent.run_sync('hello')
+
+
+def test_from_spec_without_model_runs_with_model_argument():
+    """A model omitted from the spec can be supplied when running the agent."""
+    agent = Agent.from_spec({'instructions': 'hello'})
+
+    result = agent.run_sync('hello', model=TestModel(custom_output_text='runtime model'))
+
+    assert result.output == 'runtime model'
+
+
+def test_from_file_without_model(tmp_path: Path):
+    """from_file() constructs an agent from a spec that names no model."""
+    spec_path = tmp_path / 'agent.yaml'
+    spec_path.write_text('instructions: hello\n', encoding='utf-8')
+
+    agent = Agent.from_file(spec_path)
+
+    assert agent.model is None
 
 
 # --- run() with spec: additional merge scenarios ---

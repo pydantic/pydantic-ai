@@ -95,6 +95,7 @@ zai = ["openai>=3.8.0"]
 snowflake = ["openai>=3.8.0"]
 crusoe = ["openai>=3.8.0"]
 cerebras = ["openai>=3.8.0"]
+typesafe = ["typesafe-sdk>=0.6.0"]
 huggingface = [
     "huggingface-hub>=1.3.4,<2.0.0",
     # huggingface_hub 1.3.x still calls the deprecated hf_xet.download_files() API.

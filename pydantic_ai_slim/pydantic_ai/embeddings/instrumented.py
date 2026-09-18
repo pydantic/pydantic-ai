@@ -13,6 +13,7 @@ from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_PROVIDER_NAME_ATTRIBUTE,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
+    record_uncaught_errors,
     server_attributes,
 )
 from pydantic_ai._warnings import CostCalculationFailedWarning
@@ -107,7 +108,12 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
 
         record_metrics: Callable[[], None] | None = None
         try:
-            with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+            with (
+                self.instrumentation_settings.tracer.start_as_current_span(
+                    span_name, attributes=attributes, record_exception=False, set_status_on_exception=False
+                ) as span,
+                record_uncaught_errors(span, include_content=self.instrumentation_settings.include_content),
+            ):
 
                 def finish(result: EmbeddingResult):
                     # Prepare metric recording closure first so metrics are recorded

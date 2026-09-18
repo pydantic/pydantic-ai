@@ -57,7 +57,12 @@ from ...tools import (
     DeferredToolResults,
 )
 from ...toolsets import AbstractToolset
-from .._adapter import compaction_part_from_payload, compaction_payload, tool_availability_delta_from_payload
+from .._adapter import (
+    DEFAULT_ALLOWED_CONTENT_TYPES,
+    compaction_part_from_payload,
+    compaction_payload,
+    tool_availability_delta_from_payload,
+)
 
 try:
     from ag_ui.core import (
@@ -321,6 +326,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -333,6 +339,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
+            allowed_content_types=allowed_content_types,
             **kwargs,
         )
 

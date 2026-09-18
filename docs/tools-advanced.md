@@ -234,7 +234,12 @@ A `prepare` method can be registered via the `prepare` kwarg to any of the tool 
 - [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator
 - [`Tool`][pydantic_ai.tools.Tool] dataclass
 
-The `prepare` method has type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc]. It receives [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]. It can return that definition unchanged or modified, return a new definition, or return `None` to omit the tool for that step.
+The `prepare` method has type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc]. It receives [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]. It can return that definition unchanged, return a modified copy built with [`dataclasses.replace`][dataclasses.replace], or return `None` to omit the tool for that step.
+
+!!! warning "Modify the definition you're given, don't build a new one"
+    A [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] carries more than a name and a parameters schema: `description`, `strict`, `sequential`, `kind`, `metadata`, `timeout`, `defer_loading`, and `toolset_id` all arrive pre-filled. Constructing a fresh one inside a `prepare` function silently resets every field you don't pass back to its default, so modify the definition you were handed or copy it with [`dataclasses.replace`][dataclasses.replace] instead.
+
+    `kind` is the field that bites: it is how [`requires_approval=True`](deferred-tools.md#human-in-the-loop-tool-approval) reaches the agent run. A definition that loses it describes a tool that runs immediately, without pausing for approval. If you'd rather not depend on every `prepare` function preserving it, [`ApprovalRequiredToolset`](toolsets.md#requiring-tool-approval) enforces approval when the tool is called, independently of how its definition was prepared.
 
 Here's a simple `prepare` method that only includes the tool if the value of the dependency is `42`.
 
@@ -326,7 +331,7 @@ _(This example is complete, it can be run "as is")_
 
 In addition to per-tool `prepare` methods, you can also define an agent-wide `prepare_tools` function. This function is called at each step of a run and allows you to filter or modify the list of all tool definitions available to the agent for that step. This is especially useful if you want to enable or disable multiple tools at once, or apply global logic based on the current context.
 
-The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns the tool definitions to expose for that step. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools.
+The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns the tool definitions to expose for that step. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools. As with per-tool `prepare`, modify the definitions you were given or copy them with [`dataclasses.replace`][dataclasses.replace] rather than constructing new ones.
 
 !!! note
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
