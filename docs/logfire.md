@@ -275,9 +275,9 @@ Each metric point carries the `gen_ai.provider.name` (and legacy `gen_ai.system`
 
 By default, model request spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes, while agent run spans use `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`.
 
-This avoids double-counting in observability backends that aggregate usage attributes across parent and child spans, since agent run spans report the sum of their child model request spans' usage.
+This avoids double-counting in observability backends that aggregate usage attributes across parent and child spans, since an agent run span reports the sum of its own model request spans' usage.
 
-An agent run span covers its whole subtree, so a run that [delegates to another agent](multi-agent-applications.md#agent-delegation) reports the delegate's tokens as well as its own. To total a conversation, sum the outermost agent run spans: summing every agent run span counts a delegate's tokens once for each run containing it.
+An agent run span reports what that run spent. A run that [delegates to another agent](multi-agent-applications.md#agent-delegation) does not include the delegate's tokens, because the delegate's own run span reports those. So the agent run spans in a trace can be added up as they are — the total matches the sum of the `gen_ai.usage.*` attributes on the model request spans underneath them.
 
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.

@@ -4291,23 +4291,26 @@ async def _run_delegating_agent(*, share_usage: bool, sequential: bool) -> None:
 async def test_run_span_reports_its_subtree_usage_under_concurrent_delegation(
     capfire: CaptureLogfire, share_usage: bool, sequential: bool
 ) -> None:
-    """An agent-run span reports its span subtree, whatever the delegates do with the usage object.
+    """Each agent-run span reports its own requests, whatever the delegates do with the usage object.
 
     Concurrent delegates handed the parent's `RunUsage` (the `usage=ctx.usage` pattern in
     `docs/multi-agent-applications.md`) overlap in time, so neither the shared object's contents nor
-    an end-minus-start delta on it can say which run added what: each delegate would absorb its
-    sibling's tokens, by more the wider the fan-out. And a delegate that *doesn't* share the object
-    would leave its tokens off the parent, which contains its span either way. Usage is attributed
-    down the task stack instead, so all four combinations report the same subtrees.
+    an end-minus-start delta on it can say which run added what: each delegate would otherwise
+    absorb its sibling's tokens, by more the wider the fan-out. Crediting the run that made the
+    request instead makes all four combinations agree, and makes the spans sum to the run's total
+    rather than counting a delegate's tokens again on the parent that contains it.
     """
     await _run_delegating_agent(share_usage=share_usage, sequential=sequential)
 
-    reported = {
+    agent_spans = [
         (span['name'], span['attributes']['gen_ai.aggregated_usage.input_tokens'])
         for span in capfire.exporter.exported_spans_as_dict()
         if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
-    }
-    assert reported == snapshot({('invoke_agent delegate', 10), ('invoke_agent parent', 2020)})
+    ]
+    assert set(agent_spans) == snapshot({('invoke_agent delegate', 10), ('invoke_agent parent', 2000)})
+    # The delegates' tokens are reported once, on the delegates, so summing every agent-run span
+    # gives the run's total rather than counting them again on the parent containing them.
+    assert sum(tokens for _, tokens in agent_spans) == snapshot(2020)
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

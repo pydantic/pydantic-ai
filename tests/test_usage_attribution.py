@@ -1,10 +1,10 @@
-"""Guard the invariant that makes agent-run spans report their subtree's usage.
+"""Guard the invariant that makes agent-run spans report the usage their own run produced.
 
-`_usage_attribution` credits an increment to the run that made it *and* to every run containing it,
-which is what lets an agent-run span report its span subtree. A `RunUsage` field incremented
-directly still reaches the caller's total and the usage limits, so nothing fails loudly — the
-tokens just go missing from every containing span. That is invisible until someone sums spans, so
-it is guarded here rather than left to review.
+`_usage_attribution` credits an increment to the run that made it, which is what lets agent-run
+spans be summed without counting a nested run twice. A `RunUsage` field incremented directly still
+reaches the caller's total and the usage limits, so nothing fails loudly — the tokens just go
+missing from the run's span. That is invisible until someone sums spans, so it is guarded here
+rather than left to review.
 """
 
 from __future__ import annotations
@@ -51,9 +51,9 @@ def test_no_bare_run_usage_mutation_outside_the_recorder() -> None:
     """Every increment of a live run's usage must go through `_usage_attribution`."""
     assert find_bare_mutations(PACKAGE_ROOT) == [], (
         "Increment a run's usage through `_usage_attribution.record_*` so it is also credited to "
-        'the agent runs containing it; a bare increment leaves the tokens off every containing '
-        f"span. If the target is not a live run's usage, say so with `{MARKER}<reason>` on the "
-        'line. Offending lines:\n' + '\n'.join(find_bare_mutations(PACKAGE_ROOT))
+        "the run that produced it; a bare increment leaves the tokens off that run's span. If the "
+        f"target is not a live run's usage, say so with `{MARKER}<reason>` on the line. Offending "
+        'lines:\n' + '\n'.join(find_bare_mutations(PACKAGE_ROOT))
     )
 
 
@@ -88,10 +88,14 @@ def _record_usage(usage: RunUsage) -> None:
     ],
     ids=['request', 'tool_call', 'usage'],
 )
-def test_record_credits_the_target_and_every_containing_run(
+def test_record_credits_the_target_and_the_innermost_run(
     record: Callable[[RunUsage], None], expected: RunUsage
 ) -> None:
-    """Each `record_*` reaches the run's own usage and every accumulator containing it, once."""
+    """Each `record_*` reaches the run's own usage and the run that produced it, and no other.
+
+    A nested run's requests belong to the nested run; the enclosing one reports its own, so that
+    summing both spans gives the total instead of counting the inner run twice.
+    """
     shared = RunUsage()
     outer = RunUsage()
     inner = RunUsage()
@@ -99,10 +103,12 @@ def test_record_credits_the_target_and_every_containing_run(
     with _usage_attribution.accumulate(outer):
         with _usage_attribution.accumulate(inner):
             record(shared)
+        # Crediting is handed back to the enclosing run when the nested one ends.
+        record(shared)
 
-    assert shared == expected
-    assert outer == expected
+    assert shared == expected + expected
     assert inner == expected
+    assert outer == expected
 
 
 def test_record_outside_any_run_only_touches_the_target() -> None:
@@ -113,7 +119,7 @@ def test_record_outside_any_run_only_touches_the_target() -> None:
 
 
 def test_accumulators_do_not_leak_to_siblings() -> None:
-    """A sibling's accumulator is not on this context's stack, which is the whole point."""
+    """A sibling's accumulator is not the one credited here, which is the whole point."""
     first = RunUsage()
     second = RunUsage()
 
