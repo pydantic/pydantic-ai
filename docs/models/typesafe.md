@@ -455,6 +455,50 @@ is exactly why it should not be the only thing standing between an agent and an 
 `typesafe_boolean_threshold` matters here more than anywhere else on this page. The default rounds at the coin
 flip, and for a guard the two mistakes rarely cost the same: see [what `True` has to mean](#what-true-has-to-mean).
 
+### Choose from a set built at run time
+
+The examples above name their options in the source. When the options are only known once the run is under way —
+the actions available on the screen in front of an agent, the records a search returned — build the output types
+at that point and pass them to the run. Each [output function](../output.md#output-functions) is one candidate,
+named and described where it is built, and the one Jev picks is the one that runs:
+
+```python {title="choose_a_candidate.py"}
+from pydantic_ai import Agent, ToolOutput
+
+agent = Agent('typesafe:jev-latest')
+
+RESERVED = {
+    'reobserve': 'Discard this decision set and look again.',
+    'abstain': 'Do nothing, because none of these is safe for what was observed.',
+}
+
+
+def candidates(actions: dict[str, str]) -> list[ToolOutput[str]]:
+    """One output function per available action, plus the two ways to decline."""
+
+    def take(action_id: str):
+        def act() -> str:
+            return action_id
+
+        return act
+
+    return [ToolOutput(take(i), name=i, description=d) for i, d in {**actions, **RESERVED}.items()]
+
+
+async def decide(observation: str, actions: dict[str, str]) -> str:
+    result = await agent.run(observation, output_type=candidates(actions))
+    return result.output
+```
+
+Two things this gets right that are easy to lose. Jev can only answer with an option it was given, so there is no
+step where a made-up action has to be validated away. And `reobserve` and `abstain` are options like any other, so
+declining is something Jev can *choose* rather than something you infer from a low confidence — the difference
+between an agent that stops and one that acts on a coin flip.
+
+The probabilities over every candidate are in `provider_details['tool']['probabilities']`, which is what to watch:
+a decision loop that abstains on most steps, or spreads its probability evenly, is telling you the candidates are
+not distinguishable by their descriptions.
+
 ### The same shape elsewhere
 
 Any hook that takes a decision rather than a generation fits this way.
