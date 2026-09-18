@@ -55,7 +55,7 @@ with try_import() as evals_imports_successful:
 with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
-    from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel
+    from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel, TypeSafeModelSettings
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
 pytestmark = [
@@ -679,7 +679,7 @@ async def test_a_threshold_outside_zero_to_one_is_refused_before_the_request(
 ):
     agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
     with pytest.raises(UserError, match='`typesafe_tool_call_threshold` must be between 0 and 1'):
-        await agent.run('anything', model_settings={'typesafe_tool_call_threshold': threshold})
+        await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_tool_call_threshold=threshold))
 
 
 class Undescribed(BaseModel):
