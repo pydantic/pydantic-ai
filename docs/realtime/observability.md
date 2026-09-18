@@ -51,9 +51,13 @@ Breaches raise [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]
 
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
+[OpenAI GPT-Live](openai-live.md#usage-is-measured-in-seconds),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
 [Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations) pages.
+[xAI](xai.md#feature-support-and-limitations) pages. GPT-Live is the one that reports no tokens for
+itself: it meters the spoken call in seconds, which no `UsageLimits` field bounds. The backend it
+delegates to is billed per token as usual, so token and cost limits do bound that part of a session
+— but never the spoken call, which needs a timer of your own.
 
 ## Logfire instrumentation
 

@@ -1157,6 +1157,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
                 prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+                # Same closed-`TypedDict` mismatch as on the Responses call below.
+                prompt_cache_options: Any = model_settings.get('openai_prompt_cache_options', OMIT)
                 # Most providers only accept one of `max_completion_tokens` (OpenAI, incl. o-series) or
                 # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
                 max_tokens = model_settings.get('max_tokens', OMIT)
@@ -1191,7 +1193,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     moderation=model_settings.get('openai_moderation', OMIT),
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=prompt_cache_retention,
-                    prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
+                    prompt_cache_options=prompt_cache_options,
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
                 )
@@ -2798,6 +2800,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
         prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+        # The SDK's `PromptCacheOptions` is a closed `TypedDict` that also carries
+        # `comparison_response_id`, a cache-diagnostics field Pydantic AI doesn't expose, so our
+        # narrower settings dict isn't assignable to it even though every key it does set matches.
+        prompt_cache_options: Any = model_settings.get('openai_prompt_cache_options', OMIT)
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
@@ -2825,7 +2831,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     include=include or OMIT,
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=prompt_cache_retention,
-                    prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
+                    prompt_cache_options=prompt_cache_options,
                     background=model_settings.get('openai_background', OMIT),
                     moderation=model_settings.get('openai_moderation', OMIT),
                     timeout=timeout,

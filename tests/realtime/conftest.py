@@ -240,6 +240,17 @@ def openai_ws_cassette(
 
 
 @pytest.fixture
+def openai_live_ws_cassette(
+    request: pytest.FixtureRequest, openai_api_key: str
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """An `OpenAIProvider` whose GPT-Live WebSocket is backed by a cassette."""
+    if not openai_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'openai_live') as cassette:
+        yield OpenAIProvider(api_key=openai_api_key), cassette
+
+
+@pytest.fixture
 def openai_ws_sideband_cassette(
     request: pytest.FixtureRequest, openai_api_key: str
 ) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
@@ -387,6 +398,17 @@ def azure_ws_sideband_cassette(
 
 
 @pytest.fixture
+def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
+    """Leave the blocking-call detector on for replay, which is what CI runs.
+
+    Recording dials the provider for real, and building the TLS context reads CA bundles from disk
+    inside the event loop. That is the recording harness's own blocking call, not the library's, and
+    it cannot happen on the replay path, where nothing dials.
+    """
+    return _record_mode(request) is None
+
+
+@pytest.fixture
 def parity_ws_cassette(
     request: pytest.FixtureRequest,
     openai_api_key: str,
@@ -401,6 +423,10 @@ def parity_ws_cassette(
     if route == 'openai':
         provider = OpenAIProvider(api_key=openai_api_key)
         provider_name = 'openai'
+    elif route == 'openai-live':
+        # GPT-Live authenticates like OpenAI realtime but speaks its own protocol on its own endpoint.
+        provider = OpenAIProvider(api_key=openai_api_key)
+        provider_name = 'openai_live'
     elif route == 'azure':
         endpoint, api_key = azure_config
         # Same GA-form normalization as `azure_ws_cassette` above; replay's placeholder endpoint

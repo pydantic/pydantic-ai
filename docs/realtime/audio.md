@@ -20,6 +20,7 @@ input and output rates can differ.
 Start with 100 ms input chunks to balance interactive cadence with per-chunk overhead, then tune for
 your transport. The provider pages list their model-specific rates and constraints:
 [OpenAI](openai.md#feature-support-and-limitations),
+[OpenAI GPT-Live](openai-live.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
 [Google Gemini](gemini.md#feature-support-and-limitations), and
 [xAI](xai.md#feature-support-and-limitations).

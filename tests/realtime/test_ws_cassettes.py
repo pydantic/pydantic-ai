@@ -271,20 +271,28 @@ async def test_recording_truncates_inbound_audio() -> None:
     """Unit test: inbound audio is truncated so cassettes stay small — both provider shapes."""
     long_audio = 'A' * 400  # far longer than the retained byte budget
     openai_frame = {'type': 'response.output_audio.delta', 'delta': long_audio}
+    # GPT-Live names the same thing differently, and streams a continuous track, so an untruncated
+    # Live cassette is the largest of the three.
+    live_frame = {'type': 'session.output_audio.delta', 'delta': long_audio}
     gemini_frame = {'serverContent': {'modelTurn': {'parts': [{'inlineData': {'data': long_audio}}]}}}
     # `inlineData` present but without string `data` (e.g. metadata-only) is walked through untouched.
     gemini_no_data = {'serverContent': {'modelTurn': {'parts': [{'inlineData': {'mimeType': 'audio/pcm'}}]}}}
-    fake_ws = _FakeWebSocket([json.dumps(openai_frame), json.dumps(gemini_frame), json.dumps(gemini_no_data)])
+    fake_ws = _FakeWebSocket(
+        [json.dumps(openai_frame), json.dumps(live_frame), json.dumps(gemini_frame), json.dumps(gemini_no_data)]
+    )
     cassette = RealtimeCassette()
     recording = RecordingWebSocket(fake_ws, cassette)
 
     await recording.recv()
     await recording.recv()
     await recording.recv()
+    await recording.recv()
 
-    openai_stored, gemini_stored, no_data_stored = cassette.interactions
+    openai_stored, live_stored, gemini_stored, no_data_stored = cassette.interactions
     assert isinstance(openai_stored, CassetteMessage) and isinstance(gemini_stored, CassetteMessage)
+    assert isinstance(live_stored, CassetteMessage)
     assert 0 < len(openai_stored.data['delta']) < len(long_audio)
+    assert 0 < len(live_stored.data['delta']) < len(long_audio)
     stored_gemini = gemini_stored.data['serverContent']['modelTurn']['parts'][0]['inlineData']['data']
     assert 0 < len(stored_gemini) < len(long_audio)
     assert isinstance(no_data_stored, CassetteMessage)

@@ -97,6 +97,7 @@ from .profiles import RealtimeModelProfile
 from .settings import TurnDetection
 
 if TYPE_CHECKING:
+    from openai import AsyncOpenAI
     from websockets.asyncio.client import ClientConnection
 
 
@@ -120,14 +121,19 @@ class _ReconnectableOpenAIProtocolConnection(Protocol):
 _ConnectionT = TypeVar('_ConnectionT', bound=_ReconnectableOpenAIProtocolConnection)
 
 
-def realtime_websocket_url(base_url: str, *, model: str | None = None, call_id: str | None = None) -> str:
+def realtime_websocket_url(
+    base_url: str, *, model: str | None = None, call_id: str | None = None, path: str = 'realtime'
+) -> str:
     """Derive the realtime WebSocket URL from a provider's HTTP base URL.
 
-    Swaps the HTTP scheme for the WebSocket one and appends the `realtime` path, so the default
-    OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The
-    path lands *before* any query string the base URL carries, rather than being appended after it
-    into the wrong endpoint. A fragment is likewise split off first, so it can't swallow the path
-    into the client-side part of the URL. `model`/`call_id` are merged in by `with_realtime_query`.
+    Swaps the HTTP scheme for the WebSocket one and appends `path`, so the default OpenAI base URL
+    `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The path lands *before*
+    any query string the base URL carries, rather than being appended after it into the wrong
+    endpoint. A fragment is likewise split off first, so it can't swallow the path into the
+    client-side part of the URL. `model`/`call_id` are merged in by `with_realtime_query`.
+
+    `path` exists because GPT-Live is a different protocol on the same host, reached at
+    `live/sessions`; everything about deriving the URL from the base URL is identical.
     """
     url, _, fragment = base_url.partition('#')
     url, _, query = url.partition('?')
@@ -136,7 +142,7 @@ def realtime_websocket_url(base_url: str, *, model: str | None = None, call_id: 
         url = 'wss://' + url[len('https://') :]
     elif url.startswith('http://'):
         url = 'ws://' + url[len('http://') :]
-    url = f'{url}/realtime'
+    url = f'{url}/{path.strip("/")}'
     url = f'{url}?{query}' if query else url
     url = f'{url}#{fragment}' if fragment else url
     return with_realtime_query(url, model=model, call_id=call_id)
@@ -843,6 +849,26 @@ class RealtimeHandshakeError(Exception):
         self.error = error
         """The server's `error` payload when it rejected the session, otherwise a description of the failure."""
         super().__init__(_error_message(error))
+
+
+async def openai_websocket_auth_headers(client: AsyncOpenAI) -> dict[str, str]:
+    """Resolve the `Authorization` header for a raw OpenAI WebSocket handshake.
+
+    The handshake bypasses the SDK's request path, which is where `AsyncOpenAI` resolves anything but
+    a static key, so both dynamic forms are resolved here. Shared by the Realtime and GPT-Live
+    transports, which authenticate identically even though their protocols have nothing else in
+    common.
+    """
+    # A `workload_identity` client leaves `client.api_key` set to a placeholder string and exchanges
+    # it for a real token per request; sending the placeholder would fail the handshake with an
+    # opaque auth error.
+    if (workload_identity := client._workload_identity_auth) is not None:  # pyright: ignore[reportPrivateUsage]
+        return {'Authorization': f'Bearer {await workload_identity.get_token_async()}'}
+    # An async `api_key` provider leaves `client.api_key` empty until resolved. The SDK's own refresh
+    # is a no-op returning the static key when no provider is configured, so the handshake stays
+    # byte-identical in that case.
+    api_key = await client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
+    return {'Authorization': f'Bearer {api_key}'}
 
 
 @contextmanager

@@ -89,6 +89,7 @@ from ._openai_protocol import (
     loads_obj,
     map_connect_errors,
     map_event,
+    openai_websocket_auth_headers,
     realtime_websocket_url,
     resolve_base_turn_detection,
     resolve_transcription_model,
@@ -1186,19 +1187,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         # `model_settings` lets a provider vary auth by session (e.g. Azure Voice Live uses a different
         # resource key); OpenAI's auth doesn't depend on it.
         del model_settings
-        # The raw WebSocket handshake bypasses the SDK's request path, which is where `AsyncOpenAI`
-        # resolves anything but a static key, so both dynamic forms are resolved the same way here.
-        client = self._provider.client
-        # A `workload_identity` client leaves `client.api_key` set to a placeholder string and
-        # exchanges it for a real token per request; sending the placeholder would fail the handshake
-        # with an opaque auth error.
-        if (workload_identity := client._workload_identity_auth) is not None:  # pyright: ignore[reportPrivateUsage]
-            return {'Authorization': f'Bearer {await workload_identity.get_token_async()}'}
-        # An async `api_key` provider leaves `client.api_key` empty until resolved. The SDK's own
-        # refresh is a no-op returning the static key when no provider is configured, so the handshake
-        # stays byte-identical in that case.
-        api_key = await client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
-        return {'Authorization': f'Bearer {api_key}'}
+        return await openai_websocket_auth_headers(self._provider.client)
 
     def _connection_class(self, model_settings: OpenAIRealtimeModelSettings) -> type[OpenAIRealtimeConnection]:
         """The connection class for a session, given its settings.
