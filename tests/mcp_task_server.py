@@ -8,9 +8,11 @@ except ImportError:
     # FastMCP 4 moved `TaskConfig`.
     from fastmcp.utilities.tasks import TaskConfig
 
-# `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a declaration.
+# `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a
+# declaration. It needs a value rather than a bare annotation: this module registers the extension
+# at import, and an annotation alone leaves the name unbound at that use.
 if TYPE_CHECKING:
-    TasksExtension: Any
+    TasksExtension: Any = None
 else:
     try:
         from fastmcp_tasks import TasksExtension
