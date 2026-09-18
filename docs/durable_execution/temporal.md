@@ -427,14 +427,17 @@ async def post_chat(request: Request) -> Response:
 
 The workflow is the queue. Starting it hands the run to a Temporal worker, and the HTTP request is only a subscriber to what that worker produces: it can go away without touching the run, Temporal retries the run's activities on its own, and the run survives the process that started it.
 
-That also means the frontend can come back. Store the workflow ID alongside the conversation, and a second endpoint reattaches a reconnecting client to a run it did not start:
+That also means the frontend can come back. Store the workflow ID alongside the conversation — under the same ownership you already enforce on the conversation itself — and a second endpoint reattaches a reconnecting client to a run it did not start:
 
 ```python {title="temporal_workflow_streams_ui_reattach.py" test="skip" lint="skip"}
 async def get_chat(request: Request) -> Response:
-    workflow_id = request.path_params['workflow_id']
-    handle = client.get_workflow_handle(workflow_id)
+    # Resolve the run through the conversation the caller owns. A workflow ID taken
+    # straight off the path would let anyone replay anyone else's conversation, since
+    # a Temporal handle carries no authorization of its own.
+    chat = await load_chat(request.path_params['chat_id'], user=request.state.user)
+    handle = client.get_workflow_handle(chat.workflow_id)
 
-    adapter = VercelAIAdapter(agent=agent, run_input=await load_run_input(workflow_id))
+    adapter = VercelAIAdapter(agent=agent, run_input=chat.run_input)
     events = durability.stream_agent_events(client, handle, output_type=str)
     return adapter.streaming_response(adapter.transform_stream(events))
 ```

@@ -222,8 +222,15 @@ async def test_a_late_consumer_still_gets_the_whole_run(client: Client) -> None:
             task_queue=TASK_QUEUE,
         )
         stream_client = WorkflowStreamClient(handle, client=client)
-        while await stream_client.get_offset() < 10:
-            await anyio.sleep(0.05)
+        try:
+            # Bounded: a workflow that fails never reaches this offset, and an unbounded wait would
+            # hang the run rather than report it.
+            with anyio.fail_after(30):
+                while await stream_client.get_offset() < 10:
+                    await anyio.sleep(0.05)
+        except TimeoutError:  # pragma: no cover
+            await handle.result()  # surfaces the workflow's own failure, if that's why we waited
+            raise
 
         received = await _collect(
             _durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
