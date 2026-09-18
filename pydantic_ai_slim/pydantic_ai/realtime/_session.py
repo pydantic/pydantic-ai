@@ -867,7 +867,6 @@ class RealtimeSession:
             self._connection.set_message_history(self.all_messages)
 
         self._session_instrumentation.start_session_span()
-        self._start_pump()
 
         return self
 
@@ -908,11 +907,11 @@ class RealtimeSession:
             self._pending_messages.close()
             self._closed = True
             self._finish_taps(discard_pending=True)
-            # The pump runs from `__aenter__` on. Cancelled before state is settled below so it can't
-            # mutate state mid-settlement; the task is awaited together with the rest afterwards.
-            pump_task = self._pump_task
-            assert pump_task is not None
-            pump_task.cancel()
+            # A session closed without ever sending, subscribing, or iterating never started one.
+            # Cancelled before state is settled below so it can't mutate state mid-settlement; the
+            # task is awaited together with the rest afterwards.
+            if self._pump_task is not None:
+                self._pump_task.cancel()
             if (early_error := self._closing_error or self._pump_error) is not None and (
                 chat_span := self._session_instrumentation.chat_span
             ) is not None:
@@ -951,10 +950,10 @@ class RealtimeSession:
             raise error
 
     async def _finish_teardown(self) -> None:
-        # The pump runs from `__aenter__` on, so there is always at least one task to drain.
-        pump_task = self._pump_task
-        assert pump_task is not None
-        await cancel_and_drain(*self._background_tasks, pump_task, msg='Realtime session exited')
+        # A session closed without ever sending, subscribing, or iterating started no pump, so there
+        # may be nothing here but the background tasks.
+        pump_tasks = (self._pump_task,) if self._pump_task is not None else ()
+        await cancel_and_drain(*self._background_tasks, *pump_tasks, msg='Realtime session exited')
 
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
         # in flight), with the error — if any — already recorded on it before settlement.
@@ -1803,6 +1802,11 @@ class RealtimeSession:
         self._ensure_not_closed()
         if (self._pump_finished or self._receive_ending) and (error := self._first_undelivered_error()) is not None:
             self._raise_delivered(error)
+        # Started here rather than in `__aenter__` so a session driven by `send()` alone still notices
+        # a receive-side failure, without the pump publishing to taps that do not exist yet. Entering
+        # eagerly discarded provider output produced before the caller's first `stream_audio()` or
+        # `stream_transcripts()`, which is the order every docs example uses.
+        self._start_pump()
 
     def _error_was_delivered(self, error: BaseException) -> bool:
         return any(delivered is error for delivered in self._delivered_errors)

@@ -3552,12 +3552,15 @@ async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
         tool_manager=make_tool_manager(runner),
     )
     await session.__aenter__()
+    # A taps-only consumer, which is what this test is about: subscribing is what starts receiving.
+    transcripts = session.stream_transcripts()
     await asyncio.wait_for(pump_cancelled.wait(), timeout=_LIVENESS_TIMEOUT)
     assert session._pump_task is not None and not session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(ValueError, match='tool exploded'):
         await session.send('x')
     await session.close()
+    assert transcripts is not None
 
     response, request = session.all_messages()
     assert isinstance(response, ModelResponse)
@@ -3767,6 +3770,9 @@ async def test_receive_failure_is_delivered_by_next_send() -> None:
     """A send-only bridge exits when the already-ended receive side failed."""
     session = RealtimeSession(ExplodingConnection())
     await session.__aenter__()
+    # The first send is what starts receiving, so the failure it lets through is delivered to the next
+    # one: there is nothing for an earlier send to have surfaced, since nothing had been received yet.
+    await session.send_audio(b'first microphone chunk')
     assert session._pump_task is not None  # pyright: ignore[reportPrivateUsage]
     await session._pump_task  # pyright: ignore[reportPrivateUsage]
 
@@ -3776,12 +3782,12 @@ async def test_receive_failure_is_delivered_by_next_send() -> None:
     assert session.result is None
 
 
-async def test_session_entry_starts_receive_pump() -> None:
-    """Entering alone is enough to observe a fatal provider frame at context exit."""
+async def test_send_only_session_surfaces_a_receive_failure_at_exit() -> None:
+    """A bridge that only sends still reports what ended the session, with no view and no iterator."""
     session = RealtimeSession(ExplodingConnection())
     with pytest.raises(RuntimeError, match='connection dropped'):
         async with session:
-            await asyncio.sleep(0)
+            await session.send_audio(b'microphone chunk')
     await session.close()
     assert session.result is None
 
@@ -8851,3 +8857,31 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
         assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
         assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
         assert len(conn.sent) == 1
+
+
+async def test_provider_output_reaches_a_view_subscribed_after_entry() -> None:
+    """Receiving must not start before the caller has had a chance to subscribe.
+
+    Every docs example creates its views inside the session block, so a pump running from `__aenter__`
+    would publish the model's opening audio to no one and drop it: taps only ever receive what is
+    emitted after they subscribe.
+    """
+    chunks = [b'g1', b'g2', b'g3']
+    conn = FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks] + [ResponseDone()])
+    played: list[bytes] = []
+
+    async with RealtimeSession(conn) as session:
+        for _ in range(10):  # a caller that takes a few loop turns to get to its first subscription
+            await asyncio.sleep(0)
+        view = session.stream_audio()
+
+        async def drain() -> None:
+            async for chunk in view:
+                played.append(chunk)
+
+        draining = asyncio.create_task(drain())
+        async for _ in session:
+            pass
+        await draining
+
+    assert played == chunks
