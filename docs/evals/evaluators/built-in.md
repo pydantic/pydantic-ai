@@ -398,7 +398,7 @@ may contain at most 20 levels.
 
 ### HasMatchingSpan
 
-Check if OpenTelemetry spans match a query (requires Logfire configuration).
+Check if OpenTelemetry spans match a query (requires the `logfire` SDK to be configured; no Pydantic Logfire account is needed).
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan

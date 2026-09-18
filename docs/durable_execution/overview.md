@@ -10,7 +10,7 @@ Pydantic AI allows you to build durable agents that can preserve their progress 
 !!! note "Durability is not storage"
     A durable engine keeps one run alive across crashes and restarts. It does not store your chat threads: saving a conversation and picking it up later is a different problem with a much lighter answer, laid out in [Storage](../storage.md).
 
-Pydantic AI officially supports five durable execution solutions, co-maintained by the Pydantic and vendor teams:
+Pydantic AI supports seven durable execution solutions, plus a [builder](./backends.md) for any other engine. Five are co-maintained by the Pydantic and vendor teams:
 
 - [Temporal](./temporal.md)
 - [DBOS](./dbos.md)

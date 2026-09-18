@@ -40,7 +40,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 **Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), in [GitHub Actions](https://pydantic.dev/docs/ai/harness/gh-aw/), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](image-generation.md) and [embeddings](embeddings.md) come in the same box.
 
-**[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md): [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), [planning](https://pydantic.dev/docs/ai/harness/planning/), [context compaction](https://pydantic.dev/docs/ai/harness/compaction/), [step persistence](https://pydantic.dev/docs/ai/harness/step-persistence/), and a [trajectory judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/), up to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
 ## What are you building?
 
@@ -161,9 +161,59 @@ From simple typed data extraction to complex, long-running multi-agent collabora
             return result.output
     ```
 
-    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](durable_execution/overview.md) integrations besides.
+    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda durable functions, Kitaru, and Airflow](durable_execution/overview.md) integrations besides.
 
     **Build this →** [Durable Execution](durable_execution/overview.md)
+
+=== "Graph workflow" {#graph-workflow}
+
+    When the control flow *around* your agents is the hard part, the [graph builder](graph/builder/index.md) makes it explicit and typed: steps, decisions, parallel fan-out, and joins over state every step can read and write.
+
+    ```bash
+    pip/uv-add pydantic-graph
+    ```
+
+    ```python {title="review_pipeline.py"}
+    from dataclasses import dataclass
+
+    from pydantic_graph import GraphBuilder, StepContext
+
+
+    @dataclass
+    class Progress:
+        drafts: int = 0
+
+
+    async def main():
+        g = GraphBuilder(state_type=Progress, output_type=str)
+
+        @g.step
+        async def draft(ctx: StepContext[Progress, None, None]) -> str:
+            """Write the first version. An agent run goes here."""
+            ctx.state.drafts += 1
+            return 'a brief on embeddings'
+
+        @g.step
+        async def review(ctx: StepContext[Progress, None, str]) -> str:
+            """Check the draft. A second agent, or plain Python."""
+            return f'reviewed: {ctx.inputs}'
+
+        g.add(
+            g.edge_from(g.start_node).to(draft),
+            g.edge_from(draft).to(review),
+            g.edge_from(review).to(g.end_node),
+        )
+
+        result = await g.build().run(state=Progress())
+        print(result)
+        #> reviewed: a brief on embeddings
+    ```
+
+    _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+    Every step declares what it takes and what it returns, so a graph whose edges do not line up is a type error rather than a runtime surprise. Steps hold whatever you like, including [agent runs](agent.md); a [decision node](graph/builder/decisions.md) can send a draft back around until it passes.
+
+    **Build this →** [Graph Builder](graph/builder/index.md), or the [original `BaseNode` API](graph.md)
 
 === "Realtime voice" {#realtime-voice}
 
@@ -222,6 +272,35 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Image Generation](image-generation.md)
 
+=== "Terminal chat" {#terminal-chat}
+
+    Chat with any model straight from your shell, with no code and no project to set up:
+
+    ```bash
+    uvx clai -m anthropic:claude-fable-5
+    ```
+
+    Then point the same command at an agent you wrote, tools, capabilities, and all, by passing `module:variable`:
+
+    ```python {title="research.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import WebSearch
+
+    agent = Agent(
+        'openai:gpt-5.6-sol',
+        instructions='You are a research assistant. Cite your sources.',
+        capabilities=[WebSearch()],
+    )
+    ```
+
+    ```bash
+    clai -a research:agent
+    ```
+
+    Tool calls appear as they run, `/usage` prints what the session cost, and [`clai web`](web.md) serves the same agent as a browser chat. Any agent can open its own session instead, with [`agent.to_cli_sync()`](cli.md#custom-agents).
+
+    **Build this →** [CLI](cli.md), and [Web Chat UI](web.md) for the browser
+
 !!! tip "No API key yet?"
     You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
 
@@ -237,7 +316,9 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
 
-- **Durable execution.** First-party, co-maintained [durable execution](durable_execution/overview.md) on Temporal, DBOS, Prefect, and Restate, plus external SDK integrations for Kitaru and Airflow. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** First-party, co-maintained [durable execution](durable_execution/overview.md) on Temporal, DBOS, Prefect, Restate, and AWS Lambda durable functions, plus external SDK integrations for Kitaru and Airflow. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
+
+- **Coming from another framework?** The [comparisons](comparisons/index.md) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more.
 
 Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
 
