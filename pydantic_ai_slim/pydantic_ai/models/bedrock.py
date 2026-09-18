@@ -694,7 +694,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     )
                 if profile.get('bedrock_thinking_variant') != 'anthropic':
                     raise UserError(f'Bedrock does not support thinking and output tools at the same time. {remedy}')
-                if profile.get('bedrock_supports_adaptive_thinking', False):
+                if profile.get('bedrock_supports_adaptive_thinking', False) and _supports_tool_forcing(profile):
                     remedy += f' Alternatively, `{_ADAPTIVE_THINKING_SETTING}` supports output tools.'
                 raise UserError(
                     f'Bedrock does not support extended thinking and output tools at the same time. {remedy}'
