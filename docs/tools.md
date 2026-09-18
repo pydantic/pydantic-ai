@@ -370,7 +370,28 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
-### Enum options {#enum-options}
+### Docstrings {#docstrings}
+
+A docstring written under a parameter, a field, or an enum member is the natural place to say what it means,
+but not every one of them reaches the model:
+
+| Written under | Describes | Sent to the model |
+| --- | --- | --- |
+| a tool function | the tool | always |
+| an `Args:` entry in a tool function's docstring | that parameter | always |
+| a class used as a tool parameter or [output type](output.md) | that object | always |
+| a field of a `dataclass` or `TypedDict` | that field | tool parameters only |
+| a field of a Pydantic model | that field | with `use_attribute_docstrings` |
+| an `Enum` member | that option | with [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] |
+
+A tool's schema is built with Pydantic's
+[`use_attribute_docstrings`](https://docs.pydantic.dev/latest/api/config/#pydantic.config.ConfigDict.use_attribute_docstrings)
+turned on, which is where a `dataclass` or `TypedDict` field's docstring comes from. A Pydantic model brings its
+own config, which wins, so turn it on there — `class Ticket(BaseModel, use_attribute_docstrings=True)` — to have
+its field docstrings described wherever the model is used, including as an output type. A description written as
+`Field(description=...)` needs no config and takes precedence over the docstring.
+
+#### Enum options {#enum-options}
 
 An `Enum` parameter reaches the model as the list of its values, which says what the options are but not what
 they mean. Mix [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] into the enum to send the
@@ -437,19 +458,17 @@ agent.run_sync('hello', model=FunctionModel(print_schema))
 
 _(This example is complete, it can be run "as is")_
 
-This is the enum counterpart to Pydantic's
-[`use_attribute_docstrings`](https://docs.pydantic.dev/latest/api/config/#pydantic.config.ConfigDict.use_attribute_docstrings)
-model config. The two are expressed differently because an `Enum` has no `model_config` to carry a flag, and
+`Enum` is the one case that needs a mix-in rather than a config flag: it has no `model_config` to carry one, and
 cannot carry a plain class attribute either — annotated or not, any assigned value becomes a member — so a base
-class is the only marker left.
+class is the only marker left. Without it the docstrings are ignored and the schema is exactly the one Pydantic
+generates on its own, so opting an enum in is the only thing that changes what a model sees.
 
-Without the mix-in the docstrings are ignored and the schema is exactly the one Pydantic generates on its own,
-so opting an enum in is the only thing that changes what a model sees. Members without a docstring keep a bare
-`const`, and a docstring under an alias (`urgent = 'high'` beside `high = 'high'`) describes the option it was
-written for. A `Literal` has nowhere to write a docstring, so it is unaffected.
+Members without a docstring keep a bare `const`, and a docstring under an alias (`urgent = 'high'` beside
+`high = 'high'`) describes the option it was written for. A `Literal` has nowhere to write a docstring, so it is
+unaffected.
 
-Wherever Pydantic AI describes an opted-in enum to a model — a tool parameter, an [output type](output.md), or
-a field of a model of your own — the descriptions come along.
+Wherever Pydantic AI describes an opted-in enum to a model — a tool parameter, an [output type](output.md), or a
+field of a model of your own — the descriptions come along.
 
 
 !!! tip "Debugging Tool Calls"

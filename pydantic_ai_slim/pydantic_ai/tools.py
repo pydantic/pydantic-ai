@@ -21,6 +21,7 @@ from ._deferred import (
     ToolApproved as ToolApproved,
     ToolDenied as ToolDenied,
 )
+from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
 from .function_signature import FunctionSignature
@@ -279,10 +280,9 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         # `use_attribute_docstrings` config: that config is pushed while the *core* schema is built and nothing
         # pushes it while the JSON schema is generated, so an enum reached from a tool's parameters never sees it
         # even though `_function_schema` sets it. A base class is also the only marker an `Enum` can carry — a
-        # plain class attribute, annotated or not, becomes a member — so the marker is read off the class rather
-        # than passed in.
+        # plain class attribute, annotated or not, becomes a member — so the opt-in is read off the class itself.
         json_schema = super().enum_schema(schema)
-        if not getattr(schema['cls'], '__use_enum_member_docstrings__', False):
+        if not issubclass(schema['cls'], UseEnumMemberDocstrings):
             return json_schema
         # A docstring is read under the name it was declared under, but an alias (`urgent = 'high'` beside
         # `high = 'high'`) is the same member, so the schema only ever names the canonical one. Resolve the

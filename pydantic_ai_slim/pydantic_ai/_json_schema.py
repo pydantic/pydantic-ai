@@ -30,8 +30,6 @@ class UseEnumMemberDocstrings:
     See [enum options](../tools.md#enum-options) for an example.
     """
 
-    __use_enum_member_docstrings__ = True
-
 
 @dataclass(init=False)
 class JsonSchemaTransformer(ABC):
