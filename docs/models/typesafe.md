@@ -270,9 +270,10 @@ Write the output type's docstring as the action it is — "Triage a support tick
 
 !!! note "What the numbers on this page rest on"
     One set of 120 support tickets, labelled by a routing rule the maintainers wrote, and used to shape the
-    wording and pick the threshold as well as to report them: one domain, no held-out set. They show the mappings
-    work and roughly how well on that task, not how Jev will do on yours. Measure on your own labelled examples
-    before trusting a threshold, a hand-off rate or an accuracy figure.
+    wording and pick the threshold as well as to report them: one domain, no held-out set, and at that size every
+    accuracy comparison between models overlaps at 95%; the latency gap does not. They show the mappings work and
+    roughly how well on that task, not how Jev will do on yours. Measure on your own labelled examples before
+    trusting a threshold, a hand-off rate or an accuracy figure.
 
 ## Ask one thing per field
 
