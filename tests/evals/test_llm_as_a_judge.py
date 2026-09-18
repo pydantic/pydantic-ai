@@ -225,12 +225,9 @@ async def test_judge_g_eval_without_text_support_rejects_an_invalid_score():
 
 async def test_judge_g_eval_without_text_support_rejects_too_many_score_levels():
     """An oversized rubric fails before the grading agent can make a request."""
-    request_made = False
 
     async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal request_made
-        request_made = True
-        return ModelResponse(parts=[])
+        raise AssertionError('request should not be made')  # pragma: no cover
 
     model = FunctionModel(answer, profile={'supports_text_output': False})
     with pytest.raises(
@@ -244,25 +241,18 @@ async def test_judge_g_eval_without_text_support_rejects_too_many_score_levels()
             'Clear output.', 'clarity', ['Read it.'], score_range=(0, 20), model=model, allow_reasonless=True
         )
 
-    assert request_made is False
-
 
 async def test_public_judge_helpers_require_a_reason():
     """The existing helper result types stay strict; evaluators own reasonless results."""
-    request_made = False
 
     async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal request_made
-        request_made = True
-        return ModelResponse(parts=[])
+        raise AssertionError('request should not be made')  # pragma: no cover
 
     model = FunctionModel(answer, profile={'supports_text_output': False})
     with pytest.raises(UserError, match='Use the `LLMJudge` evaluator'):
         await judge_output('Clear output.', 'Content is clear.', model=model)
     with pytest.raises(UserError, match='Use the `GEval` evaluator'):
         await judge_g_eval('Clear output.', 'clarity', ['Read it.'], model=model)
-
-    assert request_made is False
 
 
 @pytest.mark.parametrize('wrapped', [False, True])

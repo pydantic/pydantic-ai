@@ -55,7 +55,13 @@ with try_import() as evals_imports_successful:
 with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
-    from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel, TypeSafeModelSettings
+    from pydantic_ai.models.typesafe import (
+        ToolCallProposed,
+        TypeSafeModel,
+        TypeSafeModelSettings,
+        TypeSafeStreamedResponse,
+        _fields,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
 pytestmark = [
@@ -1301,6 +1307,30 @@ async def test_streaming_gives_the_whole_answer_as_one_event(allow_model_request
     assert response.model_name == 'jev-latest'
     assert response.provider_details == {'confidence': {'response': 0.8}, 'probabilities': {}, 'scores': {}}
     assert response.usage == RequestUsage(input_tokens=10)
+
+
+def test_fields_resolves_union_and_plain_properties():
+    """Schema resolution covers properties both with and without `anyOf`."""
+    output_tool = ToolDefinition(
+        name='final_result',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'plain': {'type': 'boolean'},
+                'union': {'anyOf': [{'type': 'string'}, {'type': 'null'}]},
+            },
+        },
+    )
+
+    assert _fields(output_tool) == {
+        'plain': {'type': 'boolean'},
+        'union': {'anyOf': [{'type': 'string'}, {'type': 'null'}]},
+    }
+
+
+def test_streamed_response_repr():
+    streamed = TypeSafeStreamedResponse(ModelRequestParameters(), ModelResponse(parts=[]))
+    assert repr(streamed).startswith('TypeSafeStreamedResponse(')
 
 
 async def test_a_streamed_fallback_takes_the_proposed_step(allow_model_requests: None):
