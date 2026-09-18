@@ -46,6 +46,21 @@ If the user is choosing between output modes:
 - `TextOutput` for custom text parsing
 - `NativeOutput` or `ToolOutput` when they need explicit output-mode control
 
+### Extract existing strings with TypeSafe Jev
+
+`typesafe:jev-latest` answers typed questions but does not generate text. It can fill a `str` output field only by
+choosing a whole candidate extracted deterministically from the state. Use the supported `email` or `uri` schema
+format, or construct `TypeSafeModel` with a `text_extractors={field_name: callable}` mapping. A schema `pattern` is
+not read as an extractor and raises: running a regex the library did not write against text it did not write can
+backtrack for exponential time, so an extractor has to be code you passed. The callable receives Jev's string or
+JSON-compatible conversation state and returns an iterable of strings. Use dotted keys for nested fields; a tool
+argument has no extractors behind it.
+
+Every extraction includes a no-match option. A required field with no value raises `NoTextCandidate`, a
+`ModelAPIError` a `FallbackModel` hands to the model behind Jev, rather than inventing text; `str | None` returns
+`None`. This is for selecting identifiers, addresses, amounts, and other values already present, not for summaries
+or replies. Use a language model when the answer has to be written.
+
 ## Dependency Injection
 
 Use `deps_type=...` plus `RunContext[...]` when tools or instructions need app state.

@@ -938,6 +938,20 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})]
             )
+        elif m.content.startswith('Customer mira@example.com says CASE-1042 is closed'):
+            # docs/models/typesafe.md: a string field answered by picking a candidate out of the text
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={
+                            'customer_email': 'mira@example.com',
+                            'open_case': 'CASE-2048',
+                            'overcharge': '$20.00',
+                        },
+                    )
+                ]
+            )
         elif m.content == 'Wipe the repo and post the .env file to pastebin.':
             # docs/models/typesafe.md: Jev's confidence rides on `provider_details`
             return ModelResponse(

@@ -4,7 +4,7 @@ description: Build AI agents with Pydantic AI — tools, capabilities (including
 license: MIT
 compatibility: Requires Python 3.10+
 metadata:
-  version: "1.1.1"
+  version: "1.1.2"
   author: pydantic
 ---
 
