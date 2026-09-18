@@ -36,7 +36,9 @@ def _chunk_services(*, value: str, account: str = _ACCOUNT) -> list[str]:
         return []
     match = re.fullmatch(r'clai-chunks-v1:([0-9a-f]{32}):([1-9][0-9]{0,3})', value)
     if match is None:
-        raise UserError('Stored credentials are invalid. Reconnect through /model; for Codex run /login openai-codex.')
+        raise UserError(
+            'Stored credentials are invalid. Reconnect through /add_model; for Codex run /login openai-codex.'
+        )
     generation, count = match.groups()
     # Separate services avoid Windows keyring's multi-account collision handling.
     return [f'{_SERVICE}.{account}.{generation}.{index}' for index in range(int(count))]
@@ -115,7 +117,7 @@ def _load_keyring(*, account: str = _ACCOUNT) -> str | None:
         chunk = keyring.get_password(service, account)
         if chunk is None:
             raise UserError(
-                'Stored credentials are incomplete. Reconnect through /model; for Codex run /login openai-codex.'
+                'Stored credentials are incomplete. Reconnect through /add_model; for Codex run /login openai-codex.'
             )
         chunks.append(chunk)
     return ''.join(chunks)

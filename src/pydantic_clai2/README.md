@@ -132,7 +132,11 @@ edit saves and applies immediately, the same as `/set KEY VALUE`.
 
 ## Models and their settings
 
-`/model` opens a searchable provider list, then a model picker for that provider.
+`/model` selects from models you have already added. Its flat, searchable picker
+and Tab completion use only that saved list. `/model NAME` switches directly to
+an added model. The currently configured model is kept in the list when upgrading.
+
+`/add_model` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
 `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, and `gpt-6-astra`; availability
@@ -143,13 +147,13 @@ filtered to providers Pydantic AI can run, plus core's own model list, plus
 whatever you have set now. The left side shows model names and marks the current
 model; token counts stay in the details. The right side shows the provider, context window,
 prices, and any settings you have saved for that model. Type to filter. Enter
-makes it the model for the next prompt. `Ctrl+S` opens that model's settings:
+saves it in your model list and makes it the model for the next prompt. `Ctrl+S` opens that model's settings:
 `max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, `timeout`, the two
 penalties, `parallel_tool_calls`, `thinking`, and `service_tier`. They are
 saved per model and passed to every run with that model. Unsupported settings
-may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
+may be ignored or rejected by the provider; select only settings your provider supports. `/add_model NAME` sets the model without the menu.
 
-Tab completes setting names, boolean values, and model names from Pydantic AI's
+For `/set` and `/add_model`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
 which core supports but does not currently include in that model catalog. Complete
 the provider prefix, then enter the model identifier; suggestions do not establish
@@ -219,7 +223,7 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set`, `/model`, `/help`, `/new`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set`, `/model`, `/add_model`, `/help`, `/new`, `/exit`, `/config`,
 `/plugins`, `/usage`, `/cost`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
@@ -261,7 +265,7 @@ with the message counts before and after and an estimate of the tokens saved.
 An empty conversation, or one that fits inside the protected tail, says so and
 sends nothing.
 
-The window comes from genai-prices, the same catalog the `/model` menu shows
+The window comes from genai-prices, the same catalog the `/add_model` menu shows
 context sizes from. A model it does not list (`test`, a local endpoint) is
 assumed to have 200,000 tokens, the harness default. To change any of this,
 redeclare the plugin with your own settings; `/plugins disable compaction`
@@ -516,11 +520,11 @@ See `THIRD_PARTY_NOTICES.md` for attribution.
 
 ## vllm connection
 
-Open `/model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).
+Open `/add_model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).
 
 ## openrouter connection
 
-Open `/model`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/add_model`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -558,5 +562,5 @@ overwrite each other's key edits. The lock file contains no credentials.
 
 Existing connections with inline credentials, manually entered connection keys,
 and browser logins remain unchanged. To switch an existing connection to a
-reference, reconfigure it through `/model` and select a saved key. Changes do not
+reference, reconfigure it through `/add_model` and select a saved key. Changes do not
 alter an already running request or revoke credentials at the provider.

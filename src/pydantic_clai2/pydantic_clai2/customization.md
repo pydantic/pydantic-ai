@@ -262,8 +262,9 @@ not currently receive CommandContext from PluginHost; do not invent host.context
 ## Custom models and providers
 
 A model identifier accepted by an existing core provider can be selected with
-/model PROVIDER:NAME or /set model PROVIDER:NAME even if it is absent from the
-catalog. Install optional provider dependencies in the same environment as CLAI
+/add_model PROVIDER:NAME or /set model PROVIDER:NAME even if it is absent from the
+catalog. `/model` and its Tab suggestions select only previously added models.
+Adding a model also selects it and saves it for later sessions. Install optional provider dependencies in the same environment as CLAI
 and supply credentials via the provider's supported environment variables.
 
 For an OpenAI-compatible endpoint, write a Python launcher:

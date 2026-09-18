@@ -476,11 +476,11 @@ A plugin that reads the history gets a `Transcript` by default; pass
 
 ## vllm connection
 
-Open `/model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+Open `/add_model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
 
 ## openrouter connection
 
-Open `/model`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/add_model`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -518,5 +518,14 @@ overwrite each other's key edits. The lock file contains no credentials.
 
 Existing connections with inline credentials, manually entered connection keys,
 and browser logins remain unchanged. To switch an existing connection to a
-reference, reconfigure it through `/model` and select a saved key. Changes do not
+reference, reconfigure it through `/add_model` and select a saved key. Changes do not
 alter an already running request or revoke credentials at the provider.
+
+### Adding and selecting models
+
+`/add_model` opens the provider catalog, connection setup, and per-model settings.
+`/add_model PROVIDER:NAME` adds a model directly. Adding a model also selects it
+for the next prompt. `/model` is a flat picker of added models, and `/model NAME`
+selects one without the menu. Its Tab suggestions contain only added models.
+The list persists across sessions. The currently configured model is retained
+when upgrading; `/set model NAME` also saves the model in this list.

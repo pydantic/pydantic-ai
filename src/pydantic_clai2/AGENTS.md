@@ -109,7 +109,7 @@ summary failure; other exceptions propagate.
 3. Fire it from exactly one place in the shell.
 4. Document it in `PLUGINS.md` in the table it belongs to.
 
-## The `/plugins`, `/set`, and `/model` menus
+## The `/plugins`, `/set`, `/model`, and `/add_model` menus
 
 Built on termflow's `MenuBuilder` (and `TextInputBuilder` for typed values),
 exactly like Code Puppy's `/agent`, `/mcp`, `/set`, and `/model` menus:
@@ -179,7 +179,8 @@ the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
 | `screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
-| `model_menu.py` | `/model`: the picker, `ModelSettingsSource`, `run_model_flow` |
+| `model_menu.py` | `/add_model`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
+| `model_picker.py` | `/model`: selection and completion of saved models |
 | `model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |

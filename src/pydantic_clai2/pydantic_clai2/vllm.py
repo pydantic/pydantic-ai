@@ -79,11 +79,11 @@ def model(name: str) -> OpenAIChatModel:
     """Resolve a saved vLLM selection through core, without global API-key fallbacks."""
     raw = load_codex_credentials(account='vllm')
     if raw is None:
-        raise UserError('Connect first through /model > vllm.')
+        raise UserError('Connect first through /add_model > vllm.')
     try:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
-        raise UserError('Stored connection is invalid. Reconfigure through /model > vllm.') from None
+        raise UserError('Stored connection is invalid. Reconfigure through /add_model > vllm.') from None
     provider = VLLMProvider(
         base_url=api_url(connection.url), api_key=resolve_key(token=connection.token) or 'not-required'
     )

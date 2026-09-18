@@ -1,4 +1,4 @@
-"""Models the `/model` menu can offer, with what is known about each.
+"""Models the `/add_model` menu can offer, with what is known about each.
 
 genai-prices is the first source. Add another (models.dev, a provider API) as one more
 function returning `CatalogModel`s and merge it in `catalog()`.

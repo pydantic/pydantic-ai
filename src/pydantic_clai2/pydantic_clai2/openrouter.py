@@ -73,11 +73,11 @@ def model(name: str) -> OpenRouterModel:
     """Resolve a saved OpenRouter selection through core, without global API-key fallbacks."""
     raw = load_codex_credentials(account='openrouter')
     if raw is None:
-        raise UserError('Connect first through /model > openrouter.')
+        raise UserError('Connect first through /add_model > openrouter.')
     try:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
-        raise UserError('Stored connection is invalid. Reconfigure through /model > openrouter.') from None
+        raise UserError('Stored connection is invalid. Reconfigure through /add_model > openrouter.') from None
     provider = OpenRouterProvider(api_key=resolve_key(token=connection.token))
     return OpenRouterModel(name.removeprefix('openrouter:'), provider=provider)
 

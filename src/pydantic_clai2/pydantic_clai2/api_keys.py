@@ -31,7 +31,9 @@ def resolve_key(*, token: SecretStr | KeyReference) -> str:
         return token.get_secret_value()
     keys = load_keys()
     if token.name not in keys:
-        raise UserError(f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through /model.')
+        raise UserError(
+            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through /add_model.'
+        )
     return keys[token.name].get_secret_value()
 
 
@@ -39,7 +41,7 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
     """Validate references and save atomically with respect to key renames and deletions."""
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
-            raise UserError('The selected API key no longer exists. Select a saved key again through /model.')
+            raise UserError('The selected API key no longer exists. Select a saved key again through /add_model.')
         save_codex_credentials(account=account, value=value)
 
 
@@ -123,7 +125,7 @@ def key_users(*, name: str) -> list[str]:
             try:
                 credential = _Credential.model_validate_json(raw)
             except ValidationError:
-                raise UserError(f'Reconfigure the invalid {account} connection through /model first.') from None
+                raise UserError(f'Reconfigure the invalid {account} connection through /add_model first.') from None
             if isinstance(credential.token, KeyReference) and credential.token.name == name:
                 users.append(account)
     return users

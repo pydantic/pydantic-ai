@@ -283,3 +283,15 @@ def test_splash_restores_streams(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_config_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('XDG_CONFIG_HOME', os.fspath(tmp_path))
     assert SettingsStore().path == tmp_path / 'pydantic-clai2/config.db'
+
+
+async def test_add_model_and_select_saved_model(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    output = io.StringIO()
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('/model unknown\n/add_model test\n/model test\nhello\n/exit\n')
+        await chat(Agent(), deps=None, console=Console(file=output, width=200), store=store)
+    assert 'Model not added: unknown. Use /add_model unknown first.' in output.getvalue()
+    assert 'success' in output.getvalue()
+    assert store.models() == ['test']
+    assert store.load().model == 'test'

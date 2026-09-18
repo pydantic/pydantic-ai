@@ -1,4 +1,4 @@
-"""A full-screen editor for a set of named, validated fields. `/set` and `/model` both use it."""
+"""A full-screen editor for a set of named, validated fields. `/set` and `/add_model` both use it."""
 
 import json
 from collections.abc import Callable, Sequence

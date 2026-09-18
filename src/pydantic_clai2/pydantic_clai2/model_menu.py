@@ -1,4 +1,4 @@
-"""The `/model` menu: pick the model for the next prompt, or edit one model's settings."""
+"""The `/add_model` menu: pick the model for the next prompt, or edit one model's settings."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,7 +17,7 @@ from .model_catalog import CatalogModel, catalog
 from .model_settings import ModelSettingsForm
 from .settings_store import SettingsStore
 
-_HINT = 'type to filter - Enter use this model - Ctrl+S settings - Esc close'
+_HINT = 'type to filter - Enter add and use model - Ctrl+S settings - Esc close'
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
@@ -235,7 +235,7 @@ def _run_provider(menu: ModelMenu, runners: Runners, messages: list[str]) -> boo
         return True
 
 
-async def open_model_menu(context: CommandContext, *, run: Callable[[ModelMenu], list[str]] | None = None) -> str:
+async def open_add_model_menu(context: CommandContext, *, run: Callable[[ModelMenu], list[str]] | None = None) -> str:
     """Show the menu in a thread; the pick and any settings edits apply to the next prompt."""
 
     def flow(menu: ModelMenu) -> list[str]:

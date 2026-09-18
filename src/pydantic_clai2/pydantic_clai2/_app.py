@@ -29,7 +29,8 @@ from .customization import customization_guide
 from .input_history import input_history
 from .interrupts import Interrupts
 from .key_menu import keys_command
-from .model_menu import open_model_menu
+from .model_menu import open_add_model_menu
+from .model_picker import model_command, model_completions
 from .plugin_loader import PluginError, PluginLoader
 from .plugin_menu import open_plugins_menu
 from .plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart
@@ -105,7 +106,7 @@ async def chat(
 
     session.resolve_model = resolve_model
     if session.model is None and agent.model is None:
-        console.print('Choose a model with /set model <Tab>.', style=theme.INFO)
+        console.print('Add a model with /add_model.', style=theme.INFO)
 
     def apply_setting(key: str, updated: Settings) -> None:
         if key == 'model':
@@ -138,8 +139,16 @@ async def chat(
     commands.register(
         Command(
             name='model',
-            description='Pick a model or edit its settings; no arguments opens the menu',
-            handler=lambda args: context.set_setting(['model', *args]) if args else open_model_menu(context),
+            description='Select an added model; no arguments opens the picker',
+            handler=lambda args: model_command(context, args),
+            complete=lambda args: model_completions(context, args),
+        )
+    )
+    commands.register(
+        Command(
+            name='add_model',
+            description='Add and use a model, or browse providers and model settings',
+            handler=lambda args: context.set_setting(['model', *args]) if args else open_add_model_menu(context),
             complete=lambda args: set_completions(['model', *args]) if len(args) <= 1 else (),
         )
     )

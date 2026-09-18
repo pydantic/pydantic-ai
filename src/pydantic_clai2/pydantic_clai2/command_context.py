@@ -34,6 +34,11 @@ class CommandContext:
     project: ProjectSettings = field(default_factory=ProjectSettings)
     """Read-only here: `/set` writes the user store, and the project file wins again at next start."""
 
+    def __post_init__(self) -> None:
+        """Keep the configured model selectable, including preferences saved before the model list existed."""
+        if self.settings.model:
+            self.store.add_model(name=self.settings.model)
+
     def from_project(self, key: str) -> bool:
         """Whether the project file sets `key`, so a saved value only lasts for this session."""
         return key in self.project.overrides
