@@ -138,6 +138,8 @@ LLMJudge(
 )
 ```
 
+When the model's profile has [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], `LLMJudge` asks only for the typed pass/fail verdict. The result has no reason rather than a fabricated one, and its score is `1.0` for pass or `0.0` for fail.
+
 ### Model Settings
 
 Customize model behavior:

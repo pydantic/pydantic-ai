@@ -75,7 +75,7 @@ If you want to use a different provider or profile, you can instantiate a model 
 
 ### Inspecting a model's profile {#inspecting-a-models-profile}
 
-A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict`, so you read capability flags with normal dictionary access via `model.profile` — for example [`supports_tools`][pydantic_ai.profiles.ModelProfile.supports_tools], [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output], and [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports tool calling, native JSON-schema output, or a specific native tool before relying on it:
+A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict`, so you read capability flags with normal dictionary access via `model.profile` — for example [`supports_text_output`][pydantic_ai.profiles.ModelProfile.supports_text_output], [`supports_tools`][pydantic_ai.profiles.ModelProfile.supports_tools], [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output], and [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports text generation, tool calling, native JSON-schema output, or a specific native tool before relying on it:
 
 ```python
 from pydantic_ai.models.test import TestModel
@@ -85,6 +85,8 @@ model = TestModel()
 profile = model.profile
 
 print(profile['supports_tools'])
+#> True
+print(profile['supports_text_output'])
 #> True
 print(profile['supports_json_schema_output'])
 #> False

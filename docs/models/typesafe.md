@@ -384,7 +384,7 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 ## What Jev cannot do
 
-Jev does not write text, write a tool's arguments or read files. An agent that needs any of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
+Jev does not write text, write a tool's arguments or read files. Its model profile records the first limit as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output]. Shared model request preparation refuses any agent that asks it for text. An agent that needs any of these is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be one structured type made of the field types above, beside any output functions that take no arguments: no `str`, no second type with fields, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 - No native tools. A function tool with arguments is not called by Jev either, but [proposed](#tools-jev-picks-and-calls-what-it-can) for a model behind it; with tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
