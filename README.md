@@ -35,21 +35,24 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 ### Coding agent
 
-A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](https://pydantic.dev/docs/ai/capabilities/web-search/) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
+A coding agent in your terminal with file reads, writes and edits, ripgrep-backed listing and search, foreground/background shell commands, [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/). Shell commands run without an allowlist; use an OS-level sandbox for untrusted work. Here with [web search](https://pydantic.dev/docs/ai/capabilities/web-search/) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
 
 ```bash
-uv add pydantic-ai pydantic-ai-harness
+uv add pydantic-ai "pydantic-ai-harness[coder]"
 ```
+
+The `[coder]` extra includes ripgrep except on Android, where `rg` must be installed separately on `PATH`.
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
-from pydantic_ai_harness import Advisor, Coder
+from pydantic_ai_harness.advisor import Advisor
+from pydantic_ai_harness.coder import Coder
 
 agent = Agent(
     'anthropic:claude-fable-5',
     capabilities=[
-        Coder(),  # files, shell, repo context, planning, sub-agents, context management
+        Coder(),  # six coding tools, repo context, JSON repair, context management
         WebSearch(),  # look up docs and error messages on the web
         Advisor('openai:gpt-5.6-sol'),  # a second opinion from another model when stuck
     ],
@@ -57,19 +60,21 @@ agent = Agent(
 agent.to_cli_sync()
 ```
 
-[`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/custom/#composition-and-middleware-semantics), not a black box: use it whole, or use the blocks it bundles directly; the two are equivalent:
+[`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/custom/#composition-and-middleware-semantics). It combines:
 
-```python
-capabilities = [
-    FileSystem('.'), Shell(cwd='.'), RepoContext(), Planning(), SubAgents(...),
-    ClearToolResults(), WarnNearLimits(), ToolOutputLimits(),
-]
-```
+- [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) with `read_file`, `write_file`, `edit_file`, and its ripgrep-backed `list_files` and `grep`, content hashes off.
+- [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) with its persistent `shell` tool and no command allowlist.
+- [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/) for repository instructions and structure.
+- [`ClearToolResults` and `WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/).
+- A [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization for bounded tool output.
+- Default coding instructions, and JSON argument repair before normal tool validation.
+
+Use it whole, or build the same agent from those capabilities to change any setting; the [Coder composition documentation](https://pydantic.dev/docs/ai/harness/coder/#composition) lists the exact configuration. `Coder` no longer bundles [`Planning`](https://pydantic.dev/docs/ai/harness/planning/) or [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/); add them alongside it when wanted.
 
 Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://pydantic.dev/docs/ai/integrations/cli/#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
 ```bash
-uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
+uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
 ```
 
 **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
