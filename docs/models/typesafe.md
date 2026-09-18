@@ -170,18 +170,19 @@ Watch how often the fallback fires, not only how accurate the pair is. A chain t
 
 ## Tools: Jev picks, and calls what it can
 
-Jev cannot write a tool's arguments, but it can tell which tool a text calls for. With tools attached, every request carries one more question — which of these does the text call for — with the output type first among the options and every tool after it. Each tool is described by its docstring, and the output type by its own docstring or, without one, by the agent's instructions; with tools attached one of the two is required, since it is what filling the output is weighed against. Jev answers the question like any other, and the pick decides which path the request takes:
+Jev first tells which tool a text calls for. When that tool has arguments Jev can express as its typed questions, it asks only those arguments in a second request and returns the filled call. With tools attached, the first request carries one more question — which of these does the text call for — with the output type first among the options and every tool after it. Each tool is described by its docstring, and the output type by its own docstring or, without one, by the agent's instructions; with tools attached one of the two is required, since it is what filling the output is weighed against. Jev answers the question like any other, and the pick decides which path the request takes:
 
 | Jev picks | What runs | Language model call |
 |---|---|---|
 | the output type | Jev fills the fields, in the same request | none |
 | a tool with no arguments | your function, then Jev again with its result in view | none |
 | an output function with no arguments | your function, and the run ends | only if the function makes one |
-| a tool with arguments | the model behind Jev takes the whole step, tools and all | one |
+| a tool whose arguments Jev can express | Jev fills its arguments in a second request, then your function runs | none |
+| a tool with any unsupported argument | the model behind Jev takes the whole step, tools and all | one |
 | any tool, below the threshold | Jev fills the fields, or with only output functions takes the likeliest of them; the lean is reported in `provider_details['tool']` | none |
-| the one route left, with nothing to fill | that route, without a request | none |
+| the one route left | that route, without a choice request; Jev still asks for supported arguments | none |
 
-A function tool is only taken at or above `typesafe_tool_call_threshold`, while there is still an output type to fill or an output function left to hand to. The default of 0.6 was chosen on a small internal set of support tickets and is a starting point, not a validated threshold: higher hands off less, and is right more often when it does, so set it from labelled examples of your own. With no output type to fill, a pick below the threshold goes to the likeliest output function instead, and once every other route has returned, the one left is taken without asking. A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool with no arguments that sends mail or charges an account is one Jev can set off, and approval and limits are the agent's job here as anywhere.
+A function tool is only taken at or above `typesafe_tool_call_threshold`, while there is still an output type to fill or an output function left to hand to. The default of 0.6 was chosen on a small internal set of support tickets and is a starting point, not a validated threshold: higher takes fewer tools, and is right more often when it does, so set it from labelled examples of your own. With no output type to fill, a pick below the threshold goes to the likeliest output function instead, and once every other route has returned, the one left is taken without a choice request. A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool that sends mail or charges an account is one Jev can set off, and approval and limits are the agent's job here as anywhere.
 
 **A tool with no arguments: Jev alone.** There is nothing to write, so the call is made on Jev's pick, and its result comes back as history for the next request. Jev can work through a sequence of such tools; a tool whose result is already in the turn is not offered again, because Jev has no notion of having made a call and picks it again with the result in view, while one that asked for a retry stays on offer. What was on offer is in `provider_details['tool']['offered']`. Every request here is a Jev request:
 
@@ -233,7 +234,40 @@ agent = Agent('typesafe:jev-latest', output_type=[Ticket, reply])
 ...
 ```
 
-**A tool with arguments: the model behind Jev.** Jev cannot fill them, so the request ends in a [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed]. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind Jev hands that model the whole step, tools and all; the rest of the requests never leave Jev. Without a model behind Jev, the proposal is the error, and it says which tool Jev wanted and how sure it was. The Jev request that proposed the call is not on the fallback response's usage.
+**Supported arguments: Jev chooses, then fills.** Tool arguments use the same mapping as output fields: `bool`, two or more string options, a bounded probability, a list of options, an optional pick-one, and a nested model of those. The argument name is the field, its description from the function docstring is the question, and the tool description is the goal. The first request chooses the tool; the second carries only its argument questions over the same text and history:
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+def take_action(direction: Literal['left', 'right']) -> str:
+    """Take the requested action.
+
+    Args:
+        direction: Which direction should be taken?
+    """
+    return f'Turned {direction}.'
+
+
+agent = Agent('typesafe:jev-latest', output_type=Ticket, tools=[take_action])
+...
+```
+
+The response sums the input and output tokens from both calls. [`RequestUsage.requests`][pydantic_ai.usage.RequestUsage.requests] is fixed at one request per model step and cannot carry the real count; `provider_details['requests']` is therefore `2` when Jev chose and filled a tool. See [#8498](https://github.com/pydantic/pydantic-ai/issues/8498).
+
+The second request has already committed to the selected tool. If that request fails or returns invalid answers, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] names the tool and stops the run; the default `FallbackModel` does not replay the original step and quietly choose another route.
+
+**Unsupported arguments: the model behind Jev.** A plain `str`, an unbounded number, or any other unsupported argument leaves the selected call as a [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed]. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind Jev hands that model the whole step, tools and all; the rest of the requests never leave Jev. Without a model behind Jev, the proposal is the error, and it says which tool Jev wanted and how sure it was. The Jev request that proposed the call is not on the fallback response's usage.
 
 ```python
 from pydantic import BaseModel, Field
@@ -263,7 +297,7 @@ agent = Agent(model, output_type=Ticket, tools=[escalate_to_human, refund])
 ...
 ```
 
-Here Jev triages what it can, opens a case itself when the ticket calls for one and triages again with the case number in view, and leaves a refund, which needs an amount, to the language model behind it. Most requests never leave Jev; how many depends on your tickets and the threshold, and `provider_details['tool']` on each response is how to see it.
+Here Jev triages what it can, opens a case itself when the ticket calls for one and triages again with the case number in view, and leaves a refund's unbounded amount to the language model behind it. Most requests never leave Jev; how many depends on your tickets and the threshold, and `provider_details['tool']` on each response is how to see it.
 
 Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what Jev weighs the tools against; asked whether it *can* answer rather than what the text calls for, it hands off nearly everything. Tune the threshold on labelled examples of your own.
 
@@ -335,17 +369,17 @@ Everything below returns an answer rather than an error, which is what makes it 
 - **Several judgements in one question.** See [above](#ask-one-thing-per-field).
 - **Indirection.** A question about a property of a property, or one needing several hops, costs accuracy.
 - **Context it does not need.** Accuracy falls as the state grows with detail unrelated to the question, so filter before you send rather than after, and compact a long conversation before judging it.
-- **A tool call that repeats.** With a tool's call and result in the history, the text usually still calls for it, so Jev picks it again. A tool with no arguments is therefore not offered again once its result is in the turn, and comes back on offer at the next prompt; a tool with arguments is proposed to the model behind Jev, which decides. Put a `UsageLimits(request_limit=...)` on a Jev agent with tools all the same, as on any agent that loops.
+- **A tool call that repeats.** With a tool's call and result in the history, the text usually still calls for it, so Jev picks it again. A tool is therefore not offered again once its result is in the turn, and comes back on offer at the next prompt; unsupported arguments are proposed to the model behind Jev, which decides. Put a `UsageLimits(request_limit=...)` on a Jev agent with tools all the same, as on any agent that loops.
 - **Deciding what it cannot see.** A tool that needs an argument the text does not state — a refund amount, a date — is one Jev will propose and a language model may decline to call; the two judge the same option differently, and language models disagree with each other on such picks about as often. Compare Jev with the model behind it on your own tickets before trusting either's hand-off rate.
 - **Adversarial text.** Jev treats the state as data, not as hostile: text written to steer the answer — an injected instruction, a misleading framing, an argument for its own classification — can move it. TypeSafe say they expect to improve this. A guard built on Jev belongs alongside deterministic checks, not instead of them, and is worth testing against your own adversarial inputs.
 - **Option order.** The order of a `Literal`'s options or an `Enum`'s members is part of what Jev sees, and reordering them can move the answer. If a classification matters, test it with the options in more than one order.
 
 ## What Jev cannot do
 
-Jev does not write text, write a tool's arguments or read files. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and shared request preparation refuses any agent that asks such a model for text. An agent that needs any of these is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
+Jev does not write text or read files, and it only fills tool arguments that map to the typed questions above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and shared request preparation refuses any agent that asks such a model for text. An agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be one structured type made of the field types above, beside any output functions that take no arguments: no `str`, no second type with fields, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
-- No native tools. A function tool with arguments is offered to Jev but never called by it: picking one is [proposed](#tools-jev-picks-and-calls-what-it-can) to a model behind it, which is a `ModelAPIError` after the request rather than a refusal before it; with tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
+- No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
 - At most 255 options in one question. A pick-one field counts its own options, and the tool question counts every tool plus the output type, so 255 tools is already one too many.
 

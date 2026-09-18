@@ -1,0 +1,110 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '543'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        tool:
+          criteria:
+            final_result: Classify a message that does not request a navigation action.
+            set_direction: Set the navigation direction requested in the message.
+          instructions: Which of these does this call for?
+          type: choice
+        urgent:
+          instructions:
+            field: urgent
+            goal: Classify a message that does not request a navigation action.
+            question: Is this message urgent?
+          type: noul
+      state: At the fork, take the left path. Set our direction accordingly.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '266'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        tool:
+          choice: set_direction
+          confidence: 1.0
+          probabilities:
+            final_result: 0.0
+            set_direction: 1.0
+          type: choice
+        urgent:
+          noul: 0.1
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 390
+        output_tokens: 50
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '344'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        direction:
+          criteria:
+            left: null
+            right: null
+          instructions:
+            field: direction
+            goal: Set the navigation direction requested in the message.
+            question: Which direction should be taken?
+          type: choice
+      state: At the fork, take the left path. Set our direction accordingly.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '205'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        direction:
+          choice: left
+          confidence: 1.0
+          probabilities:
+            left: 1.0
+            right: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 332
+        output_tokens: 31
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -59,6 +59,7 @@ try:
         NoulAnswer,
         Score,
         ScoreAnswer,
+        SystemOneResponse,
         TypeSafeAPIConnectionError,
         TypeSafeAPIError,
         TypeSafeAPIResponseValidationError,
@@ -107,15 +108,17 @@ class TypeSafeModelSettings(ModelSettings, total=False):
     """How likely Jev has to find a tool call before it is proposed, from 0 to 1. Default: 0.6.
 
     With tools attached, one more question asks which tool the text calls for, the output tool among them. A tool
-    picked below this probability is a lean, and the output is filled as usual; one at or above it is raised as
-    [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] for a model behind Jev to call. At 0.6, on
-    labelled support tickets, Jev's picks agree with a frontier model as often as two frontier models agree with each
-    other; higher hands off less, and is right more often when it does. Tune it on labelled examples of your own.
+    picked below this probability is a lean, and the output is filled as usual; one at or above it is called, after
+    Jev fills any supported arguments, or raised as
+    [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] when its arguments are unsupported. At 0.6,
+    on labelled support tickets, Jev's picks agree with a frontier model as often as two frontier models agree with
+    each other; higher takes fewer tools, and is right more often when it does. Tune it on labelled examples of your
+    own.
     """
 
 
 class ToolCallProposed(ModelAPIError):
-    """Jev found that the text calls for a tool, which it cannot call itself.
+    """Jev found that the text calls for a tool whose arguments it cannot fill.
 
     A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands it the
@@ -143,7 +146,7 @@ class ToolCallProposed(ModelAPIError):
 
 @dataclass(init=False)
 class TypeSafeModel(Model[AsyncTypeSafeClient]):
-    """A model that fills a structured `output_type` with one request to a TypeSafe Jev model.
+    """A model that fills a structured `output_type`, and supported tool arguments after choosing a tool.
 
     Jev does not generate text. It answers typed questions about a text, each with a confidence. This model
     turns the output type's fields into those questions and the user prompt into the text, so an agent whose
@@ -191,14 +194,13 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     the message history, from any model, goes along beside it as `history`: user prompts, answers, tool calls
     and their results, and retry prompts.
 
-    Jev cannot write a tool's arguments, but it can tell which tool the text calls for. With tools attached, one
-    more question asks which, the output type first among the options, described by its docstring or the agent's
-    instructions. A tool that takes no arguments, or an output function that takes nothing but the run context,
-    is called on Jev's pick, so it can run a loop of such tools and hand a run off to an output function on its
-    own. A tool with arguments, picked at or above
-    `typesafe_tool_call_threshold`, is raised as [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed],
-    which a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands
-    that model, tools and all.
+    With tools attached, one more question asks which, the output type first among the options, described by its
+    docstring or the agent's instructions. A tool that takes no arguments, or an output function that takes nothing
+    but the run context, is called on Jev's pick. When a picked tool's arguments use the field types above, a second
+    request asks only those arguments and Jev returns the filled call. If any argument is unsupported, the call is
+    raised as [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed], which a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands that model,
+    tools and all.
 
     Jev answers in one piece, so a streamed run gets the whole answer as one event rather than failing.
 
@@ -274,23 +276,74 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         ]
         offered = [*hand_offs, *function_tools]
         tools = _tools_left(messages, offered)
-        if output_tool is None and len(tools) == 1 and len(offered) > 1:
-            # Every other route has returned this turn, so the one left is taken without a question.
-            return self._forced(tools[0])
+        forced_tool = tools[0] if output_tool is None and len(tools) == 1 and len(offered) > 1 else None
+        if forced_tool is not None and not forced_tool.parameters_json_schema.get('properties'):
+            # Preserve the no-request path: there is no state or question to build when no arguments need filling.
+            return self._forced(forced_tool)
         properties = _fields(output_tool) if output_tool else {}
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
+        settings = cast(TypeSafeModelSettings, model_settings or {})
+        if forced_tool is not None:
+            # Every other route has returned this turn, so the one left is taken without a choice question.
+            return await self._forced_with_arguments(forced_tool, state, instructions, settings)
         questions = _questions(properties, output_tool, instructions) if output_tool else {}
         tool_key = _tool_question(questions, output_tool, tools, instructions)
-        settings = cast(TypeSafeModelSettings, model_settings or {})
         threshold = settings.get('typesafe_tool_call_threshold', 0.6)
         if not 0 <= threshold <= 1:
             raise UserError(f'`typesafe_tool_call_threshold` must be between 0 and 1; got {threshold!r}.')
 
+        response = await self._system_one(state, questions, settings)
+        response_usage = _request_usage(response)
+        args, provider_details = _answers(response.answers, properties, questions)
+        parts: list[ModelResponsePart] = []
+        if output_tool:
+            parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
+        if tool_key is not None:
+            picked = _tool_call(
+                response.answers.get(tool_key),
+                output_tool,
+                tools,
+                {tool.name for tool in hand_offs},
+                threshold,
+                provider_details,
+            )
+            if isinstance(picked, ToolCallPart):
+                parts = [picked]
+            elif picked is not None and picked is not output_tool:
+                probability = provider_details['tool']['probabilities'][picked.name]
+                response, args, argument_details = await self._tool_arguments(
+                    picked, probability, state, instructions, settings
+                )
+                response_usage += _request_usage(response)
+                provider_details.update(argument_details)
+                # `RequestUsage.requests` is fixed at 1, so usage cannot say that this turn asked twice: the
+                # choice and the fill are two requests inside one step. The count is reported here, and only
+                # here, so it appears exactly when it differs from what usage reports. See #8498.
+                provider_details['requests'] = 2
+                parts = [ToolCallPart(picked.name, args, _utils.generate_tool_call_id())]
+
+        return ModelResponse(
+            parts=parts,
+            usage=response_usage,
+            model_name=response.model,
+            provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
+            provider_details=provider_details,
+            finish_reason='tool_call',
+        )
+
+    async def _system_one(
+        self,
+        state: JSONContent,
+        questions: dict[str, Noul | Choice | Score],
+        settings: TypeSafeModelSettings,
+    ) -> SystemOneResponse:
+        """Send one Jev request, translating SDK failures into model errors."""
         timeout = settings.get('timeout')
         try:
-            response = await self.client.system_one(
+            return await self.client.system_one(
                 state,
                 questions,
                 model=self._model_name,
@@ -311,40 +364,56 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             # not encode as JSON. That is the caller's to fix, not the model's.
             raise UserError(f'TypeSafe could not send this request: {e}') from e
 
-        args, provider_details = _answers(response.answers, properties, questions)
-        parts: list[ModelResponsePart] = []
-        if output_tool:
-            parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
-        if tool_key is not None:
-            hand_off_names = {tool.name for tool in hand_offs}
-            if call := _tool_call(
-                self._model_name,
-                response.answers.get(tool_key),
-                output_tool,
-                tools,
-                hand_off_names,
-                threshold,
-                provider_details,
-            ):
-                parts = [call]
+    async def _tool_arguments(
+        self,
+        tool: ToolDefinition,
+        probability: float,
+        state: JSONContent,
+        instructions: str | None,
+        settings: TypeSafeModelSettings,
+    ) -> tuple[SystemOneResponse, dict[str, Any], dict[str, Any]]:
+        """Ask only a selected tool's arguments, or propose it when Jev cannot express them."""
+        try:
+            properties = _fields(tool)
+            questions = _questions(properties, tool, instructions)
+        except UserError:
+            raise ToolCallProposed(self._model_name, tool.name, probability) from None
 
+        try:
+            response = await self._system_one(state, questions, settings)
+            args, provider_details = _answers(response.answers, properties, questions)
+        except (ModelAPIError, UnexpectedModelBehavior) as e:
+            # The first request committed to this route. Letting a fallback model rerun the whole original step
+            # could silently choose another route, so an argument-fill failure is terminal and names that tool.
+            raise UnexpectedModelBehavior(
+                f'TypeSafe selected tool {tool.name!r}, but failed while filling its arguments: {e}'
+            ) from e
+        return response, args, provider_details
+
+    async def _forced_with_arguments(
+        self,
+        tool: ToolDefinition,
+        state: JSONContent,
+        instructions: str | None,
+        settings: TypeSafeModelSettings,
+    ) -> ModelResponse:
+        """Fill the arguments of the one route left, without a choice request."""
+        details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
+        response, args, argument_details = await self._tool_arguments(tool, 1.0, state, instructions, settings)
+        details.update(argument_details)
         return ModelResponse(
-            parts=parts,
-            usage=usage.RequestUsage(
-                input_tokens=response.usage.input_tokens or 0, output_tokens=response.usage.output_tokens or 0
-            ),
+            parts=[ToolCallPart(tool.name, args, _utils.generate_tool_call_id())],
+            usage=_request_usage(response),
             model_name=response.model,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
-            provider_details=provider_details,
+            provider_details=details,
             finish_reason='tool_call',
         )
 
     def _forced(self, tool: ToolDefinition) -> ModelResponse:
-        """The response when one route is left and there is nothing to fill: that route, without asking Jev."""
+        """Call the one argumentless route left, without asking Jev."""
         details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
-        if tool.parameters_json_schema.get('properties'):
-            raise ToolCallProposed(self._model_name, tool.name, 1.0)
         return ModelResponse(
             parts=[ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(),
@@ -464,20 +533,25 @@ def _answers(
     return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
 
 
+def _request_usage(response: SystemOneResponse) -> usage.RequestUsage:
+    """Usage for one Jev request."""
+    return usage.RequestUsage(
+        input_tokens=response.usage.input_tokens or 0, output_tokens=response.usage.output_tokens or 0
+    )
+
+
 def _tool_call(
-    model_name: str,
     answer: object,
     output_tool: ToolDefinition | None,
     tools: list[ToolDefinition],
     hand_offs: set[str],
     threshold: float,
     provider_details: dict[str, Any],
-) -> ToolCallPart | None:
-    """The tool call Jev makes itself from its answer to the tool question, if it takes one it can make.
+) -> ToolDefinition | ToolCallPart | None:
+    """The output or tool call Jev takes from its answer to the tool question.
 
     A tool picked below the threshold is a lean: the output is filled, or with no output type to fill, the
-    likeliest output function is taken instead. A tool taken that needs arguments is raised as
-    `ToolCallProposed` for a model behind Jev.
+    likeliest output function is taken instead. A selected tool with arguments is returned for a second request.
     """
     if (
         not isinstance(answer, ChoiceAnswer)
@@ -494,13 +568,13 @@ def _tool_call(
         'offered': [tool.name for tool in tools],
     }
     if output_tool is not None and answer.choice == output_tool.name:
-        return None
+        return output_tool
     tool = next((tool for tool in tools if tool.name == answer.choice), None)
     if tool is None:
         raise UnexpectedModelBehavior(f'TypeSafe picked a tool it was not offered: {answer.choice!r}')
     if tool.name not in hand_offs and probability < threshold:
         if output_tool is not None:
-            return None
+            return output_tool
         likeliest = max(
             (candidate for candidate in tools if candidate.name in hand_offs),
             key=lambda candidate: answer.probabilities.get(candidate.name, 0.0),
@@ -510,7 +584,7 @@ def _tool_call(
             provider_details['tool']['taken'] = likeliest.name
             tool = likeliest
     if tool.parameters_json_schema.get('properties'):
-        raise ToolCallProposed(model_name, tool.name, probability)
+        return tool
     # Nothing to write, so the call is made on Jev's pick.
     return ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())
 
@@ -705,10 +779,10 @@ def _questions(
     return questions
 
 
-def _described(output_tool: ToolDefinition) -> str | None:
-    """What the user wrote about the output, if anything: the stock output tool description says nothing."""
-    description = output_tool.description
-    if not description or description.endswith(DEFAULT_OUTPUT_TOOL_DESCRIPTION):
+def _described(tool: ToolDefinition) -> str | None:
+    """What the user wrote about a tool, without the stock description generated for an output tool."""
+    description = tool.description
+    if not description or (tool.kind == 'output' and description.endswith(DEFAULT_OUTPUT_TOOL_DESCRIPTION)):
         return None
     return description
 
@@ -745,8 +819,8 @@ def _tool_question(
 ) -> str | None:
     """With tools attached, one more question: which tool the text calls for, the output tool among them.
 
-    Jev cannot write a tool's arguments, but it can tell which tool the text calls for, and either call it itself
-    when there are none to write or leave the call to a model behind it. The output tool is the first option,
+    Jev first tells which tool the text calls for, then fills a selected tool's arguments in a separate request when
+    their schema maps to questions. An unsupported argument leaves the call to a model behind it. The output tool is the first option,
     described by what the agent is for, so that filling the output is an action weighed against the others. Asked
     instead whether it *can* answer, Jev hands off nearly everything: that is a question about the question, not
     about the text. Only what the user wrote describes the output: the output type's docstring, or failing that the
