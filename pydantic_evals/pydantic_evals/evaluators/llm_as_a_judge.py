@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from textwrap import dedent
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
 
@@ -27,16 +27,23 @@ __all__ = (
 
 _default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
 _MAX_G_EVAL_SCORE_LEVELS = 20
+_JUDGE_REASON_DESCRIPTION = 'A concise 1-2 sentence justification for the verdict.'
 
 
 class GradingOutput(BaseModel, populate_by_name=True):
     """The output of a grading operation."""
 
-    reason: str | None = Field(
-        description='A concise 1-2 sentence justification for the verdict.',
-    )
+    reason: str | None = Field(description=_JUDGE_REASON_DESCRIPTION)
     pass_: bool = Field(validation_alias='pass', serialization_alias='pass')
     score: float
+
+
+class _TextGradingOutput(GradingOutput):
+    """The output of a grading operation."""
+
+    model_config = ConfigDict(title='GradingOutput')
+
+    reason: str = Field(description=_JUDGE_REASON_DESCRIPTION)
 
 
 class _BinaryGradingOutput(BaseModel, populate_by_name=True):
@@ -63,7 +70,7 @@ def _resolve_judge_model(model: models.Model | models.KnownModelName | str | Non
 
 
 async def _run_grading_agent(
-    agent: Agent[None, GradingOutput],
+    agent: Agent[None, _TextGradingOutput],
     user_prompt: str | Sequence[str | UserContent],
     model: models.Model | models.KnownModelName | str | None,
     model_settings: ModelSettings | None,
@@ -76,7 +83,8 @@ async def _run_grading_agent(
             model_settings=model_settings,
         )
         return GradingOutput(reason=None, pass_=result.output.pass_, score=float(result.output.pass_))
-    return (await agent.run(user_prompt, model=resolved_model, model_settings=model_settings)).output
+    output = (await agent.run(user_prompt, model=resolved_model, model_settings=model_settings)).output
+    return GradingOutput(reason=output.reason, pass_=output.pass_, score=output.score)
 
 
 _JUDGE_REASON_INSTRUCTION = (
@@ -104,7 +112,7 @@ _judge_output_agent = Agent(
         """
     )
     + _JUDGE_REASON_INSTRUCTION,
-    output_type=GradingOutput,
+    output_type=_TextGradingOutput,
 )
 
 
@@ -143,7 +151,7 @@ _judge_input_output_agent = Agent(
         """
     )
     + _JUDGE_REASON_INSTRUCTION,
-    output_type=GradingOutput,
+    output_type=_TextGradingOutput,
 )
 
 
@@ -186,7 +194,7 @@ _judge_input_output_expected_agent = Agent(
         """
     )
     + _JUDGE_REASON_INSTRUCTION,
-    output_type=GradingOutput,
+    output_type=_TextGradingOutput,
 )
 
 
@@ -228,7 +236,7 @@ _judge_output_expected_agent = Agent(
         """
     )
     + _JUDGE_REASON_INSTRUCTION,
-    output_type=GradingOutput,
+    output_type=_TextGradingOutput,
 )
 
 
@@ -331,6 +339,18 @@ class GEvalOutput(BaseModel):
     score: int
 
 
+class _TextGEvalOutput(GEvalOutput):
+    """The output of a G-Eval grading operation.
+
+    G-Eval asks the judge to emit a short chain-of-thought `reason` followed by an
+    integer `score` in a user-specified range (see [`judge_g_eval`][pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval]).
+    """
+
+    model_config = ConfigDict(title='GEvalOutput')
+
+    reason: str
+
+
 def _g_eval_output_type(score_range: tuple[int, int]) -> type[JsonSchemaValue]:
     """A normalized integer rubric for a judge that cannot write the reasoning trace."""
     minimum, maximum = score_range
@@ -375,7 +395,7 @@ _judge_g_eval_agent = Agent(
         Do not include any other keys or prose outside the JSON object.
         """
     ),
-    output_type=GEvalOutput,
+    output_type=_TextGEvalOutput,
 )
 
 
@@ -453,9 +473,10 @@ async def judge_g_eval(
             raise ValueError(f'Judge returned an invalid score: {normalized!r}')
         result = GEvalOutput(reason=None, score=normalized + score_range[0])
     else:
-        result = (
+        output = (
             await _judge_g_eval_agent.run(user_prompt, model=resolved_model, model_settings=model_settings)
         ).output
+        result = GEvalOutput(reason=output.reason, score=output.score)
     if not score_range[0] <= result.score <= score_range[1]:
         raise ValueError(f'Judge returned score {result.score}, outside the requested `score_range` {score_range!r}')
     return result

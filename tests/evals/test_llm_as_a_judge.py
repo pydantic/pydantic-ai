@@ -95,6 +95,42 @@ async def test_judge_prompts_constrain_reason():
         assert 'Do not include your reasoning process' in system_prompt
 
 
+async def test_judge_output_with_text_support_retries_a_null_reason():
+    """A nullable public result must not weaken the text judge's output schema."""
+    requests = 0
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        assert info.output_tools is not None
+        reason = None if requests == 1 else 'The output contains a greeting.'
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, {'reason': reason, 'pass': True, 'score': 1.0})]
+        )
+
+    result = await judge_output('Hello world', 'Content contains a greeting', model=FunctionModel(answer))
+
+    assert requests == 2
+    assert result == GradingOutput(reason='The output contains a greeting.', pass_=True, score=1.0)
+
+
+async def test_judge_g_eval_with_text_support_retries_a_null_reason():
+    """G-Eval keeps requiring a reason from judges that can generate text."""
+    requests = 0
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        assert info.output_tools is not None
+        reason = None if requests == 1 else 'The output is clear.'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'reason': reason, 'score': 4})])
+
+    result = await judge_g_eval('Clear output.', 'clarity', ['Read it.'], model=FunctionModel(answer))
+
+    assert requests == 2
+    assert result == GEvalOutput(reason='The output is clear.', score=4)
+
+
 async def test_judge_output_without_text_support():
     """A verdict-only judge gets one boolean question and reports no invented reason."""
     schemas: list[dict[str, object]] = []
