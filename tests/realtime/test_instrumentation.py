@@ -580,7 +580,13 @@ async def test_session_span_records_lifecycle_spans() -> None:
             ResponseDone(interrupted=True),
         ]
     )
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
@@ -615,7 +621,13 @@ async def test_user_speech_span_covers_the_spoken_segment() -> None:
             ResponseDone(),
         ]
     )
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
@@ -633,7 +645,13 @@ async def test_no_user_speech_span_without_a_speech_end_event() -> None:
     """
     settings, exporter = _settings()
     conn = _Connection([RealtimeInputSpeechStartEvent(), OutputTranscript(text='hi', is_final=True), ResponseDone()])
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
 
     assert [s.name for s in exporter.get_finished_spans() if s.name == 'user speech'] == []
@@ -655,7 +673,13 @@ async def test_session_span_turn_complete_omits_interrupted_when_false() -> None
     # rather than a null one.
     settings, exporter = _settings()
     conn = _Connection([OutputTranscript(text='hi', is_final=True), ResponseDone()])
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
 
     turn_complete = next(s for s in exporter.get_finished_spans() if s.name == 'model turn complete')
@@ -672,7 +696,13 @@ async def test_session_span_name_follows_instrumentation_version() -> None:
     with pytest.warns(PydanticAIDeprecationWarning, match='versions 2, 3, and 4 are deprecated'):
         settings = InstrumentationSettings(tracer_provider=provider, version=2)
     conn = _Connection([ResponseDone()])
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
 
     assert [s.name for s in exporter.get_finished_spans() if s.name != 'model turn complete'] == snapshot(['realtime'])
@@ -684,7 +714,13 @@ async def test_chat_span_records_interrupted_response_state() -> None:
     # A response that ends normally carries no state attribute.
     settings, exporter = _settings()
     conn = _Connection([OutputTranscript(text='hello there', is_final=False), ResponseDone(interrupted=True)])
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
 
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
@@ -693,7 +729,13 @@ async def test_chat_span_records_interrupted_response_state() -> None:
 
     settings, exporter = _settings()
     conn = _Connection([OutputTranscript(text='hello there', is_final=False), ResponseDone()])
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
 
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
@@ -990,7 +1032,13 @@ async def test_session_captures_transcript_messages() -> None:
             ResponseDone(),
         ]
     )
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
@@ -1198,7 +1246,13 @@ async def test_session_span_sets_conversation_id() -> None:
 async def test_session_span_omits_conversation_id_when_unset() -> None:
     settings, exporter = _settings()
     conn = _Connection([ResponseDone()])
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
@@ -1263,7 +1317,13 @@ async def test_chat_span_closed_for_contentless_response() -> None:
     # history and instrumentation retain its empty response envelope.
     settings, exporter = _settings()
     conn = _Connection([AudioDelta(data=b'\x00\x01'), ResponseDone()])
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
     assert chat.attributes is not None
@@ -1288,7 +1348,13 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
             ResponseDone(),
         ]
     )
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
@@ -1450,10 +1516,18 @@ async def test_include_content_false_redacts_chat_span_messages() -> None:
             ResponseDone(),
         ]
     )
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
     chat = next(s for s in exporter.get_finished_spans() if s.name == 'chat gpt-realtime')
     assert chat.attributes is not None
+    assert 'model_settings' not in chat.attributes
+    assert 'model_settings' not in chat.attributes
     # Envelope present, content redacted (no `content` key on the text parts).
     assert json.loads(str(chat.attributes['gen_ai.input.messages'])) == [
         {'role': 'user', 'parts': [{'type': 'text'}]},
@@ -1480,7 +1554,13 @@ async def test_direct_session_runs_tool_via_runner() -> None:
             ResponseDone(),
         ]
     )
-    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_settings={'max_tokens': 4096},
+    )
     _ = await collect_events(session)
 
     # The runner actually ran and its result was inserted into history as a `ToolReturnPart` — the

@@ -387,7 +387,7 @@ class SessionInstrumentation:
         if settings.include_model_request_parameters:
             if self.model_request_parameters is not None:
                 attributes.update(model_request_parameters_attributes(self.model_request_parameters))
-            if self.model_settings:
+            if self.model_settings and settings.include_content:
                 attributes['model_settings'] = safe_to_json(serialize_any(self.model_settings)).decode()
         if self.model_settings and (max_tokens := self.model_settings.get('max_tokens')) is not None:
             attributes['gen_ai.request.max_tokens'] = max_tokens
@@ -403,7 +403,7 @@ class SessionInstrumentation:
         if settings.include_model_request_parameters:
             if self.model_request_parameters is not None:
                 properties['model_request_parameters'] = {'type': 'object'}
-            if self.model_settings:
+            if self.model_settings and settings.include_content:
                 properties['model_settings'] = {'type': 'object'}
         return properties
 
