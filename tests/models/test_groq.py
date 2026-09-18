@@ -60,6 +60,8 @@ with try_import() as imports_successful:
     from groq.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
         ChoiceDelta,
+        ChoiceDeltaToolCall,
+        ChoiceDeltaToolCallFunction,
     )
     from groq.types.chat.chat_completion_message import ChatCompletionMessage
     from groq.types.chat.chat_completion_message_tool_call import Function
@@ -5951,3 +5953,37 @@ async def test_groq_extra_headers_not_mutated(allow_model_requests: None):
 
     # The caller's dict is unchanged: no User-Agent leaked into it.
     assert user_headers == {'X-Custom': 'value'}
+
+
+async def test_stream_text_after_tool_call_gets_own_part(allow_model_requests: None):
+    """Text streamed after a tool call must start a new TextPart instead of merging into the pre-tool-call one."""
+    tool_chunk = chunk(
+        [
+            ChoiceDelta(
+                tool_calls=[
+                    ChoiceDeltaToolCall(
+                        index=0,
+                        id='call-0',
+                        type='function',
+                        function=ChoiceDeltaToolCallFunction(name='lookup', arguments='{}'),
+                    )
+                ]
+            )
+        ],
+        finish_reason='tool_calls',
+    )
+    stream = text_chunk('Hello, '), tool_chunk, text_chunk('world'), chunk([])
+    mock_client = MockGroq.create_mock_stream(stream)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_output(debounce_by=None):
+            pass
+
+    response_parts = [p for msg in result.new_messages() if isinstance(msg, ModelResponse) for p in msg.parts]
+    assert response_parts == [
+        TextPart(content='Hello, '),
+        ToolCallPart(tool_name='lookup', args='{}', tool_call_id='call-0'),
+        TextPart(content='world'),
+    ]
