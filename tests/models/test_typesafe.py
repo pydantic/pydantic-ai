@@ -537,7 +537,7 @@ def tool_answers(choice: str, probability: float) -> httpx2.Response:
 async def test_a_tool_is_proposed_not_called(
     allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
 ):
-    """With a tool attached Jev is asked which tool the text calls for, the output tool first, and proposes one."""
+    """Jev proposes a selected tool whose unbounded numeric argument it cannot fill."""
     agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
     with pytest.raises(ToolCallProposed) as exc_info:
         await agent.run('You charged my card twice for the same month. Put the second one back.')
@@ -575,6 +575,314 @@ async def test_a_fallback_model_takes_the_proposed_step(allow_model_requests: No
         'jev-latest',
     ]
     assert result.output == Ticket(urgent=True)
+
+
+class ContactPreference(BaseModel):
+    method: Literal['email', 'phone']
+    urgent_only: bool = Field(description='Should contact be limited to urgent updates?')
+
+
+async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model_requests: None):
+    """The first request picks the tool and the second asks only its arguments using the output-field mapping."""
+    seen: list[dict[str, Any]] = []
+    called: list[dict[str, Any]] = []
+
+    def configure_contact(
+        team: Literal['billing', 'technical'],
+        urgent: bool,
+        risk: Annotated[float, Field(ge=0, le=1)],
+        channels: list[Literal['email', 'sms']],
+        window: Literal['morning', 'evening'] | None,
+        contact: ContactPreference,
+    ) -> str:
+        """Configure how the support team should handle this ticket.
+
+        Args:
+            team: Which team should handle this ticket?
+            urgent: Does this ticket need urgent handling?
+            risk: Is this ticket likely to cause customer harm?
+            channels: Which channels should receive updates?
+            window: Which contact window did the customer request, if any?
+            contact: The customer's contact preference.
+        """
+        called.append(
+            {
+                'team': team,
+                'urgent': urgent,
+                'risk': risk,
+                'channels': channels,
+                'window': window,
+                'contact': contact,
+            }
+        )
+        return 'Configured.'
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        if len(seen) == 1:
+            return answers(
+                urgent={'type': 'noul', 'noul': 0.9},
+                tool={
+                    'type': 'choice',
+                    'choice': 'configure_contact',
+                    'confidence': 0.9,
+                    'probabilities': {'final_result': 0.05, 'configure_contact': 0.95},
+                },
+            )
+        if len(seen) == 2:
+            return answers(
+                team={
+                    'type': 'choice',
+                    'choice': 'technical',
+                    'confidence': 0.9,
+                    'probabilities': {'billing': 0.1, 'technical': 0.9},
+                },
+                urgent={'type': 'noul', 'noul': 0.95},
+                risk={'type': 'noul', 'noul': 0.8},
+                **{
+                    'channels.email': {'type': 'noul', 'noul': 0.9},
+                    'channels.sms': {'type': 'noul', 'noul': 0.1},
+                    'window': {
+                        'type': 'choice',
+                        'choice': 'none',
+                        'confidence': 0.8,
+                        'probabilities': {'morning': 0.1, 'evening': 0.1, 'none': 0.8},
+                    },
+                    'contact.method': {
+                        'type': 'choice',
+                        'choice': 'email',
+                        'confidence': 0.9,
+                        'probabilities': {'email': 0.9, 'phone': 0.1},
+                    },
+                    'contact.urgent_only': {'type': 'noul', 'noul': 0.9},
+                },
+            )
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(
+        mock_model(record),
+        output_type=Ticket,
+        tools=[configure_contact],
+        instructions='Handle the customer request as written.',
+    )
+    result = await agent.run('Technical support should email me about urgent updates. No contact window specified.')
+
+    assert result.output == Ticket(urgent=True)
+    assert called == snapshot(
+        [
+            {
+                'team': 'technical',
+                'urgent': True,
+                'risk': 0.8,
+                'channels': ['email'],
+                'window': None,
+                'contact': ContactPreference(method='email', urgent_only=True),
+            }
+        ]
+    )
+    responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    assert responses[0].usage == RequestUsage(input_tokens=20)
+    assert responses[0].provider_details == snapshot(
+        {
+            'confidence': {
+                'team': 0.9,
+                'urgent': 0.8999999999999999,
+                'channels': 0.8,
+                'window': 0.8,
+                'contact.method': 0.9,
+                'contact.urgent_only': 0.8,
+            },
+            'probabilities': {
+                'team': {'billing': 0.1, 'technical': 0.9},
+                'channels': {'email': 0.9, 'sms': 0.1},
+                'window': {'morning': 0.1, 'evening': 0.1, 'none': 0.8},
+                'contact.method': {'email': 0.9, 'phone': 0.1},
+            },
+            'scores': {},
+            'tool': {
+                'choice': 'configure_contact',
+                'probabilities': {'final_result': 0.05, 'configure_contact': 0.95},
+                'offered': ['configure_contact'],
+            },
+            'requests': 2,
+        }
+    )
+    assert list(seen[0]['questions']) == ['urgent', 'tool']
+    assert seen[1]['questions'] == snapshot(
+        {
+            'team': {
+                'type': 'choice',
+                'criteria': {'billing': None, 'technical': None},
+                'instructions': {
+                    'field': 'team',
+                    'question': 'Which team should handle this ticket?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'urgent': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'urgent',
+                    'question': 'Does this ticket need urgent handling?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'risk': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'risk',
+                    'question': 'Is this ticket likely to cause customer harm?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'channels.email': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'channels',
+                    'question': 'Which channels should receive updates?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                    'option': 'email',
+                },
+            },
+            'channels.sms': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'channels',
+                    'question': 'Which channels should receive updates?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                    'option': 'sms',
+                },
+            },
+            'window': {
+                'type': 'choice',
+                'criteria': {'morning': None, 'evening': None, 'none': 'None of these.'},
+                'instructions': {
+                    'field': 'window',
+                    'question': 'Which contact window did the customer request, if any?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'contact.method': {
+                'type': 'choice',
+                'criteria': {'email': None, 'phone': None},
+                'instructions': {
+                    'field': 'contact.method',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'contact.urgent_only': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'contact.urgent_only',
+                    'question': 'Should contact be limited to urgent updates?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+        }
+    )
+    assert list(seen[2]['questions']) == ['urgent']
+
+
+async def test_a_selected_tool_fill_failure_does_not_fall_back_to_another_route(allow_model_requests: None):
+    """Once Jev selected a tool, a failed fill is terminal rather than replaying the whole step on the fallback."""
+    seen = 0
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        nonlocal seen
+        seen += 1
+        if seen == 1:
+            return answers(
+                urgent={'type': 'noul', 'noul': 0.9},
+                tool={
+                    'type': 'choice',
+                    'choice': 'set_direction',
+                    'confidence': 0.9,
+                    'probabilities': {'final_result': 0.05, 'set_direction': 0.95},
+                },
+            )
+        return httpx2.Response(503, json={'detail': 'temporarily unavailable'})
+
+    def set_direction(direction: Literal['left', 'right']) -> str:
+        """Set the direction to take.
+
+        Args:
+            direction: Which direction should be taken?
+        """
+        return direction
+
+    agent = Agent(FallbackModel(mock_model(record), TestModel()), output_type=Ticket, tools=[set_direction])
+    with pytest.raises(UnexpectedModelBehavior, match=r"selected tool 'set_direction'.*failed while filling"):
+        await agent.run('Go left.')
+    assert seen == 2
+
+
+@pytest.mark.vcr
+async def test_tool_arguments_live(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """The live API selects an argument-taking tool, then fills its supported argument."""
+    output_tool = ToolDefinition(
+        name='final_result',
+        description='Classify a message that does not request a navigation action.',
+        kind='output',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'urgent': {'type': 'boolean', 'description': 'Is this message urgent?'}},
+            'required': ['urgent'],
+        },
+    )
+    function_tool = ToolDefinition(
+        name='set_direction',
+        description='Set the navigation direction requested in the message.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'direction': {
+                    'type': 'string',
+                    'enum': ['left', 'right'],
+                    'description': 'Which direction should be taken?',
+                }
+            },
+            'required': ['direction'],
+        },
+    )
+    response = await model_request(
+        typesafe_model,
+        [ModelRequest(parts=[UserPromptPart('At the fork, take the left path. Set our direction accordingly.')])],
+        model_request_parameters=ModelRequestParameters(
+            output_mode='tool',
+            output_tools=[output_tool],
+            function_tools=[function_tool],
+            allow_text_output=False,
+        ),
+    )
+
+    assert response.parts == [ToolCallPart('set_direction', {'direction': 'left'}, tool_call_id=IsStr())]
+    assert response.provider_details == snapshot(
+        {
+            'confidence': {'direction': 1.0},
+            'probabilities': {'direction': {'left': 1.0, 'right': 0.0}},
+            'scores': {},
+            'tool': {
+                'choice': 'set_direction',
+                'probabilities': {'final_result': 0.0, 'set_direction': 1.0},
+                'offered': ['set_direction'],
+            },
+            'requests': 2,
+        }
+    )
+    first, second = request_capture.bodies('/v1/systemone')
+    assert list(first['questions']) == ['urgent', 'tool']
+    assert list(second['questions']) == ['direction']
 
 
 @pytest.mark.parametrize(
@@ -917,8 +1225,8 @@ async def test_with_nothing_to_fill_the_pick_is_the_answer(allow_model_requests:
     assert result.output == 'approved'
 
 
-async def test_the_last_route_left_is_proposed_when_it_needs_arguments(allow_model_requests: None):
-    """The one route left is taken without a question; needing arguments, it is proposed rather than called."""
+async def test_the_last_route_left_is_proposed_when_its_arguments_are_unsupported(allow_model_requests: None):
+    """The forced route still becomes a proposal when its argument schema cannot be expressed."""
 
     def unasked(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('Jev was asked a question when there was nothing left to ask about.')
@@ -934,6 +1242,84 @@ async def test_the_last_route_left_is_proposed_when_it_needs_arguments(allow_mod
     with pytest.raises(ToolCallProposed) as exc_info:
         await agent.run(message_history=history)
     assert (exc_info.value.tool_name, exc_info.value.probability) == ('refund', 1.0)
+
+
+async def test_the_last_route_left_has_its_supported_arguments_filled(allow_model_requests: None):
+    """Skipping a choice request still leaves one argument request for the forced route."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            direction={
+                'type': 'choice',
+                'choice': 'left',
+                'confidence': 0.9,
+                'probabilities': {'left': 0.9, 'right': 0.1},
+            }
+        )
+
+    output_tool = ToolDefinition(name='final_result', description='Finish.', kind='output')
+    function_tool = ToolDefinition(
+        name='set_direction',
+        description='Set the direction to take.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'direction': {
+                    'type': 'string',
+                    'enum': ['left', 'right'],
+                    'description': 'Which direction should be taken?',
+                }
+            },
+            'required': ['direction'],
+        },
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go left.')]),
+        ModelResponse(parts=[ToolCallPart('final_result', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('final_result', 'Returned.', 'call_1')]),
+    ]
+
+    response = await model_request(
+        mock_model(record),
+        messages,
+        model_request_parameters=ModelRequestParameters(
+            output_mode='tool',
+            output_tools=[output_tool],
+            function_tools=[function_tool],
+            allow_text_output=False,
+        ),
+    )
+
+    assert response.parts == [ToolCallPart('set_direction', {'direction': 'left'}, tool_call_id=IsStr())]
+    assert response.usage == RequestUsage(input_tokens=10)
+    assert response.provider_details == snapshot(
+        {
+            'tool': {
+                'choice': 'set_direction',
+                'probabilities': {'set_direction': 1.0},
+                'offered': ['set_direction'],
+            },
+            'confidence': {'direction': 0.9},
+            'probabilities': {'direction': {'left': 0.9, 'right': 0.1}},
+            'scores': {},
+        }
+    )
+    assert len(seen) == 1
+    assert seen[0]['questions'] == snapshot(
+        {
+            'direction': {
+                'type': 'choice',
+                'criteria': {'left': None, 'right': None},
+                'instructions': {
+                    'field': 'direction',
+                    'question': 'Which direction should be taken?',
+                    'goal': 'Set the direction to take.',
+                },
+            }
+        }
+    )
 
 
 async def test_below_the_threshold_with_no_hand_off_left_the_pick_stands(allow_model_requests: None):
@@ -959,7 +1345,7 @@ async def test_below_the_threshold_with_no_hand_off_left_the_pick_stands(allow_m
     assert (exc_info.value.tool_name, exc_info.value.probability) == ('refund', 0.55)
 
 
-async def test_a_tool_with_arguments_is_proposed_even_with_nothing_to_fill(allow_model_requests: None):
+async def test_a_tool_with_unsupported_arguments_is_proposed_even_with_nothing_to_fill(allow_model_requests: None):
     jev = mock_model(
         lambda _: answers(
             tool={
