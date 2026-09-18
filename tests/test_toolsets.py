@@ -301,6 +301,77 @@ async def test_function_toolset_with_defaults_overridden():
         return a - b  # pragma: no cover
 
 
+class InspectingFunctionToolset(FunctionToolset[None]):
+    """A function toolset that records the tool definition it was asked to call a tool with."""
+
+    def __init__(self, received_tool_defs: list[ToolDefinition], **kwargs: Any):
+        super().__init__(**kwargs)
+        self.received_tool_defs = received_tool_defs
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        self.received_tool_defs.append(tool.tool_def)
+        return await super().call_tool(name, tool_args, ctx, tool)
+
+
+async def test_combined_toolset_calls_tool_with_prepared_tool_def():
+    """A `prepare` function outside a `CombinedToolset` reaches the toolset that ends up running the tool."""
+    received_tool_defs: list[ToolDefinition] = []
+    source_toolset = InspectingFunctionToolset(received_tool_defs, id='source')
+
+    @source_toolset.tool_plain
+    def greet() -> str:
+        return 'hello'
+
+    def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [replace(tool_def, metadata={'source': 'prepared'}) for tool_def in tool_defs]
+
+    toolset = PreparedToolset(CombinedToolset([source_toolset]), prepare_tools)
+    ctx = build_run_context(None)
+    tool = (await toolset.get_tools(ctx))['greet']
+
+    assert await toolset.call_tool('greet', {}, ctx, tool) == 'hello'
+    assert [tool_def.metadata for tool_def in received_tool_defs] == [{'source': 'prepared'}]
+
+
+async def test_combined_toolset_calls_tool_without_its_own_toolset_id():
+    """The `toolset_id` a `CombinedToolset` adds for the model's benefit is not passed on to the source toolset."""
+    received_tool_defs: list[ToolDefinition] = []
+    source_toolset = InspectingFunctionToolset(received_tool_defs, id='source')
+
+    @source_toolset.tool_plain
+    def greet() -> str:
+        return 'hello'
+
+    toolset = CombinedToolset([source_toolset])
+    ctx = build_run_context(None)
+    tool = (await toolset.get_tools(ctx))['greet']
+    assert tool.tool_def.toolset_id == 'source'
+
+    assert await toolset.call_tool('greet', {}, ctx, tool) == 'hello'
+    assert received_tool_defs[0].toolset_id is None
+
+
+async def test_prepared_toolset_applies_prepared_timeout():
+    """A timeout set by a `prepare` function is enforced, not the one the tool was originally built with."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(timeout=10)
+    async def slow() -> None:
+        await anyio.sleep(1)
+
+    def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [replace(tool_def, timeout=0.01) for tool_def in tool_defs]
+
+    prepared_toolset = PreparedToolset(toolset, prepare_tools)
+    ctx = build_run_context(None)
+    tool = (await prepared_toolset.get_tools(ctx))['slow']
+
+    with pytest.raises(ModelRetry, match=re.escape('Timed out after 0.01 seconds')):
+        await prepared_toolset.call_tool('slow', {}, ctx, tool)
+
+
 async def test_prepared_toolset_sync_prepare_func():
     """`PreparedToolset` accepts a synchronous prepare function (no await needed)."""
     base_toolset = FunctionToolset()
