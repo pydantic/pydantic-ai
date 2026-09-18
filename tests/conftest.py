@@ -1099,6 +1099,11 @@ def groq_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def typesafe_api_key() -> str:
+    return os.getenv('TYPESAFE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def anthropic_api_key() -> str:
     return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')
 

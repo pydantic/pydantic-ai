@@ -25,6 +25,7 @@ Capture the applicable behavior at stable boundaries; do not invent requirements
 - stream modes and client-visible events;
 - usage, iteration, concurrency, timeout, and retry limits;
 - auth, tenant, filesystem, shell, network, and secret boundaries;
+- harness defaults the slice depends on: profile-resolved prompt, planning, backends, permissions, skills, memory, subagent stacks, and sandboxes;
 - traces, metrics, and eval dimensions;
 - deployment, queue, scheduler, and webhook contracts.
 
@@ -105,6 +106,19 @@ When the slice fans out, accepts concurrent requests for one thread, or shares l
 
 Test the security boundaries the slice exposes. Examples include cross-tenant access, path traversal for filesystem tools, SSRF for URL-fetching tools, secret exposure, and approval bypass. For deferred approval, forge a foreign, unknown, or already-consumed tool-call ID and reject it at an authenticated server-side correlation boundary. Enforce failures below the model layer.
 
+### Harness features
+
+When the source is a Deep Agents harness and the target adds Harness capabilities, test each capability at the contract the source promised:
+
+- **Files and sandboxes:** traversal, absolute paths, symlinks, media and binary data, output bounds, environment leakage, timeout, reconnect, egress, and cleanup failure. For permissions, test operation classes, first-match order, unmatched calls, allow, deny, interrupt, route-relative paths, and child overrides.
+- **Skills and repository context:** discovery layout, precedence, catalog names and descriptions, deferred loading, snapshot or rescan behavior, runtime writes, bundled resources and scripts, walk-up boundaries, and nested traversal.
+- **Plans and memory:** create or replace semantics, status transitions, persistence, concurrent writers, visibility on the next request, namespace isolation, retention, deletion, and whether the next run observes a write after a process restart.
+- **Subagents:** context isolation, explicit state transfer, model and tool selection, parent and child budgets, timeout, cancellation, partial failure, result shape, and streamed identity. For background children, add idempotent start, scoped list and check, task-ID authorization, update and cancel races, duplicate delivery, lost workers, and retry ceilings.
+- **Interpreters and Code Mode:** generated-code limits, state and reset scope, tool and subagent bridges, schema conversion, approval enforcement, OS access, timeouts, and resource-limit failures.
+- **Context offload and compaction:** thresholds, lossy versus lossless paths, store failure, model-visible receipts, read-back bounds, store lifetime, serialization, restoration of text and media, and tool-pair validity after compaction.
+
+Exercise the complete `Agent(..., capabilities=[...])` composition in the target interpreter once; a passing import is not a passing composition.
+
 ### Streaming
 
 Check the event behavior promised by the public stream: event order, relevant correlation IDs, partial text, final-result emission, and any documented reconnect, backpressure, or cancellation behavior. Prove incremental delivery with a real client; model-level time to first chunk does not detect application buffering. If synchronous request construction, retrieval, or tools can block the event loop, preserve any source worker/thread boundary or use a native async path. When responsiveness before the first chunk is an observed contract, test that unrelated event-loop work still advances; do not move thread-affine clients across threads blindly. `run_stream` may treat the first valid final output as terminal; use `run(event_stream_handler=...)`, `run_stream_events`, or `iter` when all tool events must complete. Test early consumer exit, cleanup, and late producer errors.
@@ -120,9 +134,9 @@ If the source uses another observability system, explain the retain, temporary d
 3. Compare outputs, trajectories, limits, and traces automatically.
 4. Canary low-risk write traffic with idempotency keys and rollback controls.
 5. Increase traffic only after predefined quality, latency, cost, and safety thresholds hold.
-6. Stop new LangChain feature work in the migrated slice.
+6. Stop new LangChain and Deep Agents feature work in the migrated slice.
 7. Remove `tool_from_langchain`, `LangChainToolset`, message converters, and dual observability after the rollback window.
-8. Remove LangChain/LangGraph dependencies only after the strict inventory has no errors, a repository-wide text search is clean or explained, dependency and entrypoint graphs show no runtime use, notebooks/config/plugin registries have been checked, and the original runtime tests still pass.
+8. Remove LangChain, LangGraph, and Deep Agents dependencies only after the strict inventory has no errors, a repository-wide text search is clean or explained, dependency and entrypoint graphs show no runtime use, notebooks/config/plugin registries have been checked, and the original runtime tests still pass.
 
 Avoid dual-running side-effectful agents unless tools are in dry-run mode or every external write is deduplicated.
 
@@ -135,7 +149,7 @@ Avoid dual-running side-effectful agents unless tools are in dry-run mode or eve
 - [ ] Streaming and cancellation pass with real clients.
 - [ ] Unit, integration, and eval thresholds pass.
 - [ ] When Logfire is enabled, its privacy settings are deliberate and traces correlate the applicable app, agent, model, tool, and subagent boundaries without being treated as sole parity proof.
-- [ ] No hidden LangChain callbacks, globals, messages, or `RunnableConfig` assumptions remain.
+- [ ] No hidden LangChain callbacks, globals, messages, `RunnableConfig`, Deep Agents backend, or profile assumptions remain.
 - [ ] Transitional bridges have been removed or have owners and removal dates.
 - [ ] Dependency files and operational documentation match the new runtime.
 

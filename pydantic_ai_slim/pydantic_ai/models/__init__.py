@@ -1691,6 +1691,10 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'typesafe':
+        from .typesafe import TypeSafeModel
+
+        return TypeSafeModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
