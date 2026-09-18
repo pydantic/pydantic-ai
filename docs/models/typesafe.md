@@ -128,7 +128,7 @@ The field description is the question text; an `Enum` field without one uses the
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the example below.
 
-A `list` of options is TypeSafe's fan-out: one yes/no per option, all in the same request, and the answer is the options Jev said yes to. An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it; on labelled tickets that reads as well as an `other` member the user wrote, and better than turning low confidence into `None`, which is what the field's confidence is for. A nested model is its fields, asked as `outer.inner` and put back in place; the parent field's description is not sent, so put the context each question needs on the field that asks it. The round trip of lists and nested models is tested; their accuracy against labels is not measured, so check them on your own data before relying on either.
+A `list` of options is TypeSafe's fan-out: one yes/no per option, all in the same request, and the answer is the options Jev said yes to. An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. A nested model is its fields, asked as `outer.inner` and put back in place; the parent field's description is not sent, so put the context each question needs on the field that asks it. The round trip of lists and nested models is tested; their accuracy against labels is not measured, so check them on your own data before relying on either.
 
 Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field, so one threshold reads the same way across an output type. It is a margin, not a probability that the answer is right. For a yes/no it is how far Jev's probability sits from the coin flip, doubled — a `False` answered from a probability of 0.01 reports 0.98, one answered from 0.45 reports 0.10. For a pick-one or a rubric it is Jev's own number, from how its probabilities are spread; for a list of options it is the least sure option's. `provider_details['probabilities']` holds the whole distribution of each pick-one and rubric field, and each option's probability for a list; `['scores']` the unrounded position of each rubric field.
 
@@ -182,7 +182,7 @@ Jev cannot write a tool's arguments, but it can tell which tool a text calls for
 | a tool with arguments | the model behind Jev takes the whole step, tools and all | one |
 | any tool, below the threshold | Jev fills the fields; the lean is reported in `provider_details['tool']` | none |
 
-A tool is only taken at or above `typesafe_tool_call_threshold`. The default of 0.6 was fitted on one set of 120 labelled support tickets, where it put Jev's picks in agreement with GPT-5.6 Sol as often as Claude Opus 5 was; it is a starting point, not a general threshold, and higher hands off less and is right more often when it does. When there is no output type to fill, only output functions, the pick is the answer whatever its probability. A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool with no arguments that sends mail or charges an account is one Jev can set off, and approval and limits are the agent's job here as anywhere.
+A tool is only taken at or above `typesafe_tool_call_threshold`. The default of 0.6 was chosen on a small internal set of support tickets and is a starting point, not a validated threshold: higher hands off less, and is right more often when it does, so set it from labelled examples of your own. When there is no output type to fill, only output functions, the pick is the answer whatever its probability. A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool with no arguments that sends mail or charges an account is one Jev can set off, and approval and limits are the agent's job here as anywhere.
 
 **A tool with no arguments: Jev alone.** There is nothing to write, so the call is made on Jev's pick, and its result comes back as history for the next request. Jev can work through a sequence of such tools; each is offered once per turn, because Jev has no notion of having made a call and picks it again with the result in view. Every request here is a Jev request:
 
@@ -264,16 +264,15 @@ agent = Agent(model, output_type=Ticket, tools=[escalate_to_human, refund])
 ...
 ```
 
-Here Jev triages what it can, opens a case itself when the ticket calls for one and triages again with the case number in view, and leaves a refund, which needs an amount, to the language model behind it. On labelled support tickets, 115 of 120 requests never left Jev.
+Here Jev triages what it can, opens a case itself when the ticket calls for one and triages again with the case number in view, and leaves a refund, which needs an amount, to the language model behind it. Most requests never leave Jev; how many depends on your tickets and the threshold, and `provider_details['tool']` on each response is how to see it.
 
 Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what Jev weighs the tools against; asked whether it *can* answer rather than what the text calls for, it hands off nearly everything. Tune the threshold on labelled examples of your own.
 
-!!! note "What the numbers on this page rest on"
-    One set of 120 support tickets, labelled by a routing rule the maintainers wrote, and used to shape the
-    wording and pick the threshold as well as to report them: one domain, no held-out set, and at that size every
-    accuracy comparison between models overlaps at 95%; the latency gap does not. They show the mappings work and
-    roughly how well on that task, not how Jev will do on yours. Measure on your own labelled examples before
-    trusting a threshold, a hand-off rate or an accuracy figure.
+!!! note "Measure on your own data"
+    The defaults on this page, and the claims about what Jev answers well, come from a small internal set of
+    support tickets: one domain, labelled by the maintainers, and too small to separate models with confidence.
+    They say the mappings work, not how Jev will do on your task. Measure accuracy, the hand-off rate and any
+    threshold on labelled examples of your own before relying on them.
 
 ## Ask one thing per field
 
