@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import pickle
 from collections.abc import Callable
 from enum import Enum, IntEnum
 from typing import Any, Literal
@@ -53,7 +54,7 @@ with try_import() as evals_imports_successful:
 with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
-    from pydantic_ai.models.typesafe import TypeSafeModel
+    from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
 pytestmark = [
@@ -488,15 +489,142 @@ async def test_unencodable_extra_body_is_a_user_error(allow_model_requests: None
         await agent.run('anything')
 
 
-async def test_function_tools_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):
-    agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
+class Ticket(BaseModel):
+    """Triage a support ticket."""
 
-    @agent.tool_plain
-    def lookup() -> str:
-        return 'x'  # pragma: no cover
+    urgent: bool = Field(description='Does this need a reply within the hour?')
 
-    with pytest.raises(UserError, match='Function tools are not supported'):
-        await agent.run('anything')
+
+def refund(amount: float) -> str:
+    """Return a payment to the customer."""
+    return f'Refunded {amount}'  # pragma: no cover
+
+
+def tool_answers(choice: str, probability: float) -> httpx2.Response:
+    """Jev's answers to a `Ticket` with `refund` attached: a sure `urgent`, and the tool question as given."""
+    rest = round(1 - probability, 2)
+    other = 'refund' if choice == 'final_result' else 'final_result'
+    return answers(
+        urgent={'type': 'noul', 'noul': 0.9},
+        tool={
+            'type': 'choice',
+            'choice': choice,
+            'confidence': 0.7,
+            'probabilities': {choice: probability, other: rest},
+        },
+    )
+
+
+@pytest.mark.vcr
+async def test_a_tool_is_proposed_not_called(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """With a tool attached Jev is asked which tool the text calls for, the output tool first, and proposes one."""
+    agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
+    with pytest.raises(ToolCallProposed) as exc_info:
+        await agent.run('You charged my card twice for the same month. Put the second one back.')
+    assert exc_info.value.tool_name == 'refund'
+    assert exc_info.value.probability == snapshot(1.0)
+    assert str(exc_info.value) == snapshot(
+        "Jev proposed calling 'refund' (probability 1.00) and cannot call tools itself. Put a model that can behind it: `FallbackModel(jev, llm)` hands it this request."
+    )
+    assert request_capture.body('/v1/systemone')['questions']['tool'] == snapshot(
+        {
+            'type': 'choice',
+            'criteria': {'final_result': 'Triage a support ticket.', 'refund': 'Return a payment to the customer.'},
+            'instructions': 'Which of these does this call for?',
+        }
+    )
+
+
+async def test_a_fallback_model_takes_the_proposed_step(allow_model_requests: None):
+    """`ToolCallProposed` is a `ModelAPIError`, so the default `FallbackModel` hands the step to the next model."""
+    jev = mock_model(lambda _: tool_answers('refund', 0.95))
+    called: list[float] = []
+
+    def refund(amount: float) -> str:
+        """Return a payment to the customer."""
+        called.append(amount)
+        return 'Refunded'
+
+    agent = Agent(FallbackModel(jev, TestModel()), output_type=Ticket, tools=[refund])
+    result = await agent.run('Charged twice.')
+    assert result.response.model_name == 'test'
+    assert called == [0]
+
+
+@pytest.mark.parametrize(
+    'probability,settings',
+    [
+        pytest.param(0.79, None, id='below the default threshold'),
+        pytest.param(0.9, {'typesafe_tool_call_threshold': 0.95}, id='below a raised threshold'),
+    ],
+)
+async def test_a_tool_below_the_threshold_is_a_lean(
+    allow_model_requests: None, probability: float, settings: dict[str, float] | None
+):
+    """A tool picked below the threshold does not end the request; the output is filled and the lean is reported."""
+    jev = mock_model(lambda _: tool_answers('refund', probability))
+    agent = Agent(jev, output_type=Ticket, tools=[refund], model_settings=settings)  # type: ignore[arg-type]
+    result = await agent.run('Charged twice.')
+    assert result.output == Ticket(urgent=True)
+    assert result.response.provider_details == snapshot(
+        {
+            'confidence': {'urgent': 0.8},
+            'probabilities': {},
+            'scores': {},
+            'tool': {
+                'choice': 'refund',
+                'probabilities': {'refund': probability, 'final_result': round(1 - probability, 2)},
+            },
+        }
+    )
+
+
+async def test_the_output_tool_is_one_of_the_options(allow_model_requests: None):
+    jev = mock_model(lambda _: tool_answers('final_result', 0.9))
+    result = await Agent(jev, output_type=Ticket, tools=[refund]).run('Is my invoice due?')
+    assert result.output == Ticket(urgent=True)
+    assert result.response.provider_details['tool'] == {
+        'choice': 'final_result',
+        'probabilities': {'final_result': 0.9, 'refund': 0.1},
+    }
+
+
+async def test_the_tool_question_stays_clear_of_a_field_named_tool(allow_model_requests: None):
+    seen: list[dict[str, Any]] = []
+
+    class Uses(BaseModel):
+        """Say what a text is about."""
+
+        tool: bool = Field(description='Does it mention a tool?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            tool={'type': 'noul', 'noul': 0.9},
+            tool_={
+                'type': 'choice',
+                'choice': 'final_result',
+                'confidence': 0.9,
+                'probabilities': {'final_result': 0.9, 'refund': 0.1},
+            },
+        )
+
+    result = await Agent(mock_model(record), output_type=Uses, tools=[refund]).run('A hammer.')
+    assert result.output == Uses(tool=True)
+    assert list(seen[0]['questions']) == ['tool', 'tool_']
+
+
+async def test_an_unexpected_tool_answer(allow_model_requests: None):
+    jev = mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': 0.9}, tool={'type': 'noul', 'noul': 0.9}))
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected answer from TypeSafe for the tool question'):
+        await Agent(jev, output_type=Ticket, tools=[refund]).run('anything')
+
+
+def test_tool_call_proposed_pickles():
+    exc = pickle.loads(pickle.dumps(ToolCallProposed('jev-latest', 'refund', 0.9)))
+    assert (exc.model_name, exc.tool_name, exc.probability) == ('jev-latest', 'refund', 0.9)
 
 
 async def test_native_tools_rejected(allow_model_requests: None, typesafe_model: TypeSafeModel):

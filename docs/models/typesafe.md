@@ -138,6 +138,37 @@ The handler runs on every model in the chain, and a language model reports no `c
 
 Watch how often the fallback fires, not only how accurate the pair is. A chain that hands off nearly everything is accurate and costs full price, and the rate is the only number that shows it.
 
+## Tools: Jev proposes, another model calls
+
+Jev cannot call a tool, but it can tell that a text calls for one. With tools attached, every request carries one more question — which of the tools this calls for, the output type among them, each described by its docstring — and Jev answers it like any other. When it picks the output, the fields are filled as usual. When it picks a tool with a probability at or above `typesafe_tool_call_threshold` (0.8 by default), the request ends in a [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed]. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind Jev hands that model the whole step, tools and all, and only the requests Jev handed off cost a language model call:
+
+```python
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.models.fallback import FallbackModel
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+def refund(amount: float) -> str:
+    """Return a payment to the customer."""
+    return f'Refunded {amount}'
+
+
+model = FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol')
+agent = Agent(model, output_type=Ticket, tools=[refund])
+...
+```
+
+Below the threshold the pick is a lean: the output is filled, and the pick and its probabilities are reported in `provider_details['tool']` so the hand-off rate can be watched alongside accuracy. Without a model behind Jev, the proposal is the error, and it says which tool Jev wanted and how sure it was.
+
+Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what Jev weighs the tools against. Asked whether it *can* answer rather than what the text calls for, Jev hands off nearly everything. Tune the threshold on labelled examples of your own: higher hands off less, and is right more often when it does.
+
 ## Ask one thing per field
 
 TypeSafe call this "probably the most important concept" in their guide, and it is the one habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible number with low confidence, and you find out later.
@@ -276,7 +307,7 @@ Everything below returns an answer rather than an error, which is what makes it 
 Jev does not write text, call tools, read files or stream. An agent that needs any of those is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be one structured type made of the field types above: no `str`, no union of output types, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
-- No function tools, toolsets or native tools.
+- No native tools. Function tools are not called by Jev either, but they are [proposed](#tools-jev-proposes-another-model-calls).
 - No image, audio, video or document in the prompt or the history.
 - No streaming: `run_stream`, `event_stream_handler` and the AG-UI and Vercel AI adapters do not work with it.
 
@@ -335,7 +366,7 @@ See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this inte
 
 ## Model settings
 
-Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request:
+Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request, and `typesafe_tool_call_threshold` sets how sure Jev has to be before it [proposes a tool](#tools-jev-proposes-another-model-calls):
 
 ```python
 from pydantic_ai import Agent

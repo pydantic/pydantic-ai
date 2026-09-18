@@ -64,7 +64,13 @@ except ImportError as _import_error:
         'you can use the `typesafe` optional group — `pip install "pydantic-ai-slim[typesafe]"`'
     ) from _import_error
 
-__all__ = ('TypeSafeModel', 'TypeSafeModelName', 'TypeSafeModelSettings', 'LatestTypeSafeModelNames')
+__all__ = (
+    'TypeSafeModel',
+    'TypeSafeModelName',
+    'TypeSafeModelSettings',
+    'LatestTypeSafeModelNames',
+    'ToolCallProposed',
+)
 
 LatestTypeSafeModelNames = Literal['jev-latest', 'jev-preview']
 """TypeSafe aliases, which move when a release ships. `jev-preview` runs ahead of `jev-latest` when there is a
@@ -85,7 +91,41 @@ class TypeSafeModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `typesafe_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # This class is a placeholder for any future TypeSafe-specific settings
+    typesafe_tool_call_threshold: float
+    """How likely Jev has to find a tool call before it is proposed, from 0 to 1. Default: 0.8.
+
+    With tools attached, one more question asks which tool the text calls for, the output tool among them. A tool
+    picked below this probability is a lean, and the output is filled as usual; one at or above it is raised as
+    [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] for a model behind Jev to call. Tune it on
+    labelled examples of your own: higher hands off less, and is right more often when it does.
+    """
+
+
+class ToolCallProposed(ModelAPIError):
+    """Jev found that the text calls for a tool, which it cannot call itself.
+
+    A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands it the
+    whole step by default, tools and all, and only the requests Jev hands off cost a language model call.
+    """
+
+    tool_name: str
+    """The tool Jev proposed."""
+
+    probability: float
+    """How likely Jev found the call, from 0 to 1."""
+
+    def __init__(self, model_name: str, tool_name: str, probability: float):
+        self.tool_name = tool_name
+        self.probability = probability
+        super().__init__(
+            model_name,
+            f'Jev proposed calling {tool_name!r} (probability {probability:.2f}) and cannot call tools itself. '
+            f'Put a model that can behind it: `FallbackModel(jev, llm)` hands it this request.',
+        )
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.tool_name, self.probability)
 
 
 @dataclass(init=False)
@@ -135,8 +175,14 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     the message history, from any model, goes along beside it as `history`: user prompts, answers, tool calls
     and their results, and retry prompts.
 
-    Anything Jev cannot do is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request
-    is sent: text output, other field types, tools, files in the prompt or history, and streaming.
+    Jev cannot call a tool, but it can tell that the text calls for one. With tools attached, one more question
+    asks which tool the text calls for, the output tool among them; a tool picked at or above
+    `typesafe_tool_call_threshold` is raised as [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed],
+    which a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands
+    that model, tools and all.
+
+    Anything else Jev cannot do is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a
+    request is sent: text output, other field types, native tools, files in the prompt or history, and streaming.
 
     Sampling settings like `temperature` do not apply and are ignored. `timeout`, `extra_headers` and
     `extra_body` are forwarded.
@@ -204,6 +250,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         questions = _questions(properties, output_tool, instructions)
+        tool_key = _tool_question(questions, output_tool, model_request_parameters.function_tools)
         settings = cast(TypeSafeModelSettings, model_settings or {})
 
         timeout = settings.get('timeout')
@@ -262,6 +309,17 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             else:
                 raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
 
+        provider_details: dict[str, Any] = {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
+        if tool_key is not None:
+            answer = response.answers.get(tool_key)
+            if not isinstance(answer, ChoiceAnswer):
+                raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for the tool question: {answer!r}')
+            probability = answer.probabilities[answer.choice]
+            if answer.choice != output_tool.name and probability >= settings.get('typesafe_tool_call_threshold', 0.8):
+                raise ToolCallProposed(self._model_name, answer.choice, probability)
+            # A tool picked below the threshold is a lean, reported so the hand-off rate can be watched.
+            provider_details['tool'] = {'choice': answer.choice, 'probabilities': answer.probabilities}
+
         return ModelResponse(
             parts=[ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(
@@ -270,15 +328,13 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             model_name=response.model,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
-            provider_details={'confidence': confidence, 'probabilities': probabilities, 'scores': scores},
+            provider_details=provider_details,
             finish_reason='tool_call',
         )
 
 
 def _output_tool(model_request_parameters: ModelRequestParameters) -> ToolDefinition:
     """The one output tool Jev answers, or a `UserError` saying why this agent cannot run on Jev."""
-    if model_request_parameters.function_tools:
-        raise UserError('Function tools are not supported by this model. Give the agent an `output_type` and no tools.')
     if model_request_parameters.allow_text_output:
         raise UserError(
             'Text output is not supported by this model. Give the agent one structured `output_type`, '
@@ -367,6 +423,27 @@ def _questions(
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
+
+
+def _tool_question(
+    questions: dict[str, Noul | Choice | Score], output_tool: ToolDefinition, tools: list[ToolDefinition]
+) -> str | None:
+    """With tools attached, one more question: which tool the text calls for, the output tool among them.
+
+    Jev cannot call a tool, but it can tell that the text calls for one, and a model behind it can make the call.
+    The output tool is the first option, described by what the agent is for, so that filling the output is an
+    action weighed against the others. Asked instead whether it *can* answer, Jev hands off nearly everything: that
+    is a question about the question, not about the text.
+    """
+    if not tools:
+        return None
+    key = 'tool'
+    while key in questions:
+        key += '_'
+    criteria: dict[str, str | None] = {output_tool.name: output_tool.description}
+    criteria.update((tool.name, tool.description) for tool in tools)
+    questions[key] = Choice(instructions='Which of these does this call for?', criteria=criteria)
+    return key
 
 
 def _score_question(name: str, options: dict[int, str | None], asked: JSONContent | None) -> Score:
