@@ -73,9 +73,11 @@ with try_import() as imports_successful:
     from pydantic_ai import _mcp, mcp as mcp_module
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
-    # `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a declaration.
+    # `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a
+    # declaration. It needs a value rather than a bare annotation, because the skip condition below
+    # reads the name at module level, where an annotation alone leaves it unbound.
     if TYPE_CHECKING:
-        TasksExtension: Any
+        TasksExtension: Any = None
     else:
         try:
             from fastmcp_tasks import TasksExtension
