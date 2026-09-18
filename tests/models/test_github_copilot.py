@@ -39,7 +39,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
+from ..conftest import IsDatetime, IsDecimal, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.github_copilot import GitHubCopilotModel
@@ -82,6 +82,7 @@ async def test_github_copilot_model_simple(allow_model_requests: None, github_co
             ModelResponse(
                 parts=[TextPart(content='Paris.')],
                 usage=RequestUsage(
+                    cost=IsDecimal() | None,
                     details={'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0},
                     input_tokens=20,
                     output_tokens=5,
@@ -140,7 +141,7 @@ async def test_github_copilot_claude_model(allow_model_requests: None, github_co
             ),
             ModelResponse(
                 parts=[TextPart(content='Paris is the capital of France.')],
-                usage=RequestUsage(input_tokens=18, output_tokens=10),
+                usage=RequestUsage(cost=IsDecimal() | None, input_tokens=18, output_tokens=10),
                 model_name='claude-haiku-4.5',
                 timestamp=IsDatetime(),
                 provider_name='github-copilot',
@@ -415,7 +416,7 @@ async def test_github_copilot_claude_thinking(
                 ),
                 TextPart(content='3599 = 59 × 61'),
             ],
-            usage=RequestUsage(input_tokens=31, output_tokens=24),
+            usage=RequestUsage(cost=IsDecimal() | None, input_tokens=31, output_tokens=24),
             model_name='claude-sonnet-5',
             timestamp=IsDatetime(),
             provider_name='github-copilot',
@@ -457,7 +458,7 @@ async def test_github_copilot_claude_thinking_stream(allow_model_requests: None,
                 ),
                 TextPart(content='**3599 = 59 × 61**'),
             ],
-            usage=RequestUsage(output_tokens=41, input_tokens=31),
+            usage=RequestUsage(cost=IsDecimal() | None, output_tokens=41, input_tokens=31),
             model_name='claude-sonnet-5',
             timestamp=IsDatetime(),
             provider_name='github-copilot',
@@ -543,7 +544,9 @@ async def test_github_copilot_gemini_thinking(
                 ),
                 TextPart(content='59 × 61'),
             ],
-            usage=RequestUsage(details={'reasoning_tokens': 122}, input_tokens=18, output_tokens=6),
+            usage=RequestUsage(
+                cost=IsDecimal() | None, details={'reasoning_tokens': 122}, input_tokens=18, output_tokens=6
+            ),
             model_name='gemini-3.8-flash',
             timestamp=IsDatetime(),
             provider_name='github-copilot',
@@ -591,7 +594,9 @@ async def test_github_copilot_gemini_thinking_stream(allow_model_requests: None,
                 ),
                 TextPart(content='120'),
             ],
-            usage=RequestUsage(details={'reasoning_tokens': 199}, input_tokens=19, output_tokens=3),
+            usage=RequestUsage(
+                cost=IsDecimal() | None, details={'reasoning_tokens': 199}, input_tokens=19, output_tokens=3
+            ),
             model_name='gemini-3.8-flash',
             timestamp=IsDatetime(),
             provider_name='github-copilot',
