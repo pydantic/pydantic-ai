@@ -865,7 +865,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # access ensures it binds to the running loop and avoids issues with Temporal's workflow sandbox.
         return anyio.Lock()
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         client: MCPToolsetClient,
         *,
@@ -893,6 +893,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         init_timeout: float | None = _UNSET,
         read_timeout: float | None = _UNSET,
         roots: RootsList | RootsHandler[Any] | None = None,
+        protocol_mode: Literal['legacy'] | None = None,
         # HTTP-specific (only used when constructing a default transport from a URL)
         auth: httpx.Auth | Literal['oauth'] | str | None = None,
         verify: ssl.SSLContext | bool | str | None = None,
@@ -949,6 +950,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             read_timeout: Maximum time in seconds to wait for new messages on the long-lived
                 connection. Defaults to 5 minutes.
             roots: Filesystem roots advertised to the server.
+            protocol_mode: Force a specific protocol mode. If `None` (default), implies `'legacy'`
+                when server-initiated handlers (`sampling_model`, `elicitation_handler`, etc) are set
+                on MCP SDK v2, otherwise modern mode.
             auth: HTTP authentication for HTTP transports — an `httpx.Auth`, the literal string
                 `'oauth'` to enable FastMCP's OAuth flow, or a bearer-token string.
             verify: SSL verification mode for HTTP transports — an `ssl.SSLContext`, a CA bundle
@@ -983,6 +987,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 'message_handler': message_handler,
                 'client_info': client_info,
                 'roots': roots,
+                'protocol_mode': protocol_mode,
                 'auth': auth,
                 'verify': verify,
                 'headers': headers,
@@ -1031,18 +1036,39 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
             wrapped_message_handler = _build_message_handler(self, message_handler)
 
-            self.client = FastMCPClient[Any](
-                transport=transport,
-                sampling_handler=resolved_sampling_handler,
-                elicitation_handler=elicitation_handler,
-                log_handler=log_handler,
-                progress_handler=progress_handler,
-                message_handler=wrapped_message_handler,
-                client_info=client_info,
-                init_timeout=init_timeout,
-                timeout=read_timeout,
-                roots=roots,
-            )
+            client_kwargs: dict[str, Any] = {
+                'transport': transport,
+                'sampling_handler': resolved_sampling_handler,
+                'elicitation_handler': elicitation_handler,
+                'log_handler': log_handler,
+                'progress_handler': progress_handler,
+                'message_handler': wrapped_message_handler,
+                'client_info': client_info,
+                'init_timeout': init_timeout,
+                'timeout': read_timeout,
+                'roots': roots,
+            }
+            if _MCP_SDK_V2:
+                mode_val = protocol_mode
+                if mode_val is None and (
+                    resolved_sampling_handler is not None or elicitation_handler is not None or log_level is not None
+                ):
+                    mode_val = 'legacy'
+
+                if mode_val is not None:
+                    import inspect
+
+                    if (
+                        'mode' in inspect.signature(FastMCPClient.__call__).parameters
+                        or 'mode' in inspect.signature(FastMCPClient.__init__).parameters
+                    ):
+                        client_kwargs['mode'] = mode_val
+                    elif hasattr(FastMCPClient, '__origin__'):
+                        # fastmcp < 4 may wrap Client in a Generic, inspect the origin instead.
+                        if 'mode' in inspect.signature(FastMCPClient.__origin__.__init__).parameters:
+                            client_kwargs['mode'] = mode_val
+
+            self.client = FastMCPClient[Any](**client_kwargs)
             self._user_message_handler = message_handler
             if resolved_sampling_handler is not None:
                 self._server_initiated_handlers.append('sampling_model' if sampling_model else 'sampling_handler')
