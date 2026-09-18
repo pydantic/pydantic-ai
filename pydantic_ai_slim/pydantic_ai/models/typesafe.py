@@ -88,6 +88,10 @@ threshold has been tuned against one. https://docs.typesafe.ai/models"""
 TypeSafeModelName = str | LatestTypeSafeModelNames
 """Possible TypeSafe model names."""
 
+# Jev picks from at most this many options in one question; a 256th is a 400 from the API.
+# https://docs.typesafe.ai/model-jaggedness/jev-1.13
+_MAX_CHOICE_OPTIONS = 255
+
 _UNSUPPORTED_FIELD_HINT = (
     'Use `bool`, a `Literal` or `Enum` of two or more strings, a `float` bounded with `ge=0` and `le=1`, a `list` of '
     'a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its schema, or a model '
@@ -754,6 +758,11 @@ def _questions(
                     f'Output field {name!r} is not supported by this model: its options are not two or more strings. '
                     f'{_UNSUPPORTED_FIELD_HINT}'
                 )
+            elif len(options) > _MAX_CHOICE_OPTIONS:
+                raise UserError(
+                    f'Output field {name!r} is not supported by this model: Jev picks from at most '
+                    f'{_MAX_CHOICE_OPTIONS} options, and this one has {len(options)}.'
+                )
             else:
                 questions[name] = Choice(instructions=asked, criteria=cast('dict[str, str | None]', options))
         elif prop.get('type') == 'boolean' or (
@@ -841,6 +850,12 @@ def _tool_question(
             )
         criteria[output_tool.name] = described or instructions
     criteria.update((tool.name, tool.description) for tool in tools)
+    if len(criteria) > _MAX_CHOICE_OPTIONS:
+        raise UserError(
+            f'Jev picks from at most {_MAX_CHOICE_OPTIONS} options, and it is being offered {len(criteria)} routes: '
+            f'the output type counts as one beside the tools. Attach fewer tools, or withhold some of them until '
+            f'they are needed.'
+        )
     questions[key] = Choice(instructions='Which of these does this call for?', criteria=criteria)
     return key
 
