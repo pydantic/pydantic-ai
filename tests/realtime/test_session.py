@@ -7282,7 +7282,7 @@ async def test_realtime_session_explains_a_declaratively_external_tool() -> None
         toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='lookup', kind='external')])]
     )
 
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='get_weather', args='{}'), ResponseDone()])
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='lookup', args='{}'), ResponseDone()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         events = [e async for e in session]
@@ -7960,7 +7960,7 @@ async def test_agent_realtime_session_capability_recovers_tool_error_for_taps_on
     def lookup() -> str:
         raise ValueError('service unavailable')
 
-    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='get_weather', args='{}'), ResponseDone()])
+    conn = BlockingRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='lookup', args='{}'), ResponseDone()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model, capabilities=[RecoverToolError()]).session() as session:
         audio = asyncio.create_task(_collect(session.stream_audio()))
