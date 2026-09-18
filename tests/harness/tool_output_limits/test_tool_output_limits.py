@@ -640,6 +640,14 @@ class TestSpill:
         assert out.metadata['orig'] is True
         assert 'overflow_handle' in out.metadata
 
+    async def test_spill_preserves_non_mapping_metadata(self, tmp_path: Path):
+        store = LocalFileStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Spill())], store=store)
+        out = await _run(cap, ToolReturn(return_value='a' * 100, metadata='app-request-id-123'))
+        assert isinstance(out, ToolReturn)
+        assert out.metadata['original_metadata'] == 'app-request-id-123'
+        assert 'overflow_handle' in out.metadata
+
 
 class _BrokenStore:
     """An `OverflowStore` whose writes always fail (for fallback tests)."""
@@ -933,6 +941,10 @@ class TestInternals:
 
     def test_with_handles_non_mapping(self):
         meta = _with_handles('not-a-mapping', 'h/1.0', 42)
+        assert meta == {'original_metadata': 'not-a-mapping', 'overflow_handle': 'h/1.0', 'overflow_bytes': 42}
+
+    def test_with_handles_none(self):
+        meta = _with_handles(None, 'h/1.0', 42)
         assert meta == {'overflow_handle': 'h/1.0', 'overflow_bytes': 42}
 
     def test_with_handles_content_only(self):
@@ -1052,6 +1064,24 @@ class TestAgentIntegration:
         assert isinstance(part.content, str) and 'too large' in part.content
         assert part.metadata is not None and 'overflow_handle' in part.metadata
         assert await store.read(part.metadata['overflow_handle']) == ('data line\n' * 500).encode('utf-8')
+
+    async def test_spill_preserves_non_mapping_metadata_through_agent_run(self, tmp_path: Path, anyio_backend: str):
+        store = LocalFileStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=100, action=Spill())], store=store)
+        agent = Agent(TestModel(call_tools=['big_tool']), capabilities=[cap])
+
+        @agent.tool_plain
+        def big_tool() -> ToolReturn:
+            return ToolReturn(return_value='data line\n' * 500, metadata='app-request-id-123')
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        spilled = [p for p in returns if p.tool_name == 'big_tool']
+        assert spilled
+        part = spilled[0]
+        assert part.metadata is not None
+        assert part.metadata['original_metadata'] == 'app-request-id-123'
+        assert 'overflow_handle' in part.metadata
 
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
         cap: ToolOutputLimits[object] = ToolOutputLimits(

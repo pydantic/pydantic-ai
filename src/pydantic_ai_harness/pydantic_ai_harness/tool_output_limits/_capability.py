@@ -552,6 +552,8 @@ def _with_handles(
     base: dict[str, object] = {}
     if _is_mapping(existing):
         base.update(_copy_mapping(existing))
+    elif existing is not None:
+        base['original_metadata'] = existing
     if value_handle is not None:
         base['overflow_handle'] = value_handle
         base['overflow_bytes'] = value_bytes
