@@ -412,10 +412,10 @@ def _fold_described_options(schema: JsonSchema) -> None:
     way was called with a value outside the options. So the options go back into one `enum`, and what each one
     means goes into the description, where the model still reads it.
     """
-    options = schema.get('anyOf')
+    options = cast(list[JsonSchema], schema.get('anyOf', []))
     if not options or not all(
         isinstance(option, dict)
-        and len(option.get('enum', ())) == 1
+        and len(cast(list[Any], option.get('enum', []))) == 1
         and option.keys() <= {'enum', 'type', 'description'}
         for option in options
     ):

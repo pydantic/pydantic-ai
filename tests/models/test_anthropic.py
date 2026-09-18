@@ -14459,7 +14459,7 @@ async def test_anthropic_enum_member_docstrings_reach_the_wire(
     ]
     assert calls[0].args_as_dict() == {'priority': 'high'}
     body = request_capture.body('/v1/messages')
-    assert body['tools'][0]['input_schema'] == snapshot(
+    assert cast(list[dict[str, Any]], body['tools'])[0]['input_schema'] == snapshot(
         {
             'additionalProperties': False,
             'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
@@ -14476,4 +14476,4 @@ async def test_anthropic_enum_member_docstrings_reach_the_wire(
                 }
             },
         }
-    )  # type: ignore[index]
+    )

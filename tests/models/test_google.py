@@ -7444,7 +7444,7 @@ async def test_google_enum_member_docstrings_reach_the_wire(
     ]
     assert calls[0].args_as_dict() == {'priority': 'high'}
     body = request_capture.body(':generateContent')
-    assert body['tools'][0]['functionDeclarations'][0] == snapshot(
+    assert cast(list[dict[str, Any]], body['tools'])[0]['functionDeclarations'][0] == snapshot(
         {
             'description': '',
             'name': 'set_priority',
@@ -7466,4 +7466,4 @@ high: Needs attention today.\
                 },
             },
         }
-    )  # type: ignore[index]
+    )
