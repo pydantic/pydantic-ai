@@ -5212,7 +5212,7 @@ def test_enum_member_docstrings_describe_options():
         high = 'high'
         """Needs attention today."""
         unknown = 'unknown'
-        annotated: str = 'annotated'
+        annotated: str = 'annotated'  # pyright: ignore[reportGeneralTypeIssues]
         """An annotated member is a member too."""
         _ignore_ = ['label']
         """A string after a name that is not a member describes nothing."""
@@ -5248,6 +5248,19 @@ class Level(str, Enum):
     low = 'low'
     """Can wait a week."""
     high = 'high'
+    annotated: str = 'annotated'  # pyright: ignore[reportGeneralTypeIssues]
+    """An annotated member is a member too."""
+    _ignore_ = ['label']
+    """A string after a name that is not a member describes nothing."""
+
+    def label(self) -> str:
+        return self.value.title()  # pragma: no cover
+
+    """A string that follows no member describes nothing."""
+
+
+Functional = Enum('Functional', {'low': 'low', 'high': 'high'})
+"""Built without source to read, so no member can be described."""
 
 
 def test_enum_member_docstrings_follow_the_models_docstring_switch():
@@ -5265,23 +5278,40 @@ def test_enum_member_docstrings_follow_the_models_docstring_switch():
 
         def capture(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.append(info.output_tools[0].parameters_json_schema)
-            args = {'level': 'low'} if output_type is not Level else {'response': 'low'}
+            args = (
+                {'response': 'low'}
+                if isinstance(output_type, type) and issubclass(output_type, Enum)
+                else {'level': 'low'}
+            )
             return ModelResponse(parts=[ToolCallPart('final_result', args, 'call_1')])
 
         Agent(FunctionModel(capture), output_type=output_type).run_sync('Hello')
         return seen[0]
 
-    assert defs(Quiet)['$defs']['Level'] == snapshot({'enum': ['low', 'high'], 'title': 'Level', 'type': 'string'})
+    assert defs(Quiet)['$defs']['Level'] == snapshot(
+        {'enum': ['low', 'high', 'annotated'], 'title': 'Level', 'type': 'string'}
+    )
     assert defs(Described)['$defs']['Level'] == snapshot(
         {
-            'anyOf': [{'const': 'low', 'description': 'Can wait a week.'}, {'const': 'high'}],
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high'},
+                {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+            ],
             'title': 'Level',
             'type': 'string',
         }
     )
+    assert defs(Functional)['$defs']['Functional'] == snapshot(
+        {'enum': ['low', 'high'], 'title': 'Functional', 'type': 'string'}
+    )
     assert defs(Level)['$defs']['Level'] == snapshot(
         {
-            'anyOf': [{'const': 'low', 'description': 'Can wait a week.'}, {'const': 'high'}],
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high'},
+                {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+            ],
             'title': 'Level',
             'type': 'string',
         }
