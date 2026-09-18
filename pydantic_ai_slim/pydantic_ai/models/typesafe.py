@@ -634,13 +634,9 @@ def _output_tools(
     An output function that takes nothing, or only the run context, is a hand-off Jev can pick without writing
     anything, so any number of them can sit beside the one output type it fills. A second output type with fields
     would be a second set of questions with no way to choose between them, and is a `UserError`, like everything
-    else this agent could ask for that Jev cannot do.
+    else this agent could ask for that Jev cannot do. Text output is refused earlier, by the shared request
+    preparation, on the profile's `supports_text_output`.
     """
-    if model_request_parameters.allow_text_output:
-        raise UserError(
-            'Text output is not supported by this model. Give the agent one structured `output_type`, '
-            'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
-        )
     with_fields: list[ToolDefinition] = []
     hand_offs: list[ToolDefinition] = []
     for tool in model_request_parameters.output_tools:
