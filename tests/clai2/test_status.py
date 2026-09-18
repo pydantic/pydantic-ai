@@ -105,33 +105,54 @@ async def test_shimmer_without_spinner(monkeypatch: pytest.MonkeyPatch, truecolo
     assert '\n' not in output.getvalue()
 
 
-async def test_row_reserved_before_margins_and_again_on_resize(monkeypatch: pytest.MonkeyPatch) -> None:
-    output = io.StringIO()
-    original_sleep = asyncio.sleep
+async def test_row_reserved_before_margins_and_again_on_resize() -> None:
+    painted = asyncio.Event()
 
-    async def tick(delay: float) -> None:
-        await original_sleep(0)
+    class Output(io.StringIO):
+        def flush(self) -> None:
+            painted.set()
 
-    monkeypatch.setattr('pydantic_clai2.status.asyncio.sleep', tick)
+    output = Output()
     console = Console(file=output, force_terminal=True, width=40, height=24)
     async with StatusLine(console, Status()):
-        for _ in range(3):
-            await original_sleep(0)
+        painted.clear()
+        await asyncio.wait_for(painted.wait(), timeout=5)
         first = output.getvalue()
-        # Index down then up puts the cursor inside the region before the margins are set.
-        assert first.count('\x1bD\x1b[1A\x1b7\x1b[1;23r') == 1
+        assert first.count('\x1bD' * 4 + '\x1b[4A\x1b7\x1b[1;20r') == 1
+        assert '│> Working... Ctrl-C to interrupt' in first
         assert first.count('\x1b[24;1H') >= 2
         console.height = 30
-        for _ in range(3):
-            await original_sleep(0)
-    resized = output.getvalue()[len(first) :]
-    assert resized.count('\x1bD\x1b[1A\x1b7\x1b[1;29r') == 1
-    assert resized.count('\x1b[30;1H') >= 1
+        painted.clear()
+        await asyncio.wait_for(painted.wait(), timeout=5)
+        resized = output.getvalue()[len(first) :]
+        assert resized.count('\x1bD' * 4 + '\x1b[4A\x1b7\x1b[1;26r') == 1
+        assert resized.count('\x1b[30;1H') >= 1
+        console.height = 2
+        painted.clear()
+        before = len(output.getvalue())
+        await asyncio.wait_for(painted.wait(), timeout=5)
+        assert '\x1b[r' in output.getvalue()[before:]
+        console.height = 24
+        painted.clear()
+        await asyncio.wait_for(painted.wait(), timeout=5)
+        assert 'Working... Ctrl-C to interrupt' in output.getvalue()[before:]
 
 
 async def test_tiny_terminal() -> None:
-    async with StatusLine(Console(file=io.StringIO(), force_terminal=True, height=2), Status()):
-        await asyncio.sleep(0)
+    output = io.StringIO()
+    async with StatusLine(Console(file=output, force_terminal=True, height=2), Status()):
+        pass
+    assert '\x1b[1;' not in output.getvalue()
+    assert 'Working' not in output.getvalue()
+
+
+@pytest.mark.parametrize(('width', 'height'), [(80, 5), (3, 24), (1, 3)])
+async def test_small_terminal_keeps_only_the_status_row(width: int, height: int) -> None:
+    output = io.StringIO()
+    async with StatusLine(Console(file=output, force_terminal=True, width=width, height=height), Status()):
+        assert f'\x1b[1;{height - 1}r' in output.getvalue()
+        assert '┌' not in output.getvalue()
+    assert output.getvalue().endswith('\x1b8\x1b[?25h')
 
 
 async def test_redirected_output_has_no_footer() -> None:
@@ -169,8 +190,9 @@ async def test_cancellation_restores_scroll_region() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert output.getvalue().startswith('\x1b[?25l\x1bD\x1b[1A\x1b7\x1b[1;23r\x1b[24;1H\x1b[2K')
-    assert '\x1b[23;1H' not in output.getvalue()
+    assert output.getvalue().startswith('\x1b[?25l' + '\x1bD' * 4 + '\x1b[4A\x1b7\x1b[1;20r')
+    cleared = ''.join(f'\x1b[{row};1H\x1b[2K' for row in range(21, 25))
+    assert f'\x1b[r{cleared}\x1b8' in output.getvalue()
     assert '\n' not in output.getvalue()
     assert '\x1b[r' in output.getvalue()
     assert output.getvalue().endswith('\x1b8\x1b[?25h')

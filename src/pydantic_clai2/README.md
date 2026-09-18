@@ -27,6 +27,22 @@ conversation history, so you can follow up with a clarification. No interrupted
 run is automatically retried. External application cancellation still propagates,
 and completed tool side effects cannot be undone.
 
+## Prompt area
+
+```text
+┌──────────────────────────────────────────────┐
+│> Working... Ctrl-C to interrupt               │
+└──────────────────────────────────────────────┘
+model | context: ... | running: shell
+```
+
+The bordered prompt area stays visible below streamed output while CLAI works.
+It shows a busy hint instead of an editable field during a turn. Wait for the
+turn to finish, or press Ctrl-C to cancel it, before entering your next prompt.
+There is no message queue or mid-turn editing. Full-screen question menus
+temporarily replace the prompt area; it returns when the menu closes.
+Small terminals omit the border to leave room for output.
+
 ## Input history
 
 Submitted prompts and slash commands persist across restarts for Up/Down recall,
@@ -439,12 +455,16 @@ output count, updated after each turn and hidden until a response has price data
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
-While running, the footer reserves the terminal's bottom row using ANSI scrolling
-regions. Its text shimmers with a moving highlight at ten frames per second, with no spinner and a
-16-colour fallback when truecolour is unavailable. Prompt-toolkit owns the footer while accepting input. The run footer is
-disabled for redirected output and restores normal scrolling on cancellation or
-failure. The cursor is hidden during runs and restored on completion, failure,
-or cancellation. No model requests or telemetry are added for status reporting.
+While running, the prompt frame and status row reserve the terminal's bottom
+four rows using ANSI scrolling regions, so output scrolls above them. Terminals
+shorter than six rows or narrower than four columns keep only the status row;
+below three rows, neither is drawn. The status text shimmers with a moving
+highlight at ten frames per second, with no spinner and a 16-colour fallback.
+Prompt-toolkit owns the framed editor and footer while accepting input. The run
+footer is disabled for redirected output and restores normal scrolling on
+cancellation or failure. The cursor is hidden during runs and restored on
+completion, failure, or cancellation. No model requests or telemetry are added
+for status reporting.
 
 ## Plugins
 

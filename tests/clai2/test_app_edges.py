@@ -38,7 +38,7 @@ def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -
             for selector in ('class:bottom-toolbar', 'class:bottom-toolbar.text'):
                 assert style.get_attrs_for_style_str(selector).color == '9B77FF'
 
-        async def prompt_async(self, label: str) -> str:
+        async def prompt_async(self, label: str, **kwargs: object) -> str:
             value = values.pop(0)
             if isinstance(value, BaseException):
                 raise value

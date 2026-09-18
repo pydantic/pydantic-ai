@@ -152,7 +152,7 @@ async def test_shell_commands_and_footer(tmp_path: Path, monkeypatch: pytest.Mon
             assert callable(toolbar)
             self.toolbar: Callable[[], object] = toolbar
 
-        async def prompt_async(self, label: str) -> str:
+        async def prompt_async(self, label: str, **kwargs: object) -> str:
             footers.append(str(self.toolbar()))
             return values.pop(0)
 

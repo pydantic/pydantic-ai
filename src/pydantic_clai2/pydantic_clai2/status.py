@@ -1,4 +1,4 @@
-"""A terminal-only status row, separate from conversation output."""
+"""A terminal-only prompt frame and status row, separate from conversation output."""
 
 import asyncio
 import contextlib
@@ -84,7 +84,7 @@ def _interrupted() -> bool:
 
 
 class StatusLine:
-    """Reserve the last row while a run owns the terminal; restore it on exit."""
+    """Keep the prompt frame and status visible below streamed output during a run."""
 
     def __init__(self, console: Console, status: Status) -> None:
         """Bind the footer to the same output stream as the renderer."""
@@ -92,9 +92,10 @@ class StatusLine:
         self.status = status
         self._task: asyncio.Task[None] | None = None
         self._height = 0
+        self._rows = 0
 
     async def __aenter__(self) -> Self:
-        """Reserve a row only on an interactive terminal."""
+        """Reserve the prompt area only on an interactive terminal."""
         self._reserve()
         return self
 
@@ -104,7 +105,7 @@ class StatusLine:
 
     @contextlib.asynccontextmanager
     async def paused(self) -> AsyncGenerator[None]:
-        """Give the whole screen to something else, then reserve the row again."""
+        """Give the whole screen to something else, then restore the prompt area."""
         await self._release()
         try:
             yield
@@ -128,27 +129,34 @@ class StatusLine:
                     # The CancelledError was ours, not the animation's: Ctrl-C must still abort.
                     raise asyncio.CancelledError
             finally:
-                # Forget the height so the next reserve sets the scroll region again.
-                height, self._height = self._height, 0
-                self.console.file.write(f'\x1b7\x1b[r\x1b[{height};1H\x1b[2K\x1b8')
+                self._clear()
                 self.console.show_cursor(True)
                 self.console.file.flush()
+
+    def _clear(self) -> None:
+        if self._height:
+            rows = range(max(1, self._height - self._rows + 1), min(self._height, self.console.height) + 1)
+            cleared = ''.join(f'\x1b[{row};1H\x1b[2K' for row in rows)
+            self.console.file.write(f'\x1b7\x1b[r{cleared}\x1b8')
+            self._height = self._rows = 0
 
     def _draw(self, frame: int) -> None:
         width, height = self.console.size
         if height < 3:
+            self._clear()
+            self.console.file.flush()
             return
+        rows = 4 if height >= 6 and width >= 4 else 1
         # Leave one column unused so the footer cannot trigger autowrap.
         head, figure, tail = (_printable(segment) for segment in self.status.segments())
         text = head + figure + tail
         alerted = range(len(head), len(head) + len(figure)) if self.status.context_alert else range(0)
         prefix = '\x1b7'
-        if height != self._height:
-            # After a prompt the cursor is usually on the last row. Index down and back up first,
-            # so the cursor is inside the region before the margins exclude that row; a linefeed
-            # from outside the region makes terminals either overwrite the footer or scroll it away.
-            prefix = f'\x1bD\x1b[1A\x1b7\x1b[1;{height - 1}r'
-            self._height = height
+        if (height, rows) != (self._height, self._rows):
+            self._clear()
+            # Move inside the new scroll region before excluding the footer rows.
+            prefix = '\x1bD' * rows + f'\x1b[{rows}A\x1b7\x1b[1;{height - rows}r'
+            self._height, self._rows = height, rows
         text = text[: max(0, width - 1)]
         highlight = frame % (len(text) + 12) - 6
         shades = tuple(theme.sgr(color) for color in (theme.SUGAR, theme.LIGHT_PURPLE, theme.LITHIUM, theme.PURPLE))
@@ -157,6 +165,12 @@ class StatusLine:
             (warning if index in alerted else shades[min(abs(index - highlight) // 2, 3)]) + char
             for index, char in enumerate(text)
         )
+        if rows == 4:
+            inner_width = width - 3
+            hint = '> Working... Ctrl-C to interrupt'[:inner_width].ljust(inner_width)
+            border = '─' * inner_width
+            for row, line in enumerate((f'┌{border}┐', f'│{hint}│', f'└{border}┘'), start=height - 3):
+                prefix += f'\x1b[{row};1H\x1b[2K{theme.sgr(theme.MUTED)}{line}\x1b[0m'
         self.console.file.write(f'{prefix}\x1b[{height};1H\x1b[2K{painted}\x1b[0m\x1b8')
         self.console.file.flush()
 

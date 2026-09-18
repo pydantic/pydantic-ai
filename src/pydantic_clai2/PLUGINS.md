@@ -391,9 +391,11 @@ never lands in the middle of a paragraph.
 ### Take the whole screen mid-run: `async with host.full_screen()`
 
 A full-screen widget opened from inside a tool call (the built-in `ask_user` menu
-is one) has to wait for streamed text to finish and the status row to get out of
-the way, or it draws over half a paragraph and the footer keeps repainting into
-it. `host.full_screen()` does both and undoes them when the block exits:
+is one) has to wait for streamed text to finish and the busy prompt frame and
+status row to get out of the way. Otherwise it draws over unfinished output and
+the footer keeps repainting into it. `host.full_screen()` clears the whole prompt
+area and restores it when the block exits. The busy frame is not an editor;
+users enter their next prompt after the turn finishes or they cancel it:
 
 ```python
 from pydantic_clai2.plugins import PluginHost

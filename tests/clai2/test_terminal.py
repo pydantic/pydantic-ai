@@ -8,10 +8,13 @@ import threading
 from collections.abc import AsyncIterable
 from pathlib import Path
 
+import anyio
 import pytest
 from prompt_toolkit.application import create_app_session
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.output.vt100 import Vt100_Output
 from pydantic_ai import Agent, AgentStreamEvent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.models.test import TestModel
@@ -201,6 +204,53 @@ def test_set_autocomplete() -> None:
     assert [item.text for item in codex] == ['openai-codex:', 'openai-codex:gpt-6-astra']
     assert codex[0].start_position == -len('openai-codex')
     assert all(c.text.startswith('anthropic:') for c in models)
+
+
+async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path) -> None:
+    painted = anyio.Event()
+    working = anyio.Event()
+    finish = anyio.Event()
+    done = anyio.Event()
+
+    class Output(io.StringIO):
+        def flush(self) -> None:
+            if '└' in self.getvalue() and '>' in self.getvalue():
+                painted.set()
+
+    output = Output()
+    terminal = Vt100_Output(output, lambda: Size(rows=24, columns=80), enable_cpr=False)
+    agent = Agent(TestModel(call_tools=['work'], custom_output_text='Finished work'))
+
+    @agent.tool_plain
+    async def work() -> str:
+        working.set()
+        await finish.wait()
+        return 'done'
+
+    async def run() -> None:
+        await chat(
+            agent,
+            deps=None,
+            console=Console(file=output, force_terminal=True, width=80, height=24),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=terminal), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            await painted.wait()
+            assert '┌' in output.getvalue() and '└' in output.getvalue()
+            pipe.send_text('hello\n')
+            await working.wait()
+            assert '│> Working... Ctrl-C to interrupt' in output.getvalue()
+            assert '\x1b[1;20r' in output.getvalue()
+            finish.set()
+            pipe.send_text('/exit\n')
+            await done.wait()
+    assert 'Goodbye.' in output.getvalue()
+    assert 'Turn not saved' not in output.getvalue()
+    assert '\x1b[r' in output.getvalue()
 
 
 async def test_prompt_loop_commands(tmp_path: Path) -> None:

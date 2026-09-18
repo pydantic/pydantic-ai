@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Generic, TypeVar
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.filters import Condition, is_done
 from prompt_toolkit.formatted_text import FormattedText
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
@@ -255,10 +256,11 @@ class _Shell(Generic[DepsT, OutputT]):
     screen: Screen
 
     async def run(self) -> SessionEndReason:
+        show_frame = ~is_done & Condition(lambda: self.console.width >= 4 and self.console.height >= 6)
         while True:
             try:
                 self.status.model = self.session.model or _model_label(self.agent)
-                text = (await self.prompt.prompt_async('> ')).strip()
+                text = (await self.prompt.prompt_async('> ', show_frame=show_frame)).strip()
             except KeyboardInterrupt:
                 if self.interrupts.press():
                     return 'exit'
