@@ -282,7 +282,10 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         json_schema = super().enum_schema(schema)
         read = self.describe_enum_members or self._config.use_attribute_docstrings
         docstrings = _utils.enum_member_docstrings(schema['cls']) if read else {}
-        if docstrings:
+        # A `None` member has no `const` a schema can carry: `{'const': None}` reads as "no const" to anything
+        # that looks the key up with a default, and the option silently loses its constraint. Such an enum keeps
+        # the plain `enum` list, which states every value including the null.
+        if docstrings and all(value is not None for value in json_schema.get('enum', ())):
             json_schema['anyOf'] = [
                 {'const': value, **({'description': docstrings[member.name]} if member.name in docstrings else {})}
                 for member, value in zip(schema['members'], json_schema.pop('enum'))

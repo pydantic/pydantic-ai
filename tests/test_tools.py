@@ -5263,6 +5263,29 @@ Functional = Enum('Functional', {'low': 'low', 'high': 'high'})
 """Built without source to read, so no member can be described."""
 
 
+def test_a_none_member_keeps_the_enum_in_its_plain_form():
+    """`{'const': None}` reads as "no const" to a lookup with a default, so such an enum is left alone."""
+
+    class Settled(Enum):
+        yes = 'yes'
+        """The claim holds."""
+        unknown = None
+        """Nothing in the material settles it."""
+
+    class Verdict(BaseModel):
+        model_config = ConfigDict(use_attribute_docstrings=True)
+        settled: Settled
+
+    seen: list[dict[str, Any]] = []
+
+    def capture(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.output_tools[0].parameters_json_schema)
+        return ModelResponse(parts=[ToolCallPart('final_result', {'settled': 'yes'}, 'call_1')])
+
+    Agent(FunctionModel(capture), output_type=Verdict).run_sync('Hello')
+    assert seen[0]['$defs']['Settled'] == snapshot({'enum': ['yes', None], 'title': 'Settled'})
+
+
 def test_enum_member_docstrings_follow_the_models_docstring_switch():
     """An output model reads them on `use_attribute_docstrings`, like a field docstring; a bare enum is described."""
 
