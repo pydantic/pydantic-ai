@@ -435,6 +435,11 @@ def stream_agent_events(
         from_offset: The stream offset to start from, inclusive; pass `offset + 1` to resume.
         poll_cooldown: How long to wait between polls when no new events are ready. Must be greater
             than zero.
+
+    The terminal event carries the result every capability has finished shaping, but the run
+    lifecycle finalizes after that, and nothing in the capability system wraps that step. A run
+    cancelled there publishes a terminal event and then fails, so treat the workflow's own result as
+    the authoritative outcome.
     """
     if poll_cooldown <= timedelta(0):
         raise UserError('The Workflow Stream poll cooldown must be greater than zero.')

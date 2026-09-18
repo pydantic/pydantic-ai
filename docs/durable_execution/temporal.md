@@ -377,7 +377,7 @@ Leaving the `async with` block is what makes that work. A Workflow Stream is ser
 
 Because the stream ends in an `AgentRunResultEvent`, it is exactly what a [`UIAdapter`][pydantic_ai.ui.UIAdapter] consumes, so an HTTP handler can start the workflow and serve a [UI event stream protocol](../ui/overview.md) straight off the topic — including `on_complete`, which receives the run result the same way it would for an in-process run.
 
-The two halves of the adapter's job split across the boundary: the HTTP handler turns the request into a protocol stream, and the workflow rebuilds the run arguments from the same request body.
+The adapter's two jobs split across the boundary: the HTTP handler turns the request into a protocol stream, and the workflow rebuilds the run arguments from the same request body.
 
 ```python {title="temporal_workflow_streams_ui_workflow.py" test="skip" lint="skip"}
 @workflow.defn
@@ -398,6 +398,8 @@ class ChatWorkflow:
         return result.output
 ```
 
+The handler starts that workflow under an ID the frontend can come back to, and streams the topic:
+
 ```python {title="temporal_workflow_streams_ui_handler.py" test="skip" lint="skip"}
 from starlette.requests import Request
 from starlette.responses import Response
@@ -405,56 +407,65 @@ from starlette.responses import Response
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 
-async def handle_chat(request: Request) -> Response:
+async def post_chat(request: Request) -> Response:
     body = await request.body()
+    run_input = VercelAIAdapter.build_run_input(body)
+
     handle = await client.start_workflow(
-        ChatWorkflow.run, body, id=..., task_queue='my-task-queue'
+        ChatWorkflow.run,
+        body,
+        id=f'chat-{run_input.id}-{uuid4()}',
+        task_queue='my-task-queue',
     )
 
-    adapter = VercelAIAdapter(agent=agent, run_input=VercelAIAdapter.build_run_input(body))
-    events = durability.stream_agent_events(client, handle)
+    adapter = VercelAIAdapter(agent=agent, run_input=run_input)
+    events = durability.stream_agent_events(client, handle, output_type=str)
     return adapter.streaming_response(adapter.transform_stream(events))
 ```
+
+The workflow is the queue. Starting it hands the run to a Temporal worker, and the HTTP request is only a subscriber to what that worker produces: it can go away without touching the run, Temporal retries the run's activities on its own, and the run survives the process that started it.
+
+That also means the frontend can come back. Store the workflow ID alongside the conversation, and a second endpoint reattaches a reconnecting client to a run it did not start:
+
+```python {title="temporal_workflow_streams_ui_reattach.py" test="skip" lint="skip"}
+async def get_chat(request: Request) -> Response:
+    workflow_id = request.path_params['workflow_id']
+    handle = client.get_workflow_handle(workflow_id)
+
+    adapter = VercelAIAdapter(agent=agent, run_input=await load_run_input(workflow_id))
+    events = durability.stream_agent_events(client, handle, output_type=str)
+    return adapter.streaming_response(adapter.transform_stream(events))
+```
+
+Subscribing from the default `from_offset=0` replays every event the run has published so far and then continues live, so a refreshed tab rebuilds the whole message rather than picking up mid-sentence. A client that still holds what it received can pass `from_offset=offset + 1` instead and take the rest as a continuation; see [Reconnecting](#reconnecting).
+
+The window is bounded: a run whose terminal event nobody acknowledges finishes after the `AgentEventStream`'s `drain_timeout` (30 seconds by default), and its stream goes with it. A client that reconnects later than that gets the run's outcome from `handle.result()` rather than from the topic; raise `drain_timeout` if your clients need a longer window.
 
 ##### Reconnecting
 
 Workflow Streams are offset-addressed, so a consumer that drops can resume where it left off — which is more than ordinary in-process streaming can offer. Checkpoint [`offset`][pydantic_ai.durable_exec.temporal.DurableAgentRunEvents.offset] as you go and reconnect with `from_offset=offset + 1`:
 
 ```python {title="temporal_workflow_streams_resume.py" test="skip" lint="skip"}
-import asyncio
-
-from temporalio.client import WorkflowExecutionStatus
-from temporalio.service import RPCError, RPCStatusCode
-
+from temporalio.service import RPCError
 
 last_offset = -1
 while True:
+    events = durability.stream_agent_events(client, handle, from_offset=last_offset + 1)
     try:
-        events = durability.stream_agent_events(client, handle, from_offset=last_offset + 1)
         async for event in events:
             print(event)  # forward to the frontend over SSE
             last_offset = events.offset
-        if events.result is not None:
-            break
+    except RPCError:
+        continue  # the connection dropped: resubscribe at the next offset
+    break  # the iterator ended on its own, so the run is over
 
-        task = asyncio.current_task()
-        if task is not None and task.cancelling():
-            raise asyncio.CancelledError
-
-        status = (await handle.describe()).status
-        if status not in {WorkflowExecutionStatus.RUNNING, WorkflowExecutionStatus.CONTINUED_AS_NEW}:
-            break
-    except RPCError as exc:
-        if exc.status != RPCStatusCode.UNAVAILABLE:
-            raise
-        await asyncio.sleep(1)
-
-await handle.result()  # propagate a workflow failure or cancellation
+return await handle.result()  # the output, or the workflow's failure
 ```
 
-Only a temporarily unavailable Temporal service is retried; other RPC errors are propagated. If the
-iterator ends without a result, the workflow status distinguishes a transient update timeout from a
-terminal failure or cancellation, which `handle.result()` then propagates.
+A clean end of the `async for` means the run is over, whether or not it produced a result:
+`events.result` is the run's `AgentRunResult` on success and `None` when the workflow ended some
+other way, and `handle.result()` propagates the failure or cancellation in that case. Only an
+interrupted iteration is worth resubscribing for.
 
 Offsets run over the whole stream rather than per topic, so a topic-filtered subscription sees gaps wherever the workflow published to another topic — which is why they have to be read off the stream rather than counted.
 
@@ -484,6 +495,7 @@ Under the hood, the live model stream is published by [`workflow_stream_event_ha
     - Model events are published from inside the model-request activity, so if that activity retries, its events are published again at new offsets. Consumers should tolerate duplicates. Events published from workflow code — tool events and the terminal event — are not affected, as replay rebuilds the log rather than appending to it.
     - The stream is durable, so events may be produced and consumed by processes running different Pydantic AI versions. Event shapes are stable within a major version; keep producer and consumer on the same major version.
     - One iterator covers one agent run. A workflow that runs the agent repeatedly publishes a terminal event per run, so a consumer that wants the next one reconnects with `from_offset=offset + 1`.
+    - The terminal event is published after every capability has transformed the result, but before the run lifecycle's own finalization, which nothing in the capability system wraps. A run cancelled at that last step publishes a result and then fails, so the workflow's return value stays the authoritative outcome.
     - The initial subscription is pinned to the requested workflow execution, but after continue-as-new the Temporal SDK follows the chain using an unpinned workflow ID. Do not reuse that workflow ID for an independent execution while a subscriber may still be following the chain, or it can attach to the new execution.
     - Live events reach consumers outside the workflow only; `run_stream_events()` inside workflow code still buffers.
 

@@ -15,7 +15,8 @@ from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import WrapRunHandler
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
@@ -499,8 +500,15 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
             return await handler()
 
-    def _after_run_finalized(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> None:
-        """Publish the run's terminal event once every success-path finalizer has accepted it."""
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Bind to the agent, pairing with the terminal-event publisher when a topic is set."""
+        bound = self._bind_for_agent(agent)
+        if bound._event_stream_topic is None:
+            return bound
+        return CombinedCapability([_TerminalEventPublisher(bound), bound])
+
+    def _publish_terminal_event(self, result: AgentRunResult[Any]) -> None:
+        """Publish the run's terminal event. Called by `_TerminalEventPublisher.after_run`."""
         if (topic := self._event_stream_topic) is not None and self.in_durable_context:
             publish_agent_result(topic.name, result)
 
@@ -641,3 +649,38 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
             raise UserError(IMAGE_OUTPUT_UNSUPPORTED_MESSAGE)
+
+
+class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
+    """Publishes the run's terminal event to the Workflow Stream topic, from the `outermost` tier.
+
+    The terminal event says "the run finished, here is its result", so it has to carry the result
+    every other capability has finished shaping. `TemporalDurability` can't say that from its own
+    `after_run`: it is `innermost` and `after_run` runs innermost-first, so a capability registered
+    alongside it would still transform the result afterwards. `TemporalDurability.for_agent()` pairs
+    it with this companion in the `outermost` tier instead, whose `after_run` runs after every
+    capability outside that tier -- which is where a user's capabilities land. `CombinedCapability`
+    flattens the pair into one ordering pass, so both halves stay leaves and
+    `find_capability(TemporalDurability)` keeps resolving.
+
+    Two things still run after it, and neither is closable from inside a capability: another
+    `outermost` capability registered earlier (the ordinary middleware caveat -- somebody has to be
+    the outer shell), and the run lifecycle's own finalization, the pending-cancellation re-check
+    and the run's finalizers. A run cancelled there publishes a terminal event and then fails, so
+    the workflow's return value stays the authoritative answer; `stream_agent_events()` documents
+    that for consumers.
+    """
+
+    def __init__(self, durability: TemporalDurability[AgentDepsT]) -> None:
+        self._durability = durability
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        return None  # not spec-constructible: it only exists as `TemporalDurability`'s companion
+
+    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        self._durability._publish_terminal_event(result)  # pyright: ignore[reportPrivateUsage]
+        return result

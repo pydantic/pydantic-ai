@@ -297,7 +297,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
         self._resolved_request_models: dict[int, _ResolvedRequestModel] = {}
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability to use with the agent.
+
+        An engine that needs a companion capability alongside itself (Temporal pairs one in the
+        `outermost` tier to publish its Workflow Stream terminal event) overrides this and composes
+        around `_bind_for_agent`, which stays typed as the engine's own bound copy.
+        """
+        return self._bind_for_agent(agent)
+
+    def _bind_for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
         self._check_bindable()
         if not (self.name or agent.name):

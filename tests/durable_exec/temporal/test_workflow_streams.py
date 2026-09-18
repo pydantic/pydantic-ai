@@ -915,3 +915,62 @@ async def test_the_events_drive_a_ui_adapter(client: Client) -> None:
     assert 'ToolInputAvailableChunk' in _kinds(chunks)
     assert 'ToolOutputAvailableChunk' in _kinds(chunks)
     assert completed == ['Streamed response']
+
+
+async def test_a_reattached_ui_replays_the_whole_run(client: Client) -> None:
+    """A frontend that drops mid-run gets the same message back when it reconnects.
+
+    The stream is the workflow's own state, so a consumer that reattaches from offset 0 replays
+    every event the run has produced so far and keeps going from there. That is what lets a browser
+    refresh, or a crashed HTTP process, resume a run it did not start.
+    """
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+    from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage
+
+    completed: list[str] = []
+
+    async def on_complete(result: Any) -> None:
+        completed.append(result.output)
+
+    def adapter() -> VercelAIAdapter[Any, Any]:
+        return VercelAIAdapter(agent=_agent, run_input=SubmitMessage(id='chat-1', messages=[]))
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StreamingWorkflow],
+        plugins=[AgentPlugin(_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            StreamingWorkflow.run,
+            args=['Hello'],
+            id=f'{StreamingWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+        # The first connection drops after a couple of chunks, the way a closed browser tab does.
+        dropped: list[Any] = []
+        async with _durability.stream_agent_events(
+            client, handle, poll_cooldown=timedelta(milliseconds=50)
+        ) as interrupted:
+            async for chunk in adapter().transform_stream(interrupted):
+                dropped.append(chunk)
+                if len(dropped) == 2:
+                    break
+
+        # Reconnecting from the start replays what was missed and finishes the run.
+        reattached = await _collect(
+            adapter().transform_stream(
+                _durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50)),
+                on_complete=on_complete,
+            )
+        )
+        output = await handle.result()
+
+    assert len(dropped) == 2
+    assert _kinds(reattached[: len(dropped)]) == _kinds(dropped)
+    assert len(reattached) > len(dropped)
+    assert 'TextDeltaChunk' in _kinds(reattached)
+    assert 'ToolOutputAvailableChunk' in _kinds(reattached)
+    assert completed == [output]
