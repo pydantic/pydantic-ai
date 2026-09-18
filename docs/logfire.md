@@ -253,6 +253,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Respan](https://respan.ai/docs/integrations/pydantic-ai)
 - [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
 - [Sentry](https://docs.sentry.io/platforms/python/integrations/pydantic-ai/)
+- [Confident AI](https://www.confident-ai.com/docs/integrations/third-party/pydantic-ai)
 
 ## Advanced usage
 
