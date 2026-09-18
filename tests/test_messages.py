@@ -1683,18 +1683,50 @@ def test_tool_return_url_items_rehydrate_only_with_media_type(
     assert ModelMessagesTypeAdapter.dump_python(loaded)[0]['parts'][0]['content'] == expected_dump
 
 
-def test_extensionless_url_media_type_serializes_null_and_round_trips() -> None:
-    """A URL whose media type can't be inferred serializes `media_type: null` and round-trips."""
-    for url_part in (ImageUrl, AudioUrl, VideoUrl, DocumentUrl):
-        item = url_part(url='https://example.com/file')
-        with pytest.raises(ValueError):
-            _ = item.media_type  # direct access still raises
-        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item])])]
-        dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
-        content = dumped[0]['parts'][0]['content'][0]
-        assert content['media_type'] is None
-        reloaded = ModelMessagesTypeAdapter.validate_python(dumped)
-        assert json.loads(ModelMessagesTypeAdapter.dump_json(reloaded)) == dumped
+@pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
+def test_extensionless_url_media_type_serializes_null_and_round_trips(url_type: type[FileUrl]) -> None:
+    """A URL whose media type can't be inferred serializes `media_type: null` and round-trips.
+
+    The run itself never needs the media type — providers that take the URL as it is never read one —
+    so a history that ran has to dump, and dump to something that loads back into the same part
+    ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    """
+    item = url_type(url='https://example.com/file')
+    with pytest.raises(ValueError, match='Could not infer media type'):
+        _ = item.media_type  # Reading it where a provider would still raises.
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item])])]
+    dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    content = dumped[0]['parts'][0]['content'][0]
+    assert content['media_type'] is None
+
+    reloaded = ModelMessagesTypeAdapter.validate_python(dumped)
+    assert reloaded == messages
+    assert json.loads(ModelMessagesTypeAdapter.dump_json(reloaded)) == dumped
+
+
+@pytest.mark.parametrize('url', ['https://example.com/file.png', 'https://example.com/file'])
+def test_url_media_type_is_written_under_its_public_name(url: str) -> None:
+    """`media_type` is the key whether or not the dump asks for aliases.
+
+    It is written by a model serializer rather than aliased off the private `_media_type` field it is
+    stored in, because a serialization alias only applies when dumping `by_alias`: `by_alias=False`
+    would hand the user a `_media_type` key naming a field they never set.
+    """
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url=url)])])]
+    aliased = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert 'media_type' in aliased[0]['parts'][0]['content'][0]
+    assert ModelMessagesTypeAdapter.dump_python(messages, mode='json', by_alias=False) == aliased
+
+    # Writing the two derived values by hand must not cost the caller the dump arguments pydantic would
+    # have applied to them: leaving one out, or dropping a media type there turned out to be none of.
+    item_ta = TypeAdapter(ImageUrl)
+    excluded = item_ta.dump_python(ImageUrl(url=url), mode='json', exclude={'identifier'})
+    assert 'identifier' not in excluded
+    assert excluded['media_type'] == aliased[0]['parts'][0]['content'][0]['media_type']
+
+    without_none = item_ta.dump_python(ImageUrl(url=url), mode='json', exclude_none=True)
+    assert ('media_type' in without_none) is (excluded['media_type'] is not None)
 
 
 def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():

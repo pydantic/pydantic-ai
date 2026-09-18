@@ -6094,16 +6094,35 @@ async def test_adapter_dump_messages_with_thinking():
     )
 
 
-def test_dump_messages_extensionless_url_media_type() -> None:
-    """A URL whose media type can't be inferred dumps an empty `media_type` instead of raising."""
+def test_dump_messages_extensionless_url_round_trips() -> None:
+    """A URL whose media type can't be inferred dumps an empty `media_type`, and comes back as itself.
+
+    `FileUIPart.media_type` is a required string, so a URL Pydantic AI can't read a media type out of is
+    dumped with an empty one rather than raising. That value is also what the load side reads the URL's
+    kind from, and an empty one reads as no kind at all, so the kind rides along in `provider_metadata`
+    instead of the image coming back as a document.
+    """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/image')])])
     ]
-    result = VercelAIAdapter.dump_messages(messages)
-    file_part = next(part for part in result[0].parts if part.model_dump()['type'] == 'file')
-    dumped = file_part.model_dump(exclude_none=True)
-    assert dumped['url'] == 'https://example.com/image'
-    assert dumped['media_type'] == ''
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    file_part = next(part for part in ui_messages[0].parts if isinstance(part, FileUIPart))
+    assert file_part.model_dump(exclude_none=True) == snapshot(
+        {
+            'type': 'file',
+            'media_type': '',
+            'url': 'https://example.com/image',
+            'provider_metadata': {'pydantic_ai': {'kind': 'image-url'}},
+        }
+    )
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == snapshot(
+        [UserPromptPart(content=[ImageUrl(url='https://example.com/image')], timestamp=IsDatetime())]
+    )
+    # `ImageUrl.__eq__` ignores the media type, so pin the whole dumped part rather than the part alone.
+    assert VercelAIAdapter.dump_messages(reloaded)[0].parts[-1] == file_part
 
 
 async def test_adapter_dump_messages_with_files():
