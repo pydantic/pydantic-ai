@@ -92,12 +92,11 @@ class _ResumePayload(BaseModel):
 
     `approved` is a `StrictBool` on purpose: lax-mode coercion would turn payloads like
     `{'approved': 1}` or `{'approved': 'true'}` into approvals, while the deny-by-default
-    stance requires such ambiguous payloads to fail validation and deny. It is also
-    required (no default) so the generated schema keeps `required: ['approved']`, matching
-    the AG-UI recommended approve-with-edits pattern. A payload without `approved` still
-    denies, but via `ValidationError` rather than the `approved is False` branch, so its
-    `reason` never reaches the denial message — spec-conforming clients always send
-    `approved`, and `test_resume_deny_by_default_for_ambiguous_payload` pins the outcome.
+    stance requires such ambiguous payloads to fail validation. It is also required (no
+    default) so the generated schema keeps `required: ['approved']`, matching the AG-UI
+    recommended approve-with-edits pattern. A payload without `approved` is therefore a
+    schema violation, reported through `RunError` rather than reaching the
+    `approved is False` branch — spec-conforming clients always send it.
 
     The wire keys are camelCase, so `to_camel` supplies them as aliases. Validation is
     deliberately by alias only — no `populate_by_name` — so the accepted shape stays
@@ -160,19 +159,20 @@ def interrupt_id_to_tool_call_id(interrupt_id: str) -> str:
 def resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
     """Translate one `ResumeEntry` payload into `ToolApproved` / `ToolDenied` (inbound).
 
-    The payload is validated against `_ResumePayload`, the same model whose JSON schema
-    was advertised on `Interrupt.response_schema`. Approval requires a payload that
-    validates with `approved=True`; anything that fails validation (missing, `False`,
-    `null`, or non-bool `approved`, a non-dict payload, a non-dict `editedArgs`, or a
-    non-string `reason`) is treated as a denial.
-    This deny-by-default stance is intentional: this code only runs when a tool was
-    declared `requires_approval=True`, so any ambiguity in the client's response must
-    not silently execute the call. In particular, an approval carrying a malformed
-    `editedArgs` denies the whole payload rather than approving with the original
-    arguments the user visibly tried to change.
+    The payload is validated against `_ResumePayload`, the same model whose JSON schema was
+    advertised on `Interrupt.response_schema`. A payload that fails that validation is a
+    protocol error, not an outcome the user chose, so it raises `UserError` — which the run
+    stream turns into a `RunErrorEvent`, per
+    [docs.ag-ui.com/concepts/interrupts](https://docs.ag-ui.com/concepts/interrupts):
+    "Agents should handle missing or invalid resume payloads via `RunError`, not silent
+    failures." Raising also fails the whole run rather than one entry, matching the spec's
+    run-level `RunError`.
 
-    A denial `reason` only survives when the rest of the payload validates; a payload that
-    fails validation denies with `ToolDenied`'s default message even if it carried one.
+    Deny-by-default still holds: this code only runs when a tool was declared
+    `requires_approval=True`, and approval requires a payload that validates with
+    `approved=True`, so an ambiguous response can never execute the call. Such a response is
+    reported as an erroring run rather than as a denial the client cannot tell apart from the
+    user having said no.
 
     `payload.editedArgs` (when `approved=True`) feeds into `ToolApproved.override_args`,
     fully replacing the originally proposed call arguments before the agent re-executes the tool.
@@ -182,8 +182,25 @@ def resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
 
     try:
         payload = _ResumePayload.model_validate(entry.payload)
-    except ValidationError:
-        return ToolDenied()
+    except ValidationError as e:
+        # Raising rather than degrading to a denial is specific to this payload: the AG-UI spec
+        # names a `responseSchema` mismatch a `RunError` condition, where a malformed client
+        # payload elsewhere at this boundary is expected to degrade to a harmless value instead
+        # of taking the whole request with it.
+        #
+        # Rendered from `loc` and pydantic's stable error `type` rather than its `msg`: this text
+        # travels back to the client over the event stream, and the `msg` for a non-dict payload
+        # names `_ResumePayload` — the same private-class-name leak `_RESUME_RESPONSE_SCHEMA`
+        # drops its `title` to avoid. `include_input` would echo the client's own unvalidated
+        # payload into whatever renders or logs the error.
+        details = ', '.join(
+            f'{".".join(str(part) for part in error["loc"]) or "payload"}: {error["type"]}'
+            for error in e.errors(include_url=False, include_input=False, include_context=False)
+        )
+        raise UserError(
+            f'ResumeEntry payload for interrupt {entry.interrupt_id!r} does not match the '
+            f'`responseSchema` advertised on the interrupt ({details}).'
+        ) from e
 
     if payload.approved:
         if payload.edited_args is not None:
