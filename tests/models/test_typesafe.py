@@ -631,6 +631,23 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 },
             )
         if len(seen) == 2:
+            nested: dict[str, dict[str, object]] = {
+                'channels.email': {'type': 'noul', 'noul': 0.9},
+                'channels.sms': {'type': 'noul', 'noul': 0.1},
+                'window': {
+                    'type': 'choice',
+                    'choice': 'none',
+                    'confidence': 0.8,
+                    'probabilities': {'morning': 0.1, 'evening': 0.1, 'none': 0.8},
+                },
+                'contact.method': {
+                    'type': 'choice',
+                    'choice': 'email',
+                    'confidence': 0.9,
+                    'probabilities': {'email': 0.9, 'phone': 0.1},
+                },
+                'contact.urgent_only': {'type': 'noul', 'noul': 0.9},
+            }
             return answers(
                 team={
                     'type': 'choice',
@@ -640,23 +657,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 },
                 urgent={'type': 'noul', 'noul': 0.95},
                 risk={'type': 'noul', 'noul': 0.8},
-                **{
-                    'channels.email': {'type': 'noul', 'noul': 0.9},
-                    'channels.sms': {'type': 'noul', 'noul': 0.1},
-                    'window': {
-                        'type': 'choice',
-                        'choice': 'none',
-                        'confidence': 0.8,
-                        'probabilities': {'morning': 0.1, 'evening': 0.1, 'none': 0.8},
-                    },
-                    'contact.method': {
-                        'type': 'choice',
-                        'choice': 'email',
-                        'confidence': 0.9,
-                        'probabilities': {'email': 0.9, 'phone': 0.1},
-                    },
-                    'contact.urgent_only': {'type': 'noul', 'noul': 0.9},
-                },
+                **nested,
             )
         return answers(urgent={'type': 'noul', 'noul': 0.9})
 
@@ -811,13 +812,12 @@ async def test_a_selected_tool_fill_failure_does_not_fall_back_to_another_route(
             )
         return httpx2.Response(503, json={'detail': 'temporarily unavailable'})
 
-    def set_direction(direction: Literal['left', 'right']) -> str:
+    def set_direction(direction: Literal['left', 'right']) -> None:
         """Set the direction to take.
 
         Args:
             direction: Which direction should be taken?
         """
-        return direction
 
     agent = Agent(FallbackModel(mock_model(record), TestModel()), output_type=Ticket, tools=[set_direction])
     with pytest.raises(UnexpectedModelBehavior, match=r"selected tool 'set_direction'.*failed while filling"):
@@ -881,8 +881,8 @@ async def test_tool_arguments_live(
         }
     )
     first, second = request_capture.bodies('/v1/systemone')
-    assert list(first['questions']) == ['urgent', 'tool']
-    assert list(second['questions']) == ['direction']
+    assert list(cast(dict[str, Any], first['questions'])) == ['urgent', 'tool']
+    assert list(cast(dict[str, Any], second['questions'])) == ['direction']
 
 
 @pytest.mark.parametrize(
