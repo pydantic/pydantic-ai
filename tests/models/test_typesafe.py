@@ -567,8 +567,14 @@ async def test_a_fallback_model_takes_the_proposed_step(allow_model_requests: No
 
     agent = Agent(FallbackModel(jev, TestModel()), output_type=Ticket, tools=[refund])
     result = await agent.run('Charged twice.')
-    assert result.response.model_name == 'test'
+    # The next model took the refund step; with its result in the turn, Jev is not offered `refund` again and
+    # fills the output itself.
     assert called == [0]
+    assert [message.model_name for message in result.all_messages() if isinstance(message, ModelResponse)] == [
+        'test',
+        'jev-latest',
+    ]
+    assert result.output == Ticket(urgent=True)
 
 
 @pytest.mark.parametrize(
@@ -594,6 +600,7 @@ async def test_a_tool_below_the_threshold_is_a_lean(
             'tool': {
                 'choice': 'refund',
                 'probabilities': {'refund': probability, 'final_result': round(1 - probability, 2)},
+                'offered': ['refund'],
             },
         }
     )
@@ -606,6 +613,7 @@ async def test_the_output_tool_is_one_of_the_options(allow_model_requests: None)
     assert (result.response.provider_details or {})['tool'] == {
         'choice': 'final_result',
         'probabilities': {'final_result': 0.9, 'refund': 0.1},
+        'offered': ['refund'],
     }
 
 
@@ -650,6 +658,16 @@ async def test_the_tool_question_stays_clear_of_a_field_named_tool(allow_model_r
             "TypeSafe picked a tool it was not offered: 'cancel'",
             id='a tool that was not offered',
         ),
+        pytest.param(
+            {
+                'type': 'choice',
+                'choice': 'refund',
+                'confidence': 0.8,
+                'probabilities': {'refund': 1.7, 'final_result': -0.7},
+            },
+            'Unexpected answer from TypeSafe for the tool question',
+            id='a probability outside 0 to 1',
+        ),
     ],
 )
 async def test_an_unexpected_tool_answer(allow_model_requests: None, tool: dict[str, object], match: str):
@@ -682,10 +700,6 @@ async def test_a_threshold_outside_zero_to_one_is_refused_before_the_request(
         await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_tool_call_threshold=threshold))
 
 
-class Undescribed(BaseModel):
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-
-
 async def test_an_output_type_with_nothing_said_about_it_cannot_be_weighed_against_tools(
     allow_model_requests: None, typesafe_model: TypeSafeModel
 ):
@@ -708,6 +722,97 @@ async def test_the_instructions_describe_an_output_type_without_a_docstring(allo
     )
 
 
+async def test_a_tool_that_asked_for_a_retry_stays_on_offer(allow_model_requests: None):
+    """A call with no result is not a call made: `ModelRetry` from the tool leaves it on offer."""
+    seen: list[dict[str, Any]] = []
+    attempts = 0
+
+    def flaky() -> str:
+        """Try the flaky thing."""
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ModelRetry('Busy, try again.')
+        return 'Done on the second try.'
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) < 3:
+            return answers(urgent={'type': 'noul', 'noul': 0.9}, tool=tool_answers_for('flaky'))
+        return answers(urgent={'type': 'noul', 'noul': 0.9}, tool=tool_answers_for('final_result'))
+
+    result = await Agent(mock_model(record), output_type=Ticket, tools=[flaky], retries=2).run('Try it.')
+    assert attempts == 2 and result.output == Ticket(urgent=True)
+    assert [list(request['questions'].get('tool', {}).get('criteria', {})) for request in seen] == snapshot(
+        [['final_result', 'flaky'], ['final_result', 'flaky'], []]
+    )
+
+
+async def test_the_last_route_left_is_taken_without_asking(allow_model_requests: None):
+    """Output functions only: once every other option has returned, the one left is the answer, with no request."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(tool=tool_answers_for('approve'))
+
+    result = await Agent(mock_model(record), output_type=[reject], tools=[approve]).run('Decide.')
+    assert result.output == 'rejected'
+    assert len(seen) == 1
+    assert (result.response.provider_details or {})['tool'] == snapshot(
+        {'choice': 'final_result', 'probabilities': {'final_result': 1.0}, 'offered': ['final_result']}
+    )
+
+
+async def test_a_tool_that_returned_is_not_proposed_again(allow_model_requests: None):
+    """A model behind Jev took the refund; with its result in the turn, Jev is not asked about `refund` again."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    history = [
+        ModelRequest(parts=[UserPromptPart('Charged twice.')]),
+        ModelResponse(parts=[ToolCallPart('refund', {'amount': 10}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('refund', 'Refunded', 'call_1')]),
+    ]
+    await Agent(mock_model(record), output_type=Ticket, tools=[refund]).run(message_history=history)
+    assert 'tool' not in seen[0]['questions']
+
+
+class Undescribed(BaseModel):
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+async def test_the_composed_stock_description_is_no_description_either(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """With several output types, the framework composes `Name: <stock description>`; that is still nothing said."""
+    with pytest.raises(UserError, match='Give the output type a docstring'):
+        await Agent(typesafe_model, output_type=[Undescribed, approve]).run('anything')
+
+
+async def test_below_the_threshold_with_nothing_to_fill_the_likeliest_hand_off_is_taken(
+    allow_model_requests: None,
+):
+    probabilities = {'refund': 0.4, 'final_result_approve': 0.35, 'final_result_reject': 0.25}
+    jev = mock_model(
+        lambda _: answers(
+            tool={'type': 'choice', 'choice': 'refund', 'confidence': 0.1, 'probabilities': probabilities}
+        )
+    )
+    result = await Agent(jev, output_type=[approve, reject], tools=[refund]).run('Looks fine.')
+    assert result.output == 'approved'
+    assert (result.response.provider_details or {})['tool']['taken'] == 'final_result_approve'
+
+
+async def test_a_streamed_run_can_be_cancelled_early(allow_model_requests: None):
+    jev = mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': 0.9}))
+    async with Agent(jev, output_type=Ticket).run_stream('Cancel me.') as stream:
+        await stream.cancel()
+
+
 def test_tool_call_proposed_pickles():
     exc = pickle.loads(pickle.dumps(ToolCallProposed('jev-latest', 'refund', 0.9)))
     assert (exc.model_name, exc.tool_name, exc.probability) == ('jev-latest', 'refund', 0.9)
@@ -720,7 +825,7 @@ def approve() -> str:
 
 def reject() -> str:
     """Turn the request down."""
-    return 'rejected'  # pragma: no cover
+    return 'rejected'
 
 
 async def escalate(ctx: RunContext[None]) -> str:
@@ -740,6 +845,7 @@ async def test_an_output_function_is_a_hand_off_jev_picks(
         {
             'choice': 'final_result_escalate',
             'probabilities': {'final_result_escalate': 1.0, 'final_result_Ticket': 0.0},
+            'offered': ['final_result_escalate'],
         }
     )
     assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['tool']['criteria'] == snapshot(
@@ -1308,7 +1414,11 @@ async def test_a_streamed_fallback_takes_the_proposed_step(allow_model_requests:
     agent = Agent(FallbackModel(jev, TestModel()), output_type=Ticket, tools=[refund])
     async with agent.run_stream('Charged twice.') as stream:
         await stream.get_output()
-    assert stream.response.model_name == 'test'
+    # The next model took the refund step, then Jev filled the output with its result in the turn, as in `run`.
+    assert [message.model_name for message in stream.all_messages() if isinstance(message, ModelResponse)] == [
+        'test',
+        'jev-latest',
+    ]
 
 
 async def test_fallback_does_not_skip_a_user_error(allow_model_requests: None, typesafe_model: TypeSafeModel):
