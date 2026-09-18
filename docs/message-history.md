@@ -374,9 +374,68 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
+    A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
+    as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
+    mapping, including one whose own keys happen to look like ours. A URL-based item is
+    reconstructed only when its mapping carries `media_type`, which every history Pydantic AI dumps
+    does; without one it stays the plain mapping your tool returned, so a URL Pydantic AI cannot
+    read a media type out of never becomes a file that then fails to dump. A
+    [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
+    requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
+    dumping it back never raises. Spelling one of our items out in full does reconstruct it, and the
+    keys that type doesn't declare are dropped along the way, so keep `kind` off any dictionary you
+    want handed back verbatim.
+
+    A tool return keyed by something other than a string is the one place that reconstruction
+    doesn't reach. Such a mapping's keys have no JSON form, so only a `dump_python` round-trip
+    preserves them — and because the mapping is carried through as-is, a multi-modal item nested
+    underneath one comes back as a plain dict there, while the JSON round-trip stringifies the key
+    and restores the item. Use string keys in a tool return if you need both.
+
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
     those fields are dropped entirely. That loss is by design, not a state-loss bug.
+
+### Storing complete run results
+
+An [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] can be stored directly as a field on a Pydantic model:
+
+```python {title="serialize a run result to json"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, AgentRunResult
+
+
+class StoredRun(BaseModel):
+    result: AgentRunResult[str]
+
+
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+result = agent.run_sync('Tell me a joke.')
+
+stored_json = StoredRun(result=result).model_dump_json()
+loaded = StoredRun.model_validate_json(stored_json)
+
+assert loaded.result.output == result.output
+assert loaded.result.all_messages() == result.all_messages()
+```
+
+The round-trip preserves the output, messages and new-message boundary, output tool name, usage, run and
+conversation IDs, metadata, and trace context. Run-local state used only while the agent is executing is not stored.
+
+A [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] reads its values off the stream that is
+producing them, so it lasts only as long as that stream. Once the stream has finished, take
+[`StreamedRunResult.result`][pydantic_ai.result.StreamedRunResult.result] to get the same run in settled
+form and store that:
+
+```python {title="store a streamed run" test="skip" lint="skip"}
+async with agent.run_stream('Tell me a joke.') as streamed:
+    async for text in streamed.stream_text():
+        print(text)
+
+    stored_json = StoredRun(result=streamed.result).model_dump_json()
+```
 
 ### Loading untrusted history
 
@@ -403,7 +462,7 @@ Each sanitization can be turned off individually when the corresponding parts we
 
 ## Persisting sessions
 
-[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
+[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Storage](storage.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
 
 For a chat application that is usually the whole design: load a thread's history, pass it as `message_history`, and write back [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] once the run finishes. Appending each run's new messages rather than rewriting the full list keeps each write proportional to the turn instead of to the conversation, and leaves the stored order intact.
 
@@ -600,6 +659,10 @@ into the conversation mid-run with [`RunContext.enqueue`][pydantic_ai.tools.RunC
 a realtime session). Use this when something happens during a
 run that the agent should know about — a tool wants to add follow-up context, an external event
 needs to *steer* the agent's plan, or background work needs to reach the agent when it completes.
+You can call any of these directly from synchronous or asynchronous code, including a tool or
+callback running in another thread. Calls after the run or session has ended raise
+[`UserError`][pydantic_ai.exceptions.UserError]. For standard runs, submission is synchronized with
+the final drain, so a concurrent call is either accepted for delivery or rejected as the run ends.
 
 A `priority` controls when the enqueued content is delivered:
 
@@ -676,9 +739,10 @@ async def main():
             node = await agent_run.next(node)
 ```
 
-`'when_idle'` messages are only drained when the agent would otherwise reach an `End` — that
-drain happens in `after_node_run`. `'asap'` messages are drained in `before_model_request`, and
-also at the same end-of-run point if anything arrived during the final step. Both fire however
+`'when_idle'` messages are only drained when the agent would otherwise reach an `End`. That
+drain runs after every capability's `after_node_run` hook, so a capability that redirects the run
+can still enqueue there. `'asap'` messages are drained in `before_model_request`, and also at the
+same end-of-run point if anything arrived during the final step. Both fire however
 you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
 [`AgentRun.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
 loop all deliver enqueued messages.
@@ -693,14 +757,6 @@ loop all deliver enqueued messages.
       system-prompt callback that re-enqueues on each reinjection), the run will
       loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
       run as a safety net.
-    - `enqueue` is designed to be called from the same event loop that drives the
-      agent run. Inside the run that's automatic: async tools, sync tools (which
-      Pydantic AI auto-wraps in a thread executor), and capability hooks all
-      enqueue safely because the drain only iterates between graph nodes, never
-      concurrently with a tool body. If you're forwarding events from a *different*
-      thread or loop (e.g. a webhook handler), marshal the call onto the agent's
-      loop first — e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`. The
-      drain isn't atomic against concurrent cross-thread appends.
 
 ## Processing Message History
 

@@ -119,6 +119,55 @@ those limits. Exact limits and provider behavior can change, so provider pages a
 Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnects only after the
 connection drops, so a long call can briefly drop mid-turn.
 
+## Ending a call
+
+Leaving the `async with` block closes the session. To hang up from elsewhere — a watchdog, a stop
+button, or [a tool](tools.md#ending-the-session-from-a-tool) — await
+[`close()`][pydantic_ai.realtime.RealtimeSession.close] from any task. The teardown runs to
+completion even if that task is cancelled while it waits, and both a concurrent `close()` and the
+`async with` exit wait for the same teardown, so the session is fully closed by the time the block
+is left. While the session is being iterated the loop ends, leaving the `async with` block does not
+raise, and [`session.result`][pydantic_ai.realtime.RealtimeSession.result] is settled.
+
+For external policy such as an idle timeout or maximum call duration, run a watchdog task that calls
+`close()`:
+
+```python
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.realtime import RealtimeSession
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def close_after(session: RealtimeSession, seconds: float) -> None:
+    await asyncio.sleep(seconds)
+    await session.close()
+
+
+async def main():
+    async with agent.realtime('openai:gpt-realtime').session() as session:
+        watchdog = asyncio.create_task(close_after(session, 300))
+        try:
+            async for event in session:
+                ...  # handle events as usual; the loop ends when the watchdog closes the session
+        finally:
+            watchdog.cancel()
+```
+
+For an idle rather than absolute timeout, reset the watchdog on
+[`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and
+[`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent], which providers
+whose profile declares
+[`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
+send. Where that flag is unset, as on Gemini, reset the watchdog from your own input path as
+well — whenever you send audio that is not silence — plus assistant
+[`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] activity and
+[`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent]; resetting on output
+alone would hang up on a person mid-sentence. With input transcription enabled, user parts from
+[`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] work too.
+
 ## Errors
 
 Realtime sessions use the standard Pydantic AI exception hierarchy:
@@ -126,7 +175,7 @@ Realtime sessions use the standard Pydantic AI exception hierarchy:
 | Exception | Raised when |
 | --- | --- |
 | [`UserError`][pydantic_ai.exceptions.UserError] | The application requests an unsupported operation, passes incompatible settings, lacks credentials, or misuses the session. |
-| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status. |
+| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status; Gemini also maps WebSocket close codes such as `1007` and `1008` to `status_code`, while OpenAI-protocol providers use `RealtimeError` for an in-handshake rejection. |
 | [`RealtimeError`][pydantic_ai.realtime.RealtimeError] | The connection fails, times out, closes unexpectedly, returns an invalid frame, or exhausts reconnect attempts. |
 | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | A configured [usage limit](observability.md#usage-and-limits) is exceeded. |
 

@@ -301,6 +301,77 @@ async def test_function_toolset_with_defaults_overridden():
         return a - b  # pragma: no cover
 
 
+class InspectingFunctionToolset(FunctionToolset[None]):
+    """A function toolset that records the tool definition it was asked to call a tool with."""
+
+    def __init__(self, received_tool_defs: list[ToolDefinition], **kwargs: Any):
+        super().__init__(**kwargs)
+        self.received_tool_defs = received_tool_defs
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        self.received_tool_defs.append(tool.tool_def)
+        return await super().call_tool(name, tool_args, ctx, tool)
+
+
+async def test_combined_toolset_calls_tool_with_prepared_tool_def():
+    """A `prepare` function outside a `CombinedToolset` reaches the toolset that ends up running the tool."""
+    received_tool_defs: list[ToolDefinition] = []
+    source_toolset = InspectingFunctionToolset(received_tool_defs, id='source')
+
+    @source_toolset.tool_plain
+    def greet() -> str:
+        return 'hello'
+
+    def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [replace(tool_def, metadata={'source': 'prepared'}) for tool_def in tool_defs]
+
+    toolset = PreparedToolset(CombinedToolset([source_toolset]), prepare_tools)
+    ctx = build_run_context(None)
+    tool = (await toolset.get_tools(ctx))['greet']
+
+    assert await toolset.call_tool('greet', {}, ctx, tool) == 'hello'
+    assert [tool_def.metadata for tool_def in received_tool_defs] == [{'source': 'prepared'}]
+
+
+async def test_combined_toolset_calls_tool_without_its_own_toolset_id():
+    """The `toolset_id` a `CombinedToolset` adds for the model's benefit is not passed on to the source toolset."""
+    received_tool_defs: list[ToolDefinition] = []
+    source_toolset = InspectingFunctionToolset(received_tool_defs, id='source')
+
+    @source_toolset.tool_plain
+    def greet() -> str:
+        return 'hello'
+
+    toolset = CombinedToolset([source_toolset])
+    ctx = build_run_context(None)
+    tool = (await toolset.get_tools(ctx))['greet']
+    assert tool.tool_def.toolset_id == 'source'
+
+    assert await toolset.call_tool('greet', {}, ctx, tool) == 'hello'
+    assert received_tool_defs[0].toolset_id is None
+
+
+async def test_prepared_toolset_applies_prepared_timeout():
+    """A timeout set by a `prepare` function is enforced, not the one the tool was originally built with."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(timeout=10)
+    async def slow() -> None:
+        await anyio.sleep(1)
+
+    def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [replace(tool_def, timeout=0.01) for tool_def in tool_defs]
+
+    prepared_toolset = PreparedToolset(toolset, prepare_tools)
+    ctx = build_run_context(None)
+    tool = (await prepared_toolset.get_tools(ctx))['slow']
+
+    with pytest.raises(ModelRetry, match=re.escape('Timed out after 0.01 seconds')):
+        await prepared_toolset.call_tool('slow', {}, ctx, tool)
+
+
 async def test_prepared_toolset_sync_prepare_func():
     """`PreparedToolset` accepts a synchronous prepare function (no await needed)."""
     base_toolset = FunctionToolset()
@@ -747,6 +818,134 @@ async def test_tool_manager_reuse_self():
     updated_tool_manager = await tool_manager.for_run_step(ctx=step_2_context)
 
     assert tool_manager != updated_tool_manager
+
+
+async def test_tool_manager_rebuilds_within_step_when_capability_availability_changes():
+    """Tools are re-resolved mid-step when capability availability moved, without re-running the step transition.
+
+    Invariants an agent run can't reach today, so they're pinned directly rather than through
+    `Agent.run`. The retry carry-over sits behind the `run_step` short-circuit: a same-step rebuild
+    that dropped the accumulated counts would hand every tool a fresh budget mid-run, and one that
+    re-ran the carry-over would charge two units of that budget for a single failure. The per-step
+    accumulators have to survive it too, in both directions — `failed_tools` so the next step's
+    carry-over still charges the failure, `succeeded_tools` so it still clears the count of a tool
+    that recovered. And `AbstractToolset.for_run_step` is a step boundary with real lifecycle
+    effects (`DynamicToolset` exits and re-enters its inner toolset there, re-running its factory),
+    so a same-step rebuild has to reuse the already-transitioned toolset and only re-run
+    `get_tools`.
+    """
+    factory_calls = 0
+    flaky_calls = 0
+
+    def toolset_func(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal factory_calls
+        factory_calls += 1
+        toolset = FunctionToolset[None](max_retries=3)
+
+        @toolset.tool_plain
+        def failing_tool() -> int:
+            raise ModelRetry('This tool always fails')
+
+        @toolset.tool_plain
+        def flaky_tool() -> int:
+            nonlocal flaky_calls
+            flaky_calls += 1
+            if flaky_calls == 1:
+                raise ModelRetry('Not yet')
+            return flaky_calls
+
+        return toolset
+
+    secrets = Capability[None](id='secrets', description='Secret tools.', defer_loading=True)
+    step_1 = replace(build_run_context(None, run_step=1), capabilities={'secrets': secrets})
+
+    async with DynamicToolset(toolset_func) as dynamic_toolset:
+        tool_manager = await ToolManager[None](dynamic_toolset).for_run_step(step_1)
+        assert factory_calls == 1
+
+        for tool_name in ('failing_tool', 'flaky_tool'):
+            with pytest.raises(ToolRetryError):
+                await tool_manager.handle_call(ToolCallPart(tool_name=tool_name, args={}))
+
+        # A step advance charges both failures, so the same-step rebuild below has counts to carry.
+        tool_manager = await tool_manager.for_run_step(replace(step_1, run_step=2))
+        assert factory_calls == 2
+        assert tool_manager.ctx is not None
+        assert tool_manager.ctx.retries == snapshot({'failing_tool': 1, 'flaky_tool': 1})
+
+        with pytest.raises(ToolRetryError):
+            await tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={}))
+        assert await tool_manager.handle_call(ToolCallPart(tool_name='flaky_tool', args={})) == 2
+        assert tool_manager.failed_tools == {'failing_tool'}
+        assert tool_manager.succeeded_tools == {'flaky_tool'}
+
+        # Availability moves mid-step: same `run_step`, but the deferred capability is now loaded.
+        # (A fresh context carries no retries of its own, as the graph's does not.)
+        step_2_loaded = replace(step_1, run_step=2, loaded_capability_ids={'secrets'})
+        rebuilt = await tool_manager.for_run_step(step_2_loaded)
+
+        assert rebuilt is not tool_manager
+        # The step transition is not re-run, so the dynamic toolset's factory doesn't fire again.
+        assert factory_calls == 2
+        assert rebuilt.ctx is not None
+        # Retries carry through untouched: neither reset by the fresh context nor charged twice.
+        assert rebuilt.ctx.retries == snapshot({'failing_tool': 1, 'flaky_tool': 1})
+        # Both per-step accumulators survive, so the next step's carry-over sees this step's outcomes.
+        assert rebuilt.failed_tools == {'failing_tool'}
+        assert rebuilt.succeeded_tools == {'flaky_tool'}
+
+        # Availability unchanged: no rebuild, the same manager is returned.
+        assert await rebuilt.for_run_step(step_2_loaded) is rebuilt
+
+        # Advancing the step charges the failure exactly once and clears the recovered tool's count,
+        # and does re-run the transition.
+        advanced = await rebuilt.for_run_step(replace(step_2_loaded, run_step=3))
+        assert factory_calls == 3
+        assert advanced.ctx is not None
+        assert advanced.ctx.retries == snapshot({'failing_tool': 2})
+        assert advanced.failed_tools == set()
+        assert advanced.succeeded_tools == set()
+
+
+async def test_tool_manager_availability_snapshot_is_independent_of_the_shared_set():
+    """The recorded availability has to be a snapshot, and removal has to invalidate as well as addition.
+
+    The run's `loaded_capability_ids` is a single mutable set shared by reference with every
+    `RunContext` of the run: `_refresh_loaded_capability_ids` clears and updates it in place rather
+    than handing over a replacement, precisely so the copies stay in sync. A manager that recorded
+    the live set instead of a snapshot of it would compare it against itself and never invalidate.
+    Exercised here by mutating the very set the manager resolved against, which a test that passes
+    a fresh set per step does not do.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def plain_tool() -> int:  # pragma: no cover
+        return 1
+
+    secrets = Capability[None](id='secrets', description='Secret tools.', defer_loading=True)
+    loaded_capability_ids: set[str] = set()
+    ctx = replace(
+        build_run_context(None, run_step=1),
+        capabilities={'secrets': secrets},
+        loaded_capability_ids=loaded_capability_ids,
+    )
+    assert ctx.loaded_capability_ids is loaded_capability_ids
+
+    tool_manager = await ToolManager[None](toolset).for_run_step(ctx)
+    assert tool_manager.resolved_capability_ids == snapshot(frozenset())
+
+    # Mutated in place, exactly as the run's own refresh does it.
+    loaded_capability_ids.add('secrets')
+    rebuilt = await tool_manager.for_run_step(ctx)
+    assert rebuilt is not tool_manager
+    assert rebuilt.resolved_capability_ids == snapshot(frozenset({'secrets'}))
+
+    # And back out: a processor can drop a load pair as easily as add one.
+    loaded_capability_ids.remove('secrets')
+    re_rebuilt = await rebuilt.for_run_step(ctx)
+    assert re_rebuilt is not rebuilt
+    assert re_rebuilt.resolved_capability_ids == snapshot(frozenset())
 
 
 async def test_tool_manager_retry_logic():
@@ -2991,3 +3190,58 @@ def test_apply_walks_combined_and_wrapper_toolsets():
     combined.apply(visited.append)
     assert inner1 in visited
     assert inner2 in visited
+
+
+async def test_get_tool_for_tool_def_lists_tools_by_default():
+    """The default rebuild lists the toolset's tools, which is always correct."""
+    listings = 0
+
+    async def echo(text: str) -> str:
+        return text
+
+    class CountingToolset(FunctionToolset):
+        async def get_tools(self, ctx: RunContext) -> dict[str, ToolsetTool]:
+            nonlocal listings
+            listings += 1
+            return await super().get_tools(ctx)
+
+    toolset = CountingToolset([echo])
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tool_def = (await toolset.get_tools(ctx))['echo'].tool_def
+
+    tool = await toolset.get_tool_for_tool_def(tool_def, ctx)
+    assert listings == 2
+    # The rebuilt tool has to be callable, not merely named right: it carries the function to run.
+    assert await toolset.call_tool('echo', {'text': 'hi'}, ctx, tool) == 'hi'
+
+    with pytest.raises(KeyError):
+        await toolset.get_tool_for_tool_def(ToolDefinition(name='missing'), ctx)
+
+
+async def test_dynamic_toolset_delegates_get_tool_for_tool_def():
+    """`DynamicToolset` hands the rebuild to whatever its factory resolved, so an overriding inner
+    toolset keeps its own behavior when it's reached through a dynamic one."""
+
+    async def echo(text: str) -> str:
+        return text
+
+    rebuilt: list[str] = []
+
+    class RebuildingToolset(FunctionToolset):
+        async def get_tool_for_tool_def(self, tool_def: ToolDefinition, ctx: RunContext) -> ToolsetTool:
+            rebuilt.append(tool_def.name)
+            return self.tool_for_tool_def(tool_def, ctx=ctx)
+
+    inner = RebuildingToolset([echo])
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tool_def = (await inner.get_tools(ctx))['echo'].tool_def
+
+    dynamic = DynamicToolset(lambda _: inner, id='dynamic', per_run_step=False)
+    # Unresolved, it holds no tools to rebuild from.
+    with pytest.raises(KeyError):
+        await dynamic.get_tool_for_tool_def(tool_def, ctx)
+
+    resolved = await dynamic.for_run(ctx)
+    tool = await resolved.get_tool_for_tool_def(tool_def, ctx)
+    assert rebuilt == ['echo']
+    assert await resolved.call_tool('echo', {'text': 'hi'}, ctx, tool) == 'hi'
