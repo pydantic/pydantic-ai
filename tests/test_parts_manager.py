@@ -1141,6 +1141,24 @@ def test_get_part_by_vendor_id():
     assert manager.get_part_by_vendor_id('missing') is None
 
 
+def test_get_part_resolves_in_the_unfiltered_index_space():
+    """`get_part` looks parts up in the same unfiltered space `PartStartEvent.index` comes from."""
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+
+    # A nameless tool-call delta stays a dangling `ToolCallPartDelta` occupying unfiltered index 0.
+    assert manager.handle_tool_call_delta(vendor_part_id='tool', args='{"value":') is None
+    assert manager.get_part(0) is None
+
+    # The next part is indexed past the dangling delta, and resolves to itself.
+    next(manager.handle_text_delta(vendor_part_id='content', content='hello'))
+    assert manager.get_part(1) == TextPart(content='hello', part_kind='text')
+
+    # Out-of-range indexes return None rather than raising IndexError — the filtered
+    # `get_parts()[index]` lookup this method replaced raised at end of stream.
+    assert manager.get_part(-1) is None
+    assert manager.get_part(2) is None
+
+
 def test_apply_event_preserves_stream_part_indexes():
     """Incomplete tool calls do not emit events, but still occupy a stream-part index."""
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
