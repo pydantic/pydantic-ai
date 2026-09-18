@@ -58,9 +58,11 @@ REASONING_CASES = [
     # o-series: always reasons, no off switch
     ReasoningCase(model='o1', enabled_by_default=True),
     ReasoningCase(model='o1-mini', enabled_by_default=True),
+    ReasoningCase(model='o1-preview-2024-09-12', enabled_by_default=True),
     ReasoningCase(model='o3', enabled_by_default=True),
     ReasoningCase(model='o3-mini', enabled_by_default=True),
     ReasoningCase(model='o4-mini', enabled_by_default=True),
+    ReasoningCase(model='o4-mini-2025-04-16', enabled_by_default=True),
     # gpt-5 (not 5.x): always reasons, no off switch
     ReasoningCase(model='gpt-5', enabled_by_default=True),
     ReasoningCase(model='gpt-5-pro', enabled_by_default=True),
@@ -134,6 +136,9 @@ REASONING_CASES = [
     ReasoningCase(model='gpt-4o'),
     ReasoningCase(model='gpt-4o-mini'),
     ReasoningCase(model='gpt-4o-2024-08-06'),
+    # Gateway prefixes beginning with "o" are not OpenAI o-series model names.
+    ReasoningCase(model='openrouter/moonshotai/kimi-k2'),
+    ReasoningCase(model='openai/gpt-4o'),
 ]
 
 
