@@ -294,7 +294,10 @@ Key facts for building realtime agents:
   `gemini-live-2.5-flash` half-cascade can opt in with `profile={'supports_text_output': True}`.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
-  are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
+  stay attached to the user turn they describe even when they arrive after its response. A reported
+  speech segment whose transcript never arrives remains represented by retained audio or a content-less
+  `SpeechPart` when the session closes. Transcripts are what carry over; OpenAI and Azure can also
+  replay retained transcript-less *user* audio, Gemini
   and xAI cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
   history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
   oldest evicted first) record.
