@@ -23,7 +23,7 @@ from termflow.stream import SmoothWriter, StreamSmoother  # pyright: ignore[repo
 
 from . import theme
 from .grep_output import GrepOutput
-from .tool_output import ToolOutput, terminal_text
+from .tool_output import ToolOutput, print_tool_header, terminal_text
 
 
 def markdown_style() -> RenderStyle:
@@ -119,11 +119,7 @@ class StreamRenderer:
             return
         if isinstance(event, FunctionToolCallEvent) and not self._tool_output.render_call(event):
             name = ''.join(char if char.isprintable() else ' ' for char in event.part.tool_name)
-            self.console.print(
-                f'● {name}', style=theme.MUTED, markup=False, highlight=False, overflow='ellipsis', no_wrap=True
-            )
-            if self.show_tool_output:
-                self.console.print()
+            print_tool_header(self.console, name=name)
 
     async def _render_with_plugins(self, event: AgentStreamEvent) -> bool:
         for renderer in self._renderers:

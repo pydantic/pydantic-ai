@@ -6,7 +6,7 @@ from pydantic_ai.messages import ToolReturnPart
 from rich.console import Console
 
 from . import theme
-from .tool_output import terminal_text
+from .tool_output import print_tool_header, terminal_text
 
 
 class GrepArguments(BaseModel):
@@ -37,16 +37,7 @@ class GrepOutput:
                 return False
             label = f'grep {args.pattern!r} in {args.path!r}'
             self._calls[event.part.tool_call_id] = label
-            self.console.print(
-                f'● {terminal_text(label)}',
-                style=theme.MUTED,
-                markup=False,
-                highlight=False,
-                overflow='ellipsis',
-                no_wrap=True,
-            )
-            if self.show_output:
-                self.console.print()
+            print_tool_header(self.console, name='grep', argument=f'{args.pattern!r} in {args.path!r}')
             return True
         label = self._calls.pop(event.part.tool_call_id, None)
         if label is None:

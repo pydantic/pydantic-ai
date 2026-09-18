@@ -199,6 +199,10 @@ Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
 ## Testing
 
+- When adding or modifying a CLAI2 CLI UX feature, test every affected UX feature
+  with your changes in a fresh tmux window before opening a PR. Run CLAI2 with
+  `uv run clai2`. Verify the actual terminal behavior against the intention of
+  the user's request, not just the implementation or automated tests.
 - `pytest-anyio`; real model calls are blocked globally.
 - Drive the shell with `TestModel` and a `Console(file=StringIO())`.
 - Test a hook by building a `PluginHost`, registering a handler, and firing the

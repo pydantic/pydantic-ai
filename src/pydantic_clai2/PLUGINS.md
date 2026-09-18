@@ -385,13 +385,14 @@ capability (or `None`), for tools that should only exist in some runs.
 ### Draw an event yourself: `@host.render(EventClass)`
 
 Built-in tool rendering shows one summary line per call by default, clipped to
-the terminal width. Shell output and completion details, grep results, and file
+the terminal width and followed by a blank line. Tool names are pink; arguments
+and bullet markers are muted grey. Shell output and completion details, grep results, and file
 diffs are hidden from the terminal, not from the model. Set
 `/set display.tool_output true` to restore detailed output; `display.shell_lines`
 and `display.grep_lines` then control preview lengths (20 lines each by default).
 This setting does not suppress plugin renderers or interactive questions.
 
-CLAI shows unknown tool calls as a dim `● tool_name`. To show something
+CLAI shows unknown tool calls as `● tool_name`, with the name in pink. To show something
 better, return a Rich renderable (a `str` is fine). Return `None` to say "not mine,
 use the default".
 

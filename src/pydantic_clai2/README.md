@@ -16,7 +16,8 @@ not protect secret files or repository metadata. OS permissions still apply.
 Relative paths use the launch workspace. Use a custom agent with `Coder()` to
 retain workspace-scoped file tools.
 
-Tool calls show a single-line summary by default. Shell output, exit details and
+Tool calls show a single-line summary followed by a blank line by default.
+Tool names are pink; their arguments and bullet markers are muted grey. Shell output, exit details and
 log paths, grep results, and file diffs stay out of the terminal; the model still
 receives full tool results. Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show detailed output again, or

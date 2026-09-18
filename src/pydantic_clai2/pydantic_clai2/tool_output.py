@@ -20,6 +20,16 @@ def terminal_text(text: str) -> str:
     return ''.join(char if char.isprintable() or char in '\n\t' else f'\\x{ord(char):02x}' for char in text)
 
 
+def print_tool_header(console: Console, *, name: str, argument: str = '') -> None:
+    """Highlight the tool name, leaving its marker and arguments muted."""
+    text = Text('● ', style=theme.MUTED)
+    text.append(terminal_text(name), style=theme.ACCENT)
+    if argument:
+        text.append(f' {terminal_text(argument)}', style=theme.MUTED)
+    console.print(text, overflow='ellipsis', no_wrap=True)
+    console.print()
+
+
 _SGR = re.compile(r'(\x1b\[[0-9;]*m)')
 
 
@@ -73,11 +83,7 @@ class ToolOutput:
         summary = lines[0] if lines else ''
         if len(lines) > 1:
             summary += f' (+{len(lines) - 1} command lines)'
-        text = Text(f'● {name} ', style=theme.MUTED)
-        text.append(terminal_text(summary), style=theme.ACCENT)
-        self.console.print(text, overflow='ellipsis', no_wrap=True)
-        if self.show_output:
-            self.console.print()
+        print_tool_header(self.console, name=name, argument=summary)
 
     def render_call(self, event: FunctionToolCallEvent) -> bool:
         """Show arguments once, before execution, including for failed calls."""
