@@ -25,7 +25,7 @@ from pydantic_ai._instrumentation import (
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
+from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
@@ -42,7 +42,18 @@ from pydantic_ai.toolsets._tool_search import (
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
-from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import (
+    _display,
+    _enqueue,
+    _output,
+    _system_prompt,
+    _usage_attribution,
+    exceptions,
+    messages as _messages,
+    models,
+    result,
+    usage as _usage,
+)
 from ._cancel import RunCancellation
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -98,6 +109,7 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 EndStrategy = Literal['early', 'graceful', 'exhaustive']
 """How to handle function tool calls a model requests alongside a result that ends the run.
 
@@ -345,6 +357,11 @@ class GraphAgentState:
     identically on durable replay/recovery, which is what keeps the Temporal/DBOS MCP wrappers'
     `get_tools` scheduling replay-deterministic."""
 
+    def __post_init__(self) -> None:
+        # Keep the persisted shape a plain list while ensuring every live graph state uses the
+        # thread-safe list subclass. Pydantic deserialization also runs this hook.
+        self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
+
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
         if (
@@ -417,8 +434,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
     # place — never reassigned. The per-step refresh relies on that shared identity for both, and
     # `discovered_tool_names` additionally on the in-step reveals written by tool execution.
-    # `loaded_capability_ids` is refreshed from history only: a capability loaded during a step
-    # lands from the next one, so nothing writes it mid-step. Reassigning either (here, or by
+    # `loaded_capability_ids` is refreshed from history only: a capability the *model* loads during
+    # a step lands from the next one, since its load return only reaches history at the step's end.
+    # It is still refreshed a second time within the step, after history processing has rewritten
+    # that history — the only way its contents move mid-step. Reassigning either (here, or by
     # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
@@ -428,6 +447,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
+
+    display_banner: _display.BannerDisplay
+    """Shows the first-run banner, once this run has resolved the model and tools it will use."""
 
     agent: Agent[DepsT, Any] | None = None
 
@@ -450,6 +472,25 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     Runtime-only and id-keyed like `pending_immediate_dispatches`, and excluded from persistence for
     the same reason."""
+
+    durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] = dataclasses.field(
+        default_factory=dict[tuple[str, str], Callable[..., Awaitable[Any]]], repr=False
+    )
+    """Per-run durable capability operation dispatchers, keyed by `(capability id, operation name)`.
+
+    Shared by reference into every `RunContext` this run and only ever mutated in place, like
+    `loaded_capability_ids` above: the durability capability fills it once at run setup, and every
+    later `build_run_context` has to see the same populated mapping or a durable operation called
+    from a per-request hook would silently run inline.
+    """
+
+    run_capabilities_by_id: dict[str, AbstractCapability[DepsT]] = dataclasses.field(
+        default_factory=dict[str, AbstractCapability[Any]], repr=False
+    )
+    """The run's capability instances by `id`, used for worker-side durable recovery.
+
+    Shared by reference and mutated in place, for the same reason as `durable_operations`.
+    """
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -920,7 +961,7 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
     """
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
-        provisional.incr(continuation_usage)
+        provisional.incr(continuation_usage)  # usage-attribution: a provisional copy, for a check only
         run_context.usage_limits.check_tokens(provisional)
         if continuation_usage.cost is not None:
             # Continuation usage is provisional, so only warn after the run successfully finishes.
@@ -1136,6 +1177,31 @@ async def model_request_stream(
             await sr.aclose()
 
 
+def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+    """Show the first-run banner, from whichever path prepared the run's first request.
+
+    Called once the step's tool manager is built, the earliest point that knows which tools the
+    model will be offered: dynamic toolsets and MCP servers have been resolved by now. Output tools
+    are left out, as the banner reports the output type separately and counting them would make the
+    number move with the output mode rather than with what the agent was given.
+
+    Every reason there won't be a banner is checked before any of that is gathered, so a run that
+    isn't getting one counts nothing: this is on a path every run takes, and past the first one it
+    comes down to reading a flag.
+
+    An instrumented run has what the banner would point it to, so it stays out of the way — without
+    spending the claim, since another agent in this process may not be instrumented. `clai` differs:
+    its banner is also its session header, so it shows one either way.
+    """
+    if ctx.state.run_step != 1 or ctx.deps.instrumentation_settings is not None or not _display.banner_pending():
+        return
+
+    ctx.deps.display_banner(
+        model=ctx.deps.model_id or ctx.deps.model.model_id,
+        tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
+    )
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -1192,7 +1258,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
             skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
             skip_sr = CompletedStreamedResponse(e.response, model_request_parameters=skip_mrp)
@@ -1233,7 +1299,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # separate request steps.
             async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
                 self._did_stream = True
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                 agent_stream_holder.append(agent_stream)
                 stream_ready.set()
@@ -1318,7 +1384,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await agent_stream.aclose_events()
                 return
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=model_request_parameters,
@@ -1362,7 +1428,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             conversation_id=ctx.state.conversation_id,
                         )
                         fill_response_cost(partial_response)
-                        ctx.state.usage.incr(partial_response.usage)
+                        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
                         ctx.state.message_history.append(partial_response)
                 else:
                     try:
@@ -1430,7 +1496,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             return await self._finish_handling(ctx, e.response)
 
         _handler_response: _messages.ModelResponse | None = None
@@ -1485,11 +1551,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, e)
         self.last_request_context = request_context
-        ctx.state.usage.requests += 1
+        _usage_attribution.record_request(ctx.state.usage)
 
         return await self._finish_handling(ctx, model_response)
 
@@ -1532,6 +1598,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Note: for_run_step may already have been called by UserPromptNode for the
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        _display_first_run_banner(ctx)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
         instruction_parts = await _get_instructions(ctx, run_context)
@@ -1601,6 +1669,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
+
+        # Processing may have added or removed `load_capability` exchanges, and the durable history it
+        # just rewrote is what the rest of the step reads availability from. Refresh so the execution
+        # gate agrees with the reveal state `_with_outgoing_reveal_state` derives below from the same
+        # messages; `ToolManager.for_run_step` re-resolves off this set at dispatch, so a capability
+        # that became active here still governs its own tools through `prepare_tools`.
+        _refresh_loaded_capability_ids(ctx)
+
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
             messages,
@@ -1655,7 +1731,42 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Copy to avoid modifying the original usage object with the counted usage
             usage = deepcopy(usage)
 
+            outgoing_request = next(
+                message for message in reversed(messages) if isinstance(message, _messages.ModelRequest)
+            )
+            raw_outgoing_namespace_before = (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+            outgoing_namespace_before: dict[str, Any] = (
+                dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
+            )
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
+
+            # Counting models may persist framework-only state on the request they counted. When
+            # normalization merged consecutive requests, that request is temporary, so copy only keys
+            # added or changed by `count_tokens()` back to the durable trailing request. Application
+            # metadata keeps the existing normalization contract and is never propagated this way.
+            outgoing_namespace = (outgoing_request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+            updates = (
+                {
+                    key: value
+                    for key, value in outgoing_namespace.items()
+                    if key not in outgoing_namespace_before or outgoing_namespace_before[key] != value
+                }
+                if is_str_dict(outgoing_namespace)
+                else {}
+            )
+            if updates:
+                durable_request = next(
+                    message
+                    for message in reversed(ctx.state.message_history)
+                    if isinstance(message, _messages.ModelRequest)
+                )
+                if durable_request is not outgoing_request:
+                    durable_request.metadata = durable_request.metadata or {}
+                    durable_namespace = durable_request.metadata.get(_PYDANTIC_AI_METADATA_KEY)
+                    if not is_str_dict(durable_namespace):
+                        durable_namespace = {}
+                        durable_request.metadata[_PYDANTIC_AI_METADATA_KEY] = durable_namespace
+                    durable_namespace.update(updates)
             # Price this request's input tokens so the accumulated cost reflects them. Output tokens don't
             # exist yet, so this is a lower bound: it only catches a request whose input alone exceeds the limit.
             counted_price = best_effort_price(
@@ -1665,7 +1776,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 provider_name=model.system,
             )
             counted_usage.cost = counted_price.total_price if counted_price is not None else None
-            usage.incr(counted_usage)
+            usage.incr(counted_usage)  # usage-attribution: a deepcopy, to check a limit before the request
 
             ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
 
@@ -1709,6 +1820,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
         instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
@@ -1772,6 +1885,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # replace its contents (dropping the suspended response) rather than the reference;
         # `_finish_handling` then appends the final merged response after the base history.
         ctx.state.message_history[:] = base_messages
+
+        # Same reason as in `_prepare_request`: processing may have changed which capabilities the
+        # durable history shows as loaded, and the tool calls this continuation comes back with are
+        # dispatched against that history.
+        _refresh_loaded_capability_ids(ctx)
+
         ctx.deps.new_message_index = _first_new_message_index(
             base_messages,
             ctx.state.run_id,
@@ -1845,7 +1964,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         fill_response_cost(response)
-        ctx.state.usage.incr(response.usage)
+        _usage_attribution.record_usage(ctx.state.usage, response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.
@@ -2173,8 +2292,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
         # The manager was already prepared for this same run step before the model request, so
-        # `for_run_step` deliberately returns it unchanged, keeping the retries it accumulated —
-        # which is why the evidence lands field by field rather than by swapping in `run_context`.
+        # `for_run_step` normally returns it unchanged, keeping the retries it accumulated — which is
+        # why the evidence lands field by field rather than by swapping in `run_context`. (It does
+        # re-resolve when capability availability moved since preparation, e.g. a history processor
+        # injected a `load_capability` exchange; that path carries the same retries through and ends
+        # up holding `run_context`, whose evidence this assignment then re-applies harmlessly.)
         # Only the retrospective evidence is carried: replacing the prospective shared sets would
         # affect the next request's reveal pruning and search ranking.
         assert ctx.deps.tool_manager.ctx is not None
@@ -2434,6 +2556,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
+        _durable_operations=ctx.deps.durable_operations,
+        _run_capabilities_by_id=ctx.deps.run_capabilities_by_id,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
@@ -2443,10 +2567,10 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
     # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
-    # `_mcp_tool_defs_cache` (see the invariant on `GraphAgentDeps.loaded_capability_ids`). Never
-    # add any of them as a `replace` kwarg — forking the object would silently break in-step
-    # capability loads / tool reveals / message enqueues / cancellation / event delivery /
-    # tool-defs caching.
+    # `_mcp_tool_defs_cache`, `_durable_operations`, `_run_capabilities_by_id` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
+    # the object would silently break in-step capability loads / tool reveals / message enqueues /
+    # cancellation / event delivery / tool-defs caching / durable operation dispatch.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
@@ -2998,19 +3122,29 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
-                # We intentionally don't block merging when `conversation_id` or `metadata` differ,
-                # nor try to preserve them across the merge. These fields are only bookkeeping for
-                # callers; they're never part of what gets sent to the model. Refusing to merge on a
-                # mismatch would leave two consecutive requests where the model expects one, breaking
-                # providers (and provider-side conversation state) that require a single request per
-                # turn -- a real regression -- just to preserve fields the model request node never reads.
+                # We intentionally don't block merging when `conversation_id` or application metadata
+                # differ. These fields are only bookkeeping for callers; they're never part of what gets
+                # sent to the model. Refusing to merge on a mismatch would leave two consecutive requests
+                # where the model expects one. Framework protocol state in `__pydantic_ai__` is different:
+                # model implementations read it, so combine only that reserved namespace below.
             ):
                 parts = [*last_message.parts, *message.parts]
                 parts.sort(key=_messages._tool_results_first_sort_key)  # pyright: ignore[reportPrivateUsage]
+                metadata: dict[str, Any] | None = None
+                last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                if is_str_dict(last_namespace) or is_str_dict(namespace):
+                    metadata = {
+                        _PYDANTIC_AI_METADATA_KEY: {
+                            **(last_namespace if is_str_dict(last_namespace) else {}),
+                            **(namespace if is_str_dict(namespace) else {}),
+                        }
+                    }
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
                     timestamp=message.timestamp or last_message.timestamp,
+                    metadata=metadata,
                 )
                 clean_messages[-1] = merged_message
             else:

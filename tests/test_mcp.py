@@ -32,7 +32,18 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SpeechPart,
+    TextPart,
+    ToolAvailabilityDeltaPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -59,7 +70,8 @@ with try_import() as imports_successful:
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
 
-    from pydantic_ai import mcp as mcp_module
+    from pydantic_ai import _mcp, mcp as mcp_module
+    from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
     # `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a declaration.
     if TYPE_CHECKING:
@@ -153,6 +165,52 @@ def test_is_mcp_sdk_v2_reads_the_installed_distribution_version(
 
     monkeypatch.setattr(_mcp_compat, 'version', fake_package_version)
     assert _mcp_compat.is_mcp_sdk_v2() is expected
+
+
+# A fastmcp 4 install has no legacy `httpx` in it — its client extra requires `httpx2`, as does the
+# MCP SDK v2 under it — so `pydantic_ai.mcp` may not import one. Legacy `httpx` is installed here
+# (the `retries` extra pulls it in), so the subprocess makes it unimportable to stand in for the
+# install a user actually gets; the same stand-in `tests/test_httpx2_sdk_readiness.py` uses for the
+# provider modules, spelled out here because only this file runs in the FastMCP 4 CI job.
+_HTTPX_FREE_MCP = """
+import sys
+
+
+class BlockHttpx:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'httpx' or fullname.startswith('httpx.'):
+            raise ImportError('httpx is not installed')
+
+
+sys.meta_path.insert(0, BlockHttpx())
+
+import httpx2
+
+from pydantic_ai.mcp import MCPToolset
+
+client = httpx2.AsyncClient()
+toolset = MCPToolset(
+    'https://example.com/mcp',
+    auth=httpx2.BasicAuth('user', 'pass'),
+    http_client=client,
+)
+assert toolset.client.transport.httpx_client_factory() is client
+
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), (
+    'the MCP toolset imported httpx'
+)
+"""
+
+
+@pytest.mark.skipif(not MCP_SDK_V2, reason='fastmcp 3 is itself built on legacy httpx')
+def test_mcp_runs_without_legacy_httpx() -> None:
+    result = subprocess.run(
+        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_MCP],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
 
 
 MCP_FIELD_READS = [
@@ -1568,6 +1626,47 @@ class TestToolResultMapping:
 
 
 class TestSamplingHandler:
+    @pytest.mark.skipif(MCP_SDK_V2, reason='Modern MCP sessions do not support server-initiated sampling')
+    async def test_continue_tool_history_through_sampling(self):
+        def get_weather() -> str:
+            return 'Sunny in London'
+
+        source_agent = Agent(TestModel(), tools=[get_weather])
+        history = (await source_agent.run('What is the weather?')).all_messages()
+        tool_calls = [part for message in history for part in message.parts if isinstance(part, ToolCallPart)]
+        assert len(tool_calls) == 1
+        expected_tool_call = tool_calls[0]
+        received_messages: list[ModelMessage] = []
+
+        def sample(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            received_messages.extend(messages)
+            return ModelResponse(parts=[TextPart('Enjoy the sunshine')])
+
+        server: FastMCP[None] = FastMCP('sampling-history')
+
+        @server.tool()
+        async def continue_conversation(ctx: Context) -> str:
+            result = await Agent(MCPSamplingModel(ctx.session)).run('Thanks', message_history=history)
+            return result.output
+
+        toolset = MCPToolset(server, sampling_model=FunctionModel(sample))
+        async with toolset:
+            assert await toolset.direct_call_tool('continue_conversation', {}) == 'Enjoy the sunshine'
+
+        received_calls = [
+            part for message in received_messages for part in message.parts if isinstance(part, ToolCallPart)
+        ]
+        received_results = [
+            part for message in received_messages for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+        assert received_calls == [expected_tool_call]
+        assert len(received_results) == 1
+        assert (received_results[0].tool_name, received_results[0].tool_call_id, received_results[0].content) == (
+            'get_weather',
+            expected_tool_call.tool_call_id,
+            'Sunny in London',
+        )
+
     async def test_sampling_handler_round_trip(self):
         """Drive the sampling handler built from `sampling_model=` to cover its body."""
         from pydantic_ai.mcp import _build_sampling_handler  # type: ignore[attr-defined]
@@ -1588,6 +1687,12 @@ class TestSamplingHandler:
 class TestSamplingMessageMapping:
     """Cover the mapping helpers in `pydantic_ai._mcp` that translate MCP sampling messages
     to/from PAI message parts. Exercised via the sampling handler that `MCPToolset(sampling_model=...)` installs."""
+
+    async def test_unmapped_request_parts_remain_ignored(self):
+        """Pin mapper behavior for parts the agent normally transforms before model requests."""
+        assert _mcp.map_from_pai_messages(
+            [ModelRequest(parts=[SpeechPart(speaker='user'), ToolAvailabilityDeltaPart(tools_added=['weather'])])]
+        ) == ('', [])
 
     async def test_map_handles_image_audio_and_role_transitions(self):
         from pydantic_ai import _mcp as _mcp_helpers
@@ -1625,16 +1730,7 @@ class TestSamplingMessageMapping:
     async def test_map_rejects_unsupported_content_types(self):
         from pydantic_ai import _mcp as _mcp_helpers
 
-        list_content_params = mcp_types.CreateMessageRequestParams(
-            messages=[
-                mcp_types.SamplingMessage(role='user', content=[]),
-            ],
-            maxTokens=10,
-        )
-        with pytest.raises(NotImplementedError, match='list content'):
-            _mcp_helpers.map_from_mcp_params(list_content_params)
-
-        # `ToolUseContent` / `ToolResultContent` from the user side aren't legal sampling input.
+        # Tool calls belong to assistant messages.
         tool_use_params = mcp_types.CreateMessageRequestParams(
             messages=[
                 mcp_types.SamplingMessage(
@@ -1663,6 +1759,105 @@ class TestSamplingMessageMapping:
         )
         with pytest.raises(NotImplementedError):
             _mcp_helpers.map_from_sampling_content(audio_response_params.messages[0].content)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize('as_list', [False, True])
+    @pytest.mark.parametrize('is_error', [False, True])
+    async def test_map_tool_history(self, as_list: bool, is_error: bool):
+        """Pin native wire conversion independently of a model provider's history interpretation."""
+        tool_call = mcp_types.ToolUseContent(type='tool_use', id='call-1', name='weather', input={'city': 'London'})
+        tool_result = mcp_types.ToolResultContent(
+            type='tool_result',
+            toolUseId='call-1',
+            content=[mcp_types.TextContent(type='text', text='unavailable' if is_error else 'sunny')],
+            isError=is_error,
+        )
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(role='assistant', content=[tool_call] if as_list else tool_call),
+                mcp_types.SamplingMessage(role='user', content=[tool_result] if as_list else tool_result),
+            ],
+            maxTokens=10,
+        )
+        mapped = _mcp.map_from_mcp_params(params)
+        assert isinstance(mapped[0], ModelResponse)
+        assert mapped[0].parts == [ToolCallPart(tool_name='weather', args={'city': 'London'}, tool_call_id='call-1')]
+        assert isinstance(mapped[1], ModelRequest)
+        result = mapped[1].parts[0]
+        assert isinstance(result, ToolReturnPart)
+        assert (result.tool_name, result.tool_call_id, result.content, result.outcome) == (
+            'weather',
+            'call-1',
+            'unavailable' if is_error else 'sunny',
+            'failed' if is_error else 'success',
+        )
+
+    async def test_map_parallel_tool_history_with_structured_result(self):
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='assistant',
+                    content=[
+                        mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
+                        mcp_types.ToolUseContent(type='tool_use', id='two', name='second', input={}),
+                    ],
+                ),
+                mcp_types.SamplingMessage(
+                    role='user',
+                    content=[
+                        mcp_types.ToolResultContent(
+                            type='tool_result', toolUseId='one', content=[], structuredContent={'value': 1}
+                        ),
+                        mcp_types.ToolResultContent(
+                            type='tool_result',
+                            toolUseId='two',
+                            content=[
+                                mcp_types.TextContent(type='text', text='line one'),
+                                mcp_types.TextContent(type='text', text='line two'),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+            maxTokens=10,
+        )
+        mapped = _mcp.map_from_mcp_params(params)
+        assert len(mapped) == 2
+        assert isinstance(mapped[1], ModelRequest)
+        assert [
+            (part.tool_name, part.tool_call_id, part.content)
+            for part in mapped[1].parts
+            if isinstance(part, ToolReturnPart)
+        ] == [
+            ('first', 'one', {'value': 1}),
+            ('second', 'two', ['line one', 'line two']),
+        ]
+
+    @pytest.mark.parametrize('invalid_case', ['orphan', 'assistant-result'])
+    async def test_map_rejects_invalid_tool_history(self, invalid_case: str):
+        tool_result = mcp_types.ToolResultContent(
+            type='tool_result',
+            toolUseId='one',
+            content=[],
+        )
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='assistant',
+                    content=mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
+                ),
+                mcp_types.SamplingMessage(
+                    role='assistant' if invalid_case == 'assistant-result' else 'user', content=tool_result
+                ),
+            ],
+            maxTokens=10,
+        )
+        if invalid_case == 'orphan':
+            params.messages.pop(0)
+            with pytest.raises(UnexpectedModelBehavior, match='no matching tool call'):
+                _mcp.map_from_mcp_params(params)
+        else:
+            with pytest.raises(NotImplementedError, match=r'Unsupported .* content type'):
+                _mcp.map_from_mcp_params(params)
 
     async def test_map_handles_consecutive_assistant_messages(self):
         """Two assistant messages in a row append into the same `ModelResponse` (no intervening request)."""

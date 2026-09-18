@@ -2,15 +2,23 @@
 
 [Amazon Bedrock](https://aws.amazon.com/bedrock/) exposes foundation models from many providers, and Pydantic AI reaches it through two separate AWS APIs. Pick the route by model prefix:
 
-- **[Bedrock Converse](#bedrock-converse)** (`bedrock:`) — the broadest catalog, including Anthropic, Amazon, Cohere, Meta, Mistral, DeepSeek, Qwen, and [many more][pydantic_ai.models.bedrock.BedrockModelName], through the Bedrock Runtime Converse API. This is the route for almost every Bedrock model.
-- **[Bedrock Mantle](#bedrock-mantle)** (`bedrock-mantle:`) — the modern OpenAI models (GPT-5.x and GPT-OSS), which Bedrock serves only through [Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html)'s OpenAI-compatible API.
+- **[Bedrock Converse](#bedrock-converse)** (`bedrock:`) — the broadest catalog, including Anthropic, Amazon, Cohere, Meta, Mistral, DeepSeek, Qwen, selected OpenAI models, and [many more][pydantic_ai.models.bedrock.BedrockModelName], through the Bedrock Runtime Converse API. This is the route for almost every Bedrock model.
+- **[Bedrock Mantle](#bedrock-mantle)** (`bedrock-mantle:`) — OpenAI GPT-5.x and GPT-OSS models through [Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html)'s OpenAI-compatible API.
 
-Both routes authenticate with the same AWS credentials. The `bedrock:` prefix always uses Converse; requesting a frontier OpenAI model (GPT-5.4 or newer) through it raises an error pointing you to `bedrock-mantle:`, since Converse doesn't serve those models.
+Both routes authenticate with the same AWS credentials. The `bedrock:` prefix always uses Converse; requesting an OpenAI model it doesn't serve raises an error pointing you to `bedrock-mantle:`.
+
+AWS [recommends the `bedrock-runtime` endpoint for new applications](https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints.html). Pydantic AI's `bedrock:` route uses Converse on that endpoint. Choose `bedrock-mantle:` when you need its OpenAI-compatible API or a model available only on Mantle.
 
 | Route | Prefix | Models | Optional group | Model class |
 | --- | --- | --- | --- | --- |
-| [Converse](#bedrock-converse) | `bedrock:` | Anthropic, Amazon, Cohere, Meta, Mistral, and [more][pydantic_ai.models.bedrock.BedrockModelName] | `bedrock` | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] |
+| [Converse](#bedrock-converse) | `bedrock:` | Anthropic, Amazon, Cohere, Meta, Mistral, selected OpenAI models, and [more][pydantic_ai.models.bedrock.BedrockModelName] | `bedrock` | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] |
 | [Mantle](#bedrock-mantle) | `bedrock-mantle:` | OpenAI GPT-5.x and GPT-OSS | `bedrock-mantle` | [`BedrockMantleResponsesModel`][pydantic_ai.models.bedrock_mantle.BedrockMantleResponsesModel], [`BedrockMantleChatModel`][pydantic_ai.models.bedrock_mantle.BedrockMantleChatModel] |
+
+## OpenAI model routes {#bedrock-openai-model-routes}
+
+GPT-OSS and GPT-5.6 Sol, Luna, and Terra are available through both routes. GPT-5.4, GPT-5.5, and GPT-5.6 Cyber are available only through Mantle.
+
+On Converse, GPT-5.6 requires a cross-region inference-profile model ID. Sol supports `us.openai.gpt-5.6-sol` and `global.openai.gpt-5.6-sol`. Luna and Terra support `us.`, `in.`, and `global.` IDs. See the AWS model cards for [Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html), [Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html), and [Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html) for current endpoint and regional availability.
 
 ## Bedrock Converse
 
@@ -91,6 +99,22 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
 When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
+
+### Thinking and structured output
+
+For Claude models that support adaptive thinking and forced tool choice, `model_settings={'thinking': True}`
+works with both ordinary structured output (`output_type=MyModel`) and explicit
+[`ToolOutput`][pydantic_ai.output.ToolOutput]. Pydantic AI keeps using tool output instead of switching to native or
+prompted output. This also applies when adaptive thinking is the model's default.
+
+Forced tool responses may omit visible thinking blocks. Use [`PromptedOutput`][pydantic_ai.output.PromptedOutput],
+or [`NativeOutput`][pydantic_ai.output.NativeOutput] when the model supports it, to avoid forcing an output tool.
+
+Manual extended thinking (`bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', ...}}`)
+remains incompatible with forced tools: ordinary structured output falls back to native or prompted output,
+and explicit `ToolOutput` raises a `UserError`. Models that do not support forced tool choice retain this
+restriction with adaptive thinking too. See AWS's [adaptive thinking documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html)
+and [forced tool use restrictions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-tool-use.html#model-parameters-anthropic-claude-forced-tool-use).
 
 ### Custom HTTP headers
 
@@ -404,7 +428,7 @@ For more details on boto3 retry configuration, see the [AWS boto3 documentation]
 
 ## Bedrock Mantle
 
-[Amazon Bedrock Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html) serves OpenAI models (GPT-5.x and GPT-OSS) through an OpenAI-compatible API. Use the `bedrock-mantle:` prefix:
+[Amazon Bedrock Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html) serves OpenAI GPT-5.x and GPT-OSS models through an OpenAI-compatible API. See [OpenAI model routes](#bedrock-openai-model-routes) for which models are also available through Converse. Use the `bedrock-mantle:` prefix:
 
 ```python {test="skip"}
 from pydantic_ai import Agent

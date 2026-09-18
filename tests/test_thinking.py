@@ -22,7 +22,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
@@ -894,7 +894,7 @@ class TestAnthropicThinkingOutputToolsConflict:
             model.prepare_request(settings, params)
 
 
-def _bedrock_model(profile: BedrockModelProfile) -> BedrockConverseModel:
+def _bedrock_model(profile: ModelProfile) -> BedrockConverseModel:
     client = MagicMock()
     client.meta.endpoint_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
     return BedrockConverseModel('test-model', provider=BedrockProvider(bedrock_client=client), profile=profile)
@@ -1041,6 +1041,29 @@ class TestBedrockThinkingTranslation:
             BedrockModelSettings(), ModelRequestParameters(thinking=level)
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': effort}}
+
+    def test_anthropic_variant_adaptive_xhigh_passes_through_when_profile_supports_it(self):
+        """`xhigh` reaches the wire as `xhigh` when the merged profile carries `anthropic_supports_xhigh_effort`.
+
+        `BedrockProvider.model_profile` merges the downstream Anthropic profile into the Bedrock one, so the
+        flag is present for the same models the direct Anthropic path passes `xhigh` through for. Bedrock accepts
+        `xhigh` on exactly those models and rejects it on the rest, which the `max` fallback above covers.
+        """
+        model = _bedrock_model(
+            merge_profile(
+                BedrockModelProfile(
+                    bedrock_thinking_variant='anthropic',
+                    bedrock_supports_adaptive_thinking=True,
+                    bedrock_supports_effort=True,
+                    supports_thinking=True,
+                ),
+                AnthropicModelProfile(anthropic_supports_xhigh_effort=True),
+            )
+        )
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking='xhigh')
+        )
+        assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'xhigh'}}
 
     def test_anthropic_variant_adaptive_no_effort_when_unsupported(self):
         """Effort is omitted when the profile doesn't advertise bedrock_supports_effort."""

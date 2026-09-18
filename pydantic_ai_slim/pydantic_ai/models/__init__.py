@@ -130,6 +130,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'deepseek',
         'fireworks',
         'github',
+        'github-copilot',
         'heroku',
         'litellm',
         'moonshotai',
@@ -687,6 +688,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             raise UserError('Native structured output is not supported by this model.')
         if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
             raise UserError('Tool output is not supported by this model.')
+        if params.allow_text_output and not self.profile.get('supports_text_output', True):
+            raise UserError(
+                'Text output is not supported by this model. Give the agent one structured `output_type`, '
+                'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
+            )
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
@@ -1631,8 +1637,9 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
-    # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
+    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI, Snowflake, GitHub Copilot and OpenAI Codex need to
+    # be checked before OpenAI, as they are in `OpenAIChatCompatibleProvider` or
+    # `OpenAIResponsesCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
 
@@ -1657,6 +1664,10 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
+    elif model_kind == 'github-copilot':
+        from .github_copilot import GitHubCopilotModel
+
+        return GitHubCopilotModel(model_name, provider=provider)
     elif model_kind == 'openai-codex':
         from .openai_codex import OpenAICodexModel
 
@@ -1685,6 +1696,10 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'typesafe':
+        from .typesafe import TypeSafeModel
+
+        return TypeSafeModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

@@ -25,6 +25,7 @@ from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    EnqueuedMessagesEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelRequest,
@@ -74,6 +75,56 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
+
+
+async def test_enqueued_message_delivery_event(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """OpenAI delivery emits the enqueued request object recorded in session history."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(instructions='Reply exactly "DELIVERED".')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        enqueue_id = session.enqueue('Reply now.')
+        assert enqueue_id is not None
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    enqueued_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert len(enqueued_events) == 1
+    assert enqueued_events[0].enqueue_id == enqueue_id
+    assert enqueued_events[0].messages[0] is session.new_messages()[0]
+    assert session.new_messages()[1] == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='DELIVERED')],
+            usage=RequestUsage(
+                details={
+                    'input_text_tokens': 14,
+                    'input_image_tokens': 0,
+                    'output_text_tokens': 5,
+                    'audio_tokens': 0,
+                },
+                output_tokens=5,
+                input_tokens=14,
+            ),
+            model_name='gpt-realtime',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={'status': 'completed'},
+            provider_response_id=IsStr(),
+            finish_reason='stop',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
 
 
 async def test_session_when_idle_enqueue_waits_for_response_boundary(
@@ -317,6 +368,42 @@ async def test_media_views_subscribe_before_iteration(
     assert len(transcript_parts) == 1
     assert transcript_parts[0].speaker == 'assistant'
     assert transcript_parts[0].transcript
+
+
+async def test_wait_for_playback_drains_audio_before_close(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A generation boundary does not let session teardown cut off device-paced playback."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in one short sentence.')
+    emitted: list[bytes] = []
+    played: list[bytes] = []
+
+    async with agent.realtime(model).session() as session:
+        audio = session.stream_audio()
+
+        async def play_audio() -> None:
+            async for chunk in audio:
+                await asyncio.sleep(0.005)
+                played.append(chunk)
+
+        playback = asyncio.create_task(play_audio())
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if (
+                    isinstance(event, PartDeltaEvent)
+                    and isinstance(event.delta, SpeechPartDelta)
+                    and event.delta.audio_chunk
+                ):
+                    emitted.append(event.delta.audio_chunk)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await session.wait_for_playback()
+        assert played == emitted
+
+    await playback
 
 
 async def test_provider_factory_text_turn(
@@ -779,6 +866,20 @@ async def test_tool_error_ends_transcript_only_session(
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='The tool raised an unhandled error and the session ended.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        outcome='failed',
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

@@ -1,0 +1,91 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '218'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: Factor 3599 into two primes. Show only the answer.
+        role: user
+      model: claude-sonnet-5
+      reasoning_effort: medium
+      stream: false
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    headers:
+      content-length:
+      - '1871'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        message:
+          content: 3599 = 59 × 61
+          reasoning_opaque: Z13p0zVIfkdHGVbJExp5yw4WGmNiM8H9To5shOd+PHgDzKaWpvJoO13hqorLjTi85weK+nZFpbEXtcgKiUiOwnfNTb9r2XgB6sxXG0egBH1MyckhFeHBpFKCfAIfLPid6BbWV3BiUvrDWBB/6rWbYKIruSnPSifUCW5ASI/1Q2WE1KIcWKR8CN6eEIG5k+kZUVkhTeAO+dxk9wsn7WwCCjhXWUj9Z6CdihiMEYgGTqghpf9+S3R+mgU7nmNmPTPfi1kCLIjoj5tEyd8R+cCGTE0MkKt1fsMW/SWc0gvCPp1VH0cQUAgZBwn96D1F786SQj4txy028owJoX/9tONJxebjfulneC9PKCeFdKYLBNBUTPyTMfAkdeC6goNJA530+UAttZcE8aa7yskxF5v6E6wEArQ8wXQHLowTQXkupsP4TB1WFteXNrcb0bVsXVxIkp3qiENConr+7pnxHQmYkdD4JQ53hgbPkjAvp4yQdsZDfsRuqwmp95VKoZk4Nvrz5SoVWw7MDU3QxeNVHz2luTHw466ClchamDm1IrJJspJLw7CgmR4AdwVpCu/z8FThLKTZ/HfiDIDu5P6ZOU6JicdUzBXFMO5D0a549GiRfaS1d7Km/v2kSP5W7HDFoclyd+Hmd3qZ+5goUV0KpvYSnR/WfVFrVRnu1wXjxyh1dzFtW5LyYmnw/8reUElPeB9W+rgqPv3hq59674bfWNQmgz9RmgZX72VOGEgy+TaqKkodjNAs6QwaJ918OoABl4YNulp8TV5g+2Z+VRz7U8wp4MYE6vSc9os/T4kWMlw5qhmtnwiVMNkXkPKnhK3tZyuccjDkblyz5dNwDaLFXZ/FViENo0fIPdGXAXfQAJ9tvs8Awo8fxG5lOKY=
+          reasoning_text: |+
+            3599 factors as 59 times 61.
+
+          role: assistant
+      copilot_usage:
+        token_details:
+        - batch_size: 1000000
+          cost_per_batch: 200000000000
+          model: claude-sonnet-5
+          token_count: 31
+          token_type: input
+        - batch_size: 1000000
+          cost_per_batch: 20000000000
+          model: claude-sonnet-5
+          token_count: 0
+          token_type: cache_read
+        - batch_size: 1000000
+          cost_per_batch: 250000000000
+          model: claude-sonnet-5
+          token_count: 0
+          token_type: cache_write
+        - batch_size: 1000000
+          cost_per_batch: 1000000000000
+          model: claude-sonnet-5
+          token_count: 24
+          token_type: output
+        total_nano_aiu: 30200000
+      created: 1788836903
+      id: msg_011CeqEeAbLCTagvaExsPZg9
+      model: claude-sonnet-5
+      usage:
+        completion_tokens: 24
+        prompt_tokens: 31
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 55
+    status:
+      code: 200
+      message: OK
+version: 1
+...
