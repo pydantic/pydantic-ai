@@ -320,42 +320,48 @@ expensively. What Jev changes is that the decision stops being something you rat
 
 ### Classify, then act
 
-The simplest shape is two runs: one to decide, one to do. An [output function](../output.md#output-functions) makes
-the decision a signature rather than a string to map afterwards, so the routing table is the function and the
-options are its argument:
+The simplest shape is one run. An [output function](../output.md#output-functions) makes the decision a signature
+rather than a string to map afterwards — and because the function *runs* on Jev's pick, it can do the work it
+routed to, so the router's result is the answer:
 
 ```python {title="route_to_a_model.py"}
 from typing import Literal
 
 from pydantic_ai import Agent
 
-MODELS = {'fast': 'openai:gpt-5.6-luna', 'capable': 'openai:gpt-5.6-sol'}
+assistant = Agent(instructions='You are a helpful engineering assistant.')
 
 
-def route(tier: Literal['fast', 'capable']) -> str:
-    """Route the request to a model.
+async def route(question: str, tier: Literal['fast', 'capable']) -> str:
+    """Answer the question on a model suited to it.
 
     Args:
+        question: The question to answer.
         tier: Answer `fast` for a lookup, an extraction, or a change confined to one
             place. Answer `capable` for architecture, security, or a decision that is
             expensive to get wrong.
     """
-    return MODELS[tier]
+    model = 'openai:gpt-5.6-sol' if tier == 'capable' else 'openai:gpt-5.6-luna'
+    return (await assistant.run(question, model=model)).output
 
 
 router = Agent('typesafe:jev-latest', output_type=route)
-assistant = Agent(instructions='You are a helpful engineering assistant.')
 
 
 async def answer(question: str) -> str:
-    picked = await router.run(question)
-    return (await assistant.run(question, model=picked.output)).output
+    return (await router.run(question)).output
 ```
 
-The argument's `Literal` becomes the pick-one question and its `Args:` entry becomes the wording, so the whole
-routing decision costs one Jev request. The pick's confidence is in `provider_details['confidence']`, so an unsure
-route can go to the capable model rather than the cheap one, which is the conservative direction when a wrong route
-is expensive.
+Jev fills `tier` and the framework calls `route`, which runs the assistant and returns its answer, so
+`router.run(question)` is the whole thing. `question` is filled from the prompt the same way, which is why the
+routing costs one Jev request and no extra plumbing.
+
+The argument's `Literal` becomes the pick-one question and its `Args:` entry becomes the wording. Jev sees that
+wording as the question and the function's summary line as what the run is for — but *not* a meaning per option:
+a `Literal` has nowhere to write one, so the options go out as bare names. Where the difference between two
+options needs explaining, use an `Enum` and put a docstring under each member; those become Jev's per-option
+criteria. The pick's confidence is in `provider_details['confidence']`, so an unsure route can go to the capable
+model rather than the cheap one, which is the conservative direction when a wrong route is expensive.
 
 ### Decide again on every step
 
@@ -402,23 +408,23 @@ instead, as in the section above.
 Asking on every step is only affordable because the question is cheap; with a language model in the selector, the
 routing costs as much as the work it routes.
 
+A router that reads the history has the same problem every agent does: the history grows. Jev's state is the whole
+history, so a long run makes each routing question larger and slower, and eventually the input is dominated by
+turns that no longer bear on which model should take the next step. Pair this with
+[compaction](../capabilities/compaction.md) rather than letting it grow — the compacted history is what the router
+reads, which is usually what you wanted it to read anyway.
+
 ### Judge a tool call before it runs
 
-A tool marked `requires_approval=True` stops before its body runs and arrives as an approval request, which a
-[deferred tool handler](../deferred-tools.md) resolves. That handler is a decision per call, which is the shape Jev
-answers:
+A [hook](../hooks.md) on tool execution sees every call the model makes, with its arguments already validated, and
+can stop one before its body runs. That is a decision per call, which is the shape Jev answers:
 
 ```python {title="judge_a_tool_call.py"}
 from pydantic import BaseModel, Field
 
-from pydantic_ai import (
-    Agent,
-    DeferredToolRequests,
-    DeferredToolResults,
-    RunContext,
-    ToolDenied,
-)
-from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai import Agent, RunContext, SkipToolExecution, ToolDefinition
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.messages import ToolCallPart
 
 
 class Handling(BaseModel):
@@ -432,80 +438,110 @@ class Handling(BaseModel):
 judge = Agent('typesafe:jev-latest', output_type=Handling)
 
 
-async def judge_calls(
-    ctx: RunContext, requests: DeferredToolRequests
-) -> DeferredToolResults:
-    approvals: dict[str, bool | ToolDenied] = {}
-    for call in requests.approvals:
-        verdict = await judge.run(str(call.args))
-        approvals[call.tool_call_id] = (
-            ToolDenied('That command destroys data or leaks secrets.')
-            if verdict.output.irreversible
-            else True
-        )
-    return requests.build_results(approvals=approvals)
+async def judge_tool_call(
+    ctx: RunContext,
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: dict[str, object],
+) -> dict[str, object]:
+    verdict = await judge.run(f'{tool_def.name}: {args}')
+    if verdict.output.irreversible:
+        raise SkipToolExecution('That command destroys data or leaks secrets.')
+    return args
 
 
 agent = Agent(
     'openai:gpt-5.6-sol',
-    capabilities=[HandleDeferredToolCalls(handler=judge_calls)],
+    capabilities=[Hooks(before_tool_execute=judge_tool_call)],
 )
 
 
-@agent.tool_plain(requires_approval=True)
+@agent.tool_plain
 def run_shell(command: str) -> str:
     return f'ran {command!r}'
 ```
 
-This judges the call the model proposed, not the model's intent, so it is a check on what is about to happen rather
-than on what was said. Denying a call sends the message back to the model, which can try something else. Keep a
-human in the loop for the calls that matter most: a judgement at 180 ms is cheap enough to run on everything, which
-is exactly why it should not be the only thing standing between an agent and an irreversible action.
+[`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution] stops the call and sends its message back as the
+tool's result, so the model learns what was refused and can try something else. Nothing is marked
+`requires_approval`, and no tool opts in: the hook sits on every call the agent can make, including ones added
+later, which is what you want from a guard.
 
-A yes/no is Jev's probability rounded at the coin flip, and for a guard the two mistakes rarely cost the same: a
-missed irreversible command costs more than a second look at a safe one. Read `provider_details['confidence']` and
-pick your own bar rather than taking the rounded answer, until a threshold is configurable.
+The alternative is [deferred tools](../deferred-tools.md): mark a tool `requires_approval=True` and resolve the
+approval request with [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. Use that when
+the decision has to leave the process — a person approving in another system, a queue, a run that is resumed later.
+Use the hook when the decision is made in-process, as it is here. Both see validated arguments; only the deferral
+can outlive the run.
+
+This judges the call the model proposed, not the model's intent, so it is a check on what is about to happen rather
+than on what was said. Keep a human in the loop for the calls that matter most: a judgement at 180 ms is cheap
+enough to run on everything, which is exactly why it should not be the only thing standing between an agent and an
+irreversible action.
+
+A yes/no is Jev's probability rounded at `typesafe_boolean_threshold`, and for a guard the two mistakes rarely cost
+the same: a missed irreversible command costs more than a second look at a safe one. See
+[what `True` has to mean](#what-true-has-to-mean).
 
 ### Choose from a set built at run time
 
 The examples above name their options in the source. When the options are only known once the run is under way —
-the actions available on the screen in front of an agent, the records a search returned — build the output types
-at that point and pass them to the run. Each [output function](../output.md#output-functions) is one candidate,
-named and described where it is built, and the one Jev picks is the one that runs:
+the actions available on the screen in front of an agent, the records a search returned — build the output
+functions at that point and pass them to the run. Each is one candidate, named and described where it is built,
+and **the one Jev picks is the one that runs**:
 
 ```python {title="choose_a_candidate.py"}
+from dataclasses import dataclass
+
 from pydantic_ai import Agent, ToolOutput
 
 agent = Agent('typesafe:jev-latest')
 
-RESERVED = {
-    'reobserve': 'Discard this decision set and look again.',
-    'abstain': 'Do nothing, because none of these is safe for what was observed.',
-}
+
+@dataclass
+class Screen:
+    """Whatever the agent is acting on."""
+
+    def click(self, target: str) -> str:
+        return f'clicked {target}'
+
+    def observe(self) -> str:
+        return 'a fresh look at the screen'
 
 
-def candidates(actions: dict[str, str]) -> list[ToolOutput[str]]:
+def candidates(screen: Screen, targets: dict[str, str]) -> list[ToolOutput[str]]:
     """One output function per available action, plus the two ways to decline."""
-
-    def take(action_id: str):
-        def act() -> str:
-            return action_id
-
-        return act
-
-    if clashing := RESERVED.keys() & actions.keys():
+    reserved = {'reobserve': screen.observe, 'abstain': lambda: 'did nothing'}
+    if clashing := reserved.keys() & targets.keys():
         raise ValueError(f'action IDs clash with the reserved ones: {sorted(clashing)}')
-    return [ToolOutput(take(i), name=i, description=d) for i, d in {**actions, **RESERVED}.items()]
+
+    outputs = [
+        ToolOutput(lambda target=target: screen.click(target), name=target, description=description)
+        for target, description in targets.items()
+    ]
+    outputs.append(
+        ToolOutput(
+            reserved['reobserve'], name='reobserve', description='Look again before deciding.'
+        )
+    )
+    outputs.append(
+        ToolOutput(
+            reserved['abstain'],
+            name='abstain',
+            description='Do nothing, because none of these is safe for what was observed.',
+        )
+    )
+    return outputs
 
 
-async def decide(observation: str, actions: dict[str, str]) -> str:
-    result = await agent.run(observation, output_type=candidates(actions))
+async def act(screen: Screen, observation: str, targets: dict[str, str]) -> str:
+    result = await agent.run(observation, output_type=candidates(screen, targets))
     return result.output
 ```
 
-The reserved IDs are the caller's to keep free: an action of your own called `abstain` would otherwise be
-overwritten by the reserved one, and a pick of `abstain` would then be ambiguous between doing that action and
-doing nothing.
+The key idea is that a candidate is **the action itself**, not a token standing for it. Jev picks, the framework
+calls that function, and `result.output` is what the action returned — so there is no dispatch table to write and
+no second step where an ID is turned back into behaviour. If you find yourself writing a function that returns its
+own name, the dispatch has just moved somewhere else; give the function the work instead.
 
 Two things this gets right that are easy to lose. Jev can only answer with an option it was given, so there is no
 step where a made-up action has to be validated away. And `reobserve` and `abstain` are options like any other, so
