@@ -878,6 +878,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         receives, and the request recorded in message history is re-rendered from them afterwards.
         Assigning to a [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest] in
         `request_context.messages` is not propagated the other way, so it does not reach the model.
+
+        This is not an authorization hook. Gate function tools in
+        [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools], whose result
+        controls both the definitions advertised to the model and the tools that can execute.
         """
         return request_context
 

@@ -605,6 +605,8 @@ To skip the model call entirely and provide a replacement response, raise [`Skip
 
 `before_model_request` hooks see the full `request_context.messages` list, including any [message history](../message-history.md) passed to `agent.run()`, and can modify it.
 
+Lifecycle hooks are dispatched against the capabilities that are active when the hook chain starts. If a `before_model_request` hook, including [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory], edits history so a deferred capability becomes active, the new capability does not join the `before_model_request` chain already in progress; it can participate in later hook points. Do not use `before_model_request` as an authorization hook. Gate function tools in [`prepare_tools`](#tool-preparation), whose result controls both the tools advertised to the model and the tools that can execute.
+
 To change the [instructions](../agent.md#instruction-parts) for a request, rewrite `request_context.model_request_parameters.instruction_parts` — that's what the model is sent, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest] recorded in message history is re-rendered from it once the hooks have run, so history and traces show what was actually sent. Assigning to that message's `instructions` is not propagated back into the parts and does not reach the model.
 
 !!! note "Skip and chain behavior"
@@ -684,7 +686,7 @@ Capabilities can filter or modify which tool definitions the model sees on each 
 Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
 !!! note "On a deferred capability"
-    `prepare_tools` runs only once the capability is [loaded](on-demand.md), and then receives every function tool, just as it would for an always-on capability. Before that there is nothing for it to govern: an unloaded capability's tools are neither advertised to the model nor callable.
+    `prepare_tools` runs only once the capability is [loaded](on-demand.md), and then receives every function tool, just as it would for an always-on capability. It runs again when capability availability changes, so the filter governs every function tool that the availability gate admits. Before a deferred capability loads there is nothing for it to govern: its tools are neither advertised to the model nor callable.
 
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
