@@ -271,7 +271,13 @@ class InMemorySpendStore:
             return sum(1 for _, expires_at in self._entries.values() if expires_at is None or now < expires_at)
 
     async def get(self, key: str) -> Spent:
-        """What `key` has accumulated. Deprecated in favour of `get_many`."""
+        """What `key` has accumulated. Deprecated in favour of `get_many`; call it with a sequence of keys."""
+        warnings.warn(
+            '`InMemorySpendStore.get` is deprecated in favour of `get_many`. Use the batched `get_many` to read '
+            'several keys in one call. This method will be removed in a future release.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
         return (await self.get_many([key]))[key]
 
     async def add(
@@ -284,7 +290,13 @@ class InMemorySpendStore:
         unpriced: int,
         ttl: timedelta | None,
     ) -> Spent:
-        """Add to `key` and return the result. Deprecated in favour of `add_many`."""
+        """Add to `key` and return the result. Deprecated in favour of `add_many`; call it with a sequence of entries."""
+        warnings.warn(
+            '`InMemorySpendStore.add` is deprecated in favour of `add_many`. Use the batched `add_many` to apply '
+            'several entries in one call. This method will be removed in a future release.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
         entry = SpendEntry(key=key, usd=usd, tokens=tokens, requests=requests, unpriced=unpriced, ttl=ttl)
         return (await self.add_many([entry]))[key]
 

@@ -8,6 +8,7 @@ nothing extra.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
@@ -16,6 +17,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic_ai.exceptions import UserError
 
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import SEPARATOR, delimited
 from pydantic_ai_harness.spend._snapshot import Spent, money_precision
 from pydantic_ai_harness.spend._store import DEFAULT_DEDUP_RETAIN, SpendEntry, warn_unreachable_overrides
@@ -287,7 +289,13 @@ class RedisSpendStore:
         warn_unreachable_overrides(self, RedisSpendStore)
 
     async def get(self, key: str) -> Spent:
-        """What `key` has accumulated. Deprecated in favour of `get_many`."""
+        """What `key` has accumulated. Deprecated in favour of `get_many`; call it with a sequence of keys."""
+        warnings.warn(
+            '`RedisSpendStore.get` is deprecated in favour of `get_many`. Use the batched `get_many` to read '
+            'several keys in one call. This method will be removed in a future release.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
         return (await self.get_many([key]))[key]
 
     async def add(
@@ -300,12 +308,18 @@ class RedisSpendStore:
         unpriced: int,
         ttl: timedelta | None,
     ) -> Spent:
-        """Add to `key` and return the result. Deprecated in favour of `add_many`.
+        """Add to `key` and return the result. Deprecated in favour of `add_many`; call it with a sequence of entries.
 
         One window per call, so a response counting against a day and a month budget is
         two calls and a failure between them leaves the day counted and the month not.
         `add_many` is one script over every window, which is what closes that.
         """
+        warnings.warn(
+            '`RedisSpendStore.add` is deprecated in favour of `add_many`. Use the batched `add_many` to apply '
+            'several entries in one call. This method will be removed in a future release.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
         entry = SpendEntry(key=key, usd=usd, tokens=tokens, requests=requests, unpriced=unpriced, ttl=ttl)
         return (await self.add_many([entry]))[key]
 

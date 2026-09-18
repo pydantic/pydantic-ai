@@ -142,16 +142,18 @@ class TestLiveScript:
 
     async def test_the_script_runs_and_returns_the_four_totals(self, store: RedisSpendStore):
         """The whole point of the Lua: valid on the server, and no second read to get the result."""
-        first = await store.add('k', usd=Decimal('0.000123456'), tokens=7, requests=1, unpriced=1, ttl=None)
+        first = (
+            await store.add_many([SpendEntry(key='k', usd=Decimal('0.000123456'), tokens=7, requests=1, unpriced=1)])
+        )['k']
         assert first == Spent(usd=Decimal('0.000123456'), tokens=7, requests=1, unpriced_requests=1)
 
-        second = await store.add('k', usd=Decimal('0.000000675'), tokens=3, requests=1, unpriced=0, ttl=None)
+        second = (await store.add_many([SpendEntry(key='k', usd=Decimal('0.000000675'), tokens=3, requests=1)]))['k']
         assert second == Spent(usd=Decimal('0.000124131'), tokens=10, requests=2, unpriced_requests=1)
-        assert await store.get('k') == second
+        assert (await store.get_many(['k']))['k'] == second
 
     async def test_a_finite_horizon_sets_an_expiry(self, store: RedisSpendStore):
         """The baseline the `'forever'` case below is measured against."""
-        await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=timedelta(hours=1))
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), tokens=1, requests=1, ttl=timedelta(hours=1))])
 
         assert 0 < await _ttl(store, 'k') <= 3600
 
@@ -162,16 +164,18 @@ class TestLiveScript:
         a horizon the configuration no longer mentions, handing the ceiling back on a
         schedule. This is the assertion the fake cannot make on its own.
         """
-        await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=timedelta(hours=1))
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), tokens=1, requests=1, ttl=timedelta(hours=1))])
         assert await _ttl(store, 'k') > 0
 
-        await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=None)
+        await store.add_many([SpendEntry(key='k', usd=Decimal('1'), tokens=1, requests=1, ttl=None)])
 
         assert await _ttl(store, 'k') == -1
 
     async def test_a_sub_second_horizon_still_expires(self, store: RedisSpendStore):
         """`EXPIRE` takes whole seconds, and rounding down would leave the key forever."""
-        await store.add('k', usd=Decimal('1'), tokens=1, requests=1, unpriced=0, ttl=timedelta(milliseconds=500))
+        await store.add_many(
+            [SpendEntry(key='k', usd=Decimal('1'), tokens=1, requests=1, ttl=timedelta(milliseconds=500))]
+        )
 
         assert await _ttl(store, 'k') == 1
 
@@ -183,13 +187,13 @@ class TestLiveScript:
         counter exactly. A bulk string has no double in its path.
         """
         below = Decimal(2**53 - 1) / _NANOS
-        added = await store.add('k', usd=below, tokens=1, requests=1, unpriced=0, ttl=None)
+        added = (await store.add_many([SpendEntry(key='k', usd=below, tokens=1, requests=1)]))['k']
         assert added.usd == below
 
-        crossed = await store.add('k', usd=_ONE_NANO, tokens=1, requests=1, unpriced=0, ttl=None)
+        crossed = (await store.add_many([SpendEntry(key='k', usd=_ONE_NANO, tokens=1, requests=1)]))['k']
 
         assert crossed.usd == Decimal(2**53) / _NANOS
-        assert (await store.get('k')).usd == crossed.usd
+        assert (await store.get_many(['k']))['k'].usd == crossed.usd
 
     async def test_a_counter_past_the_64_bit_range_is_refused_before_it_is_written(self, store: RedisSpendStore):
         """`HINCRBY`'s own ceiling, around $9.22 billion against one key, reported by Redis.
@@ -198,12 +202,12 @@ class TestLiveScript:
         it held rather than a number that went round the houses.
         """
         near = Decimal(2**63 - 1) / _NANOS
-        before = await store.add('k', usd=near, tokens=1, requests=1, unpriced=0, ttl=None)
+        before = (await store.add_many([SpendEntry(key='k', usd=near, tokens=1, requests=1)]))['k']
 
         with pytest.raises(ResponseError, match='overflow'):
-            await store.add('k', usd=_ONE_NANO, tokens=1, requests=1, unpriced=0, ttl=None)
+            await store.add_many([SpendEntry(key='k', usd=_ONE_NANO, tokens=1, requests=1)])
 
-        assert await store.get('k') == before
+        assert (await store.get_many(['k']))['k'] == before
 
     async def test_every_window_of_a_response_is_one_script(self, store: RedisSpendStore):
         """The #536 fix: no failure between two windows, and each keeps its own horizon."""
@@ -232,7 +236,7 @@ class TestLiveScript:
         second = await store.add_many([entry])
 
         assert first == second == {'k': Spent(usd=Decimal('1'), tokens=5, requests=1)}
-        assert await store.get('k') == first['k']
+        assert (await store.get_many(['k']))['k'] == first['k']
 
     async def test_an_overflow_leaves_no_marker_to_skip_the_retry(self, store: RedisSpendStore):
         """The marker is written after the increments, not claimed before them.
@@ -241,7 +245,7 @@ class TestLiveScript:
         overflow that aborted the script and the retry that could have completed the
         window would be skipped as a replay of a response that never fully landed.
         """
-        await store.add('k', usd=Decimal(2**63 - 1) / _NANOS, tokens=0, requests=0, unpriced=0, ttl=None)
+        await store.add_many([SpendEntry(key='k', usd=Decimal(2**63 - 1) / _NANOS, tokens=0, requests=0, ttl=None)])
         entry = SpendEntry(key='k', usd=_ONE_NANO, tokens=1, requests=1, token='resp-1')
 
         with pytest.raises(ResponseError, match='overflow'):
@@ -261,11 +265,11 @@ class TestLiveScript:
         await store.client.hset(  # pyright: ignore[reportAttributeAccessIssue]
             f'{store.prefix}:k', mapping={'usd_nanos': 3_000_000_000, 'tokens': 8, 'requests': 2}
         )
-        assert await store.get('k') == Spent(usd=Decimal('3'), tokens=8, requests=2)
+        assert (await store.get_many(['k']))['k'] == Spent(usd=Decimal('3'), tokens=8, requests=2)
 
         totals = await store.add_many([SpendEntry(key='k', usd=Decimal('1'), tokens=1, requests=1)])
         assert totals == {'k': Spent(usd=Decimal('4'), tokens=9, requests=3)}
 
         await store.client.hincrby(f'{store.prefix}:k', 'requests', 1)  # pyright: ignore[reportAttributeAccessIssue]
 
-        assert await store.get('k') == Spent(usd=Decimal('4'), tokens=9, requests=4)
+        assert (await store.get_many(['k']))['k'] == Spent(usd=Decimal('4'), tokens=9, requests=4)
