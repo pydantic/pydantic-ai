@@ -259,7 +259,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tool, hand_offs = _output_tools(model_request_parameters)
-        tools = [*hand_offs, *model_request_parameters.function_tools]
+        tools = _tools_left(messages, [*hand_offs, *model_request_parameters.function_tools])
         properties = _fields(output_tool) if output_tool else {}
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
@@ -618,6 +618,23 @@ def _questions(
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
+
+
+def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> list[ToolDefinition]:
+    """The tools still on offer: one with no arguments is offered once per run.
+
+    Once it has been called, its result is in the history, and the same call could only return the same result;
+    left on offer, Jev keeps picking it, since the text still calls for it. A tool with arguments stays, because
+    the model that makes that call can vary them.
+    """
+    called = {
+        part.tool_name
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    }
+    return [tool for tool in tools if tool.parameters_json_schema.get('properties') or tool.name not in called]
 
 
 def _tool_question(

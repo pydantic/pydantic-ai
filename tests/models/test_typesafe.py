@@ -668,14 +668,15 @@ async def test_an_arg_less_tool_is_called_by_jev_itself(allow_model_requests: No
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
-        choice, other = ('approve', 'final_result') if len(seen) == 1 else ('final_result', 'approve')
+        # Jev would pick the tool again with its result in view; it is not offered again, so this is ignored.
         return answers(
             urgent={'type': 'noul', 'noul': 0.9},
-            tool={'type': 'choice', 'choice': choice, 'confidence': 0.8, 'probabilities': {choice: 0.9, other: 0.1}},
+            tool={'type': 'choice', 'choice': 'approve', 'confidence': 0.8, 'probabilities': {'approve': 0.9}},
         )
 
     result = await Agent(mock_model(record), output_type=Ticket, tools=[approve]).run('Fine by me.')
     assert result.output == Ticket(urgent=True)
+    assert 'tool' in seen[0]['questions'] and 'tool' not in seen[1]['questions']
     assert seen[1]['state'] == snapshot(
         {
             'history': [
