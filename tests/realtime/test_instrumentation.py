@@ -1290,6 +1290,36 @@ async def test_session_span_omits_conversation_id_when_unset() -> None:
     assert 'gen_ai.conversation.id' not in sess.attributes
 
 
+async def test_session_span_reports_a_conversation_id_the_session_minted() -> None:
+    # A session opened without a `conversation_id` mints one the first time `conversation` is taken,
+    # and every message it records from then on carries it. The session span has to report the same
+    # identity, or the span a conversation was spoken in can't be correlated with the text runs that
+    # continue it -- which is the whole reason the id is carried across modalities.
+    settings, exporter = _settings()
+    conn = _Connection([ResponseDone()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    async with session:
+        minted = session.conversation.conversation_id
+        _ = [event async for event in session]
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.conversation.id'] == minted
+
+
+async def test_session_span_reports_a_conversation_id_minted_before_it_opened() -> None:
+    # The same identity, taken before the session was entered: there is no span to update yet, so the
+    # id has to be waiting for `start_session_span` to pick up instead.
+    settings, exporter = _settings()
+    conn = _Connection([ResponseDone()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    minted = session.conversation.conversation_id
+    async with session:
+        _ = [event async for event in session]
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.conversation.id'] == minted
+
+
 async def test_session_span_without_model_or_usage() -> None:
     settings, exporter = _settings()
     conn = _Connection([ResponseDone()])  # no model name, no Usage event

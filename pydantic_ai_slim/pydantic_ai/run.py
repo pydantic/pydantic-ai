@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from copy import deepcopy
+from copy import copy, deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
@@ -25,6 +25,7 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import CustomEventT
 from .capabilities._pending_messages import drain_pending_messages_at_end
+from .conversation import Conversation
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -902,6 +903,21 @@ class AgentRunResult(Generic[OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    @property
+    def conversation(self) -> Conversation:
+        """This run's [`Conversation`][pydantic_ai.conversation.Conversation], ready to carry into the next one.
+
+        Bundles the messages, usage and conversation ID that a following run — text, streamed, or
+        realtime — needs, so none of them is dropped on the way. The messages list and the usage are
+        copies, so the returned conversation can be stored, carried into another run, and mutated
+        without touching this result's own accounting.
+        """
+        return Conversation(
+            messages=list(self.all_messages()),
+            usage=copy(self.usage),
+            conversation_id=self.conversation_id,
+        )
 
     @property
     def timestamp(self) -> datetime:
