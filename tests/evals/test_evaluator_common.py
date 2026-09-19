@@ -7,7 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
@@ -823,3 +823,25 @@ def test_structured_judge_model_instance_serialized_as_string():
     model = TestModel()
     evaluator = StructuredJudge({'is_polite': 'The reply is polite.'}, model=model)
     assert evaluator.build_serialization_arguments()['model'] == model.model_id
+
+
+async def test_structured_judge_ignores_a_computed_field():
+    """A computed field is not one of the questions, so it is not one of the measures either."""
+
+    class WithComputed(BaseModel):
+        """Judge a reply."""
+
+        is_polite: bool = Field(description='Is the reply polite?')
+
+        @computed_field
+        @property
+        def evidence(self) -> list[str]:
+            return ['not a measure']
+
+    calls: list[JudgeCall] = []
+    evaluator = StructuredJudge(WithComputed, model=structured_judge_model({'is_polite': True}, calls))
+
+    result = await evaluator.evaluate(MockContext(output='Certainly.'))
+
+    assert to_jsonable_python(result) == snapshot({'is_polite': True})
+    assert calls[0].schema['properties'].keys() == {'is_polite'}

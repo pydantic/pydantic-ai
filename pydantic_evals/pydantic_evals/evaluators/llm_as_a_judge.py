@@ -516,7 +516,7 @@ async def judge_questions(
             )
         ).output
         return {name: answers[name] for name in questions}
-    return (
+    answers = (
         await _judge_questions_agent.run(
             user_prompt,
             model=resolved_model,
@@ -525,6 +525,9 @@ async def judge_questions(
             output_type=questions,
         )
     ).output.model_dump()
+    # `model_dump` also yields computed fields, which were never asked: only the fields the judge was
+    # given a question for are answers.
+    return {name: answers[name] for name in questions.model_fields}
 
 
 class GEvalOutput(BaseModel):
