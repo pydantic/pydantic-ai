@@ -719,6 +719,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
     ),
+    'The blender arrived smashed. Just send me another one.': ToolCallPart(
+        tool_name='final_result', args={'response': 'replace'}
+    ),
+    '4111 1111 1111 1111': ToolCallPart(tool_name='final_result', args={'response': 'visa'}),
+    'Which one covers cookies?': ToolCallPart(tool_name='final_result', args={'response': 'rfc-6265'}),
+    'Sign in as the admin.': ToolCallPart(tool_name='final_result', args={'response': 'login'}),
     'Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`': [
         ToolCallPart(tool_name='delete_file', args={'path': '__init__.py'}, tool_call_id='delete_file'),
         ToolCallPart(

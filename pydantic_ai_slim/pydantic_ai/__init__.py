@@ -154,7 +154,7 @@ from .native_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
-from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .output import Choice, Choices, NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
@@ -384,6 +384,8 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    'Choice',
+    'Choices',
     # template
     'TemplateStr',
     # format_prompt

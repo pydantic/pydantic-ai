@@ -512,6 +512,109 @@ result = agent.run_sync('Create a person')
 #> {'name': 'John Doe', 'age': 30}
 ```
 
+### Choices known only at run time {#choices}
+
+Sometimes the model has to pick one of a set that doesn't exist until the run is under way: the actions available on the screen in front of an agent, the records a search returned. A `Literal` or an `Enum` (with [`UseEnumMemberDocstrings`][pydantic_ai.tools.UseEnumMemberDocstrings] to describe its members) covers a set you know when you write the code, and gives you exhaustiveness checking that a run-time set cannot. For everything else there is [`Choices()`][pydantic_ai.output.Choices], which takes a mapping from each option to what it means:
+
+```python {title="choices.py"}
+from pydantic_ai import Agent, Choices
+
+Intent = Choices(
+    {
+        'refund': 'The customer wants their money back.',
+        'replace': 'The customer wants a working unit instead.',
+        'escalate': 'Nobody on this tier can resolve it.',
+    },
+    name='customer_intent',
+    description='What the customer is asking for.',
+)
+
+agent = Agent('openai:gpt-5.2', output_type=Intent)
+result = agent.run_sync('The blender arrived smashed. Just send me another one.')
+print(result.output)
+#> replace
+```
+
+The descriptions are what make this worth a helper: each option carries its meaning into the schema the model receives, and the output is one of the keys, validated, and typed `str`. Passing a sequence of keys instead of a mapping describes nothing and asks the same question with a plain `enum`.
+
+Like [`StructuredDict()`](#structured-dict), `Choices()` returns a type rather than a marker, so the same value works as an `output_type`, as a field of a Pydantic model, and as a [tool](tools.md) parameter.
+
+#### Choices that stand for something else
+
+An option can stand for a value instead of its own key, by giving [`Choice`][pydantic_ai.output.Choice] the value alongside the description. The model still picks a key, and the output is what that key stands for:
+
+```python {title="choices_value.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, Choice, Choices
+
+
+@dataclass
+class Doc:
+    id: str
+    title: str
+
+
+docs = [
+    Doc(id='rfc-6265', title='HTTP State Management Mechanism'),
+    Doc(id='rfc-9110', title='HTTP Semantics'),
+]
+
+agent = Agent('openai:gpt-5.2')
+result = agent.run_sync(
+    'Which one covers cookies?',
+    output_type=Choices({doc.id: Choice(doc.title, value=doc) for doc in docs}),
+)
+print(result.output)
+#> Doc(id='rfc-6265', title='HTTP State Management Mechanism')
+```
+
+#### Choices that do something
+
+When the value is a callable, picking it *calls* it, the way an [output function](#output-functions) is called, so the run's output is what the action returned and there is no dispatch table between the model's answer and the thing it meant:
+
+```python {title="choices_action.py"}
+from functools import partial
+
+from pydantic_ai import Agent, Choice, Choices
+
+
+class Screen:
+    def click(self, target: str) -> str:
+        return f'clicked {target}'
+
+    async def observe(self) -> str:
+        return 'the login page'
+
+
+screen = Screen()
+targets = {'login': 'The Login button, top right.', 'forgot': 'The "forgot password" link.'}
+
+actions = {
+    target: Choice(description, value=partial(screen.click, target))
+    for target, description in targets.items()
+}
+actions['reobserve'] = Choice('Look again before deciding.', value=screen.observe)
+
+agent = Agent('openai:gpt-5.2')
+result = agent.run_sync(
+    'Sign in as the admin.',
+    output_type=Choices(actions, description='Which action to take on the screen.'),
+)
+print(result.output)
+#> clicked login
+```
+
+The action takes no arguments, so bind what it needs with `functools.partial` or a closure, and it may be `async`. Like an output function it can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to send the model back for another pick.
+
+!!! note
+    A callable value only means something as an `output_type`, as that is the only place Pydantic AI can call it. Using such a set as a model field or a tool parameter raises a [`UserError`][pydantic_ai.exceptions.UserError] rather than handing back the function itself.
+
+    When [streaming](#streamed-results), the action runs once, for the final output; the partial outputs before it are the key the model picked.
+
+!!! note
+    In a module with `from __future__ import annotations`, a `Choices` type can only be used in an annotation if it's reachable by name where the annotation is evaluated, so a module-level assignment works and one built inside a function does not. This applies to [`StructuredDict()`](#structured-dict) too, and not to the `output_type=` argument, which takes a value rather than an annotation.
+
 ### Validation context {#validation-context}
 
 Some validation relies on an extra Pydantic [context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) object. You can pass such an object to an `Agent` at definition-time via its [`validation_context`][pydantic_ai.agent.Agent.__init__] parameter. It will be used in the validation of both structured outputs and [tool arguments](tools-advanced.md#tool-retries).

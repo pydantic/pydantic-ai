@@ -483,6 +483,10 @@ unaffected.
 Wherever Pydantic AI describes an opted-in enum to a model — a tool parameter, an [output type](output.md), or a
 field of a model of your own — the descriptions come along.
 
+The docstrings are read from the enum's source, so an enum built at run time has none. When the options
+themselves are only known once the run is under way, use [`Choices()`](output.md#choices), which describes a
+mapping built where you build it and emits exactly this `anyOf`-of-`const`s schema.
+
 
 !!! tip "Debugging Tool Calls"
     Understanding tool behavior is crucial for agent development. By instrumenting your agent with [Logfire](logfire.md), you can see:
