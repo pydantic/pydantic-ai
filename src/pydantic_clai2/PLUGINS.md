@@ -14,6 +14,8 @@ The default CLAI agent exposes `read_clai_customization_guide`. When you ask for
 customization, its instructions tell it to read this guide first. Only the short
 hint and tool description are present initially; the bundled text is read on tool
 invocation. Reading it needs neither a checkout nor a network connection.
+This tool needs no arguments and ignores extra arguments supplied by a model.
+Other tools keep their existing validation.
 
 The [bundled guide](src/pydantic_clai2/customization.md) includes examples for
 commands, hooks, settings, renderers, custom Termflow menus, and custom model

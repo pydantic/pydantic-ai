@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from pydantic_clai2 import Session
@@ -72,3 +73,21 @@ def test_guide_is_packaged_and_independent_of_working_directory(
         'Test and verify',
     ):
         assert f'## {section}' in guide
+
+
+@pytest.mark.parametrize('arguments', ['{}', '{"reasoning_effort": "low"}', '{"extra": {"nested": [1, null, true]}}'])
+async def test_guide_ignores_extra_tool_arguments(arguments: str) -> None:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool = info.function_tools[0]
+        assert tool.strict is False
+        assert tool.parameters_json_schema == {'additionalProperties': True, 'properties': {}, 'type': 'object'}
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool.name, arguments)])
+        return ModelResponse(parts=[TextPart('guide loaded')])
+
+    agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[customization_guide()])
+    result = await agent.run('Read the guide')
+    parts = [part for message in result.all_messages() for part in message.parts]
+    returns = [part.content for part in parts if isinstance(part, ToolReturnPart)]
+    assert returns == [read_clai_customization_guide()]
+    assert result.output == 'guide loaded'

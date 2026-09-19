@@ -479,6 +479,8 @@ The default agent has a `read_clai_customization_guide` tool and a short instruc
 to read it before advising on CLAI customization. The guide is bundled with the
 installed package and loaded only when the tool is called, not included in every
 prompt. No network access or source checkout is needed to read it.
+This tool needs no arguments and ignores extra arguments supplied by a model.
+Other tools keep their existing validation.
 
 It covers plugin installation and reload, hooks, tools, settings, commands,
 rendering, custom TUI menus, and model/provider launchers. It distinguishes plugin
