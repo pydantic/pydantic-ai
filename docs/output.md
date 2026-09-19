@@ -514,7 +514,7 @@ result = agent.run_sync('Create a person')
 
 ### Choices known only at run time {#choices}
 
-Sometimes the model has to pick one of a set that doesn't exist until the run is under way: the actions available on the screen in front of an agent, the records a search returned. A `Literal` or an `Enum` (with [`UseEnumMemberDocstrings`][pydantic_ai.tools.UseEnumMemberDocstrings] to describe its members) covers a set you know when you write the code, and gives you exhaustiveness checking that a run-time set cannot. For everything else there is [`Choices()`][pydantic_ai.output.Choices], which takes a mapping from each option to what it means:
+Sometimes the model has to pick one of a set that doesn't exist until the run is under way: the actions available on the screen in front of an agent, the records a search returned. A `Literal` or an `Enum` (with [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] to describe its members) covers a set you know when you write the code, and gives you exhaustiveness checking that a run-time set cannot. For everything else there is [`Choices()`][pydantic_ai.output.Choices], which takes a mapping from each option to what it means:
 
 ```python {title="choices.py"}
 from pydantic_ai import Agent, Choices

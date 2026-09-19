@@ -549,7 +549,7 @@ def Choices(
 
     Use it when the set is only known once the run is under way -- the actions available on the screen in front
     of an agent, the records a search returned. For a set you know when you write the code, use a `Literal` or
-    an `Enum` (with [`UseEnumMemberDocstrings`][pydantic_ai.tools.UseEnumMemberDocstrings] to describe its
+    an `Enum` (with [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] to describe its
     members), which give you exhaustiveness checking that a run-time set cannot.
 
     Like [`StructuredDict`][pydantic_ai.output.StructuredDict] it returns a type, so it works as an
