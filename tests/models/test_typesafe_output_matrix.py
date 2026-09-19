@@ -133,6 +133,11 @@ NOT_A_RUBRIC = ': a rubric must be the whole numbers from 0 upwards, in order, a
 NOT_STRINGS = ': its options are not two or more strings'
 
 
+BoolLiteral = probe('which', Literal[True, False], description='Which?')
+Percentage = probe('risk', float, ge=0, le=100, description='How risky?')
+Applies = probe('applies', dict[Area, bool], description='Which apply?')
+
+
 @dataclass(frozen=True)
 class Refused:
     """An output type Jev will not take, and the whole message the user gets for it."""
@@ -177,21 +182,9 @@ REFUSED = [
         unsupported('which', NOT_STRINGS),
     ),
     Refused(
-        'field: pick-one of booleans',
-        probe('which', Literal[True, False], description='Which?'),
-        unsupported('which', NOT_STRINGS),
-    ),
-    Refused(
         'field: pick-one of one option',
         probe('area', Literal['billing'], description='Which area?'),
         unsupported('area'),
-    ),
-    # A mapping keyed by a pick-one is not a question either, as an output type or as a field.
-    Refused('mapping of options', dict[Area, bool], unsupported('response')),
-    Refused(
-        'field: mapping of options',
-        probe('applies', dict[Area, bool], description='Which apply?'),
-        unsupported('applies'),
     ),
     Refused('mapping of text', dict[str, str], unsupported('response')),
     # A list is one yes/no per option, so its items have to be the options.
@@ -208,7 +201,6 @@ REFUSED = [
     Refused('field: model that contains itself', Thread, contains_itself('parent.parent')),
     # A number is only a question when it is a probability or a rubric level.
     Refused('field: bounded int', probe('clarity', int, ge=0, le=4, description='How clear?'), unsupported('clarity')),
-    Refused('field: percentage', probe('risk', float, ge=0, le=100, description='How risky?'), unsupported('risk')),
 ]
 
 
@@ -347,6 +339,15 @@ ACCEPTED = [
         picks='final_result_Escalation',
     ),
     Accepted('output function | None', [escalate, None], None, picks='final_result_NoneType'),
+    # `Literal[True, False]` spells out what a `bool` already is, so it asks the same yes/no.
+    Accepted('field: pick-one of booleans', BoolLiteral, BoolLiteral(which=True)),
+    # A bounded number asks for a probability; the bound is the units it comes back in.
+    Accepted('field: percentage', Percentage, Percentage(risk=90.0)),
+    # A mapping of options to yes/no fans out like a list of them, keeping every answer rather than the yeses.
+    Accepted(
+        'field: mapping of options', Applies, Applies(applies={'billing': True, 'shipping': True, 'security': True})
+    ),
+    Accepted('mapping of options', dict[Area, bool], {'billing': True, 'shipping': True, 'security': True}),
 ]
 
 
