@@ -330,7 +330,7 @@ def _read_codex_cli_credentials() -> OpenAICodexCredentials:
     code_home = Path(os.getenv('CODEX_HOME') or Path.home() / '.codex')
     path = code_home / 'auth.json'
     try:
-        text = path.read_text()
+        text = path.read_text(encoding='utf-8')
     except FileNotFoundError:
         raise UserError(
             f'No Codex CLI credentials found at `{path}`. Run `codex login` first, or pass '

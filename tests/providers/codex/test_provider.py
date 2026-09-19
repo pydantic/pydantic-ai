@@ -14,8 +14,11 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import pickle
 import socket
+import subprocess
+import sys
 import time
 from collections.abc import AsyncIterator
 from dataclasses import asdict
@@ -141,7 +144,7 @@ def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
             'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc'},
         }
     )
-    auth_json.write_text(original)
+    auth_json.write_text(original, encoding='utf-8')
     env.set('CODEX_HOME', str(tmp_path))
 
     provider = OpenAICodexProvider()
@@ -150,7 +153,40 @@ def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
     assert provider.name == 'openai-codex'
     assert provider.base_url == 'https://chatgpt.com/backend-api/codex'
     # Read-only contract: byte-for-byte unchanged after construction.
-    assert auth_json.read_text() == original
+    assert auth_json.read_text(encoding='utf-8') == original
+
+
+def test_codex_cli_auth_json_utf8_read_non_utf8_locale(tmp_path: Path):
+    """A valid UTF-8 auth.json is decoded as UTF-8 even when the platform default codec is not UTF-8.
+
+    `Path.read_text()` without `encoding=` uses the locale default, only guaranteed UTF-8 from
+    CPython 3.15 (PEP 686). Under a non-UTF-8 locale, the documented zero-argument
+    `OpenAICodexProvider()` construction used to fail on non-ASCII auth.json content.
+    """
+    auth_json = tmp_path / 'auth.json'
+    auth_json.write_text(
+        json.dumps({'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc-é-123'}}),
+        encoding='utf-8',
+    )
+    # The child script must stay pure ASCII: under LC_ALL=C with UTF-8 mode off, both argv
+    # decoding and the child's stdout use the ASCII codec, so the non-ASCII expectation is
+    # asserted inside the child (chr(0xe9) == 'é') and only an ASCII sentinel is printed.
+    code = """\
+from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+
+provider = OpenAICodexProvider()
+assert provider.credentials.account_id == 'acc-' + chr(0xe9) + '-123', provider.credentials.account_id
+print('OK')
+"""
+    result = subprocess.run(
+        [sys.executable, '-c', code],
+        capture_output=True,
+        text=True,
+        env={**os.environ, 'CODEX_HOME': str(tmp_path), 'LC_ALL': 'C', 'LANG': 'C', 'PYTHONUTF8': '0'},
+        check=False,
+    )
+    assert result.returncode == 0, f'provider construction failed under a non-UTF-8 locale:\n{result.stderr}'
+    assert result.stdout.strip() == 'OK'
 
 
 def test_from_codex_cli_missing_file(env: TestEnv, tmp_path: Path):
@@ -927,7 +963,8 @@ def test_provider_class_inference():
 
 def test_openai_codex_prefix_infers_responses_model(env: TestEnv, tmp_path: Path):
     (tmp_path / 'auth.json').write_text(
-        json.dumps({'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc'}})
+        json.dumps({'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc'}}),
+        encoding='utf-8',
     )
     env.set('CODEX_HOME', str(tmp_path))
     model = infer_model('openai-codex:gpt-5.6-luna')
