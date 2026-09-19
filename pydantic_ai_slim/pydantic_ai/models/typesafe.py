@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Container, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -197,8 +197,8 @@ class NoTextCandidate(ModelAPIError):
         super().__init__(
             model_name,
             f'Jev found no candidate value for required output field {field_name!r} and cannot write one. '
-            f'Make the field optional, widen its extractor, or put a model that can write behind it: '
-            f'`FallbackModel(jev, llm)` hands it this request.',
+            f'Make the field optional, give it a default, widen its extractor, or put a model that can write '
+            f'behind it: `FallbackModel(jev, llm)` hands it this request.',
         )
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
@@ -251,7 +251,8 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor] passed as `text_extractors`,
     supplies whole candidates from the state before the request, and Jev picks one of them or the no-match option.
     A schema `pattern` is not read as an extractor. A required field left without a value is raised as
-    [`NoTextCandidate`][pydantic_ai.models.typesafe.NoTextCandidate]; an optional one answers `None`.
+    [`NoTextCandidate`][pydantic_ai.models.typesafe.NoTextCandidate]; an optional one answers `None`, and one
+    with a default takes it.
     Confidence per field, from 0 for undecided to 1, is in
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `confidence`,
     the full distribution of each pick-one and rubric field under `probabilities`, and each rubric field's
@@ -364,7 +365,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         if forced_tool is not None and not forced_tool.parameters_json_schema.get('properties'):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool)
-        properties = _fields(output_tool) if output_tool else {}
+        properties, required = _fields(output_tool) if output_tool else ({}, set[str]())
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
@@ -385,7 +386,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                 'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
                 'it from this model.'
             )
-        candidates = _text_candidates(properties, state, self._text_extractors) if output_tool else {}
+        candidates = _text_candidates(properties, required, state, self._text_extractors) if output_tool else {}
         questions = _questions(properties, output_tool, instructions, candidates) if output_tool else {}
         tool_key = _tool_question(questions, output_tools, tools, instructions)
 
@@ -504,7 +505,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         unsupported here, and makes a route that has one a hand-off like any other field Jev cannot write.
         """
         try:
-            properties = _fields(tool)
+            properties, _ = _fields(tool)
             questions = _questions(properties, tool, instructions, {})
         except UserError:
             raise ToolCallProposed(self._model_name, tool.name, probability) from None
@@ -657,11 +658,14 @@ def _answers(
         prop, none_key = _optional(prop)
         if (extracted := candidates.get(name)) is not None:
             value, field_confidence, field_probabilities = _chosen_candidate(name, answers.get(name), extracted)
-            _set(args, name, value)
             confidence[name] = field_confidence
             probabilities[name] = field_probabilities
-            if value is None and not extracted.optional:
+            if value is not None or extracted.optional:
+                _set(args, name, value)
+            elif extracted.required:
                 unanswered.append(name)
+            # A field that is neither answered nor required has a default, and leaving it out of the
+            # arguments entirely is what lets Pydantic apply it; `None` would be rejected by a `str`.
             continue
         if prop.get('type') == 'array':
             # One yes/no went out per option; the answer is the options that came back yes, in their order.
@@ -800,7 +804,7 @@ def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
     A route is filled by `_fill`, which offers no candidates, so neither does the question asked here.
     """
     try:
-        _questions(_fields(tool), tool, instructions, {})
+        _questions(_fields(tool)[0], tool, instructions, {})
     except UserError:
         return False
     return True
@@ -823,18 +827,26 @@ def _output_tools(
     return with_fields, hand_offs
 
 
-def _properties(schema: dict[str, Any]) -> dict[str, Any]:
-    """A schema's properties, through the top-level `$ref` Pydantic renders a model that refers to itself as."""
+def _object_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """A schema through the top-level `$ref` Pydantic renders a model that refers to itself as."""
     if ref := schema.get('$ref'):
         schema = schema['$defs'][ref.removeprefix('#/$defs/')]
-    return schema.get('properties', {})
+    return schema
 
 
-def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
+def _properties(schema: dict[str, Any]) -> dict[str, Any]:
+    """A schema's properties, through the top-level `$ref` Pydantic renders a model that refers to itself as."""
+    return _object_schema(schema).get('properties', {})
+
+
+def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set[str]]:
     """The output schema's fields, flattened, with `$ref`s to `$defs` (how Pydantic renders an `Enum` or a model) resolved.
 
     A nested model is its fields, named `outer.inner`: Jev answers questions, and a field of a field is still one
     question. The answers are nested back into place by `_set`.
+
+    The schema's `required` set comes back alongside, flattened the same way: a field with a default is not
+    required, and leaving it out of the arguments is what lets Pydantic apply that default.
     """
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
@@ -848,22 +860,29 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
             prop = {**prop, 'anyOf': [resolve(option) for option in prop['anyOf']]}
         return prop
 
-    def flatten(properties: dict[str, Any], prefix: str) -> dict[str, dict[str, Any]]:
-        fields: dict[str, dict[str, Any]] = {}
-        for name, prop in properties.items():
+    def flatten(object_schema: dict[str, Any], prefix: str, inside_required: bool) -> None:
+        required_here: set[str] = set(object_schema.get('required', []))
+        for name, prop in object_schema.get('properties', {}).items():
             if '.' in name:
                 raise UserError(
                     f'Output field {prefix + name!r} is not supported by this model: a dot in a field name is how '
                     'a nested field is named. Rename it.'
                 )
             prop = resolve(prop)
+            # A field of a field is only required when the field holding it is: an absent optional model
+            # takes its default whole, fields and all.
+            here = inside_required and name in required_here
             if prop.get('type') == 'object' and prop.get('properties'):
-                fields.update(flatten(prop['properties'], f'{prefix}{name}.'))
+                flatten(prop, f'{prefix}{name}.', here)
             else:
                 fields[f'{prefix}{name}'] = prop
-        return fields
+                if here:
+                    required.add(f'{prefix}{name}')
 
-    return flatten(_properties(schema), '')
+    fields: dict[str, dict[str, Any]] = {}
+    required: set[str] = set()
+    flatten(_object_schema(schema), '', True)
+    return fields, required
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
@@ -912,11 +931,12 @@ class _TextCandidates:
     values: tuple[str, ...]
     no_match: str
     optional: bool
+    required: bool
 
     @property
     def unanswerable(self) -> bool:
         """A required field with nothing to pick from, which no answer from Jev can settle."""
-        return not self.values and not self.optional
+        return not self.values and not self.optional and self.required
 
 
 def _iter_strings(value: object) -> Iterable[str]:
@@ -1029,6 +1049,7 @@ def _extract(name: str, extractor: TypeSafeTextExtractor, state: JSONContent) ->
 
 def _text_candidates(
     properties: Mapping[str, dict[str, Any]],
+    required: Container[str],
     state: JSONContent,
     text_extractors: Mapping[str, TypeSafeTextExtractor],
 ) -> dict[str, _TextCandidates]:
@@ -1042,7 +1063,9 @@ def _text_candidates(
         if extractor is None:
             continue
         values = _extract(name, extractor, state)
-        candidates[name] = _TextCandidates(values, _no_match_key(values), optional=none_key is not None)
+        candidates[name] = _TextCandidates(
+            values, _no_match_key(values), optional=none_key is not None, required=name in required
+        )
     return candidates
 
 

@@ -803,6 +803,40 @@ async def test_no_candidates_answers_none_for_an_optional_field_without_a_reques
     )
 
 
+@pytest.mark.parametrize('extracted', [False, True])
+async def test_a_defaulted_field_falls_back_to_its_default_rather_than_failing(
+    allow_model_requests: None, extracted: bool
+):
+    """A `str` field with a default is not required, so nothing to pick means the default, not a failure.
+
+    Optionality is the schema's `required` set, not whether the annotation admits `None`: `str = 'unknown'`
+    takes neither a value Jev invented nor a `None` Pydantic would reject, so the field is left out of the
+    arguments entirely and Pydantic fills it in.
+    """
+
+    class Selected(BaseModel):
+        identifier: str = Field(default='unknown', description='Which case is open?')
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if not extracted:  # pragma: no cover
+            raise AssertionError('the request should not be sent')
+        return answers(
+            identifier={
+                'type': 'choice',
+                'choice': 'none',
+                'confidence': 0.8,
+                'probabilities': {'CASE-1000': 0.2, 'none': 0.8},
+            }
+        )
+
+    model = mock_model(handler, text_extractors={'identifier': extract_cases})
+    prompt = 'CASE-1000 is closed; there is no open case.' if extracted else 'Nothing was filed.'
+    result = await Agent(model, output_type=Selected).run(prompt)
+
+    assert result.output.identifier == 'unknown'
+    assert result.response.parts == snapshot([ToolCallPart('final_result', {}, tool_call_id=IsStr())])
+
+
 @pytest.mark.parametrize('optional', [False, True])
 async def test_the_no_match_option_never_becomes_an_invented_value(allow_model_requests: None, optional: bool):
     annotation = str | None if optional else str
