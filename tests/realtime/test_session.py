@@ -8915,3 +8915,38 @@ async def test_wait_for_reply_returns_when_a_reconnect_discards_the_reply() -> N
         await session.send('Say hello.')
         with anyio.fail_after(5):
             await session.wait_for_reply()
+
+
+async def test_wait_for_reply_wakes_when_a_concurrent_image_send_fails() -> None:
+    """The image path reserves a response too, so its rollback has to wake a waiter just like text's.
+
+    Every outbound call that reserves a response goes through the same release helper; this pins the
+    path that does not go through `send(str)`.
+    """
+    fail_send = asyncio.Event()
+
+    class _FailsMidSend(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            await fail_send.wait()
+            raise RuntimeError('send failed')
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield RealtimeInputSpeechStartEvent()
+            await asyncio.Event().wait()  # the receive side stays open
+
+    session = RealtimeSession(_FailsMidSend([]))
+    async with session:
+        image = BinaryImage(data=b'png', media_type='image/png')
+        sending = asyncio.create_task(session.send(image, respond=True))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'nothing was outstanding to wait on'
+
+        fail_send.set()
+        with anyio.fail_after(5):
+            await waiting
+        with pytest.raises(RuntimeError, match='send failed'):
+            await sending

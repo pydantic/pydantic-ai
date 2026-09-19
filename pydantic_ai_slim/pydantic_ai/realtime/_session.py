@@ -1271,6 +1271,16 @@ class RealtimeSession:
                 return
             await self._exchange_progress.wait()
 
+    def _release_response_reservation(self) -> None:
+        """Give back a reservation for a response that will never arrive, waking any waiter.
+
+        Rolled back by every outbound call that reserved a response and then failed to send it. The
+        decrement and the wake belong together: a caller parked in `wait_for_reply()` on that single
+        reservation has nothing else coming to wake it.
+        """
+        self._pending_response_requests -= 1
+        self._exchange_progress.set()
+
     def _reply_outstanding(self) -> bool:
         """Whether the model still owes speech.
 
@@ -1449,8 +1459,7 @@ class RealtimeSession:
             await self._send_frame(content if respond else TextContext(content))
         except BaseException:
             if respond:
-                self._pending_response_requests -= 1
-                self._exchange_progress.set()
+                self._release_response_reservation()
             self._remove_sent_request(request)
             raise
         return request
@@ -1542,7 +1551,7 @@ class RealtimeSession:
                 await self._send_frame(image)
         except BaseException:
             if respond:
-                self._pending_response_requests -= 1
+                self._release_response_reservation()
             # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
             # so nothing to take back.
             if request is not None:
@@ -1662,8 +1671,7 @@ class RealtimeSession:
         try:
             await self._send_frame(CreateResponse())
         except BaseException:
-            self._pending_response_requests -= 1
-            self._exchange_progress.set()
+            self._release_response_reservation()
             raise
 
     @overload
@@ -2898,8 +2906,7 @@ class RealtimeSession:
                 )
             )
         except BaseException:
-            self._pending_response_requests -= 1
-            self._exchange_progress.set()
+            self._release_response_reservation()
             raise
 
     # --- streaming --------------------------------------------------------------------------------
