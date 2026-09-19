@@ -449,6 +449,10 @@ from typing import Literal
 
 from pydantic_ai import Agent, ModelSelectionContext
 from pydantic_ai.capabilities import SelectModel
+from pydantic_ai.models import Model, infer_model
+
+fast = infer_model('openai:gpt-5.6-luna')
+capable = infer_model('openai:gpt-5.6-sol')
 
 router = Agent(
     'typesafe:jev-latest',
@@ -461,17 +465,21 @@ router = Agent(
 )
 
 
-async def select_model(ctx: ModelSelectionContext[None]) -> str:
+async def select_model(ctx: ModelSelectionContext[None]) -> Model:
     if not ctx.messages:
         # `ctx.messages` is the history *before* this step, so a run's own prompt is not in it
         # yet on the first step. A run given `message_history` does have something to read.
-        return 'openai:gpt-5.6-luna'
+        return fast
     picked = await router.run(message_history=ctx.messages)
-    return 'openai:gpt-5.6-sol' if picked.output == 'capable' else 'openai:gpt-5.6-luna'
+    return capable if picked.output == 'capable' else fast
 
 
 agent = Agent(capabilities=[SelectModel(select_model)])
 ```
+
+The selector returns a [`Model`][pydantic_ai.models.Model] here, but a model ID string is equally fine —
+anything `Agent(model=...)` takes. Returning an instance lets each candidate be built once, with whatever
+provider or [settings](overview.md#per-model-settings) it needs, instead of being inferred again every step.
 
 The router is given the history rather than a prompt, which is the whole state Jev reads. That history is what
 existed *before* the step being selected, so a fresh run's first step has nothing to classify and takes a default
