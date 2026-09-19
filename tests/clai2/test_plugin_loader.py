@@ -1,8 +1,12 @@
 """Loading, unloading, reloading, and dispatching between turns."""
 
+import asyncio
 import io
+import sys
 from pathlib import Path
+from types import ModuleType
 
+import anyio
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
@@ -12,7 +16,7 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.plugin_loader import PluginError, PluginLoader
-from pydantic_clai2.plugins import SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.settings_store import SettingsStore
 
 
@@ -431,3 +435,138 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
     assert (await harness.loader.command(['remove', 'repo_context'])).startswith('repo_context is built in')
     with pytest.raises(PluginError, match='extra_forbidden'):
         await harness.loader.command(['add', 'repo_context', 'pydantic_clai2.repo_context', '{"filenames": []}'])
+
+
+@pytest.mark.parametrize('error', ['RuntimeError', 'CancelledError'])
+async def test_failed_start_reports_cleanup_error_without_masking_start_failure(tmp_path: Path, error: str) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'broken_start.py').write_text(
+        'from asyncio import CancelledError, sleep\n'
+        'from pydantic_clai2.commands import Command\n'
+        'def activate(host):\n'
+        '    host.commands.register(Command(name="temporary", description="temporary", handler=lambda _: "ok"))\n'
+        '    @host.on("session_start")\n'
+        '    async def start(event):\n'
+        '        raise RuntimeError("start failed")\n'
+        '    @host.on("session_end")\n'
+        '    async def end(event):\n'
+        '        host.console.print("cleanup reason " + event.reason)\n'
+        f'        raise {error}("cleanup failed")\n'
+        '    @host.on("session_end")\n'
+        '    async def remaining(event):\n'
+        '        await sleep(0)\n'
+        '        host.console.print("remaining cleanup")\n'
+    )
+    with pytest.raises(PluginError, match='start failed'):
+        await harness.loader.load('broken_start')
+    assert 'cleanup reason error' in harness.text
+    assert 'cleanup failed' in harness.text
+    assert 'remaining cleanup' in harness.text
+    assert 'temporary' not in {command.name for command in harness.commands}
+    assert harness.loader.entries()[0].host is None
+    assert harness.loader.entries()[0].error == 'RuntimeError: start failed'
+
+
+async def test_external_cancellation_during_failed_start_cleanup_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered = anyio.Event()
+    cancelled = anyio.Event()
+    cleaned = anyio.Event()
+    task: asyncio.Task[None] | None = None
+    module = ModuleType('cancel_during_cleanup')
+
+    def activate(host: PluginHost[None]) -> None:
+        @host.on('session_start')
+        async def start(event: SessionStart) -> None:
+            raise RuntimeError('startup failed')
+
+        @host.on('session_end')
+        async def end(event: SessionEnd) -> None:
+            try:
+                entered.set()
+                await anyio.sleep_forever()
+            finally:
+                cleaned.set()
+
+    module.__dict__['activate'] = activate
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    harness = Harness(tmp_path, builtin=(PluginSettings(id='cancel', factory=module.__name__),))
+
+    async def load() -> None:
+        nonlocal task
+        task = asyncio.current_task()
+        try:
+            await harness.loader.load('cancel')
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(load)
+            await entered.wait()
+            assert task is not None
+            task.cancel()
+            await cancelled.wait()
+    assert cleaned.is_set()
+    assert harness.loader.entries()[0].host is None
+    assert not harness.loader.capabilities()
+
+
+@pytest.mark.parametrize('cancel_scope', [False, True])
+async def test_failed_load_cleanup_is_bounded_and_continues_after_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel_scope: bool
+) -> None:
+    entered = anyio.Event()
+    stopped = anyio.Event()
+    remaining = anyio.Event()
+    failed = anyio.Event()
+    cancelled = anyio.Event()
+    module = ModuleType('stalled_cleanup')
+
+    def activate(host: PluginHost[None]) -> None:
+        @host.on('session_start')
+        async def start(event: SessionStart) -> None:
+            raise RuntimeError('startup failed')
+
+        @host.on('session_end')
+        async def stall(event: SessionEnd) -> None:
+            try:
+                entered.set()
+                await anyio.sleep_forever()
+            finally:
+                stopped.set()
+
+        @host.on('session_end')
+        async def finish(event: SessionEnd) -> None:
+            await anyio.sleep(0)
+            remaining.set()
+
+    module.__dict__['activate'] = activate
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    harness = Harness(tmp_path, builtin=(PluginSettings(id='stalled', factory=module.__name__),))
+
+    async def load() -> None:
+        try:
+            await harness.loader.load('stalled')
+        except PluginError as exc:
+            assert not cancel_scope
+            assert 'startup failed' in str(exc)
+            failed.set()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    with anyio.fail_after(15):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(load)
+            await entered.wait()
+            if cancel_scope:
+                tasks.cancel_scope.cancel()
+            else:
+                await failed.wait()
+    assert cancelled.is_set() == cancel_scope
+    assert stopped.is_set() and remaining.is_set()
+    assert 'TimeoutError' in harness.text
+    assert harness.loader.entries()[0].host is None

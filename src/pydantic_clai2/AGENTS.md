@@ -76,7 +76,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   natural unit; nothing rebuilds the agent.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
   `_app.py` lists what CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
-  `compaction`, `persistence`). The loader treats them like drop-ins with the lowest
+  `compaction`, `persistence`, `logfire`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
   anywhere else; the agent from `create_agent()` has no coding tools of its
@@ -91,7 +91,10 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   drop-in folder, project, built-in. CLAI never writes the project file.
 - **A load failure leaves the session as it was.** Import or `activate` errors
   are reported and the plugin stays unloaded; partial registrations from a
-  failed `activate` are discarded with the host.
+  failed `activate` are discarded with the host. Registered `session_end` handlers
+  run with `reason='error'` under a shield with a five-second cooperative timeout
+  per handler before a failed/cancelled load drops the host. Cleanup must tolerate
+  incomplete `session_start`; a handler failure must not skip later cleanup.
 
 Compaction registers harness `FallbackCompaction` directly with `max_fraction`
 and `context_window` for both strategies. Harness owns the trigger; do not add
@@ -187,6 +190,7 @@ the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
 | `model_picker.py` | `/model`: selection and completion of saved models |
 | `model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
+| `logfire.py` | the default-enabled, locally configured Logfire plugin over core `Instrumentation` |
 | `compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
 | `commands.py` | `Command`, the registry, completion |
 | `usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |

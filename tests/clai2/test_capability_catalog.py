@@ -48,6 +48,7 @@ def test_catalog_covers_public_harness_capabilities() -> None:
         'repo_context',
         'compaction',
         'persistence',
+        'logfire',
     }
 
 

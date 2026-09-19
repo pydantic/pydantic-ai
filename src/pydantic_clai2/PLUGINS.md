@@ -54,6 +54,49 @@ directory instead. None of this changes plugin APIs. See
 [Codex authentication](README.md#codex-authentication) for storage and security
 details.
 
+## Logfire: default agent tracing
+
+The built-in `logfire` plugin (`pydantic_clai2.logfire`) is enabled by default in
+the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
+isolated Logfire instance, not process-wide instrumentation or custom tracing
+hooks. Agent/model/tool spans include timing, token usage, failures, text content,
+and binary image attachments by default, including retained history used by
+later turns. This may export source code, file contents, and screenshots; verify
+the configured telemetry destination first.
+
+Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
+in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to
+`~/.config/pydantic-clai2/logfire/`. SDK configuration is read only from that user
+directory too. Repository-local configuration/credentials and the SDK's
+`LOGFIRE_CONFIG_DIR`/`LOGFIRE_CREDENTIALS_DIR` overrides are ignored. Relative
+`XDG_CONFIG_HOME` values fall back to `~/.config`. A checkout cannot select the
+telemetry destination through its own files. Without credentials the default
+`if-token-present` mode does not export to Logfire or start interactive setup. Console logging is disabled. Other SDK configuration,
+such as explicit OTLP exporters, still applies.
+
+Manage it with `/plugins disable logfire`, `/plugins enable logfire`, or
+`/plugins reload logfire`. To change its defaults:
+
+```text
+/plugins add logfire pydantic_clai2.logfire '{"include_content": false, "include_binary_content": false}'
+```
+
+Options are `service_name` (default `pydantic-clai2`), `include_content` and
+`include_binary_content` (both default `true`), and `send_to_logfire` (default
+`"if-token-present"`, or `false`). The explicit plugin option takes precedence
+over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings.
+Content flags do not suppress all metadata: tool names and definitions may still
+be recorded. Logfire's usual scrubbing is enabled.
+
+Unload flushes and shuts down only this plugin's providers. Reload creates a new
+instance. The supplied agent and global providers are unchanged, and the existing
+global propagator is preserved. The SDK may install shared executor propagation
+helpers; those hooks are not removed on unload. Core's normal
+instrumentation precedence applies: the plugin's explicit per-run capability
+wins while enabled; disabling it restores the supplied agent's own tracing
+behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
+to stock built-ins. See [telemetry](README.md#telemetry-and-references).
+
 ## Where plugins live
 
 Plugins are trusted Python code. Drop-in files execute automatically at startup;
@@ -270,6 +313,15 @@ may require a restart if their alternatives form a cycle. Invalid source
 or a detected import cycle fails before module reloads begin. Restart for changes
 to startup code, dynamically loaded dependencies, or agent construction.
 Third-party dependencies are not recursively reloaded.
+
+If loading fails or is cancelled, registered `session_end` handlers receive
+`reason='error'` under cancellation shielding before the partial host is dropped.
+Each handler has a five-second cooperative timeout. Errors and timeouts are
+reported separately, and remaining handlers are still attempted. Register cleanup
+once a resource is owned; cleanup may run before `session_start` finishes.
+Handlers must cooperate with cancellation: blocking code and additional shields
+can exceed that timeout. Caller cancellation still propagates after cleanup;
+cleanup errors do not replace the original load error.
 
 What "load" and "unload" mean for your plugin:
 

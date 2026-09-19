@@ -11,6 +11,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Generic
 
+from anyio import fail_after
+from anyio.lowlevel import checkpoint
 from pydantic_ai import AgentStreamEvent
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from rich.console import Console
@@ -220,13 +222,33 @@ class PluginLoader(Generic[DepsT]):
             self._loaded[name] = host
             await _dispatch(host, self._session_start())
         except asyncio.CancelledError:
-            self._drop(entry)
+            await self._failed_load(entry, host)
             raise
         except Exception as exc:
-            self._drop(entry)
+            await self._failed_load(entry, host)
             entry.error = f'{type(exc).__name__}: {exc}'
             raise PluginError(name, exc) from exc
         entry.error = None
+
+    async def _failed_load(self, entry: PluginEntry[DepsT], host: PluginHost[DepsT]) -> None:
+        task = asyncio.current_task()
+        initial_cancellations = task.cancelling() if task is not None else 0
+        try:
+            for handler in host.handlers:
+                try:
+                    with fail_after(5, shield=True):
+                        await handler(SessionEnd(reason='error'))
+                except (Exception, asyncio.CancelledError) as exc:
+                    if (
+                        isinstance(exc, asyncio.CancelledError)
+                        and task is not None
+                        and task.cancelling() > initial_cancellations
+                    ):
+                        raise
+                    self._console.print(str(PluginError(entry.name, exc)), style=theme.ERROR, markup=False)
+        finally:
+            self._drop(entry)
+        await checkpoint()
 
     async def unload(self, name: str, *, reason: SessionEndReason = 'exit') -> None:
         """Fire `session_end`, then drop everything the plugin registered."""

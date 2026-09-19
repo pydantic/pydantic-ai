@@ -21,6 +21,8 @@ dependencies = [
     'rich>=14',
     "keyring>=25.6",
     "pillow>=12.3.0",
+    # Default telemetry plugin: https://github.com/pydantic/pydantic-ai-harness/issues/979.
+    "logfire>=4.31.0",
 ]
 
 [project.scripts]

@@ -19,6 +19,16 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)
+    for name in (
+        'LOGFIRE_TOKEN',
+        'LOGFIRE_API_KEY',
+        'OTEL_EXPORTER_OTLP_ENDPOINT',
+        'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
+        'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',
+        'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT',
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('LOGFIRE_CREDENTIALS_DIR', str(tmp_path / 'logfire'))
     monkeypatch.setattr(models, 'ALLOW_MODEL_REQUESTS', False)
     credentials: dict[tuple[str, str], str] = {}
 

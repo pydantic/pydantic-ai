@@ -67,6 +67,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='repo_context', factory='pydantic_clai2.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_clai2.compaction', settings={}),
     PluginSettings(id='persistence', factory='pydantic_clai2.sessions'),
+    PluginSettings(id='logfire', factory='pydantic_clai2.logfire'),
     *HARNESS_PLUGINS,
 )
 """Built-in declarations, including opt-in harness capabilities. `remove` restores their defaults.

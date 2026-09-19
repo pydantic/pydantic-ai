@@ -767,8 +767,55 @@ shows how to put a different one, a web form for instance, in its place.
 
 ## Telemetry and references
 
-CLAI emits no additional telemetry. Pydantic AI's own instrumentation covers model
-requests, tools, and capability hooks when configured on the supplied agent.
+The stock CLI enables the built-in `logfire` plugin by default. It adds Pydantic
+AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
+capability to CLAI turns for agent, model-request, and tool
+spans, including timing, token usage, and failures. It adds no separate CLAI spans
+and does not instrument HTTP clients or unrelated agents globally.
+
+Set `LOGFIRE_TOKEN` to a write token for your Logfire project. Alternatively,
+place the SDK's `logfire_credentials.json` in your user config directory at
+`$XDG_CONFIG_HOME/pydantic-clai2/logfire/` (default
+`~/.config/pydantic-clai2/logfire/`). SDK configuration is also read only from
+that directory. The plugin ignores repository-local Logfire configuration and
+credentials, plus `LOGFIRE_CONFIG_DIR` and `LOGFIRE_CREDENTIALS_DIR`, so a checkout
+cannot choose the telemetry destination. Relative `XDG_CONFIG_HOME` values fall
+back to `~/.config`. Export uses `send_to_logfire='if-token-present'`: no credentials
+means no Logfire export and no interactive project setup. Logfire's
+terminal console output is disabled so it does not interfere with the editor.
+Standard SDK configuration, including explicitly configured OTLP exporters, still
+applies; disable the plugin to stop its instrumentation altogether.
+
+Prompts, responses, tool arguments/results, and binary image attachments are
+included by default, including retained history used by later turns. This can
+send source code, file contents, and screenshots to the configured telemetry
+destination. Review that destination before supplying
+credentials. Keep tokens out of plugin settings, which are saved as plaintext.
+
+```text
+/plugins disable logfire
+/plugins enable logfire
+/plugins reload logfire
+/plugins add logfire pydantic_clai2.logfire '{"include_content": false, "include_binary_content": false}'
+```
+
+The last command replaces the built-in configuration. Its options are
+`service_name` (default `pydantic-clai2`), `include_content` (default `true`),
+`include_binary_content` (default `true`), and `send_to_logfire` (either
+`"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
+than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
+Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
+model/tool names and tool definitions may still be recorded. Logfire's normal
+scrubbing remains enabled.
+
+The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
+and shuts down that instance without shutting down application-global providers.
+The existing global propagator is preserved. Logfire's SDK may install shared
+executor context-propagation helpers; those SDK hooks are not removed on unload.
+The plugin does not mutate a supplied agent. While enabled, its explicit per-run
+`Instrumentation` takes precedence over that agent's instrumentation settings;
+disabling it leaves the agent's original configuration in effect. Custom
+`chat()` launchers only get built-ins when passed `builtin_plugins=DEFAULT_PLUGINS`.
 
 - [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)
 - [Capability events](https://pydantic.dev/docs/ai/capabilities/overview/)
