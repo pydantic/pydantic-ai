@@ -243,6 +243,25 @@ async def test_a_picked_action_cannot_ask_for_a_retry_while_streaming():
             await result.get_output()
 
 
+@pytest.mark.parametrize('with_actions', [False, True])
+def test_output_json_schema_describes_the_keys(with_actions: bool):
+    """What a set asks the model for is a key, even when the key stands for an action to run."""
+    choices = (
+        Choices({'refund': INTENTS['refund'], 'replace': Choice(INTENTS['replace'], value=lambda: 'shipped')})
+        if with_actions
+        else Choices({'refund': INTENTS['refund'], 'replace': INTENTS['replace']})
+    )
+    assert Agent(pick('refund'), output_type=choices).output_json_schema() == snapshot(
+        {
+            'anyOf': [
+                {'const': 'refund', 'description': 'The customer wants their money back.'},
+                {'const': 'replace', 'description': 'The customer wants a working unit instead.'},
+            ],
+            'type': 'string',
+        }
+    )
+
+
 def test_a_choices_set_with_actions_can_be_one_of_several_output_types():
     """Each union member gets its own output tool, and picking the set's tool still runs the action."""
     captured: list[str] = []

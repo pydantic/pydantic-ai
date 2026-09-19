@@ -1612,6 +1612,10 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
                 outputs_flat.extend(types_from_output_spec(return_annotation))
             else:
                 outputs_flat.append(str)
+        elif (choices := _ChoicesActions.of(output)) is not None:
+            # What a `Choices` set with callable values asks the model for is a key; what the action it
+            # stands for returns is only known once it has run, so the keys are what a schema can describe.
+            outputs_flat.append(cast(T, choices.keys_type))
         else:
             outputs_flat.append(cast(T, output))
 
