@@ -5274,7 +5274,7 @@ class UnopinionatedUrgency(str, Enum):
     """Needs attention today."""
 
 
-def test_mixing_in_use_attribute_docstrings_is_what_describes_the_options():
+def test_mixing_in_use_enum_member_docstrings_is_what_describes_the_options():
     """`UseEnumMemberDocstrings` is the opt-in, and the only difference between these two enums."""
 
     class Ticket(BaseModel):
