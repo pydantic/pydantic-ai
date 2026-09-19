@@ -153,6 +153,12 @@ Common entry points:
 - `Dataset`
 - evaluator classes from `pydantic_evals.evaluators`
 
+`LLMJudge` asks one question per request. When the user wants several measures of the same output, reach
+for `StructuredJudge` instead: it takes a mapping of measure name to rubric, or a Pydantic model whose
+fields are the questions, and answers all of them in one request. The trade is that one failed request
+loses every measure at once and the answers can shift, since each question is answered in the presence of
+the others.
+
 ## Build Custom Toolsets, Models, or Agents
 
 Extensibility entry points:

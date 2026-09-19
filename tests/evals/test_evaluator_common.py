@@ -1,14 +1,18 @@
 from __future__ import annotations as _annotations
 
+import re
 from dataclasses import dataclass
-from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from datetime import date, timedelta
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
@@ -28,6 +32,7 @@ with try_import() as imports_successful:
         LLMJudge,
         MaxDuration,
         OutputConfig,
+        StructuredJudge,
     )
     from pydantic_evals.evaluators.llm_as_a_judge import (
         _GEvalResult,  # pyright: ignore[reportPrivateUsage]
@@ -630,3 +635,191 @@ def test_g_eval_model_instance_serialized_as_string():
     # A string model name is already serializable and passes through unchanged.
     evaluator = GEval(criteria='coherence', evaluation_steps=['step'], model='openai:gpt-5.2')
     assert evaluator.build_serialization_arguments()['model'] == 'openai:gpt-5.2'
+
+
+class Urgency(Enum):
+    """A plain `Enum`, so the judge's answer is dumped as a member rather than as the `str` a mixin would give."""
+
+    low = 'low'
+    high = 'high'
+
+
+class ReplyReview(BaseModel):
+    """Judge a support reply."""
+
+    policy: Literal['compliant', 'violation'] = Field(description='Does the reply comply with the policy?')
+    completeness: float = Field(ge=0, le=1, description='How completely does it address the request?')
+    asks_for_secret: bool = Field(description='Does it ask for a password or a login code?')
+    urgency: Urgency = Field(description='How urgent is the reply?')
+    note: str | None = Field(default=None, description='Anything else worth recording?')
+
+
+@dataclass
+class JudgeCall:
+    """What one judge request carried, captured from the model it was sent to."""
+
+    prompt: Any
+    instructions: str | None
+    schema: dict[str, Any]
+
+
+def structured_judge_model(answer: dict[str, Any], calls: list[JudgeCall]) -> FunctionModel:
+    """A judge that records the one request it is sent and answers every question in it."""
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        output_tool = info.output_tools[0]
+        prompt = messages[-1].parts[-1]
+        assert isinstance(prompt, UserPromptPart)
+        calls.append(
+            JudgeCall(
+                prompt=prompt.content,
+                instructions=info.instructions,
+                schema=output_tool.parameters_json_schema,
+            )
+        )
+        return ModelResponse(parts=[ToolCallPart(output_tool.name, answer)])
+
+    return FunctionModel(respond)
+
+
+async def test_structured_judge_answers_every_rubric_in_one_request():
+    """Three rubrics are three measures out of one request, with each rubric asked as its own question."""
+    calls: list[JudgeCall] = []
+    evaluator = StructuredJudge(
+        {
+            'follows_policy': 'The reply follows the support policy.',
+            'gives_next_step': 'The reply gives the customer a concrete next step.',
+            'never_asks_for_secrets': 'The reply never asks for a password or a login code.',
+        },
+        model=structured_judge_model(
+            {'follows_policy': True, 'gives_next_step': False, 'never_asks_for_secrets': True}, calls
+        ),
+    )
+
+    result = await evaluator.evaluate(MockContext(output='Reset it yourself from the account page.'))
+
+    assert to_jsonable_python(result) == snapshot(
+        {'follows_policy': True, 'gives_next_step': False, 'never_asks_for_secrets': True}
+    )
+    assert len(calls) == 1
+    # The rubrics are the questions on the output type, not a `<Rubric>` section of the prompt: a judge
+    # that takes its questions from the type would otherwise read them as more material to judge.
+    assert calls[0].prompt == snapshot('<Output>\nReset it yourself from the account page.\n</Output>')
+    assert calls[0].instructions == snapshot('Answer each question about <Output>.')
+    assert calls[0].schema == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {
+                'follows_policy': {
+                    'description': 'Is this statement true? The reply follows the support policy.',
+                    'type': 'boolean',
+                },
+                'gives_next_step': {
+                    'description': 'Is this statement true? The reply gives the customer a concrete next step.',
+                    'type': 'boolean',
+                },
+                'never_asks_for_secrets': {
+                    'description': 'Is this statement true? The reply never asks for a password or a login code.',
+                    'type': 'boolean',
+                },
+            },
+            'required': ['follows_policy', 'gives_next_step', 'never_asks_for_secrets'],
+            'title': 'Grading',
+            'type': 'object',
+        }
+    )
+
+
+async def test_structured_judge_reports_one_measure_per_field():
+    """Each field of an output type becomes its own measure: an assertion, a score, or a label."""
+    calls: list[JudgeCall] = []
+    evaluator = StructuredJudge(
+        ReplyReview,
+        model=structured_judge_model(
+            {
+                'policy': 'compliant',
+                'completeness': 0.5,
+                'asks_for_secret': False,
+                'urgency': 'high',
+                'note': None,
+            },
+            calls,
+        ),
+        include_input=True,
+        include_expected_output=True,
+    )
+
+    result = await evaluator.evaluate(
+        MockContext(
+            output='Reset it yourself from the account page.',
+            inputs={'prompt': 'Hello'},
+            expected_output='Hello',
+        )
+    )
+
+    # `note` is answered with `None`, so it is reported as no measure at all rather than as an empty label.
+    assert to_jsonable_python(result) == snapshot(
+        {'policy': 'compliant', 'completeness': 0.5, 'asks_for_secret': False, 'urgency': 'high'}
+    )
+    assert calls[0].prompt == snapshot(
+        '<Input>\n{"prompt":"Hello"}\n</Input>\n'
+        '<Output>\nReset it yourself from the account page.\n</Output>\n'
+        '<ExpectedOutput>\nHello\n</ExpectedOutput>'
+    )
+    assert calls[0].instructions == snapshot(
+        'Answer each question about <Output>, taking <Input> and <ExpectedOutput> into account.'
+    )
+
+
+async def test_structured_judge_leaves_out_context_it_was_not_asked_for():
+    """Without `include_input`/`include_expected_output` the judge is told about neither, as `LLMJudge` is."""
+    calls: list[JudgeCall] = []
+    evaluator = StructuredJudge(
+        {'is_polite': 'The reply is polite.'}, model=structured_judge_model({'is_polite': True}, calls)
+    )
+
+    await evaluator.evaluate(MockContext(output='Certainly.'))
+
+    assert calls[0].prompt == snapshot('<Output>\nCertainly.\n</Output>')
+    assert calls[0].instructions == snapshot('Answer each question about <Output>.')
+
+
+async def test_structured_judge_refuses_an_answer_that_is_not_a_measure():
+    """A field that cannot be reported as a measure fails the evaluator instead of being stringified."""
+
+    class Dated(BaseModel):
+        """Judge a reply."""
+
+        sent_on: date = Field(description='When was it sent?')
+
+    calls: list[JudgeCall] = []
+    evaluator = StructuredJudge(Dated, model=structured_judge_model({'sent_on': '2024-01-01'}, calls))
+
+    with pytest.raises(ValueError, match=re.escape("The judge answered 'sent_on' with datetime.date(")):
+        await evaluator.evaluate(MockContext(output='Sent yesterday.'))
+
+
+def test_structured_judge_requires_a_question():
+    """An empty question set fails at construction, before any request is paid for."""
+
+    class Empty(BaseModel):
+        """Judge nothing."""
+
+    with pytest.raises(ValueError, match='`questions` must contain at least one question'):
+        StructuredJudge({})
+
+    with pytest.raises(ValueError, match='`questions` must contain at least one question'):
+        StructuredJudge(Empty)
+
+
+def test_structured_judge_registered_in_defaults():
+    """`StructuredJudge` deserializes from YAML/JSON dataset configs via `DEFAULT_EVALUATORS`."""
+    assert StructuredJudge in DEFAULT_EVALUATORS
+
+
+def test_structured_judge_model_instance_serialized_as_string():
+    """`StructuredJudge` serializes a `Model` instance as its `model_id`, matching `LLMJudge`."""
+    model = TestModel()
+    evaluator = StructuredJudge({'is_polite': 'The reply is polite.'}, model=model)
+    assert evaluator.build_serialization_arguments()['model'] == model.model_id

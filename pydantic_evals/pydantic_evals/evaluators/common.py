@@ -1,10 +1,13 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
+from enum import Enum
 from typing import Any, Literal, cast
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, TypeAdapter
+from pydantic.json_schema import SkipJsonSchema
 from typing_extensions import TypedDict
 
 from pydantic_ai import models
@@ -23,6 +26,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'StructuredJudge',
     'GEval',
     'HasMatchingSpan',
     'OutputConfig',
@@ -306,6 +310,124 @@ class LLMJudge(Evaluator[object, object, object]):
 
 
 @dataclass(repr=False)
+class StructuredJudge(Evaluator[object, object, object]):
+    """Judge several measures of one output in a single model request.
+
+    Where one [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] per measure sends the same output to the
+    judge once per question, `StructuredJudge` asks all of them at once and reports one measure per
+    question. Each measure is named after the question that produced it and is reported exactly like the
+    measures of any evaluator that returns a mapping, so three questions read as three results with one
+    evaluator as their source.
+
+    The questions are either a mapping of measure name to a rubric, each answered with a pass/fail
+    assertion:
+
+    ```python {title="structured_judge_rubrics.py"}
+    from pydantic_evals.evaluators import StructuredJudge
+
+    StructuredJudge(
+        {
+            'follows_policy': 'The reply follows the support policy.',
+            'gives_next_step': 'The reply gives the customer a concrete next step.',
+            'never_asks_for_secrets': 'The reply never asks for a password or a login code.',
+        }
+    )
+    ```
+
+    or a Pydantic model whose fields are the questions, which is what to reach for when a measure is a
+    score or a label rather than a yes or a no:
+
+    ```python {title="structured_judge_output_type.py"}
+    from typing import Literal
+
+    from pydantic import BaseModel, Field
+
+    from pydantic_evals.evaluators import StructuredJudge
+
+
+    class ReplyReview(BaseModel):
+        policy: Literal['compliant', 'minor_issue', 'violation'] = Field(
+            description='Does the reply comply with the support policy?'
+        )
+        completeness: float = Field(
+            ge=0, le=1, description='How completely does the reply address the request?'
+        )
+        asks_for_secret: bool = Field(
+            description='Does the reply ask for a password or a login code?'
+        )
+
+
+    StructuredJudge(ReplyReview)
+    ```
+
+    A `bool` field is reported as an assertion, an `int` or `float` as a score, and a `str` or an `Enum`
+    of strings as a label. A field the judge leaves as `None` is reported as no measure at all, the way
+    [`EqualsExpected`][pydantic_evals.evaluators.EqualsExpected] reports nothing without an expected
+    output. Any other answer is an error, since there is no measure to report it as.
+
+    Give every field a description, and the model a docstring saying what is being judged: the field
+    descriptions are the questions, and a judge that takes its questions from the output type has
+    nothing to ask without them.
+
+    One request answering every question also fails as one: a request that errors leaves an
+    [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] in place of all of the measures,
+    where one judge per measure fails only its own. Asking the questions together can also move the
+    answers, since each question is answered in the presence of the others, so measure both shapes on
+    your own cases before switching a suite over.
+
+    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
+    overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    A Pydantic model cannot be written in a YAML or JSON dataset file, so only the mapping of rubrics
+    round-trips through [`Dataset.to_file`][pydantic_evals.dataset.Dataset.to_file].
+    """
+
+    # A Python class has no JSON schema, so only the mapping form is offered to a dataset file.
+    questions: SkipJsonSchema[type[BaseModel]] | Mapping[str, str]
+    model: models.Model | models.KnownModelName | str | None = None
+    include_input: bool = False
+    include_expected_output: bool = False
+    model_settings: ModelSettings | None = None
+
+    def __post_init__(self):
+        names = self.questions if isinstance(self.questions, Mapping) else self.questions.model_fields
+        if not names:
+            raise ValueError('`questions` must contain at least one question')
+
+    async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+        from .llm_as_a_judge import judge_questions
+
+        answers = await judge_questions(
+            ctx.output,
+            self.questions,
+            inputs=ctx.inputs if self.include_input else None,
+            expected_output=ctx.expected_output if self.include_expected_output else None,
+            model=self.model,
+            model_settings=self.model_settings,
+        )
+
+        measures: dict[str, EvaluationScalar] = {}
+        for name, answer in answers.items():
+            if answer is None:
+                continue
+            # Dumped in Python mode, so an `Enum` arrives as the member and a value that is not a
+            # scalar at all — a nested model, a list, a date — arrives as itself and is refused here,
+            # rather than as the string a JSON dump would quietly turn it into.
+            if isinstance(answer, Enum):
+                answer = answer.value
+            if not isinstance(answer, (bool, int, float, str)):
+                raise ValueError(
+                    f'The judge answered {name!r} with {answer!r}, which cannot be reported as a measure. '
+                    'Every question has to be answered with a `bool`, `int`, `float`, `str`, or an `Enum` of those.'
+                )
+            measures[name] = answer
+        return measures
+
+    def build_serialization_arguments(self):
+        return _serialize_model_as_string(super().build_serialization_arguments())
+
+
+@dataclass(repr=False)
 class GEval(Evaluator[object, object, object]):
     """G-Eval-style chain-of-thought evaluator (Liu et al., 2023).
 
@@ -387,6 +509,7 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     IsInstance,
     MaxDuration,
     LLMJudge,
+    StructuredJudge,
     HasMatchingSpan,
     ToolCorrectness,
     TrajectoryMatch,

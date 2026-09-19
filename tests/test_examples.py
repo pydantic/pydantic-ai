@@ -778,6 +778,21 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
+def _structured_judge_answers(schema: dict[str, Any]) -> dict[str, Any]:
+    """Answer each question of a `StructuredJudge` output type, whatever the docs example asks."""
+    answers: dict[str, Any] = {}
+    for name, prop in schema['properties'].items():
+        if options := prop.get('enum'):
+            answers[name] = options[0]
+        elif prop.get('type') == 'boolean':
+            answers[name] = True
+        elif prop.get('type') == 'number':
+            answers[name] = 0.5
+        else:  # pragma: no cover
+            raise ValueError(f'No stock answer for a {prop!r} question')
+    return answers
+
+
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
@@ -861,6 +876,18 @@ async def model_logic(  # noqa: C901
         elif '<Rubric>\n' in m.content:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
+            )
+        elif m.content.startswith('<Output>') and info.output_tools:
+            # docs/evals/evaluators/llm-judge.md: a `StructuredJudge` prompt carries only the material to
+            # judge, and every question is a field of the output type it is asked to fill.
+            output_tool = info.output_tools[0]
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=output_tool.name,
+                        args=_structured_judge_answers(output_tool.parameters_json_schema),
+                    )
+                ]
             )
         elif m.content.startswith('Question '):
             # Handle concurrency example prompts like "Question 0", "Question 1", etc.

@@ -354,6 +354,58 @@ dataset = Dataset(
 
 **See Also:** [LLM Judge Deep Dive](llm-judge.md)
 
+### StructuredJudge
+
+Several measures of one output, answered in a single model request: one measure per question, named
+after the question.
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_evals.evaluators import StructuredJudge
+
+# A rubric per measure, each answered with a pass/fail assertion
+StructuredJudge(
+    {
+        'follows_policy': 'The reply follows the support policy.',
+        'gives_next_step': 'The reply gives the customer a concrete next step.',
+    }
+)
+
+
+# Or a model whose fields are the questions, for scores and labels as well as assertions
+class ReplyReview(BaseModel):
+    """Judge a support reply against the support policy."""
+
+    policy: Literal['compliant', 'violation'] = Field(description='Does the reply comply?')
+    completeness: float = Field(ge=0, le=1, description='How completely does it answer?')
+
+
+StructuredJudge(ReplyReview, include_input=True)
+```
+
+**Parameters:**
+
+- `questions` (type[BaseModel] | Mapping[str, str]): The questions to answer together, as a model whose
+  fields are the questions or as a mapping of measure name to rubric (required)
+- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
+- `include_input` (bool): Include task inputs in the prompt (default: `False`)
+- `include_expected_output` (bool): Include the expected output in the prompt (default: `False`)
+- `model_settings` (ModelSettings | None): Custom model settings
+
+**Returns:** a mapping of question name to answer — `bool` as an assertion, `int`/`float` as a score,
+`str` or an `Enum` of strings as a label. A field answered with `None` is reported as no measure.
+
+One request answering every question also fails as one, and asking the questions together can move the
+answers. See [Several Measures in One Request](llm-judge.md#several-measures-in-one-request).
+
+Only the mapping of rubrics can be written in a YAML or JSON dataset file; a Pydantic model is a Python
+type, so an evaluator that uses one is built in Python.
+
+---
+
 ### GEval
 
 Chain-of-thought evaluation following the G-Eval method (Liu et al., 2023): the judge applies
@@ -479,6 +531,7 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | `bool` + reason | Free | Instant |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
+| [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] | Several measures, one request | mapping of measures | $$ | Slow |
 | [`GEval`][pydantic_evals.evaluators.GEval] | Chain-of-thought scoring | `int` + reason | $$ | Slow |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
 
