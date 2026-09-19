@@ -376,7 +376,9 @@ async def test_fallback_on_low_confidence(allow_model_requests: None, noul: floa
         pytest.param(str, 'Text output is not supported', id='text'),
         pytest.param([Handling, str], 'Text output is not supported', id='text-in-union'),
         pytest.param(
-            [Handling, EnumAndProbability], 'Multiple output types with fields are not supported.*got 2', id='union'
+            [Handling, EnumAndProbability],
+            "'final_result_EnumAndProbability' says nothing about itself",
+            id='a union member with no docstring',
         ),
         pytest.param(NativeOutput(Handling), 'Native structured output is not supported', id='native'),
         pytest.param(PromptedOutput(Handling), 'Text output is not supported', id='prompted'),
@@ -820,7 +822,7 @@ async def test_a_selected_tool_fill_failure_does_not_fall_back_to_another_route(
         """
 
     agent = Agent(FallbackModel(mock_model(record), TestModel()), output_type=Ticket, tools=[set_direction])
-    with pytest.raises(UnexpectedModelBehavior, match=r"selected tool 'set_direction'.*failed while filling"):
+    with pytest.raises(UnexpectedModelBehavior, match=r"selected 'set_direction'.*failed while filling"):
         await agent.run('Go left.')
     assert seen == 2
 
@@ -1006,6 +1008,88 @@ async def test_a_threshold_outside_zero_to_one_is_refused_before_the_request(
     agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
     with pytest.raises(UserError, match='`typesafe_tool_call_threshold` must be between 0 and 1'):
         await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_tool_call_threshold=threshold))
+
+
+@pytest.mark.parametrize('threshold', [-0.1, 1.5, float('nan')])
+async def test_a_boolean_threshold_outside_zero_to_one_is_refused_before_the_request(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, threshold: float
+):
+    agent = Agent(typesafe_model, output_type=Ticket)
+    with pytest.raises(UserError, match='`typesafe_boolean_threshold` must be between 0 and 1'):
+        await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=threshold))
+
+
+@pytest.mark.parametrize(
+    'threshold,expected,expected_confidence',
+    [
+        pytest.param(None, True, 0.3999999999999999, id='the default rounds a 0.7 to yes'),
+        pytest.param(0.5, True, 0.3999999999999999, id='the default, passed explicitly'),
+        pytest.param(0.75, False, 0.06666666666666672, id='a raised bar turns the same answer into a no'),
+        pytest.param(0.7, True, 0.0, id='an answer exactly at the bar is a yes, and the least sure one'),
+        pytest.param(0.0, True, 0.7, id='a bar of zero takes every answer as a yes'),
+        pytest.param(1.0, False, 0.30000000000000004, id='a bar of one takes nothing short of certainty'),
+    ],
+)
+async def test_the_boolean_threshold_decides_what_a_probability_of_yes_rounds_to(
+    allow_model_requests: None, threshold: float | None, expected: bool, expected_confidence: float
+):
+    """What `True` has to mean is the user's to choose, and confidence is the distance from their bar."""
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(urgent={'type': 'noul', 'noul': 0.7})
+
+    settings = None if threshold is None else TypeSafeModelSettings(typesafe_boolean_threshold=threshold)
+    agent = Agent(mock_model(record), output_type=Ticket)
+    result = await agent.run('Is this urgent?', model_settings=settings)
+
+    assert result.output == Ticket(urgent=expected)
+    assert result.response.provider_details == {
+        'confidence': {'urgent': expected_confidence},
+        'probabilities': {},
+        'scores': {},
+    }
+
+
+async def test_the_boolean_threshold_applies_to_each_option_of_a_list(allow_model_requests: None):
+    """A list of options is one yes/no per option, so the same bar decides each of them."""
+
+    class Routing(BaseModel):
+        """Route a support ticket."""
+
+        channels: list[Literal['email', 'sms']] = Field(description='Which channels should receive updates?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        options: dict[str, dict[str, object]] = {
+            'channels.email': {'type': 'noul', 'noul': 0.7},
+            'channels.sms': {'type': 'noul', 'noul': 0.6},
+        }
+        return answers(**options)
+
+    agent = Agent(mock_model(record), output_type=Routing)
+    assert (await agent.run('x')).output == Routing(channels=['email', 'sms'])
+
+    result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.65))
+    assert result.output == Routing(channels=['email'])
+    # The field is as sure as its least sure option, which is the `sms` that only just missed the bar.
+    assert (result.response.provider_details or {})['confidence'] == {'channels': snapshot(0.07692307692307698)}
+
+
+async def test_the_boolean_threshold_leaves_a_probability_field_alone(allow_model_requests: None):
+    """A `float` bounded 0 to 1 asks for the probability itself, so there is nothing to round."""
+
+    class Scored(BaseModel):
+        """Score a support ticket."""
+
+        risk: float = Field(ge=0, le=1, description='Is this ticket likely to cause customer harm?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(risk={'type': 'noul', 'noul': 0.7})
+
+    agent = Agent(mock_model(record), output_type=Scored)
+    result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.95))
+
+    assert result.output == Scored(risk=0.7)
+    assert (result.response.provider_details or {})['confidence'] == {}
 
 
 async def test_an_output_type_with_nothing_said_about_it_cannot_be_weighed_against_tools(
@@ -2061,3 +2145,264 @@ rm -rf ./build
             },
         ]
     )
+
+
+class Escalation(BaseModel):
+    """Hand the ticket to a human specialist."""
+
+    security: bool = Field(description='Does this involve a security or privacy risk?')
+
+
+class DraftedReply(BaseModel):
+    """Write the customer a reply."""
+
+    ok: bool
+    body: str
+
+
+def _route(choice: str, probabilities: dict[str, float]) -> dict[str, object]:
+    return {'type': 'choice', 'choice': choice, 'confidence': 0.9, 'probabilities': probabilities}
+
+
+async def test_a_union_picks_the_type_then_fills_only_that_one(allow_model_requests: None):
+    """Several output types are routes: one request picks, a second asks only the chosen type's fields."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route(
+                    'final_result_Escalation',
+                    {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8},
+                )
+            )
+        return answers(security={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation])
+    result = await agent.run('Someone else can see my invoices.')
+
+    assert result.output == Escalation(security=True)
+    # The first request asks nothing but the route; the second asks nothing but the chosen type's fields.
+    assert list(seen[0]['questions']) == ['tool']
+    assert list(seen[1]['questions']) == ['security']
+    assert result.response.provider_details == snapshot(
+        {
+            'confidence': {'security': 0.8},
+            'probabilities': {},
+            'scores': {},
+            'tool': {
+                'choice': 'final_result_Escalation',
+                'probabilities': {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8},
+                'offered': [],
+            },
+            'requests': 2,
+        }
+    )
+
+
+async def test_a_union_member_jev_cannot_express_is_offered_and_hands_off_when_picked(allow_model_requests: None):
+    """A union is the route set, so a member beyond Jev is a hand-off rather than a refusal.
+
+    With one output type there is no other route the run could take, so an unfillable one still raises up front.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            tool=_route(
+                'final_result_DraftedReply',
+                {'final_result_Ticket': 0.1, 'final_result_DraftedReply': 0.9},
+            )
+        )
+
+    agent = Agent(mock_model(record), output_type=[Ticket, DraftedReply])
+    with pytest.raises(ToolCallProposed) as exc_info:
+        await agent.run('Write back and say sorry.')
+
+    assert (exc_info.value.tool_name, exc_info.value.probability) == ('final_result_DraftedReply', 0.9)
+    # The choice call happened; only the fill was beyond Jev.
+    assert len(seen) == 1
+
+
+async def test_a_union_member_jev_cannot_express_is_filled_by_the_model_behind_it(allow_model_requests: None):
+    """`ToolCallProposed` is a `ModelAPIError`, so `FallbackModel` gives the whole step to a language model."""
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            tool=_route(
+                'final_result_DraftedReply',
+                {'final_result_Ticket': 0.1, 'final_result_DraftedReply': 0.9},
+            )
+        )
+
+    agent = Agent(FallbackModel(mock_model(record), TestModel()), output_type=[Ticket, DraftedReply])
+    result = await agent.run('Write back and say sorry.')
+
+    # The step is handed over whole, so the model behind Jev picks the route and fills it.
+    assert result.response.model_name == 'test'
+    assert isinstance(result.output, (Ticket, DraftedReply))
+
+
+async def test_one_output_type_jev_cannot_express_is_still_refused_before_any_request(allow_model_requests: None):
+    """Alone, an unfillable output type can only ever fail, so it is a coding error rather than a hand-off."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a lone unfillable output type must not reach a request')
+
+    with pytest.raises(UserError, match="Output field 'summary' is not supported"):
+        await Agent(mock_model(unreachable), output_type=WithText).run('anything')
+
+
+async def test_a_union_below_the_threshold_fills_the_likeliest_output_type(allow_model_requests: None):
+    """The threshold gates tools, not output types: an unsure tool pick falls back to the likeliest result."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route(
+                    'refund',
+                    {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.5, 'refund': 0.3},
+                )
+            )
+        return answers(security={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation], tools=[refund])
+    result = await agent.run('Someone else can see my invoices.')
+
+    assert result.output == Escalation(security=True)
+    assert list(seen[1]['questions']) == ['security']
+
+
+async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None):
+    """One instruction cannot describe two different routes, so each member says what it is for itself."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a union member without a docstring must be refused before any request')
+
+    agent = Agent(mock_model(unreachable), output_type=[Ticket, WithOptional], instructions='Handle the ticket.')
+    with pytest.raises(UserError, match="'final_result_WithOptional' says nothing about itself"):
+        await agent.run('anything')
+
+
+async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: None):
+    """`_tool_call` falls back to the likeliest output type without requiring Jev to have priced it.
+
+    Jev is not obliged to report a probability for every option it was offered, so the route that comes back
+    is not necessarily one that appears in `probabilities`. Reading it as a plain index raised `KeyError`.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            # A below-threshold tool pick, with neither output type priced.
+            return answers(tool=_route('refund', {'refund': 0.3}))
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation], tools=[refund])
+    result = await agent.run('You charged me twice.')
+
+    assert result.output == Ticket(urgent=True)
+    details = result.response.provider_details or {}
+    assert details['tool']['probabilities'] == {'refund': 0.3}
+    assert details['requests'] == 2
+
+
+async def test_a_union_no_member_of_which_jev_can_fill_is_refused_before_any_request(allow_model_requests: None):
+    """A hand-off is worth building only while some other route is a real alternative.
+
+    With every member beyond Jev the choice is decided before it is asked: each answer hands off, so the
+    request that asks which one buys nothing and every run pays for Jev on top of the model behind it.
+    """
+
+    class DraftedReply(BaseModel):
+        """Write the customer a reply."""
+
+        body: str
+
+    class Summary(BaseModel):
+        """Summarise the thread."""
+
+        text: str
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a union with nothing fillable must be refused before any request')
+
+    agent = Agent(mock_model(unreachable), output_type=[DraftedReply, Summary])
+    with pytest.raises(UserError, match='None of the output types can be filled by this model'):
+        await agent.run('Write back.')
+
+
+async def test_a_union_with_one_fillable_member_is_still_offered(allow_model_requests: None):
+    """One real alternative is enough: the hand-off then depends on the text rather than on the types."""
+
+    class DraftedReply(BaseModel):
+        """Write the customer a reply."""
+
+        body: str
+
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route('final_result_Ticket', {'final_result_Ticket': 0.9, 'final_result_DraftedReply': 0.1})
+            )
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, DraftedReply])
+    result = await agent.run('Is this urgent?')
+
+    assert result.output == Ticket(urgent=True)
+    # Both were offered: the hand-off now depends on which one the text calls for.
+    assert set(seen[0]['questions']['tool']['criteria']) == {'final_result_Ticket', 'final_result_DraftedReply'}
+
+
+@pytest.mark.parametrize('setting', ['typesafe_tool_call_threshold', 'typesafe_boolean_threshold'])
+async def test_a_bad_threshold_is_refused_before_the_forced_route_spends_a_request(
+    allow_model_requests: None, setting: str
+):
+    """The forced-fill path takes no choice question, so its bars are checked before it sends anything.
+
+    Reading them only while handling the answer would mean paying for the request that carried the prompt and
+    the whole history before saying the settings were wrong.
+    """
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a threshold outside 0 to 1 must be refused before any request')
+
+    def set_direction(direction: Literal['left', 'right']) -> str:
+        """Set the direction to take.
+
+        Args:
+            direction: Which direction should be taken?
+        """
+        return direction  # pragma: no cover
+
+    # No output type to fill, and `approve` already returned this turn, so `set_direction` is the one route
+    # left: it is filled without a choice question, which is the path that used to validate too late.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go left.')]),
+        ModelResponse(parts=[ToolCallPart('final_result', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('final_result', 'approved', 'call_1')]),
+    ]
+    agent = Agent(mock_model(unreachable), output_type=[approve], tools=[set_direction])
+    with pytest.raises(UserError, match=f'`{setting}` must be between 0 and 1'):
+        await agent.run(message_history=history, model_settings=cast(TypeSafeModelSettings, {setting: 1.5}))
+
+
+@pytest.mark.parametrize('noul', [-0.1, 1.5])
+async def test_a_probability_outside_zero_to_one_is_a_model_error_not_a_crash(allow_model_requests: None, noul: float):
+    """Both confidence scalings divide by the room left on their side of the bar, which can be zero.
+
+    At a threshold of 0 a negative probability used to reach `(0 - noul) / 0`. A malformed answer is
+    something the model reports, like every other unexpected answer, rather than a `ZeroDivisionError`.
+    """
+    agent = Agent(mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': noul})), output_type=Ticket)
+    with pytest.raises(UnexpectedModelBehavior, match=f'Unexpected probability from TypeSafe: {noul}'):
+        await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0))
