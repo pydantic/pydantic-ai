@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
@@ -15,12 +16,14 @@ from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition, is_done
 from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
-from prompt_toolkit.layout import ConditionalContainer, FormattedTextControl, HSplit, Window
+from prompt_toolkit.layout import ConditionalContainer, FormattedTextControl, HSplit, VSplit, Window
 from rich.console import Console
 from rich.text import Text
 
 from . import theme
 from .interrupts import Interrupts
+
+_WORKING_FRAMES = ('⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏')
 
 
 class PromptOutput(io.StringIO):
@@ -76,16 +79,30 @@ class LivePrompt:
     """Own the editor and output worker until the shell exits, including cancellation."""
 
     def __init__(
-        self, prompt: PromptSession[str], console: Console, *, prepare: Callable[[], None], interrupts: Interrupts
+        self,
+        prompt: PromptSession[str],
+        console: Console,
+        *,
+        prepare: Callable[[], None],
+        interrupts: Interrupts,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Keep all input and output resources scoped to one shell."""
         self.prompt = prompt
         self.console = console
         self.prepare = prepare
         self.interrupts = interrupts
+        self._clock = clock
         self._submissions: deque[str | KeyboardInterrupt | EOFError] = deque()
         self._submitted = asyncio.Event()
         self.output = PromptOutput(console.file)
+
+    def working_title(self) -> FormattedText:
+        """Animate the top border without adding a row to the editable area."""
+        if not self.interrupts.active:
+            return FormattedText([])
+        frame = _WORKING_FRAMES[int(self._clock() * 10) % len(_WORKING_FRAMES)]
+        return FormattedText([(theme.MUTED, ' Working '), (theme.ACCENT, frame), ('', ' ')])
 
     async def read(self) -> str:
         """Consume submissions in order without overlapping agent runs."""
@@ -173,6 +190,22 @@ class LivePrompt:
         started = anyio.Event()
         container = self.prompt.layout.container
         assert isinstance(container, HSplit)
+        editor = container.children[0]
+        assert isinstance(editor, ConditionalContainer)
+        frame = editor.content
+        assert isinstance(frame, HSplit)
+        original_border = frame.children[0]
+        working_border = VSplit(
+            [
+                Window(width=1, char='┌'),
+                Window(width=1, char='─'),
+                Window(FormattedTextControl(self.working_title), dont_extend_width=True),
+                Window(char='─'),
+                Window(width=1, char='┐'),
+            ],
+            height=1,
+            style='class:frame.border',
+        )
         preview = ConditionalContainer(
             Window(FormattedTextControl(lambda: ANSI(self.output.pending)), dont_extend_height=True),
             filter=Condition(lambda: bool(self.output.pending)) & ~is_done,
@@ -186,6 +219,7 @@ class LivePrompt:
 
         def prepare() -> None:
             self.prepare()
+            frame.children[0] = working_border
             container.children[0:0] = [preview, queue_preview]
             self.prompt.default_buffer.accept_handler = self.accept
             started.set()
@@ -221,6 +255,7 @@ class LivePrompt:
                     self.console.file = original
                     self.prompt.bottom_toolbar = toolbar
                     self.prompt.default_buffer.accept_handler = accept_handler
+                    frame.children[0] = original_border
                     container.children.remove(preview)
                     container.children.remove(queue_preview)
                     workers.cancel_scope.cancel()

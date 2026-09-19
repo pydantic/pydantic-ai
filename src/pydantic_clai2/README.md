@@ -50,7 +50,7 @@ and completed tool side effects cannot be undone.
 ```text
 Follow-up: Add tests for the change
 Command: /usage
-┌──────────────────────────────────────────────┐
+┌─ Working ⠋ ──────────────────────────────────┐
 │> Draft your next message here                 │
 └──────────────────────────────────────────────┘
 model | context: ... | running: shell
@@ -59,8 +59,12 @@ model | context: ... | running: shell
 The prompt sits above the footer with one editable line when empty. It grows
 for wrapped or pasted text and completion suggestions, not to fill the terminal.
 History search stays compact too. The bordered prompt area stays visible below
-streamed output while CLAI works, and remains editable. Enter submits a message
-to an in-memory queue. Pending text appears above the editor as `Follow-up:`
+streamed output while CLAI works, and remains editable. A `Working` label and
+animated spinner appear in the box's top border while a turn or its lifecycle
+hooks are active, without adding a row to the input area. The animation uses the editor's existing refresh
+cycle and disappears when work finishes, fails, or is cancelled. It is not part
+of your draft or submitted message. Full-screen menus temporarily hide it along
+with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
 previews, with queued slash commands labeled `Command:`. Previews are shown in
 execution order and disappear as each submission starts. Long or multiline messages
 have a single-line preview; large queues show a `+N more queued` summary to leave
