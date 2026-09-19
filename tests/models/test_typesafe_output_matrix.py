@@ -30,17 +30,16 @@ import httpx2
 import pytest
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, UseEnumMemberDocstrings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 
 from ..conftest import try_import
+from .test_typesafe import answers, mock_model
 
 with try_import() as imports_successful:
     from pydantic_ai.models.typesafe import TypeSafeModel
-
-    from .test_typesafe import Clarity, answers, mock_model
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='typesafe-sdk not installed'),
@@ -217,6 +216,17 @@ class OptionalArea(BaseModel):
     area: Area | None = Field(description='Which area, if any?')
 
 
+class Clarity(UseEnumMemberDocstrings, IntEnum):
+    """How clearly is the problem stated?"""
+
+    none = 0
+    """Leaves a reader who did not already know none the wiser."""
+    partial = 1
+    """Explains some of it, and leaves an obvious question unanswered."""
+    full = 2
+    """A reader who did not already know could act on it."""
+
+
 class Graded(BaseModel):
     """Grade the writing."""
 
@@ -285,7 +295,7 @@ ACCEPTED = [
     Accepted('a pick-one', Area, 'billing'),
     Accepted('a list of options', list[Area], ['billing', 'shipping', 'security']),
     Accepted('an optional pick-one field', OptionalArea, OptionalArea(area='billing')),
-    Accepted('a rubric field', Graded, Graded(clarity=1)),
+    Accepted('a rubric field', Graded, Graded(clarity=Clarity.partial)),
     # A union is a route set: one request picks the member, a second asks only that member's fields.
     Accepted(
         'a union of output types',
