@@ -845,6 +845,8 @@ async def test_structured_judge_ignores_a_computed_field():
 
     assert to_jsonable_python(result) == snapshot({'is_polite': True})
     assert calls[0].schema['properties'].keys() == {'is_polite'}
+    # The premise: a dump of the same answer would have carried the computed field along.
+    assert WithComputed(is_polite=True).model_dump() == snapshot({'is_polite': True, 'evidence': ['not a measure']})
 
 
 async def test_structured_judge_reads_the_fields_it_asked_about_not_the_serialization():
@@ -865,6 +867,8 @@ async def test_structured_judge_reads_the_fields_it_asked_about_not_the_serializ
     assert to_jsonable_python(await evaluator.evaluate(MockContext(output='Certainly.'))) == snapshot(
         {'is_polite': True}
     )
+    # The premise: a dump of the same answer would have named the measure `politeness`.
+    assert Renamed(is_polite=True).model_dump() == snapshot({'politeness': True})
 
 
 @pytest.mark.parametrize(
