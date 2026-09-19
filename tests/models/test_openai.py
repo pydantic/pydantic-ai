@@ -608,6 +608,73 @@ async def test_stream_text(allow_model_requests: None):
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
+def test_provider_details_service_tier(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(
+        completion_message(ChatCompletionMessage(role='assistant', content='hello')).model_copy(
+            update={'service_tier': 'default'}
+        )
+    )
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # The reported tier comes from the provider response, not the requested setting.
+    result = agent.run_sync('hello', model_settings=OpenAIChatModelSettings(openai_service_tier='flex'))
+    response = cast(ModelResponse, result.all_messages()[-1])
+    assert response.provider_details == {
+        'finish_reason': 'stop',
+        'service_tier': 'default',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+    }
+
+    # The key is omitted when the provider response does not report a tier.
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(role='assistant', content='hello')))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+    response = cast(ModelResponse, agent.run_sync('hello').all_messages()[-1])
+    assert response.provider_details == {
+        'finish_reason': 'stop',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+    }
+
+    # OpenAI-compatible providers may report tiers outside the OpenAI literal set.
+    mock_client = MockOpenAI.create_mock(
+        completion_message(ChatCompletionMessage(role='assistant', content='hello')).model_copy(
+            update={'service_tier': 'custom-tier'}
+        )
+    )
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+    response = cast(ModelResponse, agent.run_sync('hello').all_messages()[-1])
+    assert response.provider_details == {
+        'finish_reason': 'stop',
+        'service_tier': 'custom-tier',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+    }
+
+
+async def test_provider_details_service_tier_streaming(allow_model_requests: None) -> None:
+    chunks = [
+        text_chunk('hello '),
+        text_chunk('world', finish_reason='stop').model_copy(update={'service_tier': 'default'}),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(chunks)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == ['hello ', 'hello world']
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.provider_details is not None
+        assert response.provider_details['service_tier'] == 'default'
+
+    # The key is omitted when no chunk reports a tier.
+    mock_client = MockOpenAI.create_mock_stream([text_chunk('hello '), text_chunk('world', finish_reason='stop')])
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == ['hello ', 'hello world']
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.provider_details is not None
+        assert 'service_tier' not in response.provider_details
+
+
 def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
     """`run_stream_sync` must stream and complete against a real, recorded streaming model.
 
@@ -1489,6 +1556,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
@@ -1531,6 +1599,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
@@ -1666,7 +1735,7 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-D1Fb52cAhS0I5T514KLWFLTvsJHYv',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1741,7 +1810,7 @@ Each of these interpretations would depend on the broader context in which this 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-D1Hu5C2mqc2CPw07SQa6U7Ki9PF7X',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1795,7 +1864,7 @@ async def test_yaml_document_url_input(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-D9Y2SGcIahjmc95USEBhPxjrIEW8c',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1975,6 +2044,131 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
 
+async def test_provider_details_service_tier_responses(allow_model_requests: None) -> None:
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    output_item = ResponseOutputMessage(
+        id='msg_123',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='hello', type='output_text', annotations=[])],
+    )
+    r = response_message([output_item]).model_copy(update={'service_tier': 'default'})
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    result = await Agent(m).run('hello')
+    response = cast(ModelResponse, result.all_messages()[-1])
+    assert response.provider_details is not None
+    assert response.provider_details['service_tier'] == 'default'
+
+    # The key is omitted when the provider response does not report a tier.
+    mock_client = MockOpenAIResponses.create_mock(response_message([output_item]))
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    result = await Agent(m).run('hello')
+    response = cast(ModelResponse, result.all_messages()[-1])
+    assert response.provider_details is not None
+    assert 'service_tier' not in response.provider_details
+
+
+async def test_provider_details_service_tier_responses_streaming(allow_model_requests: None) -> None:
+    from openai.types import responses as resp
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    output_item = ResponseOutputMessage(
+        id='msg_123',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='hello', type='output_text', annotations=[])],
+    )
+    r = response_message([output_item]).model_copy(update={'service_tier': 'default', 'status': 'completed'})
+    events = [
+        resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_123', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='hello',
+            item_id='msg_123',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=3,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_123',
+            output_index=0,
+            text='hello',
+            type='response.output_text.done',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(response=r, type='response.completed', sequence_number=5),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(events)
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.provider_details is not None
+        assert response.provider_details['service_tier'] == 'default'
+
+    # The key is omitted when the completed response does not report a tier.
+    events = [
+        resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_123', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='hello',
+            item_id='msg_123',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=3,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_123',
+            output_index=0,
+            text='hello',
+            type='response.output_text.done',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=response_message([output_item]).model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=5,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(events)
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+        response = cast(ModelResponse, result.all_messages()[-1])
+        assert response.provider_details is not None
+        assert 'service_tier' not in response.provider_details
+
+
 async def test_text_content_input(allow_model_requests: None):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
     res = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
@@ -2152,6 +2346,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 11, 22, 10, 1, 40, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
@@ -2220,6 +2415,7 @@ async def test_openai_moderation(allow_model_requests: None, openai_api_key: str
     assert response.provider_details == snapshot(
         {
             'finish_reason': 'stop',
+            'service_tier': 'default',
             'moderation': {
                 'input': {
                     'model': 'omni-moderation-latest',
@@ -2352,6 +2548,7 @@ async def test_openai_moderation_stream(allow_model_requests: None, openai_api_k
     assert response.provider_details == snapshot(
         {
             'timestamp': IsDatetime(),
+            'service_tier': 'default',
             'finish_reason': 'stop',
             'moderation': {
                 'input': {
@@ -2487,6 +2684,7 @@ async def test_openai_moderation_flagged(allow_model_requests: None, openai_api_
     assert response.provider_details == snapshot(
         {
             'finish_reason': 'stop',
+            'service_tier': 'default',
             'moderation': {
                 'input': {
                     'model': 'omni-moderation-latest',
@@ -2629,6 +2827,7 @@ async def test_openai_moderation_block_policy(allow_model_requests: None, openai
     assert response.provider_details == snapshot(
         {
             'finish_reason': 'stop',
+            'service_tier': 'default',
             'moderation': {
                 'input': {
                     'model': 'omni-moderation-latest',
@@ -3586,6 +3785,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 7, 16, 30, 56, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
@@ -3644,6 +3844,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 16, 13, 37, 14, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
@@ -3682,6 +3883,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 16, 13, 37, 15, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
@@ -3741,6 +3943,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 21, 57, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c1fa0523248197888681b898567bde093f57e27128848a',
                 finish_reason='stop',
@@ -3788,6 +3991,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 9, 10, 22, 22, 24, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-CENUmtwDD0HdvTUYL6lUeijDtxrZL',
@@ -4160,6 +4364,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 24, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
@@ -4206,6 +4411,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 25, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
@@ -4280,6 +4486,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 9, 21, 20, 53, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
@@ -4320,6 +4527,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 9, 21, 20, 54, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
@@ -4384,6 +4592,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 22, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
@@ -4424,6 +4633,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 23, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
@@ -4502,6 +4712,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 9, 23, 21, 26, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
@@ -4546,6 +4757,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 9, 23, 21, 27, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
@@ -4608,6 +4820,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 35, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
@@ -4648,6 +4861,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 36, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
@@ -4714,6 +4928,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 38, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
@@ -4758,6 +4973,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 39, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
