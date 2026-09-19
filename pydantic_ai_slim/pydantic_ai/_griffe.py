@@ -174,5 +174,7 @@ def _disable_griffe_logging():
     # Hacky, but suggested here: https://github.com/mkdocstrings/griffe/issues/293#issuecomment-2167668117
     old_level = logging.root.getEffectiveLevel()
     logging.root.setLevel(logging.ERROR)
-    yield
-    logging.root.setLevel(old_level)
+    try:
+        yield
+    finally:
+        logging.root.setLevel(old_level)
