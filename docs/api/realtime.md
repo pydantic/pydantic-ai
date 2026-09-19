@@ -81,6 +81,13 @@ waits until the single audio view has accounted for all audio emitted so far, wh
 played or discarded.
 [`RealtimeSession.close()`][pydantic_ai.realtime.RealtimeSession.close] ends the session and every
 live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.closed] exposes its state.
+The session starts receiving at whichever comes first: the first outbound call, the first
+`stream_audio()` or `stream_transcripts()` view, or the first `async for` over the session. It does
+not start on entry, so a view created inside the session block — as every example here does — cannot
+miss output the model produced before it subscribed. A fatal receive or tool failure is raised
+from active event iteration; without an active iterator, the views end and context exit raises it.
+The next outbound session method raises an already-ended receive side's failure first, and the same
+failure is never delivered twice.
 
 The low-level [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send] accepts the
 normalized [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput] — a `str` text turn, a
