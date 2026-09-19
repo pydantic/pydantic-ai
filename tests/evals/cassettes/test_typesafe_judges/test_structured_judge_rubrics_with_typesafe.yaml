@@ -1,0 +1,70 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '983'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        follows_policy:
+          instructions:
+            field: follows_policy
+            goal: Judge an output against each rubric.
+            instructions: Answer each question about <Output>.
+            question: Is this statement true? The reply follows the support policy.
+          type: noul
+        gives_next_step:
+          instructions:
+            field: gives_next_step
+            goal: Judge an output against each rubric.
+            instructions: Answer each question about <Output>.
+            question: Is this statement true? The reply gives the customer a concrete next step.
+          type: noul
+        never_asks_for_secrets:
+          instructions:
+            field: never_asks_for_secrets
+            goal: Judge an output against each rubric.
+            instructions: Answer each question about <Output>.
+            question: Is this statement true? The reply never asks for a password or a login code.
+          type: noul
+      state: |-
+        <Output>
+        I cannot reset your password, but you can do it yourself from the account page.
+        </Output>
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '248'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        follows_policy:
+          noul: 0.86
+          type: noul
+        gives_next_step:
+          noul: 0.94
+          type: noul
+        never_asks_for_secrets:
+          noul: 0.97
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 488
+        output_tokens: 63
+    status:
+      code: 200
+      message: OK
+version: 1

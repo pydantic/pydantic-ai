@@ -112,6 +112,8 @@ print(result.output)
 
 For a single question an agent's `instructions` do the same job, and Jev answers the two spellings alike. Prefer the output type anyway: each field carries its own question, so several questions can be asked in one request, which is the thing Jev is fast at. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
 
+The same split is what [`StructuredJudge`](../evals/evaluators/llm-judge.md#several-measures-in-one-request) gives a Pydantic Evals suite: the case's output is the prompt, the measures are the fields, and Jev answers all of them in one request.
+
 ## Ask one thing per field
 
 TypeSafe call this "probably the most important concept" in their guide, and it is the one habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible number with low confidence, and you find out later.
