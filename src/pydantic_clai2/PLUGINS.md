@@ -28,6 +28,15 @@ Custom agents can opt in with `customization_guide()` from
 write files, activate plugins, or grant permission to execute generated code.
 Keep the bundled guide aligned with this contract when changing plugin APIs.
 
+## Default code rendering
+
+The default stream renderer buffers fenced code until the fence closes or the
+text part ends, then highlights the whole block. This preserves multiline lexer
+context. Unlabelled and Markdown fences stay literal; unknown languages use
+plain text. Long code lines wrap to the terminal width. Prose still streams line
+by line. A plugin renderer that handles a text event replaces this default
+rendering for that event.
+
 ## Tool retries
 
 CLAI defaults to three retries per tool call. `/set run.tool_retries N` changes

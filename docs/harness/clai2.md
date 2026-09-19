@@ -195,13 +195,17 @@ magenta-to-white shimmer for the active status line and plain purple while idle;
 brand grey for tool previews and hints. On terminals without 24-bit
 colour the nearest of the 16 standard colours is used. Every colour lives in
 `theme.py`. This is local to CLAI; it does not change your terminal's colours
-or Termflow defaults elsewhere. Code block syntax highlighting retains Termflow's
-Monokai default.
+or Termflow defaults elsewhere. Code blocks use Rich's syntax renderer with the
+Monokai palette and Termflow's language aliases.
 
 Streaming matches Code Puppy's separate output and thinking paths:
 
 - Markdown uses Termflow `SmoothWriter`: 12 ms ticks, 0.5-second catch-up,
-  minimum one visible character per tick. Markdown is parsed line-by-line.
+  minimum one visible character per tick. Prose is parsed line-by-line. Fenced
+  code is buffered until the closing fence or text part end, then highlighted
+  as a whole block so multiline strings and comments keep their context.
+  Unlabelled and Markdown fences stay literal, including indentation and blank
+  lines. Unknown languages use plain text. Long code lines wrap to the terminal width.
 - Thinking deltas feed `StreamSmoother` immediately: 20 ms ticks, 0.4-second
   catch-up, minimum two characters per tick. They display as dim literal text,
   without waiting for newlines or interpreting Markdown.

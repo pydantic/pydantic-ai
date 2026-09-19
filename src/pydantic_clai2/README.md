@@ -28,6 +28,15 @@ Use `/set display.tool_output true` to show detailed output again, or
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
+## Code highlighting
+
+Fenced code uses the fence's language for syntax highlighting. CLAI renders a
+block when its closing fence arrives, or when the text part ends if the fence
+is unfinished. This keeps multiline strings and comments correctly colored.
+Prose outside fences still streams line by line. Unlabelled and Markdown fences
+stay literal, including indentation and blank lines; unknown languages use plain
+text. Long code lines wrap to the terminal width.
+
 ## Interrupting a turn
 
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.

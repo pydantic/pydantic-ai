@@ -17,9 +17,18 @@ from pydantic_ai import (
     ThinkingPartDelta,
 )
 from rich.console import Console, RenderableType
+from rich.syntax import Syntax
+from rich.text import Text
 from termflow import Parser, Renderer  # pyright: ignore[reportMissingTypeStubs]
+from termflow.parser.events import (  # pyright: ignore[reportMissingTypeStubs]
+    CodeBlockEndEvent,
+    CodeBlockLineEvent,
+    CodeBlockStartEvent,
+    ParseEvent,
+)
 from termflow.render.style import RenderFeatures, RenderStyle  # pyright: ignore[reportMissingTypeStubs]
 from termflow.stream import SmoothWriter, StreamSmoother  # pyright: ignore[reportMissingTypeStubs]
+from termflow.syntax import LANGUAGE_ALIASES  # pyright: ignore[reportMissingTypeStubs]
 
 from . import theme
 from .grep_output import GrepOutput
@@ -71,6 +80,8 @@ class StreamRenderer:
         self._parser: Parser | None = None
         self._renderer: Renderer | None = None
         self._buffer = ''
+        self._code_lines: list[str] = []
+        self._code_language = 'text'
         self._index: int | None = None
         self.rendered_text = False
 
@@ -175,14 +186,41 @@ class StreamRenderer:
 
     def _line(self, line: str) -> None:
         assert self._parser is not None and self._renderer is not None
-        self._renderer.render_all(self._parser.parse_line(line))
+        self._render_events(self._parser.parse_line(line))
+
+    def _render_events(self, events: list[ParseEvent]) -> None:
+        assert self._renderer is not None
+        for event in events:
+            if isinstance(event, CodeBlockStartEvent):
+                self._code_language = (event.language or 'text').split()[0]
+                self._code_lines = []
+            elif isinstance(event, CodeBlockLineEvent):
+                self._code_lines.append(event.line)
+            elif isinstance(event, CodeBlockEndEvent):
+                # Lex the whole fence so multiline strings and comments keep their state.
+                with self.console.capture() as capture:
+                    self.console.rule(Text(self._code_language), align='left', style=theme.MUTED)
+                    self.console.print(
+                        Syntax(
+                            '\n'.join(self._code_lines),
+                            LANGUAGE_ALIASES.get(self._code_language.lower(), self._code_language.lower()),
+                            theme='monokai',
+                            background_color='default',
+                            word_wrap=True,
+                        )
+                    )
+                    self.console.rule(style=theme.MUTED)
+                (self._writer or self.console.file).write(capture.get())
+                self._code_lines = []
+            else:
+                self._renderer.render(event)
 
     async def finish(self) -> None:
         """Drain rendered Markdown before the next part, tool, or prompt appears."""
         if self._buffer:
             self._line(self._buffer)
         if self._parser is not None and self._renderer is not None:
-            self._renderer.render_all(self._parser.finalize())
+            self._render_events(self._parser.finalize())
         writer, self._writer = self._writer, None
         thinking_writer, self._thinking_writer = self._thinking_writer, None
         visible = self._heading_printed
@@ -211,6 +249,8 @@ class StreamRenderer:
         await asyncio.sleep(0)
 
     def _reset(self) -> None:
+        self._code_lines = []
+        self._code_language = 'text'
         self._heading_printed = False
         self._buffer = ''
         self._parser = None
