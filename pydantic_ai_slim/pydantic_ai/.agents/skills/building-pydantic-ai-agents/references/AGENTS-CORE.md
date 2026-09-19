@@ -58,8 +58,36 @@ route is picked — a tool's arguments, a chosen union member's fields — have 
 
 Every extraction includes a no-match option. A required field with no value raises `NoTextCandidate`, a
 `ModelAPIError` a `FallbackModel` hands to the model behind Jev, rather than inventing text; `str | None` returns
-`None`. This is for selecting identifiers, addresses, amounts, and other values already present, not for summaries
-or replies. Use a language model when the answer has to be written.
+`None`, and a field with a default takes it. This is for selecting identifiers, addresses, amounts, and other
+values already present, not for summaries or replies. Use a language model when the answer has to be written.
+
+## Picking One of a Run-Time Set
+
+Use `Choices({key: description})` when the model has to pick one of a set that only exists once the run is under
+way — the records a search returned, the actions available on a screen. Each option carries its meaning into the
+schema, the output is validated against the keys, and it is a type, so the same value also works as a model field
+or a tool parameter. For a set you know when you write the code, use a `Literal` or an `Enum` (with
+`UseEnumMemberDocstrings` for per-member descriptions), which give exhaustiveness checking.
+
+```python
+from pydantic_ai import Agent, Choices
+
+agent = Agent('openai:gpt-5.2', name='triage_agent')
+
+result = agent.run_sync(
+    'The blender arrived smashed. Just send me another one.',
+    output_type=Choices(
+        {'refund': 'They want their money back.', 'replace': 'They want a working unit.'},
+        description='What the customer is asking for.',
+    ),
+)
+print(result.output)
+```
+
+`Choice(description, value=...)` makes an option stand for something other than its key. When that value is
+callable, picking it *calls* it — sync or async, with no arguments — so the run's output is what the action
+returned, the way an output function's is, and `ModelRetry` from it sends the model back for another pick. A set
+with a callable value is an `output_type` only; as a field or a parameter it raises `UserError`.
 
 ## Dependency Injection
 
