@@ -530,19 +530,23 @@ async def test_response_done_maps_xai_usage_extras() -> None:
     conn = XaiRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
     events = await collect_codec_events(conn)
 
+    expected = RequestUsage(
+        input_tokens=8,
+        output_tokens=5,
+        input_audio_tokens=6,
+        output_audio_tokens=4,
+        details={
+            'audio_tokens': 4,
+            'input_grok_tokens': 2,
+            'output_grok_tokens': 1,
+            'billable_audio_seconds': 3,
+        },
+    )
+    # The billable duration is reported twice on purpose: in `details` under the provider's own name,
+    # and as the `audio_seconds` meter that prices the call.
+    expected.audio_seconds = 3
     assert events[0] == SessionUsage(
-        usage=RequestUsage(
-            input_tokens=8,
-            output_tokens=5,
-            input_audio_tokens=6,
-            output_audio_tokens=4,
-            details={
-                'audio_tokens': 4,
-                'input_grok_tokens': 2,
-                'output_grok_tokens': 1,
-                'billable_audio_seconds': 3,
-            },
-        ),
+        usage=expected,
         provider_response_id='resp-xai',
         finish_reason='stop',
     )

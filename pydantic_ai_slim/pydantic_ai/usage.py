@@ -121,6 +121,15 @@ class UsageBase:
     output_audio_tokens: int = 0
     """Number of audio output tokens. Included in `output_tokens`."""
 
+    audio_seconds: float = 0
+    """Seconds of audio billed, for models priced by duration rather than by token.
+
+    Some realtime models (xAI's Grok Voice, for instance) have no token prices at all and bill per
+    audio hour, so their token counts price to zero. Reporting the duration here is what makes such a
+    call priceable, and is why this is a field rather than a `details` entry: `details` is deliberately
+    not priced, and is typed `dict[str, int]` while these durations are fractional.
+    """
+
     details: Annotated[
         dict[str, int],
         # `details` can not be `None` any longer, but we still want to support deserializing model responses stored in a DB before this was changed

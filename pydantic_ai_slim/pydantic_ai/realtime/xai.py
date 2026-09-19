@@ -293,6 +293,14 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         ):
             if isinstance(raw, int) and not isinstance(raw, bool) and raw:
                 mapped.details[key] = raw
+        # Also reported under the name pricing knows it by. Grok Voice has *no* token prices at all — it
+        # bills per audio hour — so without this the token counts price to a confident `Decimal('0')`
+        # rather than to nothing: `cost_limit` never trips and no unavailable-cost warning is emitted.
+        # `details` cannot carry it, being both unpriced by design and typed `dict[str, int]` while these
+        # durations are fractional.
+        billable_seconds = (usage.model_extra or {}).get('billable_audio_seconds')
+        if isinstance(billable_seconds, (int, float)) and not isinstance(billable_seconds, bool):
+            mapped.audio_seconds = billable_seconds
         return mapped
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:

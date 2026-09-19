@@ -5604,6 +5604,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': '0.000',
                 },
