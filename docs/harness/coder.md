@@ -1,7 +1,8 @@
 ---
 title: Coder
 description: Autonomous coding with six tools and context management.
-goal: Show that Coder is an assembly of linked, individually usable capabilities. The composition
+goal: >-
+  Show that Coder is an assembly of linked, individually usable capabilities. The composition
   list is the point of this page: keep every component hyperlinked to its own page, and keep this
   page in sync with pydantic_ai_harness/coder/README.md.
 ---
