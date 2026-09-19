@@ -1,6 +1,7 @@
 from importlib.metadata import version as _metadata_version
 
 from ._cancel import CancellationToken
+from ._json_schema import UseEnumMemberDocstrings
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -344,6 +345,7 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    'UseEnumMemberDocstrings',
     # toolsets
     'AbstractToolset',
     'AgentToolset',

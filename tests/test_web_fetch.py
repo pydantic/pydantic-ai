@@ -345,6 +345,21 @@ class TestWebFetchLocalTool:
         with pytest.raises(ModelRetry, match='Failed to fetch'):
             await tool('not-a-url')
 
+    async def test_idna_invalid_hostname_raises_model_retry(self):
+        """A hostname httpx2's IDNA parser rejects raises ModelRetry, not `httpx2.InvalidURL`.
+
+        The URL is rejected before any name resolution, so this never reaches the network.
+        """
+        # A fullwidth "e" (U+FF45), spelled as an escape so the hostname survives any normalization
+        # a tool might apply to this file, and so a reader can tell it apart from a plain "e".
+        url = 'https://\uff45xample.com/'
+
+        tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+        with pytest.raises(ModelRetry, match='Failed to fetch') as exc_info:
+            await tool(url)
+
+        assert isinstance(exc_info.value.__cause__, httpx2.InvalidURL)
+
     async def test_allowed_domains_permits(self):
         """Allowed domain passes validation and is forwarded to safe_download."""
         mock_response = _html_response('<html><body>ok</body></html>')

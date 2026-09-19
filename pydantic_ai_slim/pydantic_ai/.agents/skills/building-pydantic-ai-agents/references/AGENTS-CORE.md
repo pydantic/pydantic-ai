@@ -53,8 +53,8 @@ choosing a whole candidate extracted deterministically from the state. Use the s
 format, or construct `TypeSafeModel` with a `text_extractors={field_name: callable}` mapping. A schema `pattern` is
 not read as an extractor and raises: running a regex the library did not write against text it did not write can
 backtrack for exponential time, so an extractor has to be code you passed. The callable receives Jev's string or
-JSON-compatible conversation state and returns an iterable of strings. Use dotted keys for nested fields; a tool
-argument has no extractors behind it.
+JSON-compatible conversation state and returns an iterable of strings. Use dotted keys for nested fields; fields filled after a
+route is picked — a tool's arguments, a chosen union member's fields — have no extractors behind them.
 
 Every extraction includes a no-match option. A required field with no value raises `NoTextCandidate`, a
 `ModelAPIError` a `FallbackModel` hands to the model behind Jev, rather than inventing text; `str | None` returns
