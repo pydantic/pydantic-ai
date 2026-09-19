@@ -859,6 +859,22 @@ def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     return prop, key
 
 
+def _list_options(name: str, prop: dict[str, Any]) -> dict[Any, str | None]:
+    """The options a `list` field fans out over, or a `UserError` saying why it is not a list of them."""
+    labels = _options(prop['items']) if 'items' in prop else None
+    if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: a list must be of two or more string '
+            f'options. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    if 'maxItems' in prop or 'minItems' in prop:
+        # Every option is asked about and every yes is kept, so how many come back is Jev's answer rather than
+        # something that can be held to a limit -- the same reason a mapping carrying one is refused. Checked
+        # after the shape, so a `tuple`, which carries both intrinsically, is still told it is not a list.
+        raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
+    return labels
+
+
 def _fan_out(name: str, ask: dict[str, JSONContent], labels: dict[Any, str | None]) -> dict[str, Noul]:
     """One yes/no per option, asked with the field's question and that option's description.
 
@@ -968,13 +984,7 @@ def _questions(
         if prop.get('type') == 'array':
             # Several options at once is one yes/no per option, all in the same request, which TypeSafe call
             # fanning out: does this option apply, asked with the field's question and the option's description.
-            labels = _options(prop['items']) if 'items' in prop else None
-            if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
-                raise UserError(
-                    f'Output field {name!r} is not supported by this model: a list must be of two or more string '
-                    f'options. {_UNSUPPORTED_FIELD_HINT}'
-                )
-            questions.update(_fan_out(name, ask, labels))
+            questions.update(_fan_out(name, ask, _list_options(name, prop)))
         elif options is not None:
             # `bool` is an `int` in Python but never a rubric level, and it is handled as a yes/no below.
             if options and all(isinstance(option, int) and not isinstance(option, bool) for option in options):

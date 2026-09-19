@@ -205,6 +205,11 @@ REFUSED = [
     # levels instead, and every key of a mapping is answered, so a limit on how many there may be cannot hold.
     Refused('field: stepped number', Stepped, unsupported('risk')),
     Refused('field: mapping with a size limit', Capped, unsupported('applies')),
+    Refused(
+        'field: list with a size limit',
+        probe('areas', list[Area], max_length=1, description='Which apply?'),
+        unsupported('areas'),
+    ),
     # `dict[str, Any]` says its values are unconstrained by writing `additionalProperties: true` rather than a
     # schema, which is not a thing to call `.get` on.
     Refused('field: mapping of anything', probe('blob', dict[str, Any], description='Anything?'), unsupported('blob')),
