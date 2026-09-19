@@ -30,6 +30,11 @@ title: Pydantic Evals
 - [LLM as a Judge](evals/evaluators/llm-judge.md) - Use LLMs to evaluate subjective qualities, complex criteria, and natural language outputs
 - [Custom Evaluators](evals/evaluators/custom.md) - Implement domain-specific scoring logic and custom evaluation metrics
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Evaluate internal agent behavior (tool calls, execution flow) using OpenTelemetry traces. Essential for complex agents where correctness depends on _how_ the answer was reached, not just the final output. Also ensures eval assertions align with production telemetry.
+- [Agentic Evaluators](evals/evaluators/agentic.md) - Grade an agent's *trajectory*, the sequence and arguments of its tool calls, not just the final output
+
+**Online Evaluation:**
+
+- [Online Evaluation](evals/online-evaluation.md) - Attach evaluators to production or staging traffic so every call, or a sampled subset, is graded in the background
 
 **How-To Guides:**
 
@@ -204,6 +209,7 @@ Learn more:
 - [LLM Judge](evals/evaluators/llm-judge.md) - Using LLMs as evaluators
 - [Custom Evaluators](evals/evaluators/custom.md) - Write your own logic
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Analyze execution traces
+- [Agentic Evaluators](evals/evaluators/agentic.md) - Grade an agent's trajectory
 
 ## Running Experiments
 
