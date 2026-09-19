@@ -434,9 +434,10 @@ routing costs one Jev request and no extra plumbing.
 The argument's `Literal` becomes the pick-one question and its `Args:` entry becomes the wording. Jev sees that
 wording as the question and the function's summary line as what the run is for — but *not* a meaning per option:
 a `Literal` has nowhere to write one, so the options go out as bare names. Where the difference between two
-options needs explaining, use an `Enum` and put a docstring under each member; those become Jev's per-option
-criteria. The pick's confidence is in `provider_details['confidence']`, so an unsure route can go to the capable
-model rather than the cheap one, which is the conservative direction when a wrong route is expensive.
+options needs explaining, use an `Enum` that mixes in `UseEnumMemberDocstrings` and put a docstring under each
+member; those become Jev's per-option criteria. The pick's confidence is in `provider_details['confidence']`, so
+an unsure route can go to the capable model rather than the cheap one, which is the conservative direction when
+a wrong route is expensive.
 
 ### Decide again on every step
 
