@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
@@ -282,16 +283,19 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         # even though `_function_schema` sets it. A base class is also the only marker an `Enum` can carry — a
         # plain class attribute, annotated or not, becomes a member — so the opt-in is read off the class itself.
         json_schema = super().enum_schema(schema)
-        if not issubclass(schema['cls'], UseEnumMemberDocstrings):
+        # `schema['cls']` is `Any`, and narrowing an `Any` by `issubclass` loses the enum along with it, so the
+        # declared type is spelled out here to keep both sides of the intersection.
+        enum_cls: type[Enum] = schema['cls']
+        if not issubclass(enum_cls, UseEnumMemberDocstrings):
             return json_schema
         # A docstring is read under the name it was declared under, but an alias (`urgent = 'high'` beside
         # `high = 'high'`) is the same member, so the schema only ever names the canonical one. Resolve the
         # declared names through `__members__` so an alias's docstring describes the option it was written
         # for; `setdefault` keeps the canonical name's own docstring when both have one, since `__members__`
         # lists a member before its aliases.
-        declared = _utils.enum_member_docstrings(schema['cls'])
+        declared = _utils.enum_member_docstrings(enum_cls)
         docstrings: dict[str, str] = {}
-        for name, member in schema['cls'].__members__.items():
+        for name, member in enum_cls.__members__.items():
             if (docstring := declared.get(name)) is not None:
                 docstrings.setdefault(member.name, docstring)
         # A `None` member has no `const` a schema can carry: `{'const': None}` reads as "no const" to anything
