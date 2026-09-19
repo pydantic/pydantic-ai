@@ -18,6 +18,7 @@ from pydantic_ai import (
     CostCalculationFailedWarning,
     CostNotFoundWarning,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -26,10 +27,13 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
+    UsageLimitUnavailableWarning,
     UserPromptPart,
+    usage as usage_module,
 )
 from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.models import function as function_model_module
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -1320,6 +1324,158 @@ def test_best_effort_price_unexpected_error_warns(monkeypatch: pytest.MonkeyPatc
     with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost: RuntimeError: kaboom'):
         price = best_effort_price(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
     assert price is None
+
+
+def test_request_usage_extract_tracks_failed_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Provider:
+        def __init__(self, outcome: GenaiPricesUsage | Exception):
+            self.outcome = outcome
+
+        def extract_usage(self, data: object, *, api_flavor: str = 'default') -> tuple[str, GenaiPricesUsage]:
+            if isinstance(self.outcome, Exception):
+                raise self.outcome
+            return 'test-model', self.outcome
+
+    class Snapshot:
+        def __init__(self, outcomes: list[GenaiPricesUsage | Exception]):
+            self.outcomes = iter(outcomes)
+
+        def find_provider(self, model_ref: object, provider_id: object, provider_api_url: object) -> Provider:
+            outcome = next(self.outcomes)
+            if isinstance(outcome, LookupError):
+                raise outcome
+            return Provider(outcome)
+
+    recovered_snapshot = Snapshot([RuntimeError('bad URL extractor'), LookupError(), GenaiPricesUsage(input_tokens=3)])
+    monkeypatch.setattr(usage_module, 'get_snapshot', lambda: recovered_snapshot)
+    recovered = RequestUsage.extract(
+        {}, provider='gateway', provider_url='https://gateway.example', provider_fallback='google'
+    )
+    assert recovered == RequestUsage(input_tokens=3)
+    assert not recovered._usage_extraction_failed  # pyright: ignore[reportPrivateUsage]
+
+    failed_snapshot = Snapshot([RuntimeError('broken extractor')] * 3)
+    monkeypatch.setattr(usage_module, 'get_snapshot', lambda: failed_snapshot)
+    failed = RequestUsage.extract(
+        {}, provider='google', provider_url='https://google.example', provider_fallback='google'
+    )
+    assert failed == RequestUsage()
+    assert failed._usage_extraction_failed  # pyright: ignore[reportPrivateUsage]
+    serialized = ModelMessagesTypeAdapter.dump_json([ModelResponse(parts=[TextPart('done')], usage=failed)])
+    assert b'_usage_extraction_failed' not in serialized
+    [round_tripped] = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert isinstance(round_tripped, ModelResponse)
+    assert not round_tripped.usage._usage_extraction_failed  # pyright: ignore[reportPrivateUsage]
+
+    unknown_snapshot = Snapshot([LookupError()] * 3)
+    monkeypatch.setattr(usage_module, 'get_snapshot', lambda: unknown_snapshot)
+    unknown = RequestUsage.extract({}, provider='unknown', provider_url='https://unknown.example', provider_fallback='')
+    assert unknown == RequestUsage()
+    assert unknown._usage_extraction_failed  # pyright: ignore[reportPrivateUsage]
+
+    class BrokenLookupSnapshot:
+        def find_provider(self, model_ref: object, provider_id: object, provider_api_url: object) -> None:
+            raise RuntimeError('broken provider lookup')
+
+    monkeypatch.setattr(usage_module, 'get_snapshot', BrokenLookupSnapshot)
+    lookup_failed = RequestUsage.extract({}, provider='google', provider_url='', provider_fallback='google')
+    assert lookup_failed._usage_extraction_failed  # pyright: ignore[reportPrivateUsage]
+
+
+def mock_failed_usage_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Provider:
+        def extract_usage(self, data: object, *, api_flavor: str = 'default') -> object:
+            raise RuntimeError('broken extractor')
+
+    class Snapshot:
+        def find_provider(self, model_ref: object, provider_id: object, provider_api_url: object) -> Provider:
+            return Provider()
+
+    monkeypatch.setattr(usage_module, 'get_snapshot', Snapshot)
+
+
+@pytest.mark.parametrize(
+    'usage_limits',
+    [UsageLimits(total_tokens_limit=1_000), UsageLimits(cost_limit=Decimal('1'))],
+    ids=['token-limit', 'cost-limit'],
+)
+async def test_usage_extraction_failure_warns_once_when_limit_depends_on_usage(
+    monkeypatch: pytest.MonkeyPatch, usage_limits: UsageLimits
+) -> None:
+    mock_failed_usage_extraction(monkeypatch)
+    calls = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        request_usage = RequestUsage.extract({}, provider='google', provider_url='', provider_fallback='google')
+        # FunctionModel replaces completely empty usage with an estimate. Keep the failure marker while
+        # making this response non-empty so the public Agent path receives it unchanged.
+        request_usage.input_tokens = 1
+        parts = [ToolCallPart(tool_name='noop', args={}, tool_call_id='call-1')] if calls == 1 else [TextPart('done')]
+        return ModelResponse(
+            parts=parts,
+            usage=request_usage,
+            model_name='gemini-2.5-flash',
+            provider_name='google',
+        )
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def noop() -> None:
+        pass
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        result = await agent.run('go', usage_limits=usage_limits)
+
+    assert result.output == 'done'
+    assert len([w for w in caught if issubclass(w.category, UsageLimitUnavailableWarning)]) == 1
+
+
+async def test_streaming_usage_extraction_failure_warns_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ExtractingStreamedResponse(function_model_module.FunctionStreamedResponse):
+        async def _get_event_iterator(self):
+            async for event in super()._get_event_iterator():
+                chunk_usage = RequestUsage.extract({}, provider='google', provider_url='', provider_fallback='google')
+                self._usage.incr(chunk_usage)
+                yield event
+
+    mock_failed_usage_extraction(monkeypatch)
+    monkeypatch.setattr(function_model_module, 'FunctionStreamedResponse', ExtractingStreamedResponse)
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'one'
+        yield 'two'
+        yield 'three'
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        async with Agent(FunctionModel(stream_function=stream_function)).run_stream(
+            'go', usage_limits=UsageLimits(total_tokens_limit=1_000)
+        ) as result:
+            await result.get_output()
+
+    assert len([w for w in caught if issubclass(w.category, UsageLimitUnavailableWarning)]) == 1
+
+
+async def test_usage_extraction_failure_without_response_usage_limit_does_not_warn(
+    monkeypatch: pytest.MonkeyPatch, recwarn: pytest.WarningsRecorder
+) -> None:
+    mock_failed_usage_extraction(monkeypatch)
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('done')],
+            usage=RequestUsage.extract({}, provider='google', provider_url='', provider_fallback='google'),
+        )
+
+    await Agent(FunctionModel(model_function)).run('go', usage_limits=UsageLimits(request_limit=1))
+
+    assert not [w for w in recwarn.list if issubclass(w.category, UsageLimitUnavailableWarning)]
 
 
 def test_check_cost_disabled_by_default():

@@ -31,6 +31,8 @@ _LEGACY_USAGE_KEYS = frozenset({'requests', 'request_tokens', 'response_tokens',
 
 _LEGACY_TOKEN_ALIASES = (('input_tokens', 'request_tokens'), ('output_tokens', 'response_tokens'))
 
+_USAGE_EXTRACTION_FAILED_ATTR = '_usage_extraction_failed'
+
 
 @cache
 def _usage_serializer(usage_type: type[object]) -> SchemaSerializer:
@@ -53,6 +55,7 @@ def _serialize_usage(
     serialized = inner(value)
     assert isinstance(serialized, dict)
     result = cast(dict[str, Any], serialized).copy()
+    result.pop(_USAGE_EXTRACTION_FAILED_ATTR, None)
     extra = {
         key: item
         for key, item in value.__dict__.items()
@@ -85,6 +88,10 @@ class UsageBase:
     # Bare `pydantic_core.to_json()` looks for this attribute but does not build custom core schemas for stdlib
     # dataclasses. The descriptor builds the same serializer as `TypeAdapter` for each concrete usage class.
     __pydantic_serializer__ = _UsageSerializerDescriptor()
+
+    # Internal signal used to warn at most once after a completed response, rather than once per streamed chunk.
+    # It is deliberately excluded from usage serialization and equality below.
+    _usage_extraction_failed: bool = dataclasses.field(default=False, init=False, repr=False, compare=False)
 
     input_tokens: Annotated[
         int,
@@ -255,19 +262,25 @@ class UsageBase:
         return result
 
     def __repr__(self):
-        kv_pairs = (f'{name}={value!r}' for name, value in sorted(self.__dict__.items()) if value)
+        kv_pairs = (
+            f'{name}={value!r}'
+            for name, value in sorted(self.__dict__.items())
+            if value and name != _USAGE_EXTRACTION_FAILED_ATTR
+        )
         return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
     def __eq__(self, value: object, /) -> bool:
         if type(self) is type(value):
             missing = object()
-            keys = self.__dict__.keys() | value.__dict__.keys()
+            keys = (self.__dict__.keys() | value.__dict__.keys()) - {_USAGE_EXTRACTION_FAILED_ATTR}
             return all(getattr(self, key, missing) == getattr(value, key, missing) for key in keys)
         return NotImplemented
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
-        return any(self.details.values()) or any(v for k, v in self.__dict__.items() if k != 'details')
+        return any(self.details.values()) or any(
+            v for k, v in self.__dict__.items() if k not in {'details', _USAGE_EXTRACTION_FAILED_ATTR}
+        )
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -290,6 +303,7 @@ class RequestUsage(UsageBase):
         """
         _incr_usage_tokens(self, incr_usage)
         _incr_usage_cost(self, incr_usage)
+        self._usage_extraction_failed |= incr_usage._usage_extraction_failed
 
     def __add__(self, other: RequestUsage) -> RequestUsage:
         """Add two RequestUsages together.
@@ -335,7 +349,9 @@ class RequestUsage(UsageBase):
                 return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
             except Exception:
                 pass
-        return cls(details=details)
+        result = cls(details=details)
+        result._usage_extraction_failed = True
+        return result
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -430,7 +446,8 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details', 'cost'}:
+    excluded_fields = {'requests', 'tool_calls', 'details', 'cost', _USAGE_EXTRACTION_FAILED_ATTR}
+    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - excluded_fields:
         slf_value = getattr(slf, k, 0)
         incr_value = getattr(incr_usage, k, 0)
         if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):
