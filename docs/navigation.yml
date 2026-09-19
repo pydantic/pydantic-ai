@@ -131,6 +131,7 @@ navigation:
           - "api/models/outlines"
           - "models/outlines"
           - "models/base"
+          - "models/providers"
       - page: "Pydantic AI Gateway"
         path: "gateway.md"
         slug: "overview/gateway"
@@ -634,6 +635,7 @@ navigation:
         aliases:
           - "logfire"
           - "observability"
+          - "guides/observability"
       - page: "Image Generation"
         path: "image-generation.md"
         slug: "guides/image-generation"
@@ -758,6 +760,7 @@ navigation:
           - "api/pydantic_graph/mermaid"
           - "api/pydantic_graph/state"
           - "guides/graph"
+          - "graph/overview"
       - section: "Graph Builder"
         slug: ""
         contents:

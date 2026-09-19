@@ -2,8 +2,11 @@
 
 Evaluate AI system behavior by analyzing OpenTelemetry spans captured during execution.
 
-!!! note "Requires Logfire"
-    Span-based evaluation requires `logfire` to be installed and configured:
+!!! note "Requires the logfire SDK"
+    These evaluators read the OpenTelemetry span tree captured during the run, so the
+    [`logfire`](../how-to/logfire-integration.md) SDK must be installed and configured. No Pydantic Logfire
+    account is needed: the SDK captures spans locally.
+
     ```bash
     pip install 'pydantic-evals[logfire]'
     ```

@@ -14,7 +14,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Extensibility | Middleware, tools | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | [Eve](https://eve.dev), a separate package; adapters drive external harnesses | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
-| Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
+| Durable execution | Yes | [Seven integrations](../durable_execution/overview.md) |
 | Interfaces | React chat UI, stream protocol | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
 | Realtime voice | Yes (experimental) | [Realtime](../realtime/overview.md) |
 | Evals | No | [Pydantic Evals](../evals.md) |
@@ -32,3 +32,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Yes (experimental) | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser use | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
+
+## Using them together
+
+These are not exclusive. Keep your Vercel AI SDK frontend and run a Pydantic AI backend behind it: [`VercelAIAdapter`](../ui/vercel-ai.md) speaks the Vercel AI Data Stream Protocol, so `useChat` and AI Elements render a Python agent's runs without frontend changes. [AG-UI](../ui/ag-ui.md) is the same deal for any AG-UI frontend.
