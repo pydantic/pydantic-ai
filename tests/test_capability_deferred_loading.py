@@ -1249,6 +1249,241 @@ async def test_processed_history_determines_request_reveal_state() -> None:
     assert seen == [set()]
 
 
+def _inject_load(capability_id: str) -> Callable[[list[ModelMessage]], list[ModelMessage]]:
+    """Build a processor that injects a complete `load_capability` exchange for `capability_id`."""
+
+    def processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if any(True for _ in iter_message_parts(messages, ModelResponse, LoadCapabilityCallPart)):
+            return messages
+        return [
+            messages[0],
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': capability_id}, tool_call_id='injected')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='injected')]),
+            *messages[1:],
+        ]
+
+    return processor
+
+
+def _secret_op_returns(messages: list[ModelMessage]) -> list[object]:
+    return [
+        part.content
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        if part.tool_name == 'secret_op'
+    ]
+
+
+def _call_secret_op_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    """Call `secret_op` on the first request, then finish however that call was answered."""
+    answered = any(
+        part.tool_name == 'secret_op' for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+    ) or any(True for _ in iter_message_parts(messages, ModelRequest, RetryPromptPart))
+    if answered:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('secret_op', {}, tool_call_id='call-1')])
+
+
+@pytest.mark.parametrize('inject_load', [False, True])
+async def test_processor_injected_load_lets_capability_prepare_tools_govern_its_tools(inject_load: bool) -> None:
+    """A capability made active by history processing still has `prepare_tools` over its own tools.
+
+    Availability is an input to tool *resolution*, not just to the execution gate: the tool set
+    resolved at the start of the step was built while the capability was inactive, so its
+    `prepare_tools` never ran and its tools sat in that set ungoverned. Caching the resolved set on
+    `run_step` alone would then hand that set to a dispatch that reads the (now changed)
+    availability live, and a `prepare_tools` used as a permission filter would be silently bypassed.
+
+    Both directions are pinned: with no injection the tool is refused as not-yet-available (the
+    filter is never reached, and must not need to be), and with the injection it is refused because
+    the filter removed it — never executed either way.
+    """
+    prepare_tools_calls: list[list[str]] = []
+    loaded_ids_seen: list[list[str]] = []
+
+    class FilteringSecrets(Capability[object]):
+        """Uses `prepare_tools` as a permission filter over its own tool."""
+
+        async def prepare_tools(self, ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            prepare_tools_calls.append(sorted(tool_def.name for tool_def in tool_defs))
+            loaded_ids_seen.append(sorted(ctx.loaded_capability_ids))
+            return [tool_def for tool_def in tool_defs if tool_def.name != 'secret_op']
+
+    secrets_toolset = FunctionToolset[object]()
+
+    @secrets_toolset.tool_plain
+    def secret_op() -> str:  # pragma: no cover
+        return 'EXECUTED'
+
+    capabilities: list[AbstractCapability[object]] = [
+        FilteringSecrets(id='secrets', description='Secret tools.', toolsets=[secrets_toolset], defer_loading=True)
+    ]
+    if inject_load:
+        capabilities.append(ProcessHistory[object](processor=_inject_load('secrets')))
+
+    agent = Agent(FunctionModel(_call_secret_op_once), capabilities=capabilities)
+    result = await agent.run('call secret_op')
+
+    assert _secret_op_returns(result.all_messages()) == []
+    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    if inject_load:
+        # The capability is active, so its own filter decides — and it removed the tool.
+        assert prepare_tools_calls[0] == snapshot(['secret_op'])
+        # The run's own prospective state agrees with the history it is sending, so the documented
+        # "has the runbook been loaded?" check (`id in ctx.loaded_capability_ids`) answers yes on
+        # this step, rather than the capability being active only through dispatch-time evidence.
+        assert loaded_ids_seen[0] == snapshot(['secrets'])
+        assert refusals == snapshot(["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"])
+    else:
+        # The capability never loaded, so the availability gate refuses before any filter is reached.
+        assert prepare_tools_calls == snapshot([])
+        assert refusals == snapshot(
+            [
+                "Tool 'secret_op' is not available yet: it belongs to capability 'secrets'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions."
+            ]
+        )
+
+
+async def test_processor_injected_load_makes_capability_tool_callable() -> None:
+    """Without a filter, a processor-injected load makes the capability's tool callable that same step.
+
+    The mirror of the test above, and the reason availability is refreshed after processing at all:
+    the reveal state the request ships is derived from the processed history, so the execution gate
+    has to read the same history or the model is offered a tool that comes back refused.
+    """
+    secrets_toolset = FunctionToolset[object]()
+
+    @secrets_toolset.tool_plain
+    def secret_op() -> str:
+        return 'EXECUTED'
+
+    agent = Agent(
+        FunctionModel(_call_secret_op_once),
+        capabilities=[
+            Capability[object](
+                id='secrets', description='Secret tools.', toolsets=[secrets_toolset], defer_loading=True
+            ),
+            ProcessHistory[object](processor=_inject_load('secrets')),
+        ],
+    )
+    result = await agent.run('call secret_op')
+
+    assert _secret_op_returns(result.all_messages()) == snapshot(['EXECUTED'])
+    assert [
+        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+    ] == snapshot([])
+
+
+async def test_processor_removed_load_leaves_advertisement_and_gate_in_agreement() -> None:
+    """Refreshing availability from processed history must not advertise a tool the gate will refuse.
+
+    The mirror of the injection tests, and the direction where making the request and the gate agree
+    could have gone wrong: the refresh takes the capability *out* of the loaded set for a step whose
+    tool set was resolved while it was in. `_with_outgoing_reveal_state` derives the request's reveal
+    state from the same processed messages, so the tool is withheld from the wire rather than shipped
+    and then refused — the model is never offered something `ToolManager` would reject.
+    """
+    secrets_toolset = FunctionToolset[object]()
+
+    @secrets_toolset.tool_plain
+    def secret_op() -> str:  # pragma: no cover
+        return 'EXECUTED'
+
+    advertised: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        advertised.append(sorted(tool.name for tool in info.function_tools))
+        return _call_secret_op_once(messages, info)
+
+    def drop_load_exchange(messages: list[ModelMessage]) -> list[ModelMessage]:
+        kept: list[ModelMessage] = []
+        for message in messages:
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, (LoadCapabilityCallPart, LoadCapabilityReturnPart))
+            ]
+            if parts:
+                kept.append(replace(message, parts=parts))
+        return kept
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            Capability[object](
+                id='secrets', description='Secret tools.', toolsets=[secrets_toolset], defer_loading=True
+            ),
+            ProcessHistory[object](processor=drop_load_exchange),
+        ],
+    )
+    result = await agent.run(
+        'call secret_op',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='load it')]),
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'secrets'}, tool_call_id='l1')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='l1')]),
+        ],
+    )
+
+    # Withheld from the wire, so the model was never offered it...
+    assert advertised[0] == snapshot(['load_capability'])
+    # ...and the call the stub makes anyway is refused, rather than running ungoverned.
+    assert _secret_op_returns(result.all_messages()) == []
+    assert [
+        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+    ] == snapshot(
+        [
+            "Tool 'secret_op' is not available yet: it belongs to capability 'secrets'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions."
+        ]
+    )
+
+
+async def test_processor_injected_load_is_governed_when_resuming_a_suspended_response() -> None:
+    """The same governance holds on the request that resumes a provider-suspended turn.
+
+    That path prepares its request separately from the normal one — the history already ends in the
+    suspended response, so there is no new `ModelRequest` to append — but it runs the same history
+    processing and dispatches the continuation's tool calls against the result, so it needs the same
+    post-processing availability refresh.
+    """
+    prepare_tools_calls: list[list[str]] = []
+    loaded_ids_seen: list[list[str]] = []
+
+    class FilteringSecrets(Capability[object]):
+        """Uses `prepare_tools` as a permission filter over its own tool."""
+
+        async def prepare_tools(self, ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            prepare_tools_calls.append(sorted(tool_def.name for tool_def in tool_defs))
+            loaded_ids_seen.append(sorted(ctx.loaded_capability_ids))
+            return [tool_def for tool_def in tool_defs if tool_def.name != 'secret_op']
+
+    secrets_toolset = FunctionToolset[object]()
+
+    @secrets_toolset.tool_plain
+    def secret_op() -> str:  # pragma: no cover
+        return 'EXECUTED'
+
+    agent = Agent(
+        FunctionModel(_call_secret_op_once),
+        capabilities=[
+            FilteringSecrets(id='secrets', description='Secret tools.', toolsets=[secrets_toolset], defer_loading=True),
+            ProcessHistory[object](processor=_inject_load('secrets')),
+        ],
+    )
+    result = await agent.run(
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='call secret_op')]),
+            ModelResponse(parts=[TextPart('paused')], state='suspended'),
+        ]
+    )
+
+    assert _secret_op_returns(result.all_messages()) == []
+    assert prepare_tools_calls[0] == snapshot(['secret_op'])
+    assert loaded_ids_seen[0] == snapshot(['secrets'])
+    assert [
+        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+    ] == snapshot(["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"])
+
+
 async def test_orphaned_reveal_evidence_stripped_by_cleanup_does_not_count_as_revealed() -> None:
     """Evidence orphaned by a history processor is stripped before reveal derivation.
 

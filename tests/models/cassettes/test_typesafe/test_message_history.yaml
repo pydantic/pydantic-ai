@@ -1,0 +1,97 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '185'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        response:
+          instructions:
+            instructions: Does the latest message mention a fruit?
+          type: noul
+      state:
+        prompt: I like apples.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '133'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        response:
+          noul: 0.99
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 290
+        output_tokens: 20
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '375'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        response:
+          instructions:
+            instructions: Does the latest message mention a fruit?
+          type: noul
+      state:
+        history:
+        - user: I like apples.
+        - tool_call:
+            args:
+              response: true
+            name: final_result
+        - tool_return:
+            content: Final result processed.
+            name: final_result
+        prompt: And bicycles.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '133'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        response:
+          noul: 0.05
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 367
+        output_tokens: 20
+    status:
+      code: 200
+      message: OK
+version: 1

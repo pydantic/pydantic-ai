@@ -121,7 +121,10 @@ class WebFetchLocalTool:
                 blocked_domains=self.blocked_domains,
                 max_bytes=self.max_download_bytes,
             )
-        except (ValueError, httpx2.HTTPStatusError, httpx2.RequestError) as e:
+        # The model picks the URL, so every way one can be bad has to come back as something it can
+        # act on. `InvalidURL` (an IDNA hostname httpx2 rejects, say) subclasses neither `ValueError`
+        # nor `HTTPError`, so it needs naming separately.
+        except (ValueError, httpx2.InvalidURL, httpx2.HTTPStatusError, httpx2.RequestError) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e
 
         media_type = response.headers.get('content-type', '')
@@ -130,11 +133,13 @@ class WebFetchLocalTool:
         title = ''
 
         if not media_type or is_text_like_media_type(media_type):
+            # The server picks the charset, and decoding costs time proportional to the body, or
+            # worse for some codecs, so run it in a worker thread rather than on the event loop.
             try:
-                text = response.text
-            except UnicodeError as e:
-                # The server picks the charset, and not every registered codec can decode a
-                # document (`idna`, say), so don't let a bad label take the run down.
+                text = await run_in_executor(_decode_text, response)
+            except (UnicodeError, LookupError) as e:
+                # Not every registered codec can decode a document (`idna`, say), and some aren't
+                # text encodings at all (`rot_13`), so don't let a bad label take the run down.
                 raise ModelRetry(f'Failed to decode {url}: {e}') from e
 
             if media_type in ('text/markdown', 'text/x-markdown'):
@@ -152,7 +157,9 @@ class WebFetchLocalTool:
                 try:
                     parsed = json.loads(text)
                     content = f'```json\n{json.dumps(parsed, indent=2)}\n```'
-                except (json.JSONDecodeError, ValueError):
+                except (json.JSONDecodeError, ValueError, RecursionError):
+                    # A document nested deeper than the interpreter's recursion limit is returned
+                    # as-is, like any other body that doesn't parse.
                     content = text
             else:
                 content = text
@@ -165,6 +172,16 @@ class WebFetchLocalTool:
             content = content[: self.max_content_length] + '\n\n[Content truncated]'
 
         return WebFetchResult(url=url, title=title, content=content)
+
+
+def _decode_text(response: httpx2.Response) -> str:
+    """Decode the body with the charset the server declared, or UTF-8 if it declared none.
+
+    This goes through `bytes.decode` rather than `response.text` so that a label naming a
+    registered codec that isn't a text encoding (`rot_13`, `base64_codec`) raises `LookupError`
+    instead of failing inside the codec with whatever it happens to raise.
+    """
+    return response.content.decode(response.encoding or 'utf-8', errors='replace')
 
 
 def _convert_html(html: str) -> tuple[str, str]:
