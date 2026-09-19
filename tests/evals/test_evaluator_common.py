@@ -7,7 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, RootModel, computed_field, model_serializer
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
@@ -845,3 +845,45 @@ async def test_structured_judge_ignores_a_computed_field():
 
     assert to_jsonable_python(result) == snapshot({'is_polite': True})
     assert calls[0].schema['properties'].keys() == {'is_polite'}
+
+
+async def test_structured_judge_reads_the_fields_it_asked_about_not_the_serialization():
+    """A custom serializer renames what a dump would hold, but the questions are still the fields."""
+
+    class Renamed(BaseModel):
+        """Judge a reply."""
+
+        is_polite: bool = Field(description='Is the reply polite?')
+
+        @model_serializer
+        def serialize(self) -> dict[str, Any]:
+            return {'politeness': self.is_polite}
+
+    calls: list[JudgeCall] = []
+    evaluator = StructuredJudge(Renamed, model=structured_judge_model({'is_polite': True}, calls))
+
+    assert to_jsonable_python(await evaluator.evaluate(MockContext(output='Certainly.'))) == snapshot(
+        {'is_polite': True}
+    )
+
+
+@pytest.mark.parametrize(
+    'answer,expected',
+    [
+        pytest.param({'is_polite': 'false'}, "Judge returned an invalid verdict for 'is_polite': 'false'", id='label'),
+        pytest.param({}, "Judge returned an invalid verdict for 'is_polite': None", id='unanswered'),
+    ],
+)
+async def test_structured_judge_refuses_a_rubric_answer_that_is_not_a_verdict(answer: dict[str, Any], expected: str):
+    """A rubric asks a yes-or-no question, so anything else is refused rather than recorded as a label."""
+    calls: list[JudgeCall] = []
+    evaluator = StructuredJudge({'is_polite': 'The reply is polite.'}, model=structured_judge_model(answer, calls))
+
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        await evaluator.evaluate(MockContext(output='Certainly.'))
+
+
+def test_structured_judge_refuses_a_root_model():
+    """A root model has one unnamed value, so it cannot name the measures it would produce."""
+    with pytest.raises(ValueError, match='`questions` must be a model with named fields, not a `RootModel`'):
+        StructuredJudge(RootModel[bool])

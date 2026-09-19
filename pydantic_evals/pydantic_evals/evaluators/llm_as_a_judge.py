@@ -515,8 +515,17 @@ async def judge_questions(
                 output_type=_rubrics_output_type(questions),
             )
         ).output
-        return {name: answers[name] for name in questions}
-    answers = (
+        verdicts: dict[str, Any] = {}
+        for name in questions:
+            # A rubric is a yes-or-no question, and not every model is held to the schema it was given.
+            # A `'false'` that got through would be recorded as a label rather than as the assertion the
+            # rubric asked for, so it is refused here instead.
+            verdict = answers.get(name)
+            if not isinstance(verdict, bool):
+                raise ValueError(f'Judge returned an invalid verdict for {name!r}: {verdict!r}')
+            verdicts[name] = verdict
+        return verdicts
+    answer = (
         await _judge_questions_agent.run(
             user_prompt,
             model=resolved_model,
@@ -524,10 +533,12 @@ async def judge_questions(
             instructions=instructions,
             output_type=questions,
         )
-    ).output.model_dump()
-    # `model_dump` also yields computed fields, which were never asked: only the fields the judge was
-    # given a question for are answers.
-    return {name: answers[name] for name in questions.model_fields}
+    ).output
+    # Read the validated instance field by field rather than dumping it: the dump is the model's
+    # serialization, which a computed field, an alias or a custom `@model_serializer` can add to,
+    # rename or replace, and none of that is what the judge was asked. The field names are the
+    # user's, so they are not statically known here.
+    return {name: getattr(answer, name) for name in questions.model_fields}
 
 
 class GEvalOutput(BaseModel):

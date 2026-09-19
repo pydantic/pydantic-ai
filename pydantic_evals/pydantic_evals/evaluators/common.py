@@ -6,7 +6,7 @@ from datetime import timedelta
 from enum import Enum
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, RootModel, TypeAdapter
 from pydantic.json_schema import SkipJsonSchema
 from typing_extensions import TypedDict
 
@@ -390,6 +390,9 @@ class StructuredJudge(Evaluator[object, object, object]):
     model_settings: ModelSettings | None = None
 
     def __post_init__(self):
+        if isinstance(self.questions, type) and issubclass(self.questions, RootModel):
+            # A root model has one unnamed value, so there is no question to name a measure after.
+            raise ValueError('`questions` must be a model with named fields, not a `RootModel`')
         names = self.questions if isinstance(self.questions, Mapping) else self.questions.model_fields
         if not names:
             raise ValueError('`questions` must contain at least one question')
