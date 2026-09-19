@@ -1010,10 +1010,11 @@ def _questions(
         elif keys := _mapping_options(prop):
             # A mapping from options to yes/no asks the same thing per option a list of them does; what
             # differs is the answer, which keeps every option rather than only the ones that came back yes.
-            if len(keys) < 2 or not all(isinstance(key, str) for key in keys):
+            if len(keys) < 2:
+                # A key of a JSON object is a string by construction, so only how many there are is in doubt.
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: a mapping must be keyed by two or '
-                    f'more string options. {_UNSUPPORTED_FIELD_HINT}'
+                    f'more options. {_UNSUPPORTED_FIELD_HINT}'
                 )
             questions.update(_fan_out(name, ask, keys))
         elif prop.get('type') == 'boolean' or _bounded(prop) is not None:

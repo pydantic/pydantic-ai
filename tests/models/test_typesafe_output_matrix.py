@@ -133,6 +133,12 @@ NOT_A_RUBRIC = ': a rubric must be the whole numbers from 0 upwards, in order, a
 NOT_STRINGS = ': its options are not two or more strings'
 
 
+class OneArea(str, Enum):
+    """The only area."""
+
+    billing = 'billing'
+
+
 class Areas(UseEnumMemberDocstrings, str, Enum):
     """Which area."""
 
@@ -221,6 +227,13 @@ REFUSED = [
     ),
     # And the keys have to be options: `dict[str, bool]` says nothing about what they are.
     Refused('field: mapping of free keys', probe('m', dict[str, bool], description='Which?'), unsupported('m')),
+    # One option is not a set to fan out over, the same as a pick-one of one option. A single `Literal` key
+    # reaches the schema as a `const`, which is not a set at all; a one-member `Enum` is a set of one.
+    Refused(
+        'field: mapping of one option',
+        probe('m', dict[OneArea, bool], description='Which?'),
+        unsupported('m', ': a mapping must be keyed by two or more options'),
+    ),
     # A `tuple` is an array whose members are positional, which Pydantic renders as `prefixItems` and no
     # `items`, so there are no options to fan out over.
     Refused(
