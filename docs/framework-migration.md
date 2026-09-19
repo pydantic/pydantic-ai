@@ -15,10 +15,12 @@ The skills preserve behavior rather than translating API names one for one. They
 | Source framework | Migration skill |
 |---|---|
 | [LangChain and LangGraph](comparisons/vs-langchain-langgraph.md) | `migrating-langchain-to-pydantic-ai` |
+| [Agno](comparisons/vs-agno.md) | `migrating-agno-to-pydantic-ai` |
 | [Claude Agent SDK](comparisons/vs-claude-agent-sdk.md) | `migrating-claude-agent-sdk-to-pydantic-ai` |
 | [Google Agent Development Kit](comparisons/vs-google-adk.md) | `migrating-google-adk-to-pydantic-ai` |
 | [Mastra](comparisons/vs-mastra.md) | `migrating-mastra-to-pydantic-ai` |
 | [OpenAI Agents SDK](comparisons/vs-openai-agents-sdk.md) | `migrating-openai-agents-sdk-to-pydantic-ai` |
+| [Pi](comparisons/vs-pi.md) | `migrating-pi-to-pydantic-ai` |
 | [Vercel AI SDK and Eve](comparisons/vs-vercel-ai-sdk.md) | `migrating-vercel-ai-sdk-and-eve-to-pydantic-ai` |
 
 ## Use a migration skill
