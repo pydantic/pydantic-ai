@@ -867,6 +867,8 @@ print(result.response.provider_details['tool']['choice'])
 
 `None` cannot carry a docstring, so the library describes it, the same way an [optional pick-one field](#what-each-mapping-does) gets its "None of these." option. There is nothing to fill either, so the route is taken on the pick alone: declining costs one request, never two.
 
+To say what declining means on your agent rather than take the stock phrase, name the route yourself with [`ToolOutput`][pydantic_ai.output.ToolOutput]: `ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')` puts that description on the route instead.
+
 ### A member Jev cannot fill
 
 A union member may use fields Jev cannot express, such as a `str`. It is still offered as a route, and picking it raises [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] — a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands it the whole step:

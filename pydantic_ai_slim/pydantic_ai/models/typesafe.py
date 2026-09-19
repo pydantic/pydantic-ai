@@ -463,7 +463,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         """Call the one argumentless route left, without asking Jev."""
         details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
         return ModelResponse(
-            parts=[ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())],
+            parts=[ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(),
             model_name=self._model_name,
             provider_name=self._provider.name,
@@ -694,7 +694,11 @@ def _none_route(tool: ToolDefinition) -> bool:
 
 
 def _route_args(tool: ToolDefinition) -> dict[str, Any]:
-    """The arguments to call a route with when Jev writes nothing: none, or the `None` a `None` route wraps."""
+    """The arguments to call a route with when Jev writes nothing: none, or the `None` a `None` route wraps.
+
+    Only reached from the route question. The forced-route path takes routes with no properties at all, and a
+    `None` route always has the one it is wrapped in.
+    """
     return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
 
 
