@@ -35,6 +35,40 @@ Default choices:
 - `Tool(...)` in `tools=[...]` when the tool should be reusable across agents
 - `FunctionToolset` when multiple related tools should be managed as a group
 
+## Describe Enum Options to the Model
+
+An `Enum` parameter or field reaches the model as a bare list of values. Mix in `UseEnumMemberDocstrings` to
+send the docstring written under each member as that option's description; the enum then renders as `anyOf` of
+described `const`s. This is the enum counterpart to `model_config = ConfigDict(use_attribute_docstrings=True)`
+on a Pydantic model — an `Enum` has no config to carry a flag, and any assigned class attribute becomes a
+member, so a base class is the marker.
+
+```python
+from enum import Enum
+
+from pydantic_ai import Agent, UseEnumMemberDocstrings
+
+agent = Agent('openai:gpt-5.2', name='ticket_agent')
+
+
+class Urgency(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@agent.tool_plain
+def set_urgency(urgency: Urgency) -> str:
+    """Set the urgency of the ticket."""
+    return f'Urgency set to {urgency.value}.'
+```
+
+Without the mix-in the docstrings are ignored and the schema is unchanged. `Literal`s have nowhere to write a
+docstring; use a described `Enum` when the model needs to know what each option means.
+
 ## Organize or Restrict Which Tools an Agent Can Use
 
 Use toolsets when the user has multiple related tools or wants cross-cutting behavior applied to a group.
