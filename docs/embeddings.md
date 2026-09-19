@@ -1,3 +1,8 @@
+---
+title: Embeddings
+description: "Generate text embeddings in Python across OpenAI, Cohere, and more: one typed `Embedder` API for semantic search, RAG retrieval, similarity and clustering."
+---
+
 # Embeddings
 
 Embeddings are vector representations of text that capture semantic meaning. They're essential for building:
