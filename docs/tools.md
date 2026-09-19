@@ -377,7 +377,7 @@ but not every one of them reaches the model:
 
 | Written under | Describes | Sent to the model |
 | --- | --- | --- |
-| a tool or [output function](output.md#function-output) | that tool | always |
+| a tool or [output function](output.md#output-functions) | that tool | always |
 | an `Args:` entry in its docstring | that parameter | always |
 | a class used as a parameter or [output type](output.md) | that object | always |
 | a field of a `dataclass` or `TypedDict` | that field | as a function's parameter |
