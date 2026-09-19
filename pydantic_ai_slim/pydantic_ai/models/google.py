@@ -134,6 +134,7 @@ except ImportError as _import_error:
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
 
+_MEDIA_PROCESSING_TOOL_NAME = 'media_processing'
 _TOOL_TYPE_TO_NATIVE_TOOL_NAME: dict[ToolType, str] = {
     ToolType.GOOGLE_SEARCH_WEB: WebSearchTool.kind,
     ToolType.URL_CONTEXT: WebFetchTool.kind,
@@ -1356,6 +1357,8 @@ class GoogleModel(Model[Client]):
             vendor_metadata = dict(file.vendor_metadata)  # copy to avoid mutating user dict
             if 'media_resolution' in vendor_metadata:
                 part_dict['media_resolution'] = vendor_metadata.pop('media_resolution')
+            if 'media_processing' in vendor_metadata:
+                part_dict['media_processing'] = vendor_metadata.pop('media_processing')
             # The remaining keys map to `video_metadata`, which only applies to video parts.
             if vendor_metadata and isinstance(file, (BinaryContent, VideoUrl, UploadedFile)):
                 part_dict['video_metadata'] = VideoMetadataDict(**vendor_metadata)
@@ -1618,6 +1621,9 @@ class GeminiStreamedResponse(StreamedResponse):
                         part = self._map_code_execution_result(part.code_execution_result)
                         part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
+                    elif part.thought_signature:
+                        # See the signature-only media-processing comment in `_process_part`.
+                        continue
                     else:
                         assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
@@ -1852,6 +1858,11 @@ def _native_tool_call_part_dict(
         return None
     if item.tool_name == CodeExecutionTool.kind:
         return _attach_signature({'executable_code': cast(ExecutableCodeDict, item.args_as_dict())}, signature)
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+        # Not replayed: Gemini rejects echoed media-processing steps in every shape, including the one
+        # Google's own ADK sends ("Tool type of tool_call part does not match with tool call context").
+        # The final part's own signature is what carries the video context into the next turn.
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
@@ -1877,6 +1888,9 @@ def _native_tool_return_part_dict(
             {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
             signature,
         )
+    if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
+        # See the media-processing call-side comment above.
+        return None
     tool_type = _NATIVE_TOOL_NAME_TO_TOOL_TYPE.get(item.tool_name)
     if tool_type is None:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
@@ -1953,6 +1967,10 @@ def _process_part(
         assert data and mime_type, 'Inline data must have data and mime type'
         content = BinaryContent(data=data, media_type=mime_type)
         item = FilePart(content=BinaryContent.narrow_type(content))
+    elif part.thought_signature:
+        # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
+        # show, and both backends reject them when replayed ("Invalid thought signature").
+        return None, code_execution_tool_call_id
     else:  # pragma: no cover
         raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
@@ -2020,9 +2038,20 @@ def _has_native_tool_invocations(parts: list[Part]) -> bool:
     metadata-based reconstruction (`_map_grounding_metadata`, `_map_url_context_metadata`,
     `_map_file_search_grounding_metadata`) must be skipped — otherwise we emit duplicate
     `NativeToolCallPart`/`NativeToolReturnPart` pairs for the same tool invocation.
-    See https://ai.google.dev/api/caching#ToolConfig.
+    Agentic media-processing steps don't count: they arrive alongside the metadata for other tools, not
+    instead of it. See https://ai.google.dev/api/caching#ToolConfig.
     """
-    return any(p.tool_call or p.tool_response for p in parts)
+    return any((tool := p.tool_call or p.tool_response) and not _is_media_processing_step(tool) for p in parts)
+
+
+def _is_media_processing_step(tool: ToolCall | ToolResponse) -> bool:
+    """Whether a `tool_call`/`tool_response` is an agentic media-processing step.
+
+    Gemini omits `tool_type` on these steps and sends only an id; every other server-side tool sets
+    `tool_type`. The SDK also defines `ToolType.MEDIA_PROCESSING` for them, so accept both shapes.
+    """
+    payload = tool.args if isinstance(tool, ToolCall) else tool.response
+    return tool.tool_type == ToolType.MEDIA_PROCESSING or (tool.tool_type is None and not payload)
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
@@ -2167,7 +2196,7 @@ def _map_code_execution_result(
 
 
 def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
-    if tool_type is None:  # pragma: no cover
+    if tool_type is None:
         raise UnexpectedModelBehavior('Missing tool_type on native tool part')
     tool_name = _TOOL_TYPE_TO_NATIVE_TOOL_NAME.get(tool_type)
     if tool_name is None:  # pragma: no cover
@@ -2176,18 +2205,26 @@ def _resolve_native_tool_name(tool_type: ToolType | None) -> str:
 
 
 def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPart:
+    if _is_media_processing_step(tool_call):
+        tool_name = _MEDIA_PROCESSING_TOOL_NAME
+    else:
+        tool_name = _resolve_native_tool_name(tool_call.tool_type)
     return NativeToolCallPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_call.tool_type),
+        tool_name=tool_name,
         tool_call_id=tool_call.id or _utils.generate_tool_call_id(),
         args=tool_call.args,
     )
 
 
 def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
+    if _is_media_processing_step(tool_response):
+        tool_name = _MEDIA_PROCESSING_TOOL_NAME
+    else:
+        tool_name = _resolve_native_tool_name(tool_response.tool_type)
     return NativeToolReturnPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_response.tool_type),
+        tool_name=tool_name,
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
