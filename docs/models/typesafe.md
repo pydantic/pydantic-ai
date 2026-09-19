@@ -154,6 +154,7 @@ Each field of the output type is a question, and all of them go out in a single 
 |---|---|---|
 | `bool` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
+| `str` with a supported `format` or an explicit extractor | pick one candidate extracted from the state | the candidate |
 | `float` with `ge=0` and `le=1` | the probability of yes | Jev's probability, unrounded |
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
@@ -219,6 +220,95 @@ print(result.response.provider_details['scores'])
 ```
 
 A nested model is its fields, asked as `outer.inner` and put back in place; the parent field's description is not sent, so put the context each question needs on the field that asks it. A dot in a field name is how a nested field is named, so a field whose own name contains one is refused. Lists and nested models round-trip faithfully, but their accuracy against labels is not measured, so check them on your own data before relying on either.
+
+### Extracting a string already in the text
+
+Jev cannot write text, but it can pick one string that is already there. A `str` field is answerable only when Pydantic AI can extract its candidates deterministically before the request.
+
+The JSON Schema formats `email` and `uri` carry built-in extractors, so a field that declares one is answerable with nothing added: the model is the plain `typesafe:jev-latest` string, and the field's description is what tells Jev which of the addresses in the text is the one being asked for. These are the two formats Pydantic AI tests; another format does not imply extraction support.
+
+```python {title="pick_a_contact.py"}
+from typing import Annotated
+
+from pydantic import BaseModel, Field, WithJsonSchema
+
+from pydantic_ai import Agent
+
+EmailText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'email'})]
+UriText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'uri'})]
+
+
+class CustomerContact(BaseModel):
+    customer_email: EmailText = Field(
+        description='Which email address is the customer, rather than our own staff?'
+    )
+    account_page: UriText = Field(
+        description="Which URI is the customer's own account page?"
+    )
+
+
+agent = Agent('typesafe:jev-latest', output_type=CustomerContact)
+result = agent.run_sync(
+    'Mira (mira@example.com) wrote in, cc billing@ourcompany.example. '
+    'Her account is at https://app.example.com/8812, and our '
+    'billing policy is at https://ourcompany.example/policy.'
+)
+print(result.output)
+#> customer_email='mira@example.com' account_page='https://app.example.com/8812'
+```
+
+For a shape Pydantic AI does not know — a case number, an invoice amount, an order id — write the extractor yourself. A [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor] is an ordinary function of yours that returns the candidate strings for one field, and it is passed to [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] as `text_extractors`, keyed by field name; use the flattened name such as `customer.email` for a nested field. An explicit extractor takes the place of the one a `format` would imply, though its selected value must still pass the field's Pydantic validation.
+
+A field's schema `pattern` is deliberately not used as an extractor, and is refused rather than obeyed. Running one would mean matching a regular expression Pydantic AI did not write against text it did not write, and a pattern that looks harmless can backtrack for exponential time on an input chosen to make it, holding the interpreter while it does. An extractor you pass is your own code, like a tool function.
+
+Extractors receive the state Jev judges: a string when the latest prompt stands alone, or the JSON-compatible mapping of `history` and `text` described under [judging a conversation](#judging-a-conversation). They are synchronous and must return an iterable of strings. Candidates are de-duplicated in first-seen order, and at most 254 are accepted because the no-match option is the 255th Jev supports.
+
+The two kinds mix in one output type: `customer_email` below needs no extractor, while `open_case` and `overcharge` get one each.
+
+```python {title="extract_invoice_details.py"}
+import json
+import re
+from typing import Annotated
+
+from pydantic import BaseModel, Field, WithJsonSchema
+
+from pydantic_ai import Agent
+from pydantic_ai.models.typesafe import TypeSafeModel
+
+EmailText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'email'})]
+
+
+class InvoiceDetails(BaseModel):
+    customer_email: EmailText = Field(
+        description='Which email address belongs to the customer?'
+    )
+    open_case: str = Field(description='Which case is still open?')
+    overcharge: str = Field(description='Which amount is the overcharge?')
+
+
+def amounts(state: object) -> list[str]:
+    return re.findall(r'\$\d+\.\d{2}', json.dumps(state))
+
+
+def cases(state: object) -> list[str]:
+    return re.findall(r'CASE-\d{4}', json.dumps(state))
+
+
+model = TypeSafeModel(
+    'jev-latest', text_extractors={'overcharge': amounts, 'open_case': cases}
+)
+agent = Agent(model, output_type=InvoiceDetails)
+result = agent.run_sync(
+    'Customer mira@example.com says CASE-1042 is closed and CASE-2048 is open. '
+    'The invoice was $80.00 instead of $60.00, an overcharge of $20.00.'
+)
+print(result.output)
+#> customer_email='mira@example.com' open_case='CASE-2048' overcharge='$20.00'
+```
+
+Every extraction question includes an explicit "none of these candidate values" option. For `str | None`, both finding no candidate and Jev picking that option answer `None`, and when no other question needs Jev no request is made. A field with a default, such as `open_case: str = 'unknown'`, is left out of the arguments in the same two cases, so Pydantic applies the default. For a required field both raise [`NoTextCandidate`][pydantic_ai.models.typesafe.NoTextCandidate], a `ModelAPIError` rather than a refusal, because whether a value is there to pick depends on the text and not on how the agent is built: a [`FallbackModel`](overview.md#fallback-model) with a language model behind Jev answers that step instead. With tools attached the output is one route among them, so a field Jev could not answer only fails the turn when the output is the route it took. A candidate outside the extracted set is never accepted.
+
+This is selection, not generation. An extractor cannot make Jev summarise the material, compose a reply, normalise a value, or copy arbitrary text that was not offered as one whole candidate. A `str` field without an available extractor remains unsupported, as does a field filled after a route is picked: neither [a picked tool's arguments](#tools-jev-picks-and-calls-what-it-can) nor [a chosen union member's fields](#a-union-of-output-types) have extractors behind them, so a string there still makes the pick a hand-off.
 
 ### Routes: which thing to do
 
@@ -928,7 +1018,7 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 Jev does not write text or read files, and it only fills tool arguments that map to the [typed questions](#what-jev-can-answer) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
-- The `output_type` must be made of the field types above, beside any output functions that take no arguments: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
+- The `output_type` must be made of the field types above, beside any output functions that take no arguments: no `str` without candidate extraction, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
 - At most 255 options in one question. A pick-one field counts its own options, and the route question counts every tool plus every output type, so 255 tools is already one too many once the output type is counted beside them.

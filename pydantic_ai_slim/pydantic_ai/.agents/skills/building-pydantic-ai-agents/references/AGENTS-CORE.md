@@ -46,6 +46,21 @@ If the user is choosing between output modes:
 - `TextOutput` for custom text parsing
 - `NativeOutput` or `ToolOutput` when they need explicit output-mode control
 
+### Extract existing strings with TypeSafe Jev
+
+`typesafe:jev-latest` answers typed questions but does not generate text. It can fill a `str` output field only by
+choosing a whole candidate extracted deterministically from the state. Use the supported `email` or `uri` schema
+format, or construct `TypeSafeModel` with a `text_extractors={field_name: callable}` mapping. A schema `pattern` is
+not read as an extractor and raises: running a regex the library did not write against text it did not write can
+backtrack for exponential time, so an extractor has to be code you passed. The callable receives Jev's string or
+JSON-compatible conversation state and returns an iterable of strings. Use dotted keys for nested fields; fields filled after a
+route is picked — a tool's arguments, a chosen union member's fields — have no extractors behind them.
+
+Every extraction includes a no-match option. A required field with no value raises `NoTextCandidate`, a
+`ModelAPIError` a `FallbackModel` hands to the model behind Jev, rather than inventing text; `str | None` returns
+`None`, and a field with a default takes it. This is for selecting identifiers, addresses, amounts, and other
+values already present, not for summaries or replies. Use a language model when the answer has to be written.
+
 ## Picking One of a Run-Time Set
 
 Use `Choices({key: description})` when the model has to pick one of a set that only exists once the run is under
