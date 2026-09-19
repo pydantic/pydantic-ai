@@ -2353,6 +2353,36 @@ async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_
     )
 
 
+async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_model_requests: None):
+    """`None` is offered as a hand-off but weighed as a result, so the fallback ranks it with the output types.
+
+    A tool picked below the threshold falls back to the likeliest *result*. `None` is one, so ranking it with
+    the hand-offs instead would return a `Ticket` Jev thought a good deal less likely than nothing at all.
+    """
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.9},
+            tool={
+                'type': 'choice',
+                'choice': 'refund',
+                'confidence': 0.4,
+                'probabilities': {'final_result_Ticket': 0.1, 'final_result_NoneType': 0.5, 'refund': 0.4},
+            },
+        )
+
+    agent: Agent[None, Ticket | None] = Agent(
+        mock_model(record),
+        output_type=[Ticket, None],  # type: ignore[arg-type]
+        tools=[refund],
+    )
+    result = await agent.run('Refund me maybe.')
+
+    assert result.output is None
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_NoneType', {'response': None}))
+
+
 async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: None):
     """`_tool_call` falls back to the likeliest output type without requiring Jev to have priced it.
 
