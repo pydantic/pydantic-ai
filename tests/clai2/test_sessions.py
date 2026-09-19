@@ -7,9 +7,9 @@ from pathlib import Path
 
 import anyio
 import pytest
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
@@ -128,7 +128,8 @@ async def test_recover_latest_frontier_without_replaying_tools(tmp_path: Path) -
     )
     second = saved_session(tmp_path)
     notice = await second.resume(head.id)
-    assert second.messages == frontier
+    assert second.messages == [*frontier[:-1], replace(frontier[-1], state='interrupted')]
+    await second.prompt('continue without replaying tools')
     assert 'No tools were replayed' in notice
 
 
@@ -219,4 +220,83 @@ async def test_memory_only_commit_and_missing_recovery_snapshot(tmp_path: Path) 
         summary=replace(session.summary, outcome='running', run_id='no-checkpoint'), messages=bare.messages
     )
     await session.resume(saved.id)
-    assert session.messages == bare.messages
+    assert session.messages == [replace(bare.messages[0], state='interrupted')]
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+async def test_interrupted_tool_frontier_accepts_followup(tmp_path: Path, *, cancel: bool) -> None:
+    entered = anyio.Event()
+    calls: list[str] = []
+    agent = Agent(TestModel(call_tools=['effect'], custom_output_text='answer'))
+
+    @agent.tool_plain
+    def effect() -> str:
+        calls.append('executed')
+        return 'done'
+
+    async def interrupt(event: AgentStreamEvent) -> None:
+        if isinstance(event, FunctionToolCallEvent):
+            entered.set()
+            if cancel:
+                await anyio.sleep_forever()
+            raise ValueError('interrupted before result')
+
+    session = Session(
+        agent,
+        deps=None,
+        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        on_stream_event=interrupt,
+    )
+    if cancel:
+        with anyio.fail_after(10):
+            async with anyio.create_task_group() as group:
+                group.start_soon(session.prompt, 'start')
+                await entered.wait()
+                group.cancel_scope.cancel()
+    else:
+        with pytest.raises(ValueError, match='interrupted before result'):
+            await session.prompt('start')
+    previous_calls = list(calls)
+    session.on_stream_event = None
+    with agent.override(model=TestModel(call_tools=[], custom_output_text='recovered')):
+        result = await session.prompt('clarification')
+    assert result.output == 'recovered'
+    assert calls == previous_calls
+    assert any(
+        isinstance(part, ToolReturnPart)
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
+@pytest.mark.parametrize('frontier', ['empty', 'suspended', 'partial'])
+async def test_restore_interrupted_frontier_preserves_existing_results(tmp_path: Path, frontier: str) -> None:
+    session = saved_session(tmp_path)
+    messages: list[ModelMessage] = []
+    if frontier == 'suspended':
+        messages = [ModelResponse(parts=[], state='suspended')]
+    elif frontier == 'partial':
+        messages = [
+            ModelResponse(
+                parts=[ToolCallPart('effect', {}, tool_call_id='a'), ToolCallPart('effect', {}, tool_call_id='b')]
+            ),
+            ModelRequest(parts=[ToolReturnPart('effect', 'already completed', tool_call_id='a')]),
+        ]
+    assert session.conversations is not None
+    head = await session.conversations.save(summary=replace(session.summary, outcome='failed'), messages=messages)
+    await session.resume(head.id)
+    if frontier != 'partial':
+        assert session.messages == messages
+        return
+    result = await session.prompt('continue')
+    returns = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(returns) == 2
+    assert returns[0].content == 'already completed'
+    assert {part.tool_call_id for part in returns} == {'a', 'b'}

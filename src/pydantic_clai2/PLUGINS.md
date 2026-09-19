@@ -360,6 +360,8 @@ Four names belong to CLAI itself. They fire outside the agent run, in the shell:
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
 tools for cleanup; it does not undo completed side effects or retry the run.
+Retained failed turns and restored interrupted sessions are marked interrupted so
+core can close unanswered tool calls on the next prompt without replaying them.
 A prompt cancelled by `turn_start` never starts an agent run and is not retained.
 
 Every other name is a Pydantic AI lifecycle hook, spelled exactly as on core's

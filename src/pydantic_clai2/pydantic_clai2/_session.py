@@ -116,11 +116,20 @@ class Session(Generic[DepsT, OutputT]):
                 if snapshot is not None:
                     messages = snapshot.messages
             self._messages = list(messages)
+            if saved.summary.outcome in ('running', 'failed', 'cancelled'):
+                self._mark_interrupted()
             self.summary = saved.summary
             # Keep the caller's current model and approval configuration. Saved models are informational.
             return f'Resumed {saved.summary.title} ({saved.summary.id}).{warning}'
         finally:
             self._running = False
+
+    def _mark_interrupted(self) -> None:
+        # Let core close unanswered calls without replaying them on the next prompt.
+        if self._messages:
+            last = self._messages[-1]
+            if not isinstance(last, ModelResponse) or last.state != 'suspended':
+                self._messages[-1] = replace(last, state='interrupted')
 
     async def _save_turn(self, *, outcome: Literal['running', 'completed', 'failed', 'cancelled']) -> None:
         if self.conversations is None:
@@ -178,6 +187,7 @@ class Session(Generic[DepsT, OutputT]):
                     # Core captures partial responses and tool results during cleanup.
                     # If cancellation precedes graph startup, retain at least the prompt.
                     self._messages = messages or [*previous, ModelRequest(parts=[UserPromptPart(content)])]
+                    self._mark_interrupted()
                     try:
                         with move_on_after(5, shield=True):
                             await self._save_turn(outcome='cancelled')
@@ -188,6 +198,7 @@ class Session(Generic[DepsT, OutputT]):
                 except Exception:
                     if self.conversations is not None:
                         self._messages = messages or self._messages
+                        self._mark_interrupted()
                         await self._save_turn(outcome='failed')
                     raise
         finally:

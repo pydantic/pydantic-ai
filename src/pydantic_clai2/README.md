@@ -51,8 +51,10 @@ the first press clears input and the second exits. Ctrl-D on an empty input and
 `/exit` also quit after earlier queued messages finish.
 The interrupted prompt and captured partial responses and tool results stay in
 conversation history, so you can follow up with a clarification. No interrupted
-run is automatically retried. External application cancellation still propagates,
-and completed tool side effects cannot be undone.
+run is automatically retried. Unanswered tool calls in retained failed or
+interrupted turns are closed out by core on the next prompt, without replaying
+those tools. External application cancellation still propagates, and completed
+tool side effects cannot be undone.
 
 ## Prompt area
 
