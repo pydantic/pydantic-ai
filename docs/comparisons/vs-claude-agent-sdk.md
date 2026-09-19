@@ -4,6 +4,8 @@ The Claude Agent SDK gives you the agent loop behind Claude Code: a Python packa
 
 Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md), [Pydantic Graph](../graph.md), [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
 
+**Already built on the Claude Agent SDK?** The [`migrating-claude-agent-sdk-to-pydantic-ai`](../framework-migration.md) skill ports an existing application to Pydantic AI one working path at a time, preserving behavior rather than translating API names.
+
 ## Framework
 
 | | Claude Agent SDK | Pydantic AI and [Harness SDK](https://pydantic.dev/docs/ai/harness/) |

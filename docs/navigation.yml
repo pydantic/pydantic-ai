@@ -905,6 +905,13 @@ navigation:
         slug: "comparisons/overview"
         aliases:
           - "comparisons"
+      - page: "Migrate to Pydantic AI"
+        path: "framework-migration.md"
+        slug: "comparisons/migrate-from-other-frameworks"
+        aliases:
+          - "framework-migration"
+          - "migrate-from-other-frameworks"
+          - "overview/migrate-from-other-frameworks"
       - page: "vs LangChain & LangGraph"
         path: "comparisons/vs-langchain-langgraph.md"
         slug: "comparisons/vs-langchain-langgraph"
