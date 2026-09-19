@@ -156,7 +156,7 @@ Anything else is a [`UserError`][pydantic_ai.exceptions.UserError] before a requ
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the [confidence example below](#confidence-and-thresholds). Put the framing on the output type's docstring and the agent instructions, and the per-field wording in the descriptions — see [where the question goes](#where-the-question-goes).
 
-Unless the schema describes an option, Jev sees it by its name alone, so name `Literal` and `Enum` options for what they mean. A `Literal` has nowhere to write a meaning per option; where the difference between two options needs explaining, use an `Enum` that mixes in `UseEnumMemberDocstrings` and put a docstring under each member, which is what puts a description on each option in the schema.
+Unless the schema describes an option, Jev sees it by its name alone, so name `Literal` and `Enum` options for what they mean. A `Literal` has nowhere to write a meaning per option; where the difference between two options needs explaining, use an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] and put a docstring under each member, which is what puts a description on each option in the schema.
 
 ### What each mapping does
 
