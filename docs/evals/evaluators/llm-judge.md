@@ -528,17 +528,14 @@ dataset = Dataset(
     evaluators=[StructuredJudge(ReplyReview)],
 )
 report = dataset.evaluate_sync(support_agent)
-print(report)
-"""
-                            Evaluation Summary: support_agent
-┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID    ┃ Scores              ┃ Labels                     ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ locked_out │ completeness: 0.500 │ policy: compliant          │ ✔          │     10ms │
-├────────────┼─────────────────────┼────────────────────────────┼────────────┼──────────┤
-│ Averages   │ completeness: 0.500 │ policy: {'compliant': 1.0} │ 100.0% ✔   │     10ms │
-└────────────┴─────────────────────┴────────────────────────────┴────────────┴──────────┘
-"""
+case = report.cases[0]
+# Each field lands in the bucket its type calls for
+print({name: result.value for name, result in case.labels.items()})
+#> {'policy': 'compliant'}
+print({name: result.value for name, result in case.scores.items()})
+#> {'completeness': 0.5}
+print({name: result.value for name, result in case.assertions.items()})
+#> {'avoids_secrets': True}
 ```
 
 A `bool` field is reported as an assertion, an `int` or `float` as a score, and a `str` or an `Enum` of
