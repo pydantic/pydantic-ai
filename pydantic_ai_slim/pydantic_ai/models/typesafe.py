@@ -653,9 +653,17 @@ def _tool_call(
     if tool is None:
         raise UnexpectedModelBehavior(f'TypeSafe picked a tool it was not offered: {answer.choice!r}')
     if tool.name not in hand_offs and probability < threshold:
+        # A `None` route is a result to take, not something else to be done, so it is weighed here with the
+        # output types rather than below with the hand-offs, even though it is offered as one of those.
+        results = [*output_tools, *(candidate for candidate in tools if _none_route(candidate))]
         if likeliest_output := max(
-            output_tools, key=lambda candidate: answer.probabilities.get(candidate.name, 0.0), default=None
+            results, key=lambda candidate: answer.probabilities.get(candidate.name, 0.0), default=None
         ):
+            if _none_route(likeliest_output):
+                # Nothing to fill, so it is called on the fallback itself rather than asked about again.
+                return ToolCallPart(
+                    likeliest_output.name, _route_args(likeliest_output), _utils.generate_tool_call_id()
+                )
             return likeliest_output
         likeliest = max(
             (candidate for candidate in tools if candidate.name in hand_offs),
