@@ -121,6 +121,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
         RunUsage(
             input_tokens=5,
             output_tokens=42,
+            audio_seconds=1,
             output_audio_tokens=39,
             details={
                 'input_text_tokens': 5,
@@ -128,7 +129,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
                 'audio_tokens': 39,
                 'billable_audio_seconds': 1,
             },
-            cost=Decimal('0.0'),
+            cost=Decimal('0.001333333333333333333333333333'),
             requests=1,
         )
     )
