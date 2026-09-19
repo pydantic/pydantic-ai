@@ -420,10 +420,12 @@ clashing with a built-in is an error at startup, not a silent override.
 Path-like input is not dispatched to commands. A slash, dot, or backslash in the
 first token after the leading `/` makes it a prompt instead, so screenshot paths
 such as `/Users/me/Desktop/Screen Shot.png` appear as follow-ups in the queue.
-After the editor trims surrounding whitespace, their text reaches the agent
-without further rewriting. Quoted paths are prompts too. Unknown command-shaped
-names such as `/missing` still report an error. Routing does not read or attach
-files; file access remains the responsibility of the agent's configured tools.
+For path text not converted to an image attachment by the editor, surrounding
+whitespace is trimmed and the remaining text reaches the agent without further
+rewriting. Quoted paths are prompts too. Unknown command-shaped names such as
+`/missing` still report an error. Routing itself does not read files; the editor's
+separate image-paste handling can attach existing images before routing. See
+[Image input](#image-input) for the resulting hook payloads.
 
 ### Give the agent tools or instructions: `host.add(capability)`
 
@@ -687,3 +689,19 @@ is labeled **SELECT PROJECT** or **SELECT SESSION**, with matching key hints.
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode
 case-insensitive and includes text instructions in multimodal prompts.
+
+## Image input
+
+Clipboard and image-path paste are part of the shell's prompt editor, not a plugin
+API. Ctrl-V or Alt-V attaches clipboard images; bracketed paste of existing image
+paths attaches local files. See [Pasting images](README.md#pasting-images) for
+platform requirements and limits.
+
+`turn_start.text` and `turn_end.text` contain the text caption with attachment
+markers removed, possibly an empty string for an image-only turn. A `turn_start`
+handler may rewrite the caption or cancel the entire turn. Rewriting the text
+does not remove the images. Core hooks receive the native multimodal request with
+`BinaryContent` image parts. Plugins that inspect or transform image content
+should use core hooks rather than parsing terminal markers. There are no new
+host lifecycle hooks. Images are persisted with the conversation, including the
+accepted request when a turn fails or is cancelled.

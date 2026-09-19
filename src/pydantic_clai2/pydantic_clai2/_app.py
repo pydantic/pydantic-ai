@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Generic, TypeVar
 
 from anyio import create_task_group
@@ -16,7 +16,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
@@ -33,6 +33,7 @@ from .command_context import CommandContext, CommandProvider
 from .commands import Command, Commands, config_command, config_completions, is_command_input, set_completions
 from .config import PluginSettings, Settings
 from .customization import customization_guide
+from .image_input import ImageInput
 from .input_history import input_history
 from .interrupts import Interrupts
 from .key_menu import keys_command
@@ -312,13 +313,14 @@ def _create_shell(
     for plugin in plugins:
         if isinstance(plugin, CommandProvider):
             commands.register_many(plugin.get_commands(context))
+    images = ImageInput()
     prompt = PromptSession[str](
         history=input_history(store.path.with_name('input-history')),
         completer=PromptCompleter(commands),
         complete_while_typing=True,
         style=COMPLETION_STYLE,
         reserve_space_for_menu=6,
-        bottom_toolbar=lambda: FormattedText(status.toolbar()),
+        bottom_toolbar=lambda: FormattedText([(theme.MUTED, images.notice)] if images.notice else status.toolbar()),
     )
     shell = _Shell(
         agent=agent,
@@ -330,9 +332,13 @@ def _create_shell(
         context=context,
         status=status,
         prompt=prompt,
+        images=images,
         interrupts=Interrupts(),
         screen=screen,
         sessions=sessions,
+    )
+    prompt.key_bindings = images.bindings(
+        queued=lambda: shell.editor.queued_messages if shell.editor is not None else ()
     )
     commands.register(
         Command(name='reload', description='Reload CLAI2 code without restarting', handler=shell.request_reload)
@@ -356,6 +362,7 @@ class _Shell(Generic[DepsT, OutputT]):
     interrupts: Interrupts
     screen: Screen
     sessions: Sessions[DepsT, OutputT]
+    images: ImageInput = field(default_factory=ImageInput)
     reload_requested: bool = False
     editor: LivePrompt | None = None
 
@@ -392,6 +399,11 @@ class _Shell(Generic[DepsT, OutputT]):
 
     async def _read_loop(self, show_frame: Filter, prepare_prompt: Callable[[], None]) -> SessionEndReason:
         while True:
+            self.images.retain(
+                [self.editor.prompt.default_buffer.text, *self.editor.queued_messages]
+                if self.editor is not None
+                else []
+            )
             try:
                 self.status.model = self.session.model or _model_label(self.agent)
                 self.status.status_segments = tuple(self.loader.status_segments())
@@ -406,6 +418,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 continue
             except EOFError:
                 return 'eof'
+            self.images.notice = ''
             if not text:
                 continue
             if self.editor is not None:
@@ -420,6 +433,7 @@ class _Shell(Generic[DepsT, OutputT]):
                     return 'exit'
                 continue
             if self.session.model is None and self.agent.model is None:
+                self.images.retry_text = text
                 self.console.print('Choose a model first: /set model <Tab>', style=theme.WARNING)
                 continue
             try:
@@ -430,12 +444,17 @@ class _Shell(Generic[DepsT, OutputT]):
                     await self.editor.output.drain()
 
     async def _turn(self, text: str) -> bool:
+        try:
+            text, images = self.images.resolve(text)
+        except ValueError as exc:
+            self.console.print(str(exc), style=theme.ERROR, markup=False)
+            return False
         start = TurnStart(text=text)
         ended: TurnEnd | None = None
 
         async def run_turn() -> None:
             nonlocal ended
-            ended = await self._run_turn(start)
+            ended = await self._run_turn(start, images=images)
 
         completed = await self.interrupts.run(run_turn())
         self.sessions.namer.submit(self.session.summary.id)
@@ -443,7 +462,7 @@ class _Shell(Generic[DepsT, OutputT]):
         await self.interrupts.run(self.loader.fire(ended or TurnEnd(text=start.text, outcome='cancelled')))
         return self.interrupts.exit_requested
 
-    async def _run_turn(self, start: TurnStart) -> TurnEnd:
+    async def _run_turn(self, start: TurnStart, *, images: Sequence[BinaryContent] = ()) -> TurnEnd:
         try:
             await self.loader.fire(start)
         except PluginError as exc:
@@ -461,6 +480,7 @@ class _Shell(Generic[DepsT, OutputT]):
         return await _run_prompt(
             self.session,
             start.text,
+            images=images,
             console=self.console,
             settings=self.context.settings,
             status=self.status,
@@ -526,6 +546,7 @@ async def _run_prompt(
     status: Status,
     renderers: Sequence[Renderer[AgentStreamEvent]],
     screen: Screen,
+    images: Sequence[BinaryContent] = (),
 ) -> TurnEnd:
     renderer = StreamRenderer(
         console,
@@ -561,7 +582,7 @@ async def _run_prompt(
     try:
         with screen.bound(take_screen):
             async with status_line:
-                result = await session.prompt(text)
+                result = await session.prompt(text, images=images)
                 await renderer.finish()
         status.output_tokens = result.usage.output_tokens
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.

@@ -89,6 +89,40 @@ Full-screen question menus and slash-command menus temporarily take over input.
 The editor and its draft return when the menu closes.
 Small terminals omit the border to leave room for output.
 
+## Pasting images
+
+Copy a screenshot or image, then press **Ctrl-V** in CLAI to attach it. If your
+terminal intercepts Ctrl-V, use **Alt-V** (or press Esc, then V). On macOS, Cmd-V
+is the terminal's text paste, not CLAI's clipboard-image shortcut.
+
+You can also paste or drag local image file paths into the prompt. This requires
+the terminal's bracketed-paste support. A paste containing only existing image
+paths becomes attachments; ordinary pasted text stays text. Quoted paths and
+paths containing spaces are supported. UNC and device paths are not read. PNG, JPEG, GIF, WebP, BMP, and TIFF files
+are read locally and converted to PNG (the first frame of animated images).
+
+Each image appears as `[image:...]`. Add your question and press Enter, or submit
+the image alone. Delete a marker before submitting to remove that attachment.
+Images in queued follow-ups belong to that follow-up, not the running turn.
+Paste errors appear in the footer without submitting a message or losing the draft.
+
+Clipboard access uses Pillow's native Windows and macOS backends. On Linux,
+install `wl-clipboard` for Wayland or `xclip` for X11 and run inside that graphical
+session. SSH and headless sessions generally cannot read your local desktop
+clipboard; paste a path to an image accessible on the machine running CLAI instead.
+The clipboard is read only when you invoke the image shortcut.
+
+Use a model that accepts images. CLAI sends the image bytes to the selected model;
+provider-specific size and format restrictions can still apply. Each source file
+and encoded attachment is limited to 10 MiB and 25 megapixels, with 32 MiB of
+pending image bytes. Accepted images are saved with the conversation and restored
+by `/resume`. Input recall stores markers, not image bytes: paste the image again
+if you recall an expired marker. If submission is rejected because no model is
+selected, the most recently rejected prompt keeps its attachments for retry. Unsubmitted images are discarded on exit or reload.
+
+Pillow is a terminal-only dependency; see the CLAI dependency boundary in
+[#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
+
 ## Input history
 
 Submitted prompts and slash commands persist across restarts for Up/Down recall,
@@ -300,9 +334,12 @@ of reaching the model. Absolute paths such as `/Users/me/Desktop/Screenshot.png`
 are prompts, not commands: a slash, dot, or backslash in the first token after
 `/` marks path-like input. Quoted paths are also prompts. For an ambiguous
 single-component path with spaces, quote it, for example `"/Screen Shot.png"`.
-After the editor trims surrounding whitespace, the prompt text, including
-internal spaces and shell escapes, reaches the agent unchanged. This routing does not read or attach the file automatically; the
-agent's configured tools determine how it can access the screenshot.
+This routing handles path text that the editor has not converted to an attachment.
+After trimming surrounding whitespace, that text, including internal spaces and
+shell escapes, reaches the agent unchanged. Routing alone does not read the file;
+the agent's configured tools determine how it can access it. Separately, bracketed
+paste of existing image paths creates attachments as described in
+[Pasting images](#pasting-images).
 
 Up/down recall saved prompt history. Ctrl-D exits. Ctrl-C at input clears the line; during a run it cancels
 the turn and returns to input. No cancelled run is automatically retried.
@@ -533,7 +570,9 @@ asyncio.run(chat(agent, deps=None))
 ```
 
 `Session(agent, deps=..., plugins=..., on_stream_event=...)` is the noninteractive
-API. Call `await session.prompt(text)` for each turn. Native `agent.run` drives the
+API. Call `await session.prompt(text)` for each turn, or
+`await session.prompt(text, images=[BinaryContent(data=png_bytes, media_type="image/png")])`
+for image input (`BinaryContent` comes from `pydantic_ai.messages`). Native `agent.run` drives the
 loop through tools to completion. Successful turns retain `result.all_messages()`;
 cancelled turns retain the prompt and messages captured by Pydantic AI, including
 interrupted responses and tool results. Failed turns leave the previous history

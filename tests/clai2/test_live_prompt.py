@@ -14,8 +14,10 @@ from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Always
 from prompt_toolkit.input import PipeInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from pydantic_ai.messages import BinaryContent
 from rich.console import Console
 
+from pydantic_clai2.image_input import ImageInput
 from pydantic_clai2.interrupts import Interrupts
 from pydantic_clai2.live_prompt import LivePrompt
 
@@ -29,12 +31,12 @@ def anyio_backend() -> str:
 
 @asynccontextmanager
 async def editor(
-    *, clock: Callable[[], float] = time.monotonic
+    *, clock: Callable[[], float] = time.monotonic, images: ImageInput | None = None
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
     output = io.StringIO()
     console = Console(file=output, force_terminal=True)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(TIMEOUT):
-        prompt = PromptSession[str]()
+        prompt = PromptSession[str](key_bindings=images.bindings() if images is not None else None)
         live = LivePrompt(prompt, console, prepare=lambda: None, interrupts=Interrupts(), clock=clock)
         async with live.opened():
             yield live, pipe, output
@@ -302,6 +304,41 @@ async def test_working_animation_is_on_top_border_without_changing_draft(outcome
             await idle.wait()
         assert live.working_title() == []
         assert live.prompt.default_buffer.text == 'draft'
+
+
+async def test_alt_v_during_work_attaches_without_cancelling(monkeypatch: pytest.MonkeyPatch) -> None:
+    images = ImageInput()
+    image = BinaryContent(data=b'png', media_type='image/png')
+    monkeypatch.setattr('pydantic_clai2.image_input.clipboard_images', lambda: [image])
+    async with editor(images=images) as (live, pipe, _):
+        started = anyio.Event()
+        stopped = anyio.Event()
+        attached = anyio.Event()
+
+        async def operation() -> None:
+            started.set()
+            await anyio.sleep_forever()
+
+        async def work() -> None:
+            assert not await live.interrupts.run(operation())
+            stopped.set()
+
+        def changed(buffer: Buffer) -> None:
+            if '[image:' in buffer.text:
+                attached.set()
+
+        live.prompt.default_buffer.on_text_changed += changed
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(work)
+            await started.wait()
+            pipe.send_text('caption\x1bv')
+            await attached.wait()
+            assert not stopped.is_set()
+            assert live.interrupts.active
+            assert images.resolve(live.prompt.default_buffer.text) == ('caption', [image])
+            pipe.send_text('\x1b')
+            await stopped.wait()
+            assert images.resolve(live.prompt.default_buffer.text) == ('caption', [image])
 
 
 async def test_queue_labels_screenshot_paths_as_follow_ups() -> None:

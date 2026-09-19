@@ -217,8 +217,12 @@ Command handlers receive list[str] arguments and return a string or an awaitable
 string. Register complete= on Command for Tab suggestions. Command names must be
 unique, including built-ins. Unknown command-shaped input such as `/missing`
 does not reach the model. Path-like input (a slash, dot, or backslash in the first
-token after `/`) is passed through as a prompt instead, without automatically
-reading or attaching the file. Quoted paths are also prompts.
+token after `/`) is passed through as a prompt instead. Routing itself does not
+read files. Separately, the editor converts bracketed pastes of existing image
+paths into attachments. Ctrl-V or Alt-V attaches clipboard images. Attachment
+markers are removed before host turn hooks run; those hooks receive the text
+caption, while core hooks receive the multimodal request. Quoted paths are also
+prompts.
 Commands run between turns, which makes them suitable for configuration menus.
 
 Use a renderer for output during a stream:

@@ -12,7 +12,7 @@ from anyio import get_cancelled_exc_class, move_on_after
 from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -136,10 +136,11 @@ class Session(Generic[DepsT, OutputT]):
         model = self.resolve_model(self.model)
         return await model if isinstance(model, Awaitable) else model
 
-    async def prompt(self, text: str) -> AgentRunResult[OutputT]:
+    async def prompt(self, text: str, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
         """Execute the complete native agent loop, including tool calls."""
         if self._running:
             raise RuntimeError('A conversation can only run one prompt at a time')
+        content: str | Sequence[UserContent] = [text, *images] if images else text
         self._running = True
         try:
             previous = self._messages
@@ -149,7 +150,7 @@ class Session(Generic[DepsT, OutputT]):
                 if self.summary.revision == 0:
                     title = ' '.join(''.join(c for c in text if c.isprintable() or c.isspace()).split())[:64]
                     candidate = replace(candidate, title=title or 'New session')
-                accepted: list[ModelMessage] = [*previous, ModelRequest(parts=[UserPromptPart(text)])]
+                accepted: list[ModelMessage] = [*previous, ModelRequest(parts=[UserPromptPart(content)])]
                 self.summary = await self.conversations.save(
                     summary=replace(candidate, outcome='running'), messages=accepted
                 )
@@ -158,7 +159,7 @@ class Session(Generic[DepsT, OutputT]):
                 try:
                     model = await self.resolved_model()
                     result = await self.agent.run(
-                        text,
+                        content,
                         deps=self.deps,
                         model=model,
                         model_settings=self.model_settings,
@@ -176,7 +177,7 @@ class Session(Generic[DepsT, OutputT]):
                 except get_cancelled_exc_class() as cancelled:
                     # Core captures partial responses and tool results during cleanup.
                     # If cancellation precedes graph startup, retain at least the prompt.
-                    self._messages = messages or [*previous, ModelRequest(parts=[UserPromptPart(text)])]
+                    self._messages = messages or [*previous, ModelRequest(parts=[UserPromptPart(content)])]
                     try:
                         with move_on_after(5, shield=True):
                             await self._save_turn(outcome='cancelled')

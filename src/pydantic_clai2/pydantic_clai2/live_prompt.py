@@ -15,7 +15,7 @@ from prompt_toolkit.application.current import set_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition, is_done
 from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
-from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
+from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent, merge_key_bindings
 from prompt_toolkit.layout import ConditionalContainer, FormattedTextControl, HSplit, VSplit, Window
 from rich.console import Console
 from rich.text import Text
@@ -230,7 +230,9 @@ class LivePrompt:
                 await self.prompt.prompt_async(
                     '> ',
                     pre_run=prepare,
-                    key_bindings=self.bindings(),
+                    key_bindings=merge_key_bindings(
+                        [self.prompt.key_bindings, self.bindings()] if self.prompt.key_bindings else [self.bindings()]
+                    ),
                     handle_sigint=False,
                     show_frame=~is_done & Condition(lambda: self.console.width >= 4 and self.console.height >= 6),
                     refresh_interval=0.1,

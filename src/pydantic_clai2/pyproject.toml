@@ -20,6 +20,7 @@ dependencies = [
     'prompt-toolkit>=3.0.52',
     'rich>=14',
     "keyring>=25.6",
+    "pillow>=12.3.0",
 ]
 
 [project.scripts]

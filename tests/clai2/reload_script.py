@@ -41,7 +41,7 @@ async def main(root: Path, mode: str) -> None:
         updated += '\nfrom .reload_bridge import RELOAD_MARKER\nassert RELOAD_MARKER == "source graph"\n'
     session = package / '_session.py'
     session.write_text(
-        session.read_text().replace('                        text,', "                        text + ' updated',")
+        session.read_text().replace('                        content,', "                        content + ' updated',")
     )
     plugin = root / 'reload_plugin.py'
     plugin.write_text(
