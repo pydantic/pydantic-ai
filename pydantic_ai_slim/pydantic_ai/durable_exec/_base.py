@@ -52,6 +52,7 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from .. import _usage_attribution
 from ._capability_operation import (
     CapabilityBoundOperation,
     CapabilityCacheIdentity,
@@ -112,6 +113,7 @@ from ._toolset import (
     guard_run_context,
     resolve_tool_durable_config,
     run_args_validator,
+    toolset_for_unit,
     unwrap_recorded_tool_call_result,
     unwrap_tool_call_result,
     validate_dynamic_tool_args,
@@ -148,7 +150,7 @@ class _RestrictedRunContext(Protocol):
     def _expose_field(self, name: str) -> None: ...
 
 
-_MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
+MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
 
 class _BoundModelOperations(NamedTuple):
@@ -298,7 +300,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
         self._resolved_request_models: dict[int, _ResolvedRequestModel] = {}
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability to use with the agent.
+
+        An engine that needs a companion capability alongside itself (Temporal pairs one in the
+        `outermost` tier to publish its Workflow Stream terminal event) overrides this and composes
+        around `_bind_for_agent`, which stays typed as the engine's own bound copy.
+        """
+        return self._bind_for_agent(agent)
+
+    def _bind_for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
         self._check_bindable()
         if not (self.name or agent.name):
@@ -497,7 +508,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         else:
             value = result.value
         if not (ctx.usage - usage_before).has_values():
-            ctx.usage.incr(result.usage_delta)
+            # Recorded, not incremented: the operation accumulated this delta across the durable
+            # boundary, where the activity's context can't reach the spans open back here.
+            _usage_attribution.record_usage(ctx.usage, result.usage_delta)
         return value
 
     def _capability_operation_parameter_transport(
@@ -621,6 +634,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         return self._event_stream_handler
 
+    def _model_stream_event_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """The handler that consumes the live model stream inside a model-request unit.
+
+        Defaults to the run's event stream handler, which is the only handler most engines have.
+        Temporal overrides it to wrap that handler in one that also publishes the live model events
+        to a Workflow Stream topic: publishing has to happen inside the activity to reach the caller
+        while the model is still streaming, whereas the run's workflow-side events are published from
+        workflow code and must not go through this handler as well.
+        """
+        return self._effective_event_stream_handler()
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
         return self._effective_event_stream_handler() is not None
@@ -644,7 +668,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 # `ModelResponseStreamEvent`s were already delivered live to the handler inside the
                 # model-request boundary; workflow-side they're the replay, so only `HandleResponseEvent`s
                 # are dispatched to the handler here.
-                if dispatch_events and not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                if dispatch_events and not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES):
                     await self._dispatch_event_stream_event(ctx, event)
                 yield event
         finally:
@@ -1168,7 +1192,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _bind_mcp_get_tools_operation(self, toolset: Any) -> Any:
         async def get_tools_handler(params: ToolsetGetToolsParams) -> dict[str, ToolDefinition]:
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
-                tools = await toolset.get_tools(durable_ctx)
+                # Discovery is normally the first unit to need the server, so this is usually where
+                # the session the run holds gets opened — inside a unit, where the engine retries a
+                # failed connection — and it then stays open for the units that follow.
+                async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
+                    tools = await unit_toolset.get_tools(durable_ctx)
             return {name: tool.tool_def for name, tool in tools.items()}
 
         operation = DurableOperation(
@@ -1212,12 +1240,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def get_instructions_handler(params: ToolsetGetToolsParams) -> Instructions:
             with self._durable_run_context_scope(params.ctx) as durable_ctx:
                 # A server's instructions are captured during `__aenter__`, so it has to be
-                # connected *inside* this unit: an engine whose lifecycle never enters the
-                # toolset (DBOS's `enter-never`) would otherwise journal `None` and silently
-                # drop the instructions. Entry is refcounted, so this is a no-op when the
-                # toolset is already entered (`enter-always`/`enter-outside-durable`).
-                async with toolset:
-                    return await toolset.get_instructions(durable_ctx)
+                # connected *inside* this unit: an engine whose lifecycle leaves entering to the
+                # units would otherwise journal `None` and silently drop the instructions. Entry is
+                # refcounted, so reusing the session the run holds — or one the wrapper already
+                # entered (`enter-always`/`enter-outside-durable`) — costs nothing.
+                async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
+                    return await unit_toolset.get_instructions(durable_ctx)
 
         operation = DurableOperation(
             operation_id=ToolsetGetInstructionsId(cast(str, toolset.id)),
@@ -1241,9 +1269,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def call_tool_handler(params: ToolsetCallToolParams) -> CallToolResult:
             assert params.tool is not None
             with self._durable_run_context_scope(params.ctx) as durable_ctx:
-                return await wrap_tool_call_result(
-                    toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
-                )
+                async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
+                    return await wrap_tool_call_result(
+                        unit_toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
+                    )
 
         backend = self.get_durable_operation_backend()
         call_operation = DurableOperation(
@@ -1453,7 +1482,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 events = await capture_event_stream(
                     run_context=durable_ctx,
                     stream=streamed,
-                    handler=self._effective_event_stream_handler(),
+                    handler=self._model_stream_event_handler(),
                 )
         response = streamed.get()
         self._stamp_response(response, params.messages)

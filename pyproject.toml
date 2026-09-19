@@ -220,6 +220,7 @@ dev = [
     "pytest-recording>=0.13.2",
     "boto3-stubs[bedrock-runtime]>=1.42.63",
     "pytest-xdist>=3.6.1",
+    "pytest-split>=0.11.0",
     # Needed for PyCharm users
     "pip>=26.1",
     "genai-prices>=0.1.0",
@@ -364,6 +365,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_check_harness_navigation.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]

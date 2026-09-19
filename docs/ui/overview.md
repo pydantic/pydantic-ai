@@ -105,6 +105,25 @@ async def chat(request: Request) -> Response:
    [the trust model](#trust-model-for-client-submitted-messages) for what it's for. Do it in your own
    framework's idiom, as here, whenever you read the body yourself.
 
+### Running the agent elsewhere
+
+The adapter assumes the agent runs inside the request that serves the frontend. It doesn't have to. If the agent runs on a [durable execution](../durable_execution/overview.md) worker, a background job, or another service, the adapter's two jobs simply split across that boundary: the request side builds the run input and transforms the events it receives back into protocol events, and whatever runs the agent builds the run arguments from the same request body.
+
+The request side never calls `run_stream()`. It hands [`UIAdapter.transform_stream()`][pydantic_ai.ui.UIAdapter.transform_stream] the agent's events as they arrive over your transport (the media-type and validation handling from the example above still applies, and is elided here):
+
+```py {title="remote_run_handler.py" test="skip" lint="skip"}
+async def chat(request: Request) -> Response:
+    body = await request.body()
+    events = start_the_run_somewhere_else(body)  # an async iterator of Pydantic AI events
+
+    adapter = VercelAIAdapter(agent=agent, run_input=VercelAIAdapter.build_run_input(body))
+    return adapter.streaming_response(adapter.transform_stream(events))
+```
+
+The transport has to deliver the run's [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] as well as its [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — that's what closes the protocol out and what `on_complete` receives — so it needs to carry what [`Agent.run_stream_events()`](../agent.md#running-agents) yields, not just the model's events.
+
+Temporal's [Workflow Streams](../durable_execution/temporal.md#streaming-events-to-a-frontend-with-workflow-streams) are one such transport, and are worth reading as a worked example: the workflow is the queue, the events are durable and offset-addressed, and a frontend that reconnects can be reattached to a run it didn't start.
+
 ### Encoding events without a request
 
 If the agent doesn't run inside the request that serves the frontend — its events reach your API edge over a transport of their own, like a [durable execution](../durable_execution/overview.md) workflow, a queue, or a websocket fan-out — there's no request body to build a run input from, and no `UIAdapter` to run the agent. Use the protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass on its own instead: it transforms and encodes [the agent's events](../agent.md#streaming-all-events) and takes no run input.

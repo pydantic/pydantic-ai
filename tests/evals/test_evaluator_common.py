@@ -33,7 +33,10 @@ with try_import() as imports_successful:
         MaxDuration,
         OutputConfig,
     )
-    from pydantic_evals.evaluators.llm_as_a_judge import GEvalOutput
+    from pydantic_evals.evaluators.llm_as_a_judge import (
+        _GEvalResult,  # pyright: ignore[reportPrivateUsage]
+        _GradingResult,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanQuery
 
@@ -270,21 +273,21 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     mock_grading_output.reason = 'Test passed'
 
     # Mock the judge_output function
-    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output')
+    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_output')
     mock_judge_output.return_value = mock_grading_output
 
     # Mock the judge_input_output function
-    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_input_output')
+    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_input_output')
     mock_judge_input_output.return_value = mock_grading_output
 
     # Mock the judge_input_output_expected function
     mock_judge_input_output_expected = mocker.patch(
-        'pydantic_evals.evaluators.llm_as_a_judge.judge_input_output_expected'
+        'pydantic_evals.evaluators.llm_as_a_judge._judge_input_output_expected'
     )
     mock_judge_input_output_expected.return_value = mock_grading_output
 
     # Mock the judge_output_expected function
-    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output_expected')
+    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_output_expected')
     mock_judge_output_expected.return_value = mock_grading_output
 
     ctx = EvaluatorContext(
@@ -305,7 +308,9 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
         {'LLMJudge': {'value': True, 'reason': 'Test passed'}}
     )
 
-    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', None, None)
+    mock_judge_output.assert_called_once_with(
+        'Hello world', 'Content contains a greeting', None, None, allow_reasonless=True
+    )
 
     # Test with input
     evaluator = LLMJudge(rubric='Output contains input', include_input=True, model='openai:gpt-4o')
@@ -314,7 +319,12 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
     mock_judge_input_output.assert_called_once_with(
-        {'prompt': 'Hello'}, 'Hello world', 'Output contains input', 'openai:gpt-4o', None
+        {'prompt': 'Hello'},
+        'Hello world',
+        'Output contains input',
+        'openai:gpt-4o',
+        None,
+        allow_reasonless=True,
     )
 
     # Test with input and expected output
@@ -326,7 +336,13 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
     mock_judge_input_output_expected.assert_called_once_with(
-        {'prompt': 'Hello'}, 'Hello world', 'Hello', 'Output contains input', 'openai:gpt-4o', None
+        {'prompt': 'Hello'},
+        'Hello world',
+        'Hello',
+        'Output contains input',
+        'openai:gpt-4o',
+        None,
+        allow_reasonless=True,
     )
 
     # Test with output and expected output
@@ -338,7 +354,12 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
     mock_judge_output_expected.assert_called_once_with(
-        'Hello world', 'Hello', 'Output contains input', 'openai:gpt-4o', None
+        'Hello world',
+        'Hello',
+        'Output contains input',
+        'openai:gpt-4o',
+        None,
+        allow_reasonless=True,
     )
     # Test with failing result
     mock_grading_output.score = 0.0
@@ -362,6 +383,16 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
 
+async def test_llm_judge_omits_an_unavailable_reason(mocker: MockerFixture):
+    mocker.patch(
+        'pydantic_evals.evaluators.llm_as_a_judge._judge_output',
+        return_value=_GradingResult(reason=None, pass_=True, score=1.0),
+    )
+    evaluator = LLMJudge(rubric='Content contains a greeting')
+
+    assert to_jsonable_python(await evaluator.evaluate(MockContext(output='Hello'))) == snapshot({'LLMJudge': True})
+
+
 @pytest.mark.anyio
 async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
     """Test LLMJudge evaluator with specific model_settings."""
@@ -369,18 +400,18 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
     mock_grading_output.pass_ = True
     mock_grading_output.reason = 'Test passed with settings'
 
-    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output')
+    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_output')
     mock_judge_output.return_value = mock_grading_output
 
-    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_input_output')
+    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_input_output')
     mock_judge_input_output.return_value = mock_grading_output
 
     mock_judge_input_output_expected = mocker.patch(
-        'pydantic_evals.evaluators.llm_as_a_judge.judge_input_output_expected'
+        'pydantic_evals.evaluators.llm_as_a_judge._judge_input_output_expected'
     )
     mock_judge_input_output_expected.return_value = mock_grading_output
 
-    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output_expected')
+    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_output_expected')
     mock_judge_output_expected.return_value = mock_grading_output
 
     custom_model_settings = ModelSettings(temperature=0.77)
@@ -403,7 +434,11 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         {'LLMJudge': {'value': True, 'reason': 'Test passed with settings'}}
     )
     mock_judge_output.assert_called_once_with(
-        'Hello world custom settings', 'Greeting with custom settings', None, custom_model_settings
+        'Hello world custom settings',
+        'Greeting with custom settings',
+        None,
+        custom_model_settings,
+        allow_reasonless=True,
     )
 
     # Test with input, with custom model_settings
@@ -422,6 +457,7 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         'Output contains input with custom settings',
         'openai:gpt-3.5-turbo',
         custom_model_settings,
+        allow_reasonless=True,
     )
 
     # Test with input and expected output, with custom model_settings
@@ -442,6 +478,7 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         'Output contains input with custom settings',
         'openai:gpt-3.5-turbo',
         custom_model_settings,
+        allow_reasonless=True,
     )
 
     # Test with output and expected output
@@ -461,6 +498,7 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         'Output contains input with custom settings',
         'openai:gpt-3.5-turbo',
         custom_model_settings,
+        allow_reasonless=True,
     )
 
 
@@ -515,8 +553,8 @@ async def test_span_query_evaluator(capfire: CaptureLogfire):
 
 async def test_g_eval_evaluator(mocker: MockerFixture):
     """Test GEval evaluator."""
-    mock_judge_g_eval = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval')
-    mock_judge_g_eval.return_value = GEvalOutput(reason='Clear and well structured', score=4)
+    mock_judge_g_eval = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge._judge_g_eval')
+    mock_judge_g_eval.return_value = _GEvalResult(reason='Clear and well structured', score=4)
 
     ctx = EvaluatorContext(
         name='test',
@@ -544,6 +582,7 @@ async def test_g_eval_evaluator(mocker: MockerFixture):
         inputs='Explain gravity.',
         model=None,
         model_settings=None,
+        allow_reasonless=True,
     )
 
     # By default the inputs are not shown to the judge
@@ -551,6 +590,18 @@ async def test_g_eval_evaluator(mocker: MockerFixture):
     evaluator = GEval(criteria='fluency', evaluation_steps=['Check grammar.'])
     await evaluator.evaluate(ctx)
     assert mock_judge_g_eval.call_args.kwargs['inputs'] is None
+
+
+async def test_g_eval_preserves_an_unavailable_reason(mocker: MockerFixture):
+    mocker.patch(
+        'pydantic_evals.evaluators.llm_as_a_judge._judge_g_eval',
+        return_value=_GEvalResult(reason=None, score=4),
+    )
+    evaluator = GEval(criteria='clarity', evaluation_steps=['Read it.'])
+
+    assert to_jsonable_python(await evaluator.evaluate(MockContext(output='Clear.'))) == snapshot(
+        {'value': 4, 'reason': None}
+    )
 
 
 def test_g_eval_validates_arguments_at_construction():

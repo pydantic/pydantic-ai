@@ -13,6 +13,7 @@ import asyncio
 import importlib
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RequestUsage, RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -48,7 +49,7 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     RealtimeTurnCompleteEvent,
 )
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
@@ -113,6 +114,7 @@ async def test_enqueued_message_delivery_event(
                 },
                 output_tokens=5,
                 input_tokens=14,
+                cost=Decimal('0.000136'),
             ),
             model_name='gpt-realtime',
             timestamp=IsDatetime(),
@@ -178,6 +180,7 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                     },
                     output_tokens=5,
                     input_tokens=24,
+                    cost=Decimal('0.000176'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -210,6 +213,7 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                     },
                     output_tokens=9,
                     input_tokens=52,
+                    cost=Decimal('0.000352'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -370,6 +374,42 @@ async def test_media_views_subscribe_before_iteration(
     assert transcript_parts[0].transcript
 
 
+async def test_wait_for_playback_drains_audio_before_close(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A generation boundary does not let session teardown cut off device-paced playback."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in one short sentence.')
+    emitted: list[bytes] = []
+    played: list[bytes] = []
+
+    async with agent.realtime(model).session() as session:
+        audio = session.stream_audio()
+
+        async def play_audio() -> None:
+            async for chunk in audio:
+                await asyncio.sleep(0.005)
+                played.append(chunk)
+
+        playback = asyncio.create_task(play_audio())
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if (
+                    isinstance(event, PartDeltaEvent)
+                    and isinstance(event.delta, SpeechPartDelta)
+                    and event.delta.audio_chunk
+                ):
+                    emitted.append(event.delta.audio_chunk)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await session.wait_for_playback()
+        assert played == emitted
+
+    await playback
+
+
 async def test_provider_factory_text_turn(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], openai_api_key: str
 ) -> None:
@@ -405,6 +445,7 @@ async def test_provider_factory_text_turn(
                         'output_text_tokens': 5,
                         'audio_tokens': 0,
                     },
+                    cost=Decimal('0.000128'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -544,6 +585,7 @@ async def test_audio_in_server_vad_turn(
                 'output_text_tokens': 28,
                 'audio_tokens': 136,
             },
+            cost=Decimal('0.010072'),
             requests=1,
         )
     )
@@ -748,6 +790,7 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='hang_up', args='{}', tool_call_id=(tool_call_id := IsSameStr()))],
+                usage=RequestUsage(cost=Decimal('0.0')),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -823,6 +866,7 @@ async def test_tool_error_ends_transcript_only_session(
                         tool_call_id=IsStr(),
                     )
                 ],
+                usage=RequestUsage(cost=Decimal('0.0')),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -830,6 +874,20 @@ async def test_tool_error_ends_transcript_only_session(
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='The tool raised an unhandled error and the session ended.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        outcome='failed',
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

@@ -145,8 +145,10 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # The original GPT-5 family (incl. -mini/-pro/-codex) reasons at 'medium' by default.
     # See https://platform.openai.com/docs/guides/reasoning
     'gpt-5': _ALWAYS_ON_REASONING,
-    # The o-series.
-    'o': _ALWAYS_ON_REASONING,
+    # Match o-series families explicitly so gateway prefixes like `openrouter/` don't match.
+    'o1': _ALWAYS_ON_REASONING,
+    'o3': _ALWAYS_ON_REASONING,
+    'o4': _ALWAYS_ON_REASONING,
 }
 """Reasoning support per model-name prefix; the first matching prefix wins, so a more specific
 prefix (e.g. `'gpt-5.3-chat'`) must be listed before the broader one it would otherwise match
