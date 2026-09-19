@@ -912,15 +912,21 @@ def _mapping_options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
     """
     if prop.get('type') != 'object' or prop.get('properties'):
         return None
-    values = prop.get('additionalProperties')
-    # `True` rather than a schema is how `dict[str, Any]` says its values are unconstrained.
-    if not isinstance(values, dict) or cast('dict[str, Any]', values).get('type') != 'boolean':
-        return None
     if 'maxProperties' in prop or 'minProperties' in prop:
         # Every option is asked about and every answer is kept, so there is no way to return fewer or more
         # keys than the mapping declares, and a limit on how many there may be could only be broken.
         return None
-    return _options(prop.get('propertyNames') or {})
+    # A plain yes/no per key and nothing else. Anything narrower -- a `const`, an `enum`, a `Literal[True]` --
+    # would forbid an answer Jev is free to give, and `True` rather than a schema is how `dict[str, Any]` says
+    # its values are unconstrained. Matching the whole schema rather than one key of it refuses both, and
+    # whatever else is put there next.
+    if prop.get('additionalProperties') != {'type': 'boolean'}:
+        return None
+    names = prop.get('propertyNames')
+    if not isinstance(names, dict):
+        # `propertyNames: true` says the keys are unconstrained, so there are no options to fan out over.
+        return None
+    return _options(cast('dict[str, Any]', names))
 
 
 def _options(prop: dict[str, Any]) -> dict[Any, str | None] | None:

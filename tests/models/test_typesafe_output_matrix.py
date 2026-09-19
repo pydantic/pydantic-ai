@@ -213,6 +213,14 @@ REFUSED = [
     # `dict[str, Any]` says its values are unconstrained by writing `additionalProperties: true` rather than a
     # schema, which is not a thing to call `.get` on.
     Refused('field: mapping of anything', probe('blob', dict[str, Any], description='Anything?'), unsupported('blob')),
+    # The values have to be a plain yes/no: anything narrower forbids an answer Jev is free to give.
+    Refused(
+        'field: mapping to a fixed value',
+        probe('m', dict[Area, Literal[True]], description='Which?'),
+        unsupported('m'),
+    ),
+    # And the keys have to be options: `dict[str, bool]` says nothing about what they are.
+    Refused('field: mapping of free keys', probe('m', dict[str, bool], description='Which?'), unsupported('m')),
     # A `tuple` is an array whose members are positional, which Pydantic renders as `prefixItems` and no
     # `items`, so there are no options to fan out over.
     Refused(
