@@ -156,3 +156,64 @@ async def test_outer_cancellation_restores_console_and_drains_workers(menu: bool
         assert console.file is original
         assert not prompt.app.is_running
     assert asyncio.all_tasks() <= before
+
+
+async def test_queue_preview_tracks_pending_messages_above_editor() -> None:
+    async with editor() as (live, pipe, _):
+        frames = [anyio.Event() for _ in range(3)]
+
+        def rendered(app: Application[str]) -> None:
+            screen = app.renderer.last_rendered_screen
+            if screen is None:
+                return
+            rows = [''.join(cell.char for cell in row.values()) for row in screen.data_buffer.values()]
+            text = '\n'.join(rows)
+            if '> draft' not in text:
+                return
+            if 'Follow-up: first' in text and 'Command: /usage' in text:
+                assert text.index('Follow-up: first') < text.index('Command: /usage') < text.index('> draft')
+                frames[0].set()
+            elif 'Follow-up:' not in text and 'Command: /usage' in text:
+                frames[1].set()
+            elif 'Follow-up:' not in text and 'Command:' not in text:
+                frames[2].set()
+
+        live.prompt.app.after_render += rendered
+        pipe.send_text('first\n/usage\ndraft')
+        await frames[0].wait()
+        assert live.queued_messages == ('first', '/usage')
+        assert await live.read() == 'first'
+        await frames[1].wait()
+        assert await live.read() == '/usage'
+        await frames[2].wait()
+        assert live.queued_messages == ()
+        assert live.prompt.default_buffer.text == 'draft'
+
+
+async def test_queue_preview_is_bounded_and_does_not_modify_messages() -> None:
+    async with editor() as (live, pipe, _):
+        live.console.size = (24, 9)
+        messages = ['one\ntwo\x1b[31m', '界' * 40, 'third', '/usage']
+        for message in messages:
+            live.prompt.default_buffer.text = message
+            live.prompt.default_buffer.validate_and_handle()
+        lines = live.queue_preview()[0][1].splitlines()
+        assert lines[0] == 'Follow-up: one two[31m'
+        assert lines[1].startswith('Follow-up: 界') and lines[1].endswith('…')
+        assert lines[2] == '+2 more queued'
+        assert '\x1b' not in '\n'.join(lines)
+        for message in messages:
+            assert await live.read() == message
+        assert live.queued_messages == ()
+        drafted = anyio.Event()
+
+        def changed(buffer: Buffer) -> None:
+            drafted.set()
+
+        live.prompt.default_buffer.on_text_changed += changed
+        pipe.send_text('\x04draft')
+        await drafted.wait()
+        assert live.queued_messages == ()
+        assert live.queue_preview()[0][1] == ''
+        with pytest.raises(EOFError):
+            await live.read()

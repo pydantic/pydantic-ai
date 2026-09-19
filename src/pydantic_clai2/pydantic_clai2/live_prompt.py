@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+from collections import deque
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import IO
@@ -12,11 +13,13 @@ from prompt_toolkit.application import in_terminal
 from prompt_toolkit.application.current import set_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition, is_done
-from prompt_toolkit.formatted_text import ANSI, to_formatted_text
+from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.layout import ConditionalContainer, FormattedTextControl, HSplit, Window
 from rich.console import Console
+from rich.text import Text
 
+from . import theme
 from .interrupts import Interrupts
 
 
@@ -80,21 +83,51 @@ class LivePrompt:
         self.console = console
         self.prepare = prepare
         self.interrupts = interrupts
-        self.submissions: asyncio.Queue[str | KeyboardInterrupt | EOFError] = asyncio.Queue()
+        self._submissions: deque[str | KeyboardInterrupt | EOFError] = deque()
+        self._submitted = asyncio.Event()
         self.output = PromptOutput(console.file)
 
     async def read(self) -> str:
         """Consume submissions in order without overlapping agent runs."""
-        value = await self.submissions.get()
+        await self._submitted.wait()
+        value = self._submissions.popleft()
+        if not self._submissions:
+            self._submitted.clear()
+        self.prompt.app.invalidate()
         if isinstance(value, BaseException):
             raise value
         return value
+
+    def _submit(self, value: str | KeyboardInterrupt | EOFError) -> None:
+        self._submissions.append(value)
+        self._submitted.set()
+        self.prompt.app.invalidate()
+
+    @property
+    def queued_messages(self) -> tuple[str, ...]:
+        """Pending text in execution order, excluding input control signals."""
+        return tuple(value for value in self._submissions if isinstance(value, str))
+
+    def queue_preview(self) -> FormattedText:
+        """Show compact follow-up previews without letting a large queue fill the terminal."""
+        messages = self.queued_messages
+        limit = max(1, self.console.height // 3 - 1)
+        lines: list[str] = []
+        for message in messages[:limit]:
+            label = 'Command' if message.startswith('/') else 'Follow-up'
+            printable = ''.join(char for char in message if char.isprintable() or char.isspace())
+            text = Text(f'{label}: {" ".join(printable.split())}')
+            text.truncate(max(1, self.console.width), overflow='ellipsis')
+            lines.append(text.plain)
+        if len(messages) > limit:
+            lines.append(f'+{len(messages) - limit} more queued')
+        return FormattedText([(theme.MUTED, '\n'.join(lines))])
 
     def accept(self, buffer: Buffer) -> bool:
         """Submit the current buffer without ending the editor application."""
         text = buffer.text.strip()
         if text:
-            self.submissions.put_nowait(text)
+            self._submit(text)
         return False
 
     def bindings(self) -> KeyBindings:
@@ -105,14 +138,14 @@ class LivePrompt:
         def interrupt(event: KeyPressEvent) -> None:
             if not self.interrupts.cancel():
                 event.current_buffer.reset()
-                self.submissions.put_nowait(KeyboardInterrupt())
+                self._submit(KeyboardInterrupt())
 
         @keys.add('c-d')
         def eof(event: KeyPressEvent) -> None:
             if event.current_buffer.text:
                 event.current_buffer.delete()
             else:
-                self.submissions.put_nowait(EOFError())
+                self._submit(EOFError())
 
         return keys
 
@@ -140,12 +173,16 @@ class LivePrompt:
             Window(FormattedTextControl(lambda: ANSI(self.output.pending)), dont_extend_height=True),
             filter=Condition(lambda: bool(self.output.pending)) & ~is_done,
         )
+        queue_preview = ConditionalContainer(
+            Window(FormattedTextControl(self.queue_preview), dont_extend_height=True),
+            filter=Condition(lambda: bool(self.queued_messages)) & ~is_done,
+        )
         toolbar = self.prompt.bottom_toolbar
         accept_handler = self.prompt.default_buffer.accept_handler
 
         def prepare() -> None:
             self.prepare()
-            container.children.insert(0, preview)
+            container.children[0:0] = [preview, queue_preview]
             self.prompt.default_buffer.accept_handler = self.accept
             started.set()
 
@@ -160,11 +197,11 @@ class LivePrompt:
                     refresh_interval=0.1,
                     bottom_toolbar=lambda: [
                         *to_formatted_text(toolbar),
-                        ('', f' | queued: {self.submissions.qsize()}') if self.submissions.qsize() else ('', ''),
+                        ('', f' | queued: {len(self.queued_messages)}') if self.queued_messages else ('', ''),
                     ],
                 )
             except EOFError:
-                self.submissions.put_nowait(EOFError())
+                self._submit(EOFError())
 
         original = self.console.file
         with set_app(self.prompt.app):
@@ -181,4 +218,5 @@ class LivePrompt:
                     self.prompt.bottom_toolbar = toolbar
                     self.prompt.default_buffer.accept_handler = accept_handler
                     container.children.remove(preview)
+                    container.children.remove(queue_preview)
                     workers.cancel_scope.cancel()

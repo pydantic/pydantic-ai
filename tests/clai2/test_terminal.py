@@ -314,6 +314,10 @@ async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path, height: i
             assert any('│> next message' in line for line in frame)
             pipe.send_text('\n/set display.thinking false\nretained draft')
             await queued.wait()
+            follow_up = next(row for row, line in enumerate(frame) if 'Follow-up: next message' in line)
+            command = next(row for row, line in enumerate(frame) if 'Command: /set display.thinking false' in line)
+            editor_top = next(row for row, line in enumerate(frame) if '┌' in line)
+            assert follow_up < command < editor_top
             assert calls == 1
             assert store.load().thinking
             finish.set()

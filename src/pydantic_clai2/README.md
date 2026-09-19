@@ -43,6 +43,8 @@ and completed tool side effects cannot be undone.
 ## Prompt area
 
 ```text
+Follow-up: Add tests for the change
+Command: /usage
 ┌──────────────────────────────────────────────┐
 │> Draft your next message here                 │
 └──────────────────────────────────────────────┘
@@ -53,8 +55,14 @@ The prompt sits above the footer with one editable line when empty. It grows
 for wrapped or pasted text and completion suggestions, not to fill the terminal.
 History search stays compact too. The bordered prompt area stays visible below
 streamed output while CLAI works, and remains editable. Enter submits a message
-to an in-memory queue; the footer shows how many submissions are waiting. Messages
-and slash commands run in submission order, after the current turn and its cleanup
+to an in-memory queue. Pending text appears above the editor as `Follow-up:`
+previews, with queued slash commands labeled `Command:`. Previews are shown in
+execution order and disappear as each submission starts. Long or multiline messages
+have a single-line preview; large queues show a `+N more queued` summary to leave
+room for the editor. The original message text is unchanged. The footer also shows
+the number waiting. This is a read-only preview, not a queue editor.
+
+Messages and slash commands run in submission order, after the current turn and its cleanup
 finish. They do not interrupt or steer the active turn. An unsubmitted draft stays
 in the editor as turns finish. Queued messages are not saved as conversation turns
 until execution starts, and are discarded on exit or `/reload`.

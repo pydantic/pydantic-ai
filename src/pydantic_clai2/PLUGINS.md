@@ -452,7 +452,11 @@ is one) has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns: users can draft and queue messages,
-but turns and slash commands execute sequentially. Slash-command handlers already
+but turns and slash commands execute sequentially. Pending message previews appear
+above the editor in execution order (`Follow-up:` for messages, `Command:` for
+slash commands), and disappear when consumed. The preview is read-only; clipping
+and flattening multiline text for display do not change the submitted text.
+Slash-command handlers already
 run with the editor suspended; tool-driven widgets must take the screen explicitly:
 
 ```python
