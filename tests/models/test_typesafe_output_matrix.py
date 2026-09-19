@@ -62,6 +62,13 @@ class Escalation(BaseModel):
     security: bool = Field(description='Does this involve a security risk?')
 
 
+class Thread(BaseModel):
+    """Triage the thread."""
+
+    urgent: bool = Field(description='Is this urgent?')
+    parent: Thread
+
+
 class Cat(BaseModel):
     """A cat."""
 
@@ -108,6 +115,13 @@ def says_nothing(route: str) -> str:
     return (
         f'Jev weighs each route by what it is for, and {route!r} says nothing about itself. '
         'Give the output type a docstring that says what filling it does.'
+    )
+
+
+def contains_itself(field: str) -> str:
+    return (
+        f'Output field {field!r} is not supported by this model: a model that always contains itself '
+        'has no end to fill. Give the field a default, or make it optional.'
     )
 
 
@@ -181,6 +195,16 @@ REFUSED = [
     Refused('mapping of text', dict[str, str], unsupported('response')),
     # A list is one yes/no per option, so its items have to be the options.
     Refused('list of models', list[Ticket], unsupported('response', NOT_A_LIST)),
+    # A `tuple` is an array whose members are positional, which Pydantic renders as `prefixItems` and no
+    # `items`, so there are no options to fan out over.
+    Refused(
+        'field: tuple of pick-ones',
+        probe('two', tuple[Area, Area], description='Which two?'),
+        unsupported('two', NOT_A_LIST),
+    ),
+    # A model that always contains itself is infinitely many questions; through a list or an optional it is
+    # refused on that field first, by the rows above.
+    Refused('field: model that contains itself', Thread, contains_itself('parent.parent')),
     # A number is only a question when it is a probability or a rubric level.
     Refused('field: bounded int', probe('clarity', int, ge=0, le=4, description='How clear?'), unsupported('clarity')),
     Refused('field: percentage', probe('risk', float, ge=0, le=100, description='How risky?'), unsupported('risk')),
@@ -326,32 +350,3 @@ async def test_an_accepted_output_type_and_what_it_costs(allow_model_requests: N
     assert result.output == case.output
     assert len(sent) == case.requests
     assert (result.response.provider_details or {}).get('requests') == (case.requests if case.requests > 1 else None)
-
-
-# The two rows below are defects, not considered refusals: an output type Jev cannot take should raise a
-# `UserError` naming the field, as every row above does. They are pinned as they stand so that fixing either
-# is a visible change; neither is fixed here.
-
-
-async def test_a_tuple_of_options_raises_a_key_error(allow_model_requests: None):
-    """A `tuple` renders as `prefixItems` with no `items`, and the list branch reads `items` unguarded."""
-    Pair = probe('two', tuple[Area, Area], description='Which two?')
-
-    with pytest.raises(KeyError, match='items'):
-        await Agent(mock_model(unreachable), output_type=Pair).run('anything')
-
-
-async def test_a_model_that_contains_itself_runs_out_of_stack(allow_model_requests: None):
-    """Resolving `$ref`s follows a model into itself forever when the self-reference has no way out.
-
-    A self-reference through a `list` or an optional is refused on that field first, before the walk repeats.
-    """
-
-    class Thread(BaseModel):
-        """Triage the thread."""
-
-        urgent: bool = Field(description='Is this urgent?')
-        parent: Thread
-
-    with pytest.raises(RecursionError):
-        await Agent(mock_model(unreachable), output_type=Thread).run('anything')

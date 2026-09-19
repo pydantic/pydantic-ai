@@ -722,7 +722,7 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
             prop = {**prop, 'anyOf': [resolve(option) for option in prop['anyOf']]}
         return prop
 
-    def flatten(properties: dict[str, Any], prefix: str) -> dict[str, dict[str, Any]]:
+    def flatten(properties: dict[str, Any], prefix: str, seen: frozenset[str]) -> dict[str, dict[str, Any]]:
         fields: dict[str, dict[str, Any]] = {}
         for name, prop in properties.items():
             if '.' in name:
@@ -730,14 +730,23 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
                     f'Output field {prefix + name!r} is not supported by this model: a dot in a field name is how '
                     'a nested field is named. Rename it.'
                 )
+            ref = prop.get('$ref')
             prop = resolve(prop)
             if prop.get('type') == 'object' and prop.get('properties'):
-                fields.update(flatten(prop['properties'], f'{prefix}{name}.'))
+                if ref is not None and ref in seen:
+                    # A model that contains itself with no way out is infinitely many questions, so there is no
+                    # depth at which to stop asking. An optional or list self-reference is refused on the field
+                    # itself before the walk gets here.
+                    raise UserError(
+                        f'Output field {prefix + name!r} is not supported by this model: a model that always '
+                        'contains itself has no end to fill. Give the field a default, or make it optional.'
+                    )
+                fields.update(flatten(prop['properties'], f'{prefix}{name}.', seen | {ref} if ref else seen))
             else:
                 fields[f'{prefix}{name}'] = prop
         return fields
 
-    return flatten(_properties(schema), '')
+    return flatten(_properties(schema), '', frozenset())
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
@@ -821,7 +830,7 @@ def _questions(
         if prop.get('type') == 'array':
             # Several options at once is one yes/no per option, all in the same request, which TypeSafe call
             # fanning out: does this option apply, asked with the field's question and the option's description.
-            labels = _options(prop['items'])
+            labels = _options(prop['items']) if 'items' in prop else None
             if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: a list must be of two or more string '
