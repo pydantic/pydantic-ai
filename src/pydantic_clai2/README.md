@@ -326,10 +326,22 @@ and their registrations are recreated. Installed module globals not overwritten
 by the new source can survive; initialize mutable state in `activate`.
 Import-time side effects cannot be undone.
 
-Reload ordering follows the modules' existing imports. Restart after changing
-import dependencies, startup code, or the custom agent's construction. `/reload`
-does not rerun the CLI or recursively reload third-party packages. Use
-`/plugins reload NAME` when you only want to reload one plugin.
+Reload ordering follows module-scope imports in the current Python source, so
+adding or changing imports between CLAI modules does not require a restart.
+Newly referenced local modules and package initializers are included when planning
+the dependency order, but Python imports them only if the updated code uses them.
+Function-local imports and `TYPE_CHECKING` guards do not create eager dependencies.
+Literal guards and direct comparisons of `sys.platform`, `os.name`, and
+`sys.version_info` select only the active branch, including imported aliases.
+Other conditions are analyzed conservatively and may require a restart if their
+alternative imports form a cycle. No guard expression is executed during planning.
+A detected import cycle or invalid source reports an error before reloading modules.
+
+Restart for changes to startup code, the custom agent's construction, or dependencies
+loaded dynamically rather than declared by module-scope imports. `/reload` does not
+rerun the CLI or recursively reload third-party packages. Import-time side effects
+still cannot be undone. Use `/plugins reload NAME` when you only want to reload one
+plugin.
 
 ## Saved sessions and `/resume`
 

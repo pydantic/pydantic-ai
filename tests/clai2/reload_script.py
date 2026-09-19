@@ -35,6 +35,10 @@ async def main(root: Path, mode: str) -> None:
     updated = updated.replace('New session started.', 'Updated session started.')
     commands = package / 'commands.py'
     commands.write_text(commands.read_text().replace('Use /help.', 'Use updated /help.'))
+    if mode == 'new_imports':
+        commands.write_text(commands.read_text() + '\nRELOAD_MARKER = "source graph"\n')
+        (package / 'reload_bridge.py').write_text('from .commands import RELOAD_MARKER\n')
+        updated += '\nfrom .reload_bridge import RELOAD_MARKER\nassert RELOAD_MARKER == "source graph"\n'
     session = package / '_session.py'
     session.write_text(
         session.read_text().replace('                        text,', "                        text + ' updated',")
@@ -174,11 +178,11 @@ async def main(root: Path, mode: str) -> None:
     if mode == 'custom':
         assert 'example: reload_plugin (built-in) (enabled, loaded)' in text, text
     assert seen[0] == ['first'], seen
-    assert seen[1] == ['first', 'second updated' if mode in ('success', 'custom') else 'second'], seen
+    assert seen[1] == ['first', 'second updated' if mode in ('success', 'custom', 'new_imports') else 'second'], seen
     assert seen[2] == [*seen[1], 'third' if mode == 'unchanged' else 'third updated'], seen
     assert labels[-1] == ('> ' if mode == 'unchanged' else 'updated> ')
     assert store.load().model == 'test' and not store.load().thinking
-    if mode in ('unchanged', 'success', 'custom'):
+    if mode in ('unchanged', 'success', 'custom', 'new_imports'):
         assert text.count('CLAI2 reloaded. Conversation preserved.') == 2, text
         assert ('Use /help.' if mode == 'unchanged' else 'Use updated /help.') in text, text
     else:
