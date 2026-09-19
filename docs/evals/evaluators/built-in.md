@@ -392,6 +392,70 @@ may contain at most 20 levels.
 
 **See Also:** [Standard Quality Metrics](standard-quality-metrics.md)
 
+### Classifier
+
+Ask a model a typed question about each case and report its answer. Where [`LLMJudge`](#llmjudge) grades
+against a rubric, this asks the question itself, in whatever shape it has: a yes/no, one of a set of labels, a
+0-to-1 score, or one per field of a model. Nothing is written in prose, so on a model that only answers
+questions, such as [TypeSafe's Jev](../../models/typesafe.md), each case is one fast, cheap request; on any
+other model it is an ordinary structured-output agent.
+
+```python
+from enum import Enum
+
+from pydantic import BaseModel, Field
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import Classifier
+
+
+class Tone(str, Enum):
+    polite = 'polite'
+    curt = 'curt'
+    """Correct but gives the customer nothing extra."""
+    rude = 'rude'
+
+
+class Reply(BaseModel):
+    """Triage a support reply."""
+
+    answers_the_question: bool = Field(description='Does the reply answer what was asked?')
+    on_policy: bool = Field(description='Does the reply match the expected answer?')
+
+
+dataset = Dataset(
+    name='support_replies',
+    cases=[Case(inputs='Can I get a refund?', expected_output='Yes, within 30 days.')],
+    evaluators=[
+        # A yes/no question is an assertion
+        Classifier('Is the reply polite?', model='typesafe:jev-latest'),
+        # A choice is a label; the docstring under a member describes that option
+        Classifier('How does the reply treat the customer?', output_type=Tone, model='typesafe:jev-latest'),
+        # A model is one evaluation per field, each field's description being its question
+        Classifier(
+            output_type=Reply,
+            model='typesafe:jev-latest',
+            include_input=True,
+            include_expected_output=True,
+        ),
+    ],
+)
+```
+
+**Parameters:**
+
+- `instructions` (str | None): The question, when `output_type` has no field to describe it
+- `output_type`: What the model may answer: `bool` (default), a `Literal` or `Enum` of strings, a `float` bounded 0 to 1, or a Pydantic model of those
+- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
+- `include_input` (bool): Include task inputs in the prompt (default: `False`)
+- `include_expected_output` (bool): Include expected output in the prompt (default: `False`)
+- `model_settings` (ModelSettings | None): Custom model settings
+- `evaluation_name` (str | None): Custom name for a single answer (default: `'Classifier'`); a model's fields are named after themselves
+
+**Returns:** `bool` as an assertion, `str` as a label, `float` as a score, or a mapping of those for a model. When the model reports a confidence for an answer, as Jev does, it is the reason.
+
+A yes/no `Classifier` saves to and loads from a dataset file like any other evaluator. An `output_type` other than `bool` is a Python type, so a dataset using one is defined in code.
+
 ---
 
 ## Span-Based Evaluation
@@ -480,6 +544,7 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
 | [`GEval`][pydantic_evals.evaluators.GEval] | Chain-of-thought scoring | `int` + reason | $$ | Slow |
+| [`Classifier`][pydantic_evals.evaluators.Classifier] | Typed question, no prose | `bool`, `str` or `float` + confidence | $ | Fast on Jev |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
 
 ### Report-Level Evaluators

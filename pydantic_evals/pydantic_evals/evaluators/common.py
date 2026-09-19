@@ -1,20 +1,29 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Literal, cast
+from enum import Enum
+from functools import cached_property
+from types import UnionType
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import TypeAdapter
+from pydantic.fields import FieldInfo
 from typing_extensions import TypedDict
 
 from pydantic_ai import models
 from pydantic_ai._utils import is_model_like
+from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 
 from ..otel.span_tree import SpanQuery
 from .agentic import ArgumentCorrectness, MaxModelRequests, MaxToolCalls, ToolCorrectness, TrajectoryMatch
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
+
+if TYPE_CHECKING:
+    from pydantic_ai import Agent
 
 __all__ = (
     'Equals',
@@ -24,6 +33,7 @@ __all__ = (
     'MaxDuration',
     'LLMJudge',
     'GEval',
+    'Classifier',
     'HasMatchingSpan',
     'OutputConfig',
 )
@@ -364,6 +374,112 @@ class GEval(Evaluator[object, object, object]):
 
 
 @dataclass(repr=False)
+class Classifier(Evaluator[object, object, object]):
+    """Ask a model a typed question about each case and report its answer.
+
+    `output_type` is what the model may answer with. `bool`, the default, is a yes/no question and reports an
+    assertion; a `Literal` or `Enum` of strings picks one option and reports a label; a `float` bounded 0 to 1
+    reports a score; a Pydantic model of those reports one evaluation per field, named after the field, with the
+    field's description as its question. `instructions` is the question when there is no field to describe it.
+
+    Where [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] grades against a rubric, this asks the question itself.
+    Nothing is written in prose, so on a model that only answers questions, such as
+    [`typesafe:jev-latest`](../../models/typesafe.md), every case is one cheap request; on any other model it is an
+    ordinary structured-output agent, so the same evaluator runs on an LLM. A confidence the model reports for an
+    answer, as Jev does in `provider_details['confidence']`, becomes the answer's reason.
+
+    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
+    overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+    """
+
+    instructions: str | None = None
+    # `| UnionType` is for Pyright, which types a class union such as `Literal['a', 'b']` as a bare `UnionType`;
+    # `Agent.__init__` gets the same effect from a duplicated overload, which a dataclass cannot have.
+    output_type: OutputSpec[Any] | UnionType = bool
+    model: models.Model | models.KnownModelName | str | None = None
+    include_input: bool = False
+    include_expected_output: bool = False
+    model_settings: ModelSettings | None = None
+    evaluation_name: str | None = field(default=None)
+
+    def __post_init__(self):
+        if self.instructions is None and not is_model_like(self.output_type):
+            raise ValueError(
+                '`Classifier` needs `instructions` to ask a question, unless `output_type` is a model whose '
+                'field descriptions are the questions'
+            )
+
+    @cached_property
+    def _agent(self) -> Agent[None, Any]:
+        from pydantic_ai import Agent
+
+        return Agent(
+            output_type=cast(OutputSpec[Any], self.output_type), instructions=self.instructions, name='classifier'
+        )
+
+    @cached_property
+    def _fields(self) -> tuple[TypeAdapter[Any], Mapping[str, str]] | None:
+        """An adapter that dumps an answer to one value per field, and the name each field went out under.
+
+        `None` when `output_type` asks a single question rather than one per field. A model, a dataclass and a
+        `TypedDict` all answer with an object, but only a model dumps itself, so the adapter does it for all
+        three. A field with an alias is asked about under the alias, so a confidence comes back under that name
+        while the evaluation keeps the name the field was written under.
+        """
+        if not is_model_like(self.output_type):
+            return None
+        output_type = cast(Any, self.output_type)
+        fields: Mapping[str, FieldInfo] = getattr(output_type, '__pydantic_fields__', None) or {}
+        return TypeAdapter(output_type), {name: field.alias or name for name, field in fields.items()}
+
+    async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+        from . import llm_as_a_judge
+
+        # The judge prompt's context sections name what a reason must take into account; `Classifier` asks for
+        # no reason, so only the prompt is used.
+        prompt, _ = llm_as_a_judge._build_prompt(  # pyright: ignore[reportPrivateUsage]
+            ctx.output,
+            None,
+            inputs=ctx.inputs if self.include_input else None,
+            expected_output=ctx.expected_output if self.include_expected_output else None,
+        )
+        result = await self._agent.run(
+            prompt,
+            model=self.model or llm_as_a_judge._default_model,  # pyright: ignore[reportPrivateUsage]
+            model_settings=self.model_settings,
+        )
+        confidence: dict[str, float] = (result.response.provider_details or {}).get('confidence') or {}
+
+        output = result.output
+        if (fields := self._fields) is not None:
+            adapter, aliases = fields
+            values: dict[str, Any] = adapter.dump_python(output, mode='json')
+            return {
+                name: _with_confidence(value, confidence.get(aliases.get(name, name))) for name, value in values.items()
+            }
+        if isinstance(output, Enum):
+            output = output.value
+        # A bare answer is one question, so one confidence, whatever the wrapper field is called.
+        return _with_confidence(output, next(iter(confidence.values())) if len(confidence) == 1 else None)
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
+    def build_serialization_arguments(self):
+        arguments = _serialize_model_as_string(super().build_serialization_arguments())
+        # A type does not survive a YAML round trip; its name keeps the spec serializable.
+        if (output_type := arguments.get('output_type')) is not None:
+            arguments['output_type'] = output_type.__name__ if isinstance(output_type, type) else str(output_type)
+        return arguments
+
+
+def _with_confidence(value: EvaluationScalar, confidence: float | None) -> EvaluationScalar | EvaluationReason:
+    if confidence is None:
+        return value
+    return EvaluationReason(value=value, reason=f'confidence {confidence:.2f}')
+
+
+@dataclass(repr=False)
 class HasMatchingSpan(Evaluator[object, object, object]):
     """Check if the span tree contains a span that matches the specified query."""
 
@@ -394,6 +510,7 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     MaxToolCalls,
     MaxModelRequests,
     GEval,
+    Classifier,
 )
 
 
