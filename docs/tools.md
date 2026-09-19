@@ -377,19 +377,32 @@ but not every one of them reaches the model:
 
 | Written under | Describes | Sent to the model |
 | --- | --- | --- |
-| a tool function | the tool | always |
-| an `Args:` entry in a tool function's docstring | that parameter | always |
-| a class used as a tool parameter or [output type](output.md) | that object | always |
-| a field of a `dataclass` or `TypedDict` | that field | tool parameters only |
-| a field of a Pydantic model | that field | with `use_attribute_docstrings` |
+| a tool or [output function](output.md#function-output) | that tool | always |
+| an `Args:` entry in its docstring | that parameter | always |
+| a class used as a parameter or [output type](output.md) | that object | always |
+| a field of a `dataclass` or `TypedDict` | that field | as a function's parameter |
+| a field of a Pydantic model or `pydantic.dataclasses.dataclass` | that field | with `use_attribute_docstrings` on the class |
 | an `Enum` member | that option | with [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] |
 
-A tool's schema is built with Pydantic's
-[`use_attribute_docstrings`](https://docs.pydantic.dev/latest/api/config/#pydantic.config.ConfigDict.use_attribute_docstrings)
-turned on, which is where a `dataclass` or `TypedDict` field's docstring comes from. A Pydantic model brings its
-own config, which wins, so turn it on there — `class Ticket(BaseModel, use_attribute_docstrings=True)` — to have
-its field docstrings described wherever the model is used, including as an output type. A description written as
-`Field(description=...)` needs no config and takes precedence over the docstring.
+The schema Pydantic AI builds from a function signature — a tool or an output function — turns on Pydantic's
+[`use_attribute_docstrings`](https://docs.pydantic.dev/latest/api/config/#pydantic.config.ConfigDict.use_attribute_docstrings),
+and that reaches every type below it that doesn't bring a config of its own, at any depth. A Pydantic model and
+a `pydantic.dataclasses.dataclass` do bring one, which wins, so they ignore it — for their own fields and for
+anything nested inside them. Set it on the class itself to opt in wherever it's used, including as an
+[output type](output.md), which is built from the type rather than from a signature and so never inherits it:
+
+```python {title="attribute_docstrings.py"}
+from pydantic import BaseModel
+
+
+class Ticket(BaseModel, use_attribute_docstrings=True):
+    """A support ticket."""
+
+    subject: str
+    """One line summarising the problem."""
+```
+
+A description written as `Field(description=...)` needs no config and takes precedence over the docstring.
 
 #### Enum options {#enum-options}
 
