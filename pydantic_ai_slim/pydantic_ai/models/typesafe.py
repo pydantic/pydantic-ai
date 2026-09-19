@@ -537,6 +537,24 @@ def _threshold(settings: TypeSafeModelSettings, name: str, default: float) -> fl
     return threshold
 
 
+def _fanned_in(
+    name: str, options: Mapping[Any, Any], answers: Mapping[str, object], boolean_threshold: float
+) -> tuple[dict[str, tuple[bool, float]], dict[str, float]]:
+    """Read back the yes/no per option that `_fan_out` asked, as verdicts and as the raw probabilities.
+
+    A list and a mapping ask the same questions and differ only in how the verdicts are shaped afterwards.
+    """
+    labelled: dict[str, float] = {}
+    for option in options:
+        answer = answers.get(f'{name}.{option}')
+        if not isinstance(answer, NoulAnswer):
+            raise UnexpectedModelBehavior(
+                f'Unexpected answer from TypeSafe for output field {name!r}, option {option!r}: {answer!r}'
+            )
+        labelled[option] = answer.noul
+    return {option: _verdict(p, boolean_threshold) for option, p in labelled.items()}, labelled
+
+
 def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
     """Whether Jev's probability of yes clears the bar, and how far from the bar it landed.
 
@@ -569,31 +587,15 @@ def _answers(
     for name, prop in properties.items():
         prop, none_key = _optional(prop)
         if keys := _mapping_options(prop):
-            # One yes/no went out per key; every one of them is in the answer, unlike a list.
-            mapped: dict[str, float] = {}
-            for key in keys:
-                answer = answers.get(f'{name}.{key}')
-                if not isinstance(answer, NoulAnswer):
-                    raise UnexpectedModelBehavior(
-                        f'Unexpected answer from TypeSafe for output field {name!r}, option {key!r}: {answer!r}'
-                    )
-                mapped[key] = answer.noul
-            verdicts = {key: _verdict(p, boolean_threshold) for key, p in mapped.items()}
+            # A mapping keeps every option with the answer it got, unlike a list.
+            verdicts, labelled = _fanned_in(name, keys, answers, boolean_threshold)
             _set(args, name, {key: chosen for key, (chosen, _) in verdicts.items()})
             confidence[name] = min(sureness for _, sureness in verdicts.values())
-            probabilities[name] = mapped
+            probabilities[name] = labelled
             continue
         if prop.get('type') == 'array':
-            # One yes/no went out per option; the answer is the options that came back yes, in their order.
-            labelled: dict[str, float] = {}
-            for option in _options(prop['items']) or {}:
-                answer = answers.get(f'{name}.{option}')
-                if not isinstance(answer, NoulAnswer):
-                    raise UnexpectedModelBehavior(
-                        f'Unexpected answer from TypeSafe for output field {name!r}, option {option!r}: {answer!r}'
-                    )
-                labelled[option] = answer.noul
-            verdicts = {option: _verdict(p, boolean_threshold) for option, p in labelled.items()}
+            # A list is the options that came back yes, in their order.
+            verdicts, labelled = _fanned_in(name, _options(prop['items']) or {}, answers, boolean_threshold)
             _set(args, name, [option for option, (chosen, _) in verdicts.items() if chosen])
             confidence[name] = min(sureness for _, sureness in verdicts.values())
             probabilities[name] = labelled
@@ -894,8 +896,9 @@ def _mapping_options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
     """
     if prop.get('type') != 'object' or prop.get('properties'):
         return None
-    values: dict[str, Any] = prop.get('additionalProperties') or {}
-    if values.get('type') != 'boolean':
+    values = prop.get('additionalProperties')
+    # `True` rather than a schema is how `dict[str, Any]` says its values are unconstrained.
+    if not isinstance(values, dict) or cast('dict[str, Any]', values).get('type') != 'boolean':
         return None
     if 'maxProperties' in prop or 'minProperties' in prop:
         # Every option is asked about and every answer is kept, so there is no way to return fewer or more

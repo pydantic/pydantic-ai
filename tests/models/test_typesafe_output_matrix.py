@@ -205,6 +205,9 @@ REFUSED = [
     # levels instead, and every key of a mapping is answered, so a limit on how many there may be cannot hold.
     Refused('field: stepped number', Stepped, unsupported('risk')),
     Refused('field: mapping with a size limit', Capped, unsupported('applies')),
+    # `dict[str, Any]` says its values are unconstrained by writing `additionalProperties: true` rather than a
+    # schema, which is not a thing to call `.get` on.
+    Refused('field: mapping of anything', probe('blob', dict[str, Any], description='Anything?'), unsupported('blob')),
     # A `tuple` is an array whose members are positional, which Pydantic renders as `prefixItems` and no
     # `items`, so there are no options to fan out over.
     Refused(
