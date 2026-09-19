@@ -834,6 +834,39 @@ Each member is described by **its own docstring**, which is what Jev weighs the 
 
 The pick is reported in `provider_details['tool']`, with the probability of every member, and `provider_details['requests']` is `2`. The [tool threshold](#tools-jev-picks-and-calls-what-it-can) gates tools, not output types: picking an output type is Jev saying which result to fill, not proposing that something else be done, so a tool picked below the threshold falls back to the likeliest output type rather than being taken.
 
+### Declining with `None`
+
+`None` is a route like any other. Include it in the union and Jev is offered one more option, "None of these.", for the text that calls for nothing at all:
+
+```python {title="union_none.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+class Escalation(BaseModel):
+    """Hand the ticket to a human specialist."""
+
+    security: bool = Field(description='Does this involve a security risk?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation, None])
+
+result = agent.run_sync('Thanks, that fixed it. Nothing else needed.')
+print(result.output)
+#> None
+print(result.response.provider_details['tool']['choice'])
+#> final_result_NoneType
+```
+
+`None` cannot carry a docstring, so the library describes it, the same way an [optional pick-one field](#what-each-mapping-does) gets its "None of these." option. There is nothing to fill either, so the route is taken on the pick alone: declining costs one request, never two.
+
 ### A member Jev cannot fill
 
 A union member may use fields Jev cannot express, such as a `str`. It is still offered as a route, and picking it raises [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] — a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands it the whole step:

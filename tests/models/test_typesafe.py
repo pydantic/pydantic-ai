@@ -32,6 +32,7 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolOutput,
     ToolReturnPart,
     UseEnumMemberDocstrings,
     UserPromptPart,
@@ -2290,6 +2291,64 @@ async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None
     agent = Agent(mock_model(unreachable), output_type=[Ticket, WithOptional], instructions='Handle the ticket.')
     with pytest.raises(UserError, match="'final_result_WithOptional' says nothing about itself"):
         await agent.run('anything')
+
+
+async def test_none_is_a_route_the_library_describes_itself(allow_model_requests: None):
+    """`None` cannot carry a docstring, so the library says what it means, as it does for an optional field.
+
+    Pydantic AI wraps a bare `None` output type in an object with one `null` property. There is only one value
+    that property could take, so there is nothing to ask: the route is taken on the pick alone and the `None`
+    is written for Jev, which is why this costs one request and not two.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.2},
+            tool=_route(
+                'final_result_NoneType',
+                {'final_result_Ticket': 0.1, 'final_result_NoneType': 0.9},
+            ),
+        )
+
+    agent = Agent(mock_model(record), output_type=[Ticket, None])
+    result = await agent.run('Nothing here needs handling.')
+
+    assert result.output is None
+    # One output type is left once `None` becomes a route, so its fields ride along with the route question
+    # and declining costs one request, not two.
+    assert len(seen) == 1
+    assert sorted(seen[0]['questions']) == snapshot(['tool', 'urgent'])
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_Ticket': 'Triage a support ticket.', 'final_result_NoneType': 'None of these.'}
+    )
+    # The `None` is written into the wrapper Pydantic AI put around it, not asked for and not left out.
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_NoneType', {'response': None}))
+
+
+async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_requests: None):
+    """`ToolOutput(type_=None, description=...)` is the user saying what declining means here, so it wins."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.1},
+            tool=_route('nothing', {'final_result_Ticket': 0.05, 'nothing': 0.95}),
+        )
+
+    agent = Agent(
+        mock_model(record),
+        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],
+    )
+    result = await agent.run('Thanks, all sorted.')
+
+    assert result.output is None
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_Ticket': 'Triage a support ticket.', 'nothing': 'Nothing needs doing here.'}
+    )
 
 
 async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: None):
