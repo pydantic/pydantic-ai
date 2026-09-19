@@ -39,6 +39,7 @@ from pydantic_ai import (
     UserPromptPart,
     WebSearchTool,
 )
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -2507,6 +2508,36 @@ async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_m
         tools=[refund],
     )
     result = await agent.run('Refund me maybe.')
+
+    assert result.output is None
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_NoneType', {'response': None}))
+
+
+async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_requests: None):
+    """Every other route has returned this turn, so the `None` one is taken without a request.
+
+    A route with nothing to fill is called on the pick alone, and with only one left there is no pick to make
+    either. A `None` route carries the property it is wrapped in, so the guard has to recognise it rather than
+    ask whether the schema has properties, or it goes off to have its `null` filled and proposes the call.
+    """
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the only route left needs no question asked about it')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Sort this out.')]),
+        ModelResponse(parts=[ToolCallPart('refund', {'amount': 1.0}, 'c1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='refund', content='Refunded 1.0', tool_call_id='c1')]),
+        ModelResponse(parts=[ToolCallPart('final_result_approve', {}, 'c2')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='final_result_approve', content='approved', tool_call_id='c2')]),
+    ]
+    agent: Agent[None, str | None] = Agent(
+        mock_model(unreachable),
+        output_type=[approve, None],  # type: ignore[arg-type]
+        tools=[refund],
+    )
+    result: AgentRunResult[str | None] = await agent.run(None, message_history=history)
 
     assert result.output is None
     call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
