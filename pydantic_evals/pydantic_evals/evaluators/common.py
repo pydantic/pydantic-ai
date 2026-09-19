@@ -360,8 +360,9 @@ class StructuredJudge(Evaluator[object, object, object]):
     StructuredJudge(ReplyReview)
     ```
 
-    A `bool` field is reported as an assertion, an `int` or `float` as a score, and a `str` or an `Enum`
-    of strings as a label. A field the judge leaves as `None` is reported as no measure at all, the way
+    A `bool` field is reported as an assertion, an `int` or `float` as a score, and a `str` as a label.
+    An `Enum` is reported as whatever its value is, so an `Enum` of strings is a label and an `IntEnum` a
+    score. A field the judge leaves as `None` is reported as no measure at all, the way
     [`EqualsExpected`][pydantic_evals.evaluators.EqualsExpected] reports nothing without an expected
     output. Any other answer is an error, since there is no measure to report it as.
 

@@ -538,8 +538,9 @@ print({name: result.value for name, result in case.assertions.items()})
 #> {'avoids_secrets': True}
 ```
 
-A `bool` field is reported as an assertion, an `int` or `float` as a score, and a `str` or an `Enum` of
-strings as a label — the same rules any evaluator returning a mapping is reported by. The evaluator is
+A `bool` field is reported as an assertion, an `int` or `float` as a score, and a `str` as a label; an
+`Enum` is reported as whatever its value is, so an `Enum` of strings is a label and an `IntEnum` a score
+— the same rules any evaluator returning a mapping is reported by. The evaluator is
 the source of all of them, so a report shows three measures, not three evaluators.
 
 Write the questions on the output type, not into the rubric text of a prompt. That is what lets a judge

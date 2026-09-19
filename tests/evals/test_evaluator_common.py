@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
@@ -644,6 +644,13 @@ class Urgency(Enum):
     high = 'high'
 
 
+class Clarity(IntEnum):
+    """An `Enum` whose values are `int`s, so its member is reported as the score it is worth."""
+
+    unclear = 0
+    clear = 1
+
+
 class ReplyReview(BaseModel):
     """Judge a support reply."""
 
@@ -651,6 +658,7 @@ class ReplyReview(BaseModel):
     completeness: float = Field(ge=0, le=1, description='How completely does it address the request?')
     asks_for_secret: bool = Field(description='Does it ask for a password or a login code?')
     urgency: Urgency = Field(description='How urgent is the reply?')
+    clarity: Clarity = Field(description='How clearly does it explain the next step?')
     note: str | None = Field(default=None, description='Anything else worth recording?')
 
 
@@ -742,6 +750,7 @@ async def test_structured_judge_reports_one_measure_per_field():
                 'completeness': 0.5,
                 'asks_for_secret': False,
                 'urgency': 'high',
+                'clarity': 1,
                 'note': None,
             },
             calls,
@@ -759,8 +768,15 @@ async def test_structured_judge_reports_one_measure_per_field():
     )
 
     # `note` is answered with `None`, so it is reported as no measure at all rather than as an empty label.
+    # An `Enum` member is reported as its value, so `urgency` is a label and `clarity` a score.
     assert to_jsonable_python(result) == snapshot(
-        {'policy': 'compliant', 'completeness': 0.5, 'asks_for_secret': False, 'urgency': 'high'}
+        {
+            'policy': 'compliant',
+            'completeness': 0.5,
+            'asks_for_secret': False,
+            'urgency': 'high',
+            'clarity': 1,
+        }
     )
     assert calls[0].prompt == snapshot(
         '<Input>\n{"prompt":"Hello"}\n</Input>\n'

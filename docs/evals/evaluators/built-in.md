@@ -396,7 +396,8 @@ StructuredJudge(ReplyReview, include_input=True)
 - `model_settings` (ModelSettings | None): Custom model settings
 
 **Returns:** a mapping of question name to answer — `bool` as an assertion, `int`/`float` as a score,
-`str` or an `Enum` of strings as a label. A field answered with `None` is reported as no measure.
+`str` as a label, and an `Enum` as whatever its value is. A field answered with `None` is reported as no
+measure.
 
 One request answering every question also fails as one, and asking the questions together can move the
 answers. See [Several Measures in One Request](llm-judge.md#several-measures-in-one-request).
