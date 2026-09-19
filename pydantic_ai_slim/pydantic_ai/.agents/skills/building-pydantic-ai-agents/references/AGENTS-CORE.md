@@ -55,7 +55,7 @@ or a tool parameter. For a set you know when you write the code, use a `Literal`
 `UseEnumMemberDocstrings` for per-member descriptions), which give exhaustiveness checking.
 
 ```python
-from pydantic_ai import Agent, Choice, Choices
+from pydantic_ai import Agent, Choices
 
 agent = Agent('openai:gpt-5.2', name='triage_agent')
 
