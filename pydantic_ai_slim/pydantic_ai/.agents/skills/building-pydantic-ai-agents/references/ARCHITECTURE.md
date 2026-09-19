@@ -67,7 +67,9 @@ Need structured data with Pydantic validation?
         └── Yes → Use output_type=str [default]
 
 Dynamic schema at runtime?
-└── Yes → Use StructuredDict(json_schema)
+├── Pick one of a set of options built at runtime?
+│   └── Yes → Use Choices({key: description}) [Choice(description, value=...) to pick an action]
+└── Otherwise → Use StructuredDict(json_schema)
 ```
 
 ### Choosing a Multi-Agent Pattern
