@@ -30,7 +30,7 @@ from ._session import Session
 from .auth import CodexAuth
 from .capability_catalog import HARNESS_PLUGINS
 from .command_context import CommandContext, CommandProvider
-from .commands import Command, Commands, config_command, config_completions, set_completions
+from .commands import Command, Commands, config_command, config_completions, is_command_input, set_completions
 from .config import PluginSettings, Settings
 from .customization import customization_guide
 from .input_history import input_history
@@ -411,7 +411,7 @@ class _Shell(Generic[DepsT, OutputT]):
             if self.editor is not None:
                 self.console.print(f'> {text}', markup=False, highlight=False)
             self.console.print()
-            if text.startswith('/'):
+            if is_command_input(text):
                 async with (self.editor.suspended if self.editor is not None else bare_screen)():
                     await self.interrupts.run(
                         _execute_command(self.commands, text, console=self.console, status=self.status)

@@ -286,8 +286,16 @@ Interactive commands: `/login`, `/set`, `/model`, `/add_model`, `/help`, `/new`,
 `/plugins`, `/reload`, `/usage`, `/cost`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
-Unknown slash commands are not sent to the model. Up/down recall saved prompt
-history. Ctrl-D exits. Ctrl-C at input clears the line; during a run it cancels
+Unknown command-shaped input such as `/missing` still reports an error instead
+of reaching the model. Absolute paths such as `/Users/me/Desktop/Screenshot.png`
+are prompts, not commands: a slash, dot, or backslash in the first token after
+`/` marks path-like input. Quoted paths are also prompts. For an ambiguous
+single-component path with spaces, quote it, for example `"/Screen Shot.png"`.
+After the editor trims surrounding whitespace, the prompt text, including
+internal spaces and shell escapes, reaches the agent unchanged. This routing does not read or attach the file automatically; the
+agent's configured tools determine how it can access the screenshot.
+
+Up/down recall saved prompt history. Ctrl-D exits. Ctrl-C at input clears the line; during a run it cancels
 the turn and returns to input. No cancelled run is automatically retried.
 
 ## Reload CLAI during development

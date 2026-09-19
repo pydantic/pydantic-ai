@@ -400,6 +400,14 @@ The handler gets the arguments as a list of strings and returns the text to show
 It may be `async`. Add `complete=` to offer Tab suggestions. Names must be unique;
 clashing with a built-in is an error at startup, not a silent override.
 
+Path-like input is not dispatched to commands. A slash, dot, or backslash in the
+first token after the leading `/` makes it a prompt instead, so screenshot paths
+such as `/Users/me/Desktop/Screen Shot.png` appear as follow-ups in the queue.
+After the editor trims surrounding whitespace, their text reaches the agent
+without further rewriting. Quoted paths are prompts too. Unknown command-shaped
+names such as `/missing` still report an error. Routing does not read or attach
+files; file access remains the responsibility of the agent's configured tools.
+
 ### Give the agent tools or instructions: `host.add(capability)`
 
 ```python

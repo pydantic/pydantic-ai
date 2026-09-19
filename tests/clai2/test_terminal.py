@@ -488,3 +488,42 @@ async def test_live_editor_interrupts_slow_turn_hooks(
         assert 'Turn cancelled. Use /exit to quit.' in output.getvalue()
         assert 'Press Ctrl-C again' not in output.getvalue()
         assert 'completed' not in output.getvalue()
+
+
+@pytest.mark.parametrize('terminal', [False, True])
+@pytest.mark.parametrize(
+    'text',
+    [
+        '/Users/test/Desktop/Screenshot 2026-09-19.png',
+        r'/Users/test/Desktop/Screen\ Shot.png explain this',
+        "/tmp/screenshot.png What's wrong here?",
+        '/screenshot.PNG',
+        r'/Screen\ Shot.png',
+        '/help/screenshot.png',
+        '"/Users/test/Screen Shot.png"',
+        "'/Users/test/Screen Shot.png'",
+        '/tmp/shot.png\nDescribe this screenshot.',
+    ],
+)
+async def test_absolute_screenshot_paths_are_prompts(tmp_path: Path, terminal: bool, text: str) -> None:
+    prompts: list[str] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_model_request
+    async def record(ctx: RunContext[None], request: ModelRequestContext) -> ModelRequestContext:
+        assert isinstance(ctx.prompt, str)
+        prompts.append(ctx.prompt)
+        return request
+
+    output = io.StringIO()
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text(f'\x1b[200~{text}\x1b[201~\n/missing-command\n/exit\n')
+        await chat(
+            Agent(TestModel(custom_output_text='received screenshot path'), deps_type=type(None), capabilities=[hooks]),
+            deps=None,
+            console=Console(file=output, force_terminal=terminal),
+            store=SettingsStore(tmp_path / 'settings.db'),
+        )
+    assert prompts == [text]
+    assert 'Unknown command' in output.getvalue()
+    assert 'Goodbye.' in output.getvalue()

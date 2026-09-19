@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.text import Text
 
 from . import theme
+from .commands import is_command_input
 from .interrupts import Interrupts
 
 _WORKING_FRAMES = ('⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏')
@@ -131,7 +132,7 @@ class LivePrompt:
         limit = max(1, self.console.height // 3 - 1)
         lines: list[str] = []
         for message in messages[:limit]:
-            label = 'Command' if message.startswith('/') else 'Follow-up'
+            label = 'Command' if is_command_input(message) else 'Follow-up'
             printable = ''.join(char for char in message if char.isprintable() or char.isspace())
             text = Text(f'{label}: {" ".join(printable.split())}')
             text.truncate(max(1, self.console.width), overflow='ellipsis')

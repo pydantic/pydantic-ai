@@ -302,3 +302,16 @@ async def test_working_animation_is_on_top_border_without_changing_draft(outcome
             await idle.wait()
         assert live.working_title() == []
         assert live.prompt.default_buffer.text == 'draft'
+
+
+async def test_queue_labels_screenshot_paths_as_follow_ups() -> None:
+    async with editor() as (live, _, _):
+        for text in ('/tmp/shot.png', '/screenshot.PNG', '/help', '/unknown-command'):
+            live.prompt.default_buffer.text = text
+            live.prompt.default_buffer.validate_and_handle()
+        assert live.queue_preview()[0][1].splitlines() == [
+            'Follow-up: /tmp/shot.png',
+            'Follow-up: /screenshot.PNG',
+            'Command: /help',
+            'Command: /unknown-command',
+        ]

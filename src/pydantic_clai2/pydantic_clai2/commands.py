@@ -19,6 +19,19 @@ from .config import SETTING_FIELDS, PluginSettings
 from .settings_store import SettingsStore
 
 
+def is_command_input(text: str) -> bool:
+    """Recognize slash commands without routing path-like prefixes to the registry.
+
+    A slash, dot, or backslash in the first token after `/` denotes a path, not a command
+    name. This is lexical: it neither reads local files nor parses prompt text
+    as shell arguments. Unknown command-shaped names still reach the registry.
+    """
+    if not text.startswith('/'):
+        return False
+    name = text.split(maxsplit=1)[0][1:]
+    return not any(marker in name for marker in ('/', '.', '\\'))
+
+
 @dataclass(frozen=True, kw_only=True)
 class Command:
     """A command available to both dispatch and autocomplete."""
@@ -77,7 +90,7 @@ class Commands(Completer):
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
         """Complete slash commands, contextual arguments, and @file paths."""
         text = document.text_before_cursor
-        if not text.startswith('/'):
+        if not is_command_input(text):
             word = document.get_word_before_cursor(WORD=True)
             if word.startswith('@'):
                 path = Path(word[1:]).expanduser()

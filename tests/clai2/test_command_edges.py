@@ -10,6 +10,7 @@ from pydantic_clai2.commands import (
     Commands,
     config_command,
     config_completions,
+    is_command_input,
     plugins_command,
     set_completions,
 )
@@ -61,3 +62,40 @@ def test_command_boundaries(tmp_path: Path) -> None:
             plugins_command(store, args)
     with pytest.raises(ValueError):
         store.reset('missing')
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        ('', False),
+        ('describe this screenshot', False),
+        ('/', True),
+        ('/ ', True),
+        ('/help', True),
+        ('/set model test', True),
+        ('/missing', True),
+        ('/missing-command', True),
+        ('/help /tmp/screenshot.png', True),
+        ('/Users/test/Desktop/Screenshot 2026-09-19.png', False),
+        (r'/Users/test/Desktop/Screen\ Shot.png explain this', False),
+        ("/tmp/screenshot.png What's wrong here?", False),
+        ('/screenshot.PNG', False),
+        (r'/Screen\ Shot.png', False),
+        ('/help/screenshot.png', False),
+        ('/tmp/', False),
+        ('/.hidden', False),
+        ('"/Users/test/Screen Shot.png"', False),
+        ("'/Users/test/Screen Shot.png'", False),
+    ],
+)
+def test_command_input_classification(text: str, expected: bool) -> None:
+    assert is_command_input(text) is expected
+
+
+def test_path_prompt_keeps_file_completion(tmp_path: Path) -> None:
+    (tmp_path / 'file.txt').touch()
+    commands = Commands()
+    commands.register(Command(name='help', description='Help', handler=lambda _: 'help'))
+    assert list(commands.get_completions(Document('/help/screenshot.png'), CompleteEvent())) == []
+    completions = list(commands.get_completions(Document(f'/screenshot.png compare @{tmp_path}/fi'), CompleteEvent()))
+    assert [item.text for item in completions] == ['le.txt']
