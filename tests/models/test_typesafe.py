@@ -33,6 +33,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     WebSearchTool,
 )
@@ -64,7 +65,9 @@ pytestmark = [
 ]
 
 
-class Verdict(str, Enum):
+# Opted in, and the cassettes were recorded with the described options in the request, so Jev answered
+# knowing what each verdict means.
+class Verdict(UseEnumMemberDocstrings, str, Enum):
     """How to handle this command."""
 
     run = 'run'
@@ -176,9 +179,9 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
                 'verdict': {
                     'type': 'choice',
                     'criteria': {
-                        'ask': None,
-                        'reject': None,
-                        'run': None,
+                        'ask': 'Legitimate but consequential enough that a human should confirm.',
+                        'reject': 'Destroys data, rewrites shared history, or sends secrets over the network.',
+                        'run': 'Reads, builds, tests or edits inside the project. Reversible.',
                     },
                     'instructions': {
                         'field': 'verdict',
@@ -1481,7 +1484,8 @@ class Customer(BaseModel):
     angry: bool = Field(description='Is the customer angry?')
 
 
-class Area(str, Enum):
+# Opted in, and the cassette was recorded with the description on the `billing` option.
+class Area(UseEnumMemberDocstrings, str, Enum):
     billing = 'billing'
     """Money already owed, charged or refunded."""
     account = 'account'
@@ -1532,7 +1536,7 @@ async def test_nested_fields_lists_and_optionals(
                     'field': 'areas',
                     'question': 'Which teams does this touch?',
                     'goal': 'Triage a support ticket.',
-                    'option': 'billing',
+                    'option': 'billing: Money already owed, charged or refunded.',
                 },
             },
             'areas.account': {
