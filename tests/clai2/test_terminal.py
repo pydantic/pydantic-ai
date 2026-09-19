@@ -428,8 +428,9 @@ async def test_add_model_and_select_saved_model(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize('phase', ['start', 'end'])
+@pytest.mark.parametrize('key', ['\x03', '\x1b'])
 async def test_live_editor_interrupts_slow_turn_hooks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str, key: str
 ) -> None:
     started = anyio.Event()
     cleaned = anyio.Event()
@@ -474,11 +475,12 @@ async def test_live_editor_interrupts_slow_turn_hooks(
             tasks.start_soon(run)
             pipe.send_text('hello\n')
             await started.wait()
-            pipe.send_text('draft\x03')
+            pipe.send_text('draft' + key)
             await cleaned.wait()
             pipe.send_text('\x15/exit\n')
             await done.wait()
     assert 'Goodbye.' in output.getvalue()
     if phase == 'start':
-        assert 'Turn cancelled' in output.getvalue()
+        assert 'Turn cancelled. Use /exit to quit.' in output.getvalue()
+        assert 'Press Ctrl-C again' not in output.getvalue()
         assert 'completed' not in output.getvalue()

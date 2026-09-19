@@ -456,6 +456,9 @@ but turns and slash commands execute sequentially. Pending message previews appe
 above the editor in execution order (`Follow-up:` for messages, `Command:` for
 slash commands), and disappear when consumed. The preview is read-only; clipping
 and flattening multiline text for display do not change the submitted text.
+Esc in the live editor cancels active work, including turn lifecycle hooks,
+without clearing the draft or requesting exit. While a plugin owns the screen,
+its menu retains control of Esc.
 Slash-command handlers already
 run with the editor suspended; tool-driven widgets must take the screen explicitly:
 

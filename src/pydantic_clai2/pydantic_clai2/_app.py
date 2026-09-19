@@ -94,7 +94,7 @@ async def chat(
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
-    Ctrl-C cancels the current turn or clears input; Ctrl-D and `/exit` quit.
+    Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
     """
@@ -102,7 +102,7 @@ async def chat(
     console.print()
     print_banner(console)
     console.print(
-        '/new starts a session; /resume restores one; /exit quits. Ctrl-C interrupts a turn.', style=theme.MUTED
+        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.', style=theme.MUTED
     )
     project = project or ProjectSettings()
     _report_project(project, console)
@@ -487,7 +487,7 @@ def _report_project_plugins(loader: PluginLoader[DepsT], console: Console) -> No
 
 def _report_interrupt(completed: bool, console: Console) -> None:
     if not completed:
-        console.print('Turn cancelled. Press Ctrl-C again within 2 seconds to exit.', style=theme.MUTED)
+        console.print('Turn cancelled. Use /exit to quit.', style=theme.MUTED, highlight=False)
         console.print()
 
 

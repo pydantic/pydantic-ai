@@ -140,6 +140,10 @@ class LivePrompt:
                 event.current_buffer.reset()
                 self._submit(KeyboardInterrupt())
 
+        @keys.add('escape', filter=Condition(lambda: self.interrupts.active))
+        def escape(event: KeyPressEvent) -> None:
+            self.interrupts.cancel(exit_on_repeat=False)
+
         @keys.add('c-d')
         def eof(event: KeyPressEvent) -> None:
             if event.current_buffer.text:

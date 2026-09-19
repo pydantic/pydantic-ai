@@ -105,7 +105,8 @@ async def test_closed_input_reports_eof() -> None:
             await live.read()
 
 
-async def test_busy_interrupt_cancels_work_not_editor() -> None:
+@pytest.mark.parametrize('key', ['\x03', '\x1b'])
+async def test_busy_interrupt_cancels_work_not_editor(key: str) -> None:
     async with editor() as (live, pipe, _):
         started = anyio.Event()
         stopped = anyio.Event()
@@ -125,13 +126,23 @@ async def test_busy_interrupt_cancels_work_not_editor() -> None:
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(work)
             await started.wait()
-            pipe.send_text('retained\x03')
+            edited = anyio.Event()
+
+            def changed(buffer: Buffer) -> None:
+                if buffer.text == 'Zretained':
+                    edited.set()
+
+            live.prompt.default_buffer.on_text_changed += changed
+            pipe.send_text('retained\x1b[D\x1bbZ')
+            await edited.wait()
+            assert not cleaned.is_set()
+            pipe.send_text(key)
             await stopped.wait()
             assert cleaned.is_set()
             assert live.prompt.app.is_running
-            assert live.prompt.default_buffer.text == 'retained'
+            assert live.prompt.default_buffer.text == 'Zretained'
             pipe.send_text('\n')
-            assert await live.read() == 'retained'
+            assert await live.read() == 'Zretained'
 
 
 @pytest.mark.parametrize('menu', [False, True])
