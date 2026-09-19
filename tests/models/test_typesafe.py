@@ -2314,7 +2314,9 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
             ),
         )
 
-    agent = Agent(mock_model(record), output_type=[Ticket, None])
+    # `None` in an `output_type` list is not spelled out in the overloads, so the output type is named here;
+    # it runs on every model.
+    agent: Agent[None, Ticket | None] = Agent(mock_model(record), output_type=[Ticket, None])  # type: ignore[arg-type]
     result = await agent.run('Nothing here needs handling.')
 
     assert result.output is None
@@ -2343,7 +2345,7 @@ async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_
 
     agent = Agent(
         mock_model(record),
-        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],
+        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],  # type: ignore[arg-type]
     )
     result = await agent.run('Thanks, all sorted.')
 
@@ -2390,7 +2392,9 @@ async def test_a_route_that_says_nothing_anywhere_is_still_refused(allow_model_r
     def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('a route that describes itself nowhere must be refused before any request')
 
-    agent = Agent(mock_model(unreachable), output_type=[Literal['urgent', 'normal'], Ticket])
+    # A bare `Literal` beside another type is not spelled out in the overloads; it is refused at run time
+    # for a different reason, which is what this asserts.
+    agent: Agent[None, Any] = Agent(mock_model(unreachable), output_type=[Literal['urgent', 'normal'], Ticket])  # type: ignore[arg-type]
     with pytest.raises(UserError, match="'final_result_Literal' says nothing about itself"):
         await agent.run('anything')
 

@@ -463,7 +463,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         """Call the one argumentless route left, without asking Jev."""
         details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
         return ModelResponse(
-            parts=[ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())],
+            parts=[ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(),
             model_name=self._model_name,
             provider_name=self._provider.name,
@@ -694,22 +694,24 @@ def _none_route(tool: ToolDefinition) -> bool:
 
 
 def _route_args(tool: ToolDefinition) -> dict[str, Any]:
-    """The arguments to call a route with when Jev writes nothing: none, or the `None` a `None` route wraps."""
+    """The arguments to call a route with when Jev writes nothing: none, or the `None` a `None` route wraps.
+
+    Only reached from the route question. The forced-route path takes routes with no properties at all, and a
+    `None` route always has the one it is wrapped in.
+    """
     return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
 
 
 def _wrapped(tool: ToolDefinition) -> dict[str, Any] | None:
     """The single property Pydantic AI wraps an output type that is not object-like in, if this is one.
 
-    A `Literal`, an `Enum`, a `Choices` set and a bare `None` all reach a model as one required `response`
-    property of an object with no title of its own. What such a type says about itself is written on that
-    property, because there is no class for it to be a docstring on.
+    A `Literal`, an `Enum`, a `Choices` set and a bare `None` all reach a model as one property of an object,
+    because only an object can be a tool's arguments. What such a type says about itself is written on that
+    property, since there is no class for it to be a docstring on. `outer_typed_dict_key` is the wrapping,
+    named by whoever did it, so it is read rather than guessed back out of the schema's shape.
     """
-    schema = tool.parameters_json_schema
-    if 'title' in schema or list(schema.get('required', ())) != ['response']:
-        return None
-    properties = _properties(schema)
-    return properties.get('response') if list(properties) == ['response'] else None
+    key = tool.outer_typed_dict_key
+    return _properties(tool.parameters_json_schema).get(key) if key else None
 
 
 def _purpose(tool: ToolDefinition) -> str | None:
