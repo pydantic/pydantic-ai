@@ -1,0 +1,184 @@
+"""An editable prompt with sequential submissions and output above the editor."""
+
+import asyncio
+import io
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
+from typing import IO
+
+import anyio
+from prompt_toolkit import PromptSession
+from prompt_toolkit.application import in_terminal
+from prompt_toolkit.application.current import set_app
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition, is_done
+from prompt_toolkit.formatted_text import ANSI, to_formatted_text
+from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
+from prompt_toolkit.layout import ConditionalContainer, FormattedTextControl, HSplit, Window
+from rich.console import Console
+
+from .interrupts import Interrupts
+
+
+class PromptOutput(io.StringIO):
+    """Buffer complete lines so a redraw cannot overwrite a partially streamed line."""
+
+    def __init__(self, original: IO[str]) -> None:
+        """Retain the console destination rather than replacing the process streams."""
+        super().__init__()
+        self.original = original
+        self.pending = ''
+        self.lines: asyncio.Queue[str] = asyncio.Queue()
+        self.direct = False
+
+    def isatty(self) -> bool:
+        """Preserve terminal detection for Rich and Termflow."""
+        return self.original.isatty()
+
+    def write(self, text: str) -> int:
+        """Queue complete lines; menu output bypasses the editor."""
+        if self.direct:
+            return self.original.write(text)
+        self.pending += text
+        before, separator, self.pending = self.pending.rpartition('\n')
+        if separator:
+            self.lines.put_nowait(before + separator)
+        return len(text)
+
+    def flush(self) -> None:
+        """Leave incomplete streaming lines buffered until a boundary."""
+        if self.direct:
+            self.original.flush()
+
+    async def drain(self) -> None:
+        """Finish an unterminated line at a turn or menu boundary."""
+        if self.pending:
+            self.lines.put_nowait(self.pending + '\n')
+            self.pending = ''
+        await self.lines.join()
+
+    async def run(self) -> None:
+        """Serialize writes with prompt-toolkit terminal ownership."""
+        while True:
+            text = await self.lines.get()
+            try:
+                async with in_terminal():
+                    self.original.write(text)
+                    self.original.flush()
+            finally:
+                self.lines.task_done()
+
+
+class LivePrompt:
+    """Own the editor and output worker until the shell exits, including cancellation."""
+
+    def __init__(
+        self, prompt: PromptSession[str], console: Console, *, prepare: Callable[[], None], interrupts: Interrupts
+    ) -> None:
+        """Keep all input and output resources scoped to one shell."""
+        self.prompt = prompt
+        self.console = console
+        self.prepare = prepare
+        self.interrupts = interrupts
+        self.submissions: asyncio.Queue[str | KeyboardInterrupt | EOFError] = asyncio.Queue()
+        self.output = PromptOutput(console.file)
+
+    async def read(self) -> str:
+        """Consume submissions in order without overlapping agent runs."""
+        value = await self.submissions.get()
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    def accept(self, buffer: Buffer) -> bool:
+        """Submit the current buffer without ending the editor application."""
+        text = buffer.text.strip()
+        if text:
+            self.submissions.put_nowait(text)
+        return False
+
+    def bindings(self) -> KeyBindings:
+        """Keep interrupts aimed at the turn rather than the editor task."""
+        keys = KeyBindings()
+
+        @keys.add('c-c')
+        def interrupt(event: KeyPressEvent) -> None:
+            if not self.interrupts.cancel():
+                event.current_buffer.reset()
+                self.submissions.put_nowait(KeyboardInterrupt())
+
+        @keys.add('c-d')
+        def eof(event: KeyPressEvent) -> None:
+            if event.current_buffer.text:
+                event.current_buffer.delete()
+            else:
+                self.submissions.put_nowait(EOFError())
+
+        return keys
+
+    @asynccontextmanager
+    async def suspended(self) -> AsyncGenerator[None]:
+        """Let a command or question menu own input without losing the draft."""
+        if self.output.direct:
+            yield
+            return
+        await self.output.drain()
+        async with in_terminal():
+            self.output.direct = True
+            try:
+                yield
+            finally:
+                self.output.direct = False
+
+    @asynccontextmanager
+    async def opened(self) -> AsyncGenerator[None]:
+        """Scope both workers to the shell and restore the console on every exit."""
+        started = anyio.Event()
+        container = self.prompt.layout.container
+        assert isinstance(container, HSplit)
+        preview = ConditionalContainer(
+            Window(FormattedTextControl(lambda: ANSI(self.output.pending)), dont_extend_height=True),
+            filter=Condition(lambda: bool(self.output.pending)) & ~is_done,
+        )
+        toolbar = self.prompt.bottom_toolbar
+        accept_handler = self.prompt.default_buffer.accept_handler
+
+        def prepare() -> None:
+            self.prepare()
+            container.children.insert(0, preview)
+            self.prompt.default_buffer.accept_handler = self.accept
+            started.set()
+
+        async def edit() -> None:
+            try:
+                await self.prompt.prompt_async(
+                    '> ',
+                    pre_run=prepare,
+                    key_bindings=self.bindings(),
+                    handle_sigint=False,
+                    show_frame=~is_done & Condition(lambda: self.console.width >= 4 and self.console.height >= 6),
+                    refresh_interval=0.1,
+                    bottom_toolbar=lambda: [
+                        *to_formatted_text(toolbar),
+                        ('', f' | queued: {self.submissions.qsize()}') if self.submissions.qsize() else ('', ''),
+                    ],
+                )
+            except EOFError:
+                self.submissions.put_nowait(EOFError())
+
+        original = self.console.file
+        with set_app(self.prompt.app):
+            async with anyio.create_task_group() as workers:
+                workers.start_soon(edit)
+                await started.wait()
+                self.console.file = self.output
+                workers.start_soon(self.output.run)
+                try:
+                    yield
+                    await self.output.drain()
+                finally:
+                    self.console.file = original
+                    self.prompt.bottom_toolbar = toolbar
+                    self.prompt.default_buffer.accept_handler = accept_handler
+                    container.children.remove(preview)
+                    workers.cancel_scope.cancel()

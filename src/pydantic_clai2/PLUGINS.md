@@ -448,13 +448,12 @@ never lands in the middle of a paragraph.
 ### Take the whole screen mid-run: `async with host.full_screen()`
 
 A full-screen widget opened from inside a tool call (the built-in `ask_user` menu
-is one) has to wait for streamed text to finish and the busy prompt frame and
-status row to get out of the way. Otherwise it draws over unfinished output and
-the footer keeps repainting into it. `host.full_screen()` clears the whole prompt
-area and restores it when the block exits. The idle editor stays compact above
-the footer, growing for input or completions rather than filling the terminal.
-The busy frame is not an editor; users enter their next prompt after the turn
-finishes or they cancel it:
+is one) has to wait for streamed text to finish and the editor and status row to
+get out of the way. `host.full_screen()` flushes pending output, suspends the
+editor's input reader, and restores the editor and its draft when the block exits.
+The editor remains active during agent turns: users can draft and queue messages,
+but turns and slash commands execute sequentially. Slash-command handlers already
+run with the editor suspended; tool-driven widgets must take the screen explicitly:
 
 ```python
 from pydantic_clai2.plugins import PluginHost
@@ -465,8 +464,8 @@ async def choose(host: PluginHost[None]) -> str:
         return await show_my_menu()
 ```
 
-Between turns nothing is streaming, so it is a no-op there. It only settles the
-screen; drawing, and restoring the terminal afterwards, is the widget's job. One
+When no editor or stream is active, taking the screen is a no-op. It only settles
+the screen; drawing, and restoring the terminal afterwards, is the widget's job. One
 widget owns the screen at a time: a second `full_screen()` (from a parallel tool
 call, say) waits for the first block to exit. Do not nest it inside itself.
 

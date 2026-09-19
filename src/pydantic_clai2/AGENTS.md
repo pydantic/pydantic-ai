@@ -125,8 +125,10 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.
 - A menu opened mid-run (the `ask_user` question menu) goes inside
-  `async with host.full_screen()`, which flushes streamed text and pauses the
-  status row first. Between turns the menus do not need it.
+  `async with host.full_screen()`, which flushes streamed text and suspends the
+  editor's input reader first, preserving its draft. Slash-command handlers
+  already run with the editor suspended. Do not start a second input reader
+  alongside the live editor.
 - Adding a plugin is not in the menu. It needs free text, so it stays
   `/plugins add`.
 - Anything that is "edit named, validated fields" uses `field_menu.py`: a
@@ -188,7 +190,8 @@ the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
 | `compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
 | `commands.py` | `Command`, the registry, completion |
 | `usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
-| `status.py` | the footer `Status` fields and the `StatusLine` row painter |
+| `status.py` | the footer `Status` fields and the standalone `StatusLine` row painter |
+| `live_prompt.py` | the continuously editable prompt, submission queue, and output ownership |
 | `config.py` | `Settings`, `PluginSettings` |
 | `settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
 | `project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |

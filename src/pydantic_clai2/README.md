@@ -30,10 +30,11 @@ default. Plugin-provided rendering, including interactive questions, is unchange
 
 ## Interrupting a turn
 
-Press Ctrl-C once to cancel the active agent turn and return to input. Tool cleanup
-and terminal restoration finish before the next prompt. Press Ctrl-C again within
+Press Ctrl-C once to cancel the active agent turn without discarding your draft.
+Tool cleanup finishes before the next queued message starts. Press Ctrl-C again within
 two seconds to exit, including across the transition back to input. At the prompt,
-the first press clears input and the second exits. Ctrl-D and `/exit` also quit.
+the first press clears input and the second exits. Ctrl-D on an empty input and
+`/exit` also quit after earlier queued messages finish.
 The interrupted prompt and captured partial responses and tool results stay in
 conversation history, so you can follow up with a clarification. No interrupted
 run is automatically retried. External application cancellation still propagates,
@@ -43,7 +44,7 @@ and completed tool side effects cannot be undone.
 
 ```text
 ┌──────────────────────────────────────────────┐
-│> Working... Ctrl-C to interrupt               │
+│> Draft your next message here                 │
 └──────────────────────────────────────────────┘
 model | context: ... | running: shell
 ```
@@ -51,10 +52,15 @@ model | context: ... | running: shell
 The prompt sits above the footer with one editable line when empty. It grows
 for wrapped or pasted text and completion suggestions, not to fill the terminal.
 History search stays compact too. The bordered prompt area stays visible below
-streamed output while CLAI works. It shows a busy hint during a turn. Wait for the
-turn to finish, or press Ctrl-C to cancel it, before entering your next prompt.
-There is no message queue or mid-turn editing. Full-screen question menus
-temporarily replace the prompt area; it returns when the menu closes.
+streamed output while CLAI works, and remains editable. Enter submits a message
+to an in-memory queue; the footer shows how many submissions are waiting. Messages
+and slash commands run in submission order, after the current turn and its cleanup
+finish. They do not interrupt or steer the active turn. An unsubmitted draft stays
+in the editor as turns finish. Queued messages are not saved as conversation turns
+until execution starts, and are discarded on exit or `/reload`.
+
+Full-screen question menus and slash-command menus temporarily take over input.
+The editor and its draft return when the menu closes.
 Small terminals omit the border to leave room for output.
 
 ## Input history
@@ -598,16 +604,12 @@ output count, updated after each turn and hidden until a response has price data
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
-While running, the prompt frame and status row reserve the terminal's bottom
-four rows using ANSI scrolling regions, so output scrolls above them. Terminals
-shorter than six rows or narrower than four columns keep only the status row;
-below three rows, neither is drawn. The status text shimmers with a moving
-highlight at ten frames per second, with no spinner and a 16-colour fallback.
-Prompt-toolkit owns the framed editor and footer while accepting input. The run
-footer is disabled for redirected output and restores normal scrolling on
-cancellation or failure. The cursor is hidden during runs and restored on
-completion, failure, or cancellation. No model requests or telemetry are added
-for status reporting.
+Prompt-toolkit owns the editor, cursor, and footer during both input and agent
+turns. Complete output lines scroll above the editor; the incomplete streaming
+line is displayed separately above the input frame until it is complete. Status
+refreshes ten times per second. Terminals shorter than six rows or narrower than
+four columns omit the input border. Redirected output has no live editor or footer.
+No model requests or telemetry are added for status reporting.
 
 ## Plugins
 

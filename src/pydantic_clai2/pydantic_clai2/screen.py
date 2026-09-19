@@ -19,9 +19,10 @@ class Screen:
     """
 
     def __init__(self) -> None:
-        """Start unbound: between prompts nothing is streaming, so taking the screen is free."""
+        """Start without a stream or editor to suspend."""
         self._take: FullScreen = bare_screen
         self._owner = asyncio.Lock()
+        self.editor: FullScreen | None = None
 
     @contextmanager
     def bound(self, take: FullScreen) -> Generator[None]:
@@ -35,5 +36,5 @@ class Screen:
     @asynccontextmanager
     async def full(self) -> AsyncGenerator[None]:
         """Own the terminal until the block exits. Give this to `PluginHost` as its `full_screen`."""
-        async with self._owner, self._take():
+        async with self._owner, self._take(), (self.editor or bare_screen)():
             yield

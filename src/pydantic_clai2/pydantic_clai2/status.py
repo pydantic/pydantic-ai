@@ -86,10 +86,11 @@ def _interrupted() -> bool:
 class StatusLine:
     """Keep the prompt frame and status visible below streamed output during a run."""
 
-    def __init__(self, console: Console, status: Status) -> None:
+    def __init__(self, console: Console, status: Status, *, enabled: bool = True) -> None:
         """Bind the footer to the same output stream as the renderer."""
         self.console = console
         self.status = status
+        self.enabled = enabled
         self._task: asyncio.Task[None] | None = None
         self._height = 0
         self._rows = 0
@@ -113,7 +114,7 @@ class StatusLine:
             self._reserve()
 
     def _reserve(self) -> None:
-        if self.console.is_terminal and not self.console.is_dumb_terminal:
+        if self.enabled and self.console.is_terminal and not self.console.is_dumb_terminal:
             self.console.show_cursor(False)
             self._draw(0)
             self._task = asyncio.create_task(self._animate())

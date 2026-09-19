@@ -1,14 +1,14 @@
 """Interactive terminal shell around a capability-independent session."""
 
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import Generic, TypeVar
 
 from anyio import create_task_group
 from prompt_toolkit import PromptSession
-from prompt_toolkit.filters import Always, Condition, is_done
+from prompt_toolkit.filters import Always, Condition, Filter, is_done
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.layout import BufferControl, HSplit
 from prompt_toolkit.layout.containers import VerticalAlign
@@ -36,11 +36,12 @@ from .customization import customization_guide
 from .input_history import input_history
 from .interrupts import Interrupts
 from .key_menu import keys_command
+from .live_prompt import LivePrompt
 from .model_menu import open_add_model_menu
 from .model_picker import model_command, model_completions
 from .plugin_loader import PluginError, PluginLoader
 from .plugin_menu import open_plugins_menu
-from .plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart
+from .plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart, bare_screen
 from .project_settings import ProjectSettings
 from .reloading import reload_clai
 from .screen import Screen
@@ -356,6 +357,7 @@ class _Shell(Generic[DepsT, OutputT]):
     screen: Screen
     sessions: Sessions[DepsT, OutputT]
     reload_requested: bool = False
+    editor: LivePrompt | None = None
 
     def request_reload(self, args: list[str]) -> str:
         if args:
@@ -377,10 +379,25 @@ class _Shell(Generic[DepsT, OutputT]):
             assert isinstance(layout.container, HSplit)
             layout.container.align = VerticalAlign.BOTTOM
 
+        if self.console.is_terminal:
+            self.editor = LivePrompt(self.prompt, self.console, prepare=prepare_prompt, interrupts=self.interrupts)
+            self.screen.editor = self.editor.suspended
+            try:
+                async with self.editor.opened():
+                    return await self._read_loop(show_frame, prepare_prompt)
+            finally:
+                self.screen.editor = None
+                self.editor = None
+        return await self._read_loop(show_frame, prepare_prompt)
+
+    async def _read_loop(self, show_frame: Filter, prepare_prompt: Callable[[], None]) -> SessionEndReason:
         while True:
             try:
                 self.status.model = self.session.model or _model_label(self.agent)
-                text = (await self.prompt.prompt_async('> ', show_frame=show_frame, pre_run=prepare_prompt)).strip()
+                if self.editor is not None:
+                    text = await self.editor.read()
+                else:
+                    text = (await self.prompt.prompt_async('> ', show_frame=show_frame, pre_run=prepare_prompt)).strip()
             except KeyboardInterrupt:
                 if self.interrupts.press():
                     return 'exit'
@@ -390,57 +407,65 @@ class _Shell(Generic[DepsT, OutputT]):
                 return 'eof'
             if not text:
                 continue
+            if self.editor is not None:
+                self.console.print(f'> {text}', markup=False, highlight=False)
             self.console.print()
             if text.startswith('/'):
-                await self.interrupts.run(
-                    _execute_command(self.commands, text, console=self.console, status=self.status)
-                )
+                async with (self.editor.suspended if self.editor is not None else bare_screen)():
+                    await self.interrupts.run(
+                        _execute_command(self.commands, text, console=self.console, status=self.status)
+                    )
                 if text == '/exit' or self.interrupts.exit_requested or self.reload_requested:
                     return 'exit'
                 continue
             if self.session.model is None and self.agent.model is None:
                 self.console.print('Choose a model first: /set model <Tab>', style=theme.WARNING)
                 continue
-            if await self._turn(text):
-                return 'exit'
+            try:
+                if await self._turn(text):
+                    return 'exit'
+            finally:
+                if self.editor is not None:
+                    await self.editor.output.drain()
 
     async def _turn(self, text: str) -> bool:
         start = TurnStart(text=text)
+        ended: TurnEnd | None = None
+
+        async def run_turn() -> None:
+            nonlocal ended
+            ended = await self._run_turn(start)
+
+        completed = await self.interrupts.run(run_turn())
+        self.sessions.namer.submit(self.session.summary.id)
+        _report_interrupt(completed, self.console)
+        await self.interrupts.run(self.loader.fire(ended or TurnEnd(text=start.text, outcome='cancelled')))
+        return self.interrupts.exit_requested
+
+    async def _run_turn(self, start: TurnStart) -> TurnEnd:
         try:
             await self.loader.fire(start)
         except PluginError as exc:
             self.console.print(str(exc), style=theme.ERROR, markup=False)
             self.console.print()
-            await self.loader.fire(TurnEnd(text=start.text, outcome='failed', error=exc))
-            return False
+            return TurnEnd(text=start.text, outcome='failed', error=exc)
         if start.cancelled:
             self.console.print(
                 f'Turn cancelled by a plugin: {start.cancel_reason or "no reason given"}', style=theme.WARNING
             )
             self.console.print()
-            await self.loader.fire(TurnEnd(text=start.text, outcome='cancelled'))
-            return False
+            return TurnEnd(text=start.text, outcome='cancelled')
         self.session.plugins = (*self.plugins, *self.loader.capabilities())
         self.session.model_settings = self.context.model_settings(self.session.model or _model_label(self.agent))
-        ended: TurnEnd | None = None
-
-        async def run_prompt() -> None:
-            nonlocal ended
-            ended = await _run_prompt(
-                self.session,
-                start.text,
-                console=self.console,
-                settings=self.context.settings,
-                status=self.status,
-                renderers=self.loader.renderers(),
-                screen=self.screen,
-            )
-
-        completed = await self.interrupts.run(run_prompt())
-        self.sessions.namer.submit(self.session.summary.id)
-        _report_interrupt(completed, self.console)
-        await self.loader.fire(ended or TurnEnd(text=start.text, outcome='cancelled'))
-        return self.interrupts.exit_requested
+        return await _run_prompt(
+            self.session,
+            start.text,
+            console=self.console,
+            settings=self.context.settings,
+            status=self.status,
+            renderers=self.loader.renderers(),
+            screen=self.screen,
+        )
 
 
 def _report_project(project: ProjectSettings, console: Console) -> None:
@@ -524,7 +549,7 @@ async def _run_prompt(
 
     session.on_context_usage = context_usage
     session.on_stream_event = observe
-    status_line = StatusLine(console, status)
+    status_line = StatusLine(console, status, enabled=screen.editor is None)
 
     @asynccontextmanager
     async def take_screen() -> AsyncGenerator[None]:

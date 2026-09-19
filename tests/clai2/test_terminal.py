@@ -7,6 +7,7 @@ import sys
 import threading
 from collections.abc import AsyncIterable
 from pathlib import Path
+from types import ModuleType
 
 import anyio
 import pytest
@@ -24,6 +25,8 @@ from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[r
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.plugins import PluginHost, TurnEnd, TurnStart
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
 
@@ -212,6 +215,10 @@ async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path, height: i
     completions = anyio.Event()
     searched = anyio.Event()
     pasted = anyio.Event()
+    drafted = anyio.Event()
+    queued = anyio.Event()
+    second = anyio.Event()
+    calls = 0
     frame: list[str] = []
     working = anyio.Event()
     finish = anyio.Event()
@@ -233,21 +240,37 @@ async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path, height: i
                 frame = [
                     ''.join(screen.data_buffer[row][col].char for col in range(80)) for row in range(screen.height)
                 ]
-                if any('ready' in line for line in frame):
-                    painted.set()
-                if any('display.thinking' in line for line in frame):
-                    completions.set()
-                if any('reverse-i-search' in line for line in frame):
-                    searched.set()
-                if any('second line' in line for line in frame):
-                    pasted.set()
+                for text, event in (
+                    ('ready', painted),
+                    ('display.thinking', completions),
+                    ('reverse-i-search', searched),
+                    ('second line', pasted),
+                    ('next message', drafted),
+                    ('retained draft', queued),
+                ):
+                    if any(text in line for line in frame):
+                        event.set()
 
     output = Output()
+    store = SettingsStore(tmp_path / 'config.db')
     terminal = Vt100_Output(output, lambda: Size(rows=height, columns=80), term='xterm-256color')
-    agent = Agent(TestModel(call_tools=['work'], custom_output_text='Finished work'))
+    hooks = Hooks[None]()
+
+    @hooks.on.before_model_request
+    async def observe(ctx: RunContext[None], request: ModelRequestContext) -> ModelRequestContext:
+        if ctx.prompt == 'next message':
+            assert finish.is_set()
+            second.set()
+        return request
+
+    agent = Agent(
+        TestModel(call_tools=['work'], custom_output_text='Finished work'), deps_type=type(None), capabilities=[hooks]
+    )
 
     @agent.tool_plain
     async def work() -> str:
+        nonlocal calls
+        calls += 1
         working.set()
         await finish.wait()
         return 'done'
@@ -257,7 +280,7 @@ async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path, height: i
             agent,
             deps=None,
             console=Console(file=output, force_terminal=True, width=80, height=height),
-            store=SettingsStore(tmp_path / 'config.db'),
+            store=store,
         )
         done.set()
 
@@ -286,14 +309,24 @@ async def test_prompt_frame_stays_visible_during_tools(tmp_path: Path, height: i
             assert bottom - top == 3
             pipe.send_text('\n')
             await working.wait()
-            assert '│> Working... Ctrl-C to interrupt' in output.getvalue()
-            assert f'\x1b[1;{height - 4}r' in output.getvalue()
+            pipe.send_text('next message')
+            await drafted.wait()
+            assert any('│> next message' in line for line in frame)
+            pipe.send_text('\n/set display.thinking false\nretained draft')
+            await queued.wait()
+            assert calls == 1
+            assert store.load().thinking
             finish.set()
-            pipe.send_text('/exit\n')
+            await second.wait()
+            assert any('retained draft' in line for line in frame)
+            pipe.send_text('\x15/exit\n')
             await done.wait()
     assert 'Goodbye.' in output.getvalue()
     assert 'Turn not saved' not in output.getvalue()
-    assert '\x1b[r' in output.getvalue()
+    assert calls == 1
+    assert not store.load().thinking
+    text = output.getvalue()
+    assert text.index('Finished work') < text.index('> next message\n')
 
 
 async def test_prompt_loop_commands(tmp_path: Path) -> None:
@@ -388,3 +421,60 @@ async def test_add_model_and_select_saved_model(tmp_path: Path) -> None:
     assert 'success' in output.getvalue()
     assert store.models() == ['test']
     assert store.load().model == 'test'
+
+
+@pytest.mark.parametrize('phase', ['start', 'end'])
+async def test_live_editor_interrupts_slow_turn_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    started = anyio.Event()
+    cleaned = anyio.Event()
+    done = anyio.Event()
+    module = ModuleType('slow_turn_test')
+
+    async def wait() -> None:
+        try:
+            started.set()
+            await anyio.sleep_forever()
+        finally:
+            cleaned.set()
+
+    def activate(host: PluginHost[None]) -> None:
+        @host.on('turn_start')
+        async def before(event: TurnStart) -> None:
+            if phase == 'start':
+                await wait()
+
+        @host.on('turn_end')
+        async def after(event: TurnEnd) -> None:
+            if phase == 'end':
+                await wait()
+
+    module.__dict__['activate'] = activate
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_plugin(PluginSettings(id='slow', factory=module.__name__))
+    output = io.StringIO()
+
+    async def run() -> None:
+        await chat(
+            Agent(TestModel(custom_output_text='completed')),
+            deps=None,
+            console=Console(file=output, force_terminal=True),
+            store=store,
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('hello\n')
+            await started.wait()
+            pipe.send_text('draft\x03')
+            await cleaned.wait()
+            pipe.send_text('\x15/exit\n')
+            await done.wait()
+    assert 'Goodbye.' in output.getvalue()
+    if phase == 'start':
+        assert 'Turn cancelled' in output.getvalue()
+        assert 'completed' not in output.getvalue()
