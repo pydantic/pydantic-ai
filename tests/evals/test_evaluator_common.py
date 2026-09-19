@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel, Field
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
+from typing_extensions import TypedDict
 
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -688,6 +689,38 @@ async def test_classifier_confidence_is_the_reason():
     model = answering({'polite': True, 'tone': 'curt'}, confidence={'polite': 0.93})
     assert await Classifier(output_type=Reply, model=model).evaluate(ctx) == snapshot(
         {'polite': EvaluationReason(value=True, reason='confidence 0.93'), 'tone': 'curt'}
+    )
+
+
+async def test_classifier_object_output_kinds():
+    """Every output shape that answers with an object gives one evaluation per field, not one bare answer."""
+    ctx = MockContext(output='30 days.')
+    answers = {'polite': True, 'tone': 'curt'}
+
+    @dataclass
+    class DataclassReply:
+        polite: bool
+        tone: str
+
+    class TypedDictReply(TypedDict):
+        polite: bool
+        tone: str
+
+    for output_type in (Reply, DataclassReply, TypedDictReply):
+        evaluator = Classifier(output_type=output_type, model=answering(answers))
+        assert await evaluator.evaluate(ctx) == snapshot({'polite': True, 'tone': 'curt'})
+
+
+async def test_classifier_confidence_for_an_aliased_field():
+    """A field goes out under its alias, so its confidence comes back under the alias, not the Python name."""
+
+    class AliasedReply(BaseModel):
+        is_polite: bool = Field(alias='is-polite', description='Is the reply polite?')
+
+    ctx = MockContext(output='30 days.')
+    model = answering({'is-polite': True}, confidence={'is-polite': 0.91})
+    assert await Classifier(output_type=AliasedReply, model=model).evaluate(ctx) == snapshot(
+        {'is_polite': EvaluationReason(value=True, reason='confidence 0.91')}
     )
 
 

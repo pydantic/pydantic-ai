@@ -394,9 +394,11 @@ may contain at most 20 levels.
 
 ### Classifier
 
-Ask a model a typed question about each case and report its answer. Unlike `LLMJudge`, nothing is written in
-prose, so it runs on a model that only answers questions, such as [TypeSafe's Jev](../../models/typesafe.md),
-where each case is one fast, cheap request. On any other model it is an ordinary structured-output agent.
+Ask a model a typed question about each case and report its answer. Where [`LLMJudge`](#llmjudge) grades
+against a rubric, this asks the question itself, in whatever shape it has: a yes/no, one of a set of labels, a
+0-to-1 score, or one per field of a model. Nothing is written in prose, so on a model that only answers
+questions, such as [TypeSafe's Jev](../../models/typesafe.md), each case is one fast, cheap request; on any
+other model it is an ordinary structured-output agent.
 
 ```python
 from enum import Enum

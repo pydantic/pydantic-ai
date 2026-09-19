@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
@@ -7,7 +8,8 @@ from functools import cached_property
 from types import UnionType
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import TypeAdapter
+from pydantic.fields import FieldInfo
 from typing_extensions import TypedDict
 
 from pydantic_ai import models
@@ -380,10 +382,11 @@ class Classifier(Evaluator[object, object, object]):
     reports a score; a Pydantic model of those reports one evaluation per field, named after the field, with the
     field's description as its question. `instructions` is the question when there is no field to describe it.
 
-    This is the evaluator for a model that answers questions rather than writing text, such as
-    [`typesafe:jev-latest`](../../models/typesafe.md), where every case is one cheap request. On any other model it
-    is an ordinary structured-output agent, so the same evaluator runs on an LLM. A confidence the model reports
-    for an answer, as Jev does in `provider_details['confidence']`, becomes the answer's reason.
+    Where [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] grades against a rubric, this asks the question itself.
+    Nothing is written in prose, so on a model that only answers questions, such as
+    [`typesafe:jev-latest`](../../models/typesafe.md), every case is one cheap request; on any other model it is an
+    ordinary structured-output agent, so the same evaluator runs on an LLM. A confidence the model reports for an
+    answer, as Jev does in `provider_details['confidence']`, becomes the answer's reason.
 
     If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
@@ -414,6 +417,21 @@ class Classifier(Evaluator[object, object, object]):
             output_type=cast(OutputSpec[Any], self.output_type), instructions=self.instructions, name='classifier'
         )
 
+    @cached_property
+    def _fields(self) -> tuple[TypeAdapter[Any], Mapping[str, str]] | None:
+        """An adapter that dumps an answer to one value per field, and the name each field went out under.
+
+        `None` when `output_type` asks a single question rather than one per field. A model, a dataclass and a
+        `TypedDict` all answer with an object, but only a model dumps itself, so the adapter does it for all
+        three. A field with an alias is asked about under the alias, so a confidence comes back under that name
+        while the evaluation keeps the name the field was written under.
+        """
+        if not is_model_like(self.output_type):
+            return None
+        output_type = cast(Any, self.output_type)
+        fields: Mapping[str, FieldInfo] = getattr(output_type, '__pydantic_fields__', None) or {}
+        return TypeAdapter(output_type), {name: field.alias or name for name, field in fields.items()}
+
     async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
         from . import llm_as_a_judge
 
@@ -433,9 +451,12 @@ class Classifier(Evaluator[object, object, object]):
         confidence: dict[str, float] = (result.response.provider_details or {}).get('confidence') or {}
 
         output = result.output
-        if isinstance(output, BaseModel):
-            values: dict[str, Any] = output.model_dump(mode='json')
-            return {name: _with_confidence(value, confidence.get(name)) for name, value in values.items()}
+        if (fields := self._fields) is not None:
+            adapter, aliases = fields
+            values: dict[str, Any] = adapter.dump_python(output, mode='json')
+            return {
+                name: _with_confidence(value, confidence.get(aliases.get(name, name))) for name, value in values.items()
+            }
         if isinstance(output, Enum):
             output = output.value
         # A bare answer is one question, so one confidence, whatever the wrapper field is called.
