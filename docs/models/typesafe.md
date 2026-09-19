@@ -407,11 +407,13 @@ agent = Agent(capabilities=[SelectModel(select_model)])
 
 async def main():
     simple = await agent.run('What does this repo do?')
-    print(simple.output)
-    #> It is a provider-agnostic agent framework for Python.
+    print(simple.response.model_name)
+    #> gpt-5.6-luna
     hard = await agent.run(
         'Now redesign its auth layer.', message_history=simple.all_messages()
     )
+    print(hard.response.model_name)
+    #> gpt-5.6-sol
     print(hard.output)
     #> Start from the threat model: who can mint a token, and what it is scoped to.
 ```
