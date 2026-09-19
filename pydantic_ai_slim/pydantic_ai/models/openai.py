@@ -1647,11 +1647,35 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if isinstance(message, ModelResponse)
             for part in message.parts
         )
-        backfill_field = (
-            profile.get('openai_chat_thinking_field', None)
-            if thinking_active and profile.get('openai_chat_send_back_thinking_parts', 'auto') == 'field'
-            else None
-        )
+        backfill_field: str | None = None
+        if thinking_active:
+            send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
+            if send_back_thinking == 'field':
+                backfill_field = profile.get('openai_chat_thinking_field', None)
+            elif send_back_thinking == 'auto':
+                # In `'auto'` mode, thinking is sent back via the custom field it was received in,
+                # recorded on `ThinkingPart.id` by `_map_response_thinking_part`. If every thinking
+                # turn in this history points at the same field, framework-synthesized assistant
+                # turns that carry no thinking must backfill that field too, or field-based
+                # providers like DeepSeek 400 on the missing key. Stay silent when the field is
+                # ambiguous or when the observed field disagrees with the profile's configured one,
+                # mirroring the field-vs-tags decision made for the turns that do carry thinking.
+                custom_field = profile.get('openai_chat_thinking_field', None)
+                observed_fields = {
+                    part.id
+                    for message in messages
+                    if isinstance(message, ModelResponse)
+                    for part in message.parts
+                    if (
+                        isinstance(part, ThinkingPart)
+                        and part.id
+                        and part.id != 'content'
+                        and part.provider_name == self.system
+                        and (not custom_field or part.id == custom_field)
+                    )
+                }
+                if len(observed_fields) == 1:
+                    backfill_field = observed_fields.pop()
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):

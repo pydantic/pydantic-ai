@@ -5277,6 +5277,139 @@ async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
     assert synthetic_turn.get(thinking_field) == ('' if thinking else None)
 
 
+@pytest.mark.parametrize('thinking', [True, False])
+async def test_auto_mode_thinking_backfill_on_synthetic_tool_search_turn(allow_model_requests: None, thinking: bool):
+    """In `'auto'` mode the backfill field is the one observed on this provider's `ThinkingPart`s.
+
+    Replaying a native tool-search exchange from another provider splits it into a
+    framework-synthesized `search_tools` assistant turn carrying tool calls but no thinking. The
+    `'auto'` send-back mode routes thinking through the field recorded on `ThinkingPart.id`, so the
+    synthesized turn must backfill that same observed field (empty) while thinking is active —
+    otherwise field-based providers like DeepSeek 400 on the missing key, exactly like the
+    `'field'`-mode gap closed by `test_field_mode_thinking_backfill_on_synthetic_tool_search_turn`.
+    """
+    model = OpenAIChatModel('foobar', provider=OpenAIProvider(api_key='dummy'))
+    thinking_parts = (
+        [ThinkingPart(content='I should search.', id='reasoning_content', provider_name=model.system)]
+        if thinking
+        else []
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find the dice tool.')]),
+        ModelResponse(
+            parts=[*thinking_parts, TextPart(content='Let me look.')],
+            provider_name=model.system,
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Go ahead.')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='call_1')],
+            provider_name=model.system,
+        ),
+    ]
+
+    mapped = cast(Any, await model._map_messages(history, ModelRequestParameters()))  # pyright: ignore[reportPrivateUsage]
+
+    if thinking:
+        thinking_turn = next(message for message in mapped if message.get('reasoning_content'))
+        assert thinking_turn['reasoning_content'] == 'I should search.'
+    synthetic_turn = next(
+        message
+        for message in mapped
+        if any(call['function']['name'] == 'roll_dice' for call in message.get('tool_calls', ()))
+    )
+    assert synthetic_turn.get('reasoning_content') == ('' if thinking else None)
+
+
+async def test_auto_mode_thinking_backfill_skips_ambiguous_fields(allow_model_requests: None):
+    """No backfill when the history observed more than one thinking field."""
+    model = OpenAIChatModel('foobar', provider=OpenAIProvider(api_key='dummy'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find the dice tool.')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='First.', id='reasoning_content', provider_name=model.system),
+                ThinkingPart(content='Second.', id='reasoning', provider_name=model.system),
+            ],
+            provider_name=model.system,
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Go ahead.')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='call_1')],
+            provider_name=model.system,
+        ),
+    ]
+
+    mapped = cast(Any, await model._map_messages(history, ModelRequestParameters()))  # pyright: ignore[reportPrivateUsage]
+
+    synthetic_turn = next(
+        message
+        for message in mapped
+        if any(call['function']['name'] == 'roll_dice' for call in message.get('tool_calls', ()))
+    )
+    assert 'reasoning_content' not in synthetic_turn
+    assert 'reasoning' not in synthetic_turn
+
+
+async def test_auto_mode_thinking_backfill_respects_configured_field(allow_model_requests: None):
+    """No backfill when the observed field disagrees with the profile's configured one.
+
+    `_map_response_thinking_part` falls back to tags for such parts, so field-based backfill would
+    contradict how the turns that do carry thinking are sent.
+    """
+    model = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(api_key='dummy'),
+        profile=OpenAIModelProfile(openai_chat_thinking_field='reasoning'),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find the dice tool.')]),
+        ModelResponse(
+            parts=[ThinkingPart(content='I should search.', id='reasoning_content', provider_name=model.system)],
+            provider_name=model.system,
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Go ahead.')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='call_1')],
+            provider_name=model.system,
+        ),
+    ]
+
+    mapped = cast(Any, await model._map_messages(history, ModelRequestParameters()))  # pyright: ignore[reportPrivateUsage]
+
+    synthetic_turn = next(
+        message
+        for message in mapped
+        if any(call['function']['name'] == 'roll_dice' for call in message.get('tool_calls', ()))
+    )
+    assert 'reasoning_content' not in synthetic_turn
+
+
+async def test_auto_mode_thinking_backfill_ignores_other_provider_parts(allow_model_requests: None):
+    """No backfill from thinking received via a different provider than the one being mapped."""
+    model = OpenAIChatModel('foobar', provider=OpenAIProvider(api_key='dummy'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Find the dice tool.')]),
+        ModelResponse(
+            parts=[ThinkingPart(content='I should search.', id='reasoning_content', provider_name='anthropic')],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Go ahead.')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='call_1')],
+            provider_name=model.system,
+        ),
+    ]
+
+    mapped = cast(Any, await model._map_messages(history, ModelRequestParameters()))  # pyright: ignore[reportPrivateUsage]
+
+    synthetic_turn = next(
+        message
+        for message in mapped
+        if any(call['function']['name'] == 'roll_dice' for call in message.get('tool_calls', ()))
+    )
+    assert 'reasoning_content' not in synthetic_turn
+
+
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage.model_construct(content='response', reasoning_content='reasoning', role='assistant')
