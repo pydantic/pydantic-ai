@@ -644,7 +644,8 @@ With tools attached, the first request carries the [route question](#routes-whic
 
 | Jev picks | What runs | Language model call |
 |---|---|---|
-| the output type | Jev fills the fields, in the same request | none |
+| a single output type | Jev fills the fields, in the same request | none |
+| one member of a union of output types | Jev fills that member's fields in a second request | none |
 | a tool with no arguments | your function, then Jev again with its result in view | none |
 | an output function with no arguments | your function, and the run ends | only if the function makes one |
 | a tool whose arguments Jev can express | Jev fills its arguments in a second request, then your function runs | none |
