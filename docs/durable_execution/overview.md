@@ -16,7 +16,7 @@ Pydantic AI supports seven durable execution solutions, plus a [builder](./backe
 - [DBOS](./dbos.md)
 - [Prefect](./prefect.md)
 - [Restate](./restate.md)
-- [AWS Lambda durable functions](https://pydantic.dev/docs/ai/harness/aws-lambda/)
+- [AWS Lambda](https://pydantic.dev/docs/ai/harness/aws-lambda/)
 
 Additional external SDK integrations:
 
