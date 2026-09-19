@@ -12,7 +12,7 @@ strings, a union of models as a field. When one of those changes, its row moves 
 are not about a composed shape — `str`, `NativeOutput`, `PromptedOutput`, a field of plain text —
 stay in `test_typesafe.py` beside the rest of the field shapes.
 
-Nothing here reaches the network. Almost every refusal is raised while the request is still being
+Nothing here reaches the network. Every refusal below is raised while the request is still being
 built, so the transport these tests hand the model raises if it is ever called: the refusal and its
 cost (nothing) are pinned together. The rows that do work are answered by a scripted transport
 rather than a cassette, because what they pin is *how many requests a shape costs* — a fact about
