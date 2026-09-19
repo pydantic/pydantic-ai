@@ -801,6 +801,9 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
             prop = {**prop, 'items': resolve(prop['items'])}
         if 'anyOf' in prop:
             prop = {**prop, 'anyOf': [resolve(option) for option in prop['anyOf']]}
+        if 'propertyNames' in prop:
+            # How an `Enum`-keyed mapping names its keys, as a `$ref` to the enum's own schema.
+            prop = {**prop, 'propertyNames': resolve(prop['propertyNames'])}
         return prop
 
     def flatten(properties: dict[str, Any], prefix: str, seen: frozenset[str]) -> dict[str, dict[str, Any]]:
@@ -875,6 +878,10 @@ def _bounded(prop: dict[str, Any]) -> float | None:
     """
     if prop.get('type') != 'number' or prop.get('minimum') != 0:
         return None
+    if 'multipleOf' in prop:
+        # Jev answers anywhere between the bounds, so a field that only accepts steps along them is not a
+        # probability in different units; it is a set of levels, which is what a rubric is for.
+        return None
     maximum = prop.get('maximum')
     return maximum if isinstance(maximum, (int, float)) and not isinstance(maximum, bool) and maximum > 0 else None
 
@@ -889,6 +896,10 @@ def _mapping_options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
         return None
     values: dict[str, Any] = prop.get('additionalProperties') or {}
     if values.get('type') != 'boolean':
+        return None
+    if 'maxProperties' in prop or 'minProperties' in prop:
+        # Every option is asked about and every answer is kept, so there is no way to return fewer or more
+        # keys than the mapping declares, and a limit on how many there may be could only be broken.
         return None
     return _options(prop.get('propertyNames') or {})
 

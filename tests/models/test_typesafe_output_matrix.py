@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Annotated, Any, Literal
 
 import httpx2
@@ -133,6 +133,18 @@ NOT_A_RUBRIC = ': a rubric must be the whole numbers from 0 upwards, in order, a
 NOT_STRINGS = ': its options are not two or more strings'
 
 
+class Areas(UseEnumMemberDocstrings, str, Enum):
+    """Which area."""
+
+    billing = 'billing'
+    """Charges, refunds and invoices."""
+    shipping = 'shipping'
+    """Where an order is."""
+
+
+EnumKeyed = probe('applies', dict[Areas, bool], description='Which apply?')
+Stepped = probe('risk', float, ge=0, le=100, multiple_of=10, description='How risky?')
+Capped = probe('applies', dict[Area, bool], max_length=2, description='Which apply?')
 BoolLiteral = probe('which', Literal[True, False], description='Which?')
 Percentage = probe('risk', float, ge=0, le=100, description='How risky?')
 Applies = probe('applies', dict[Area, bool], description='Which apply?')
@@ -189,6 +201,10 @@ REFUSED = [
     Refused('mapping of text', dict[str, str], unsupported('response')),
     # A list is one yes/no per option, so its items have to be the options.
     Refused('list of models', list[Ticket], unsupported('response', NOT_A_LIST)),
+    # A bound is the units a probability is asked in. A field that only accepts steps along it is a set of
+    # levels instead, and every key of a mapping is answered, so a limit on how many there may be cannot hold.
+    Refused('field: stepped number', Stepped, unsupported('risk')),
+    Refused('field: mapping with a size limit', Capped, unsupported('applies')),
     # A `tuple` is an array whose members are positional, which Pydantic renders as `prefixItems` and no
     # `items`, so there are no options to fan out over.
     Refused(
@@ -348,6 +364,10 @@ ACCEPTED = [
         'field: mapping of options', Applies, Applies(applies={'billing': True, 'shipping': True, 'security': True})
     ),
     Accepted('mapping of options', dict[Area, bool], {'billing': True, 'shipping': True, 'security': True}),
+    # An `Enum` key reaches the schema as a `$ref` under `propertyNames`, which the walk resolves like any other.
+    Accepted(
+        'field: mapping keyed by an Enum', EnumKeyed, EnumKeyed(applies={Areas.billing: True, Areas.shipping: True})
+    ),
 ]
 
 
