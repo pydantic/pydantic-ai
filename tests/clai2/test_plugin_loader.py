@@ -98,6 +98,27 @@ class Harness:
         return self.output.getvalue()
 
 
+SEGMENT = """
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost) -> None:
+    @host.status_segment
+    def where() -> str:
+        return 'in {name}'
+"""
+
+
+async def test_status_segments_follow_load_and_unload(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'segment.py').write_text(SEGMENT.format(name='segment'))
+    assert harness.loader.status_segments() == []
+    await harness.loader.load_all()
+    assert [segment() for segment in harness.loader.status_segments()] == ['in segment']
+    await harness.loader.disable('segment')
+    assert harness.loader.status_segments() == []
+
+
 async def test_folder_discovery_and_load_order(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('beta')

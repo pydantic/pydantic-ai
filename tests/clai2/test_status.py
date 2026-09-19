@@ -4,6 +4,7 @@ import asyncio
 import io
 import re
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
@@ -12,7 +13,7 @@ from rich.console import Console
 
 from pydantic_clai2._app import _reset_status  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.status import Status, StatusLine
-from pydantic_clai2.theme import WARNING, sgr
+from pydantic_clai2.theme import MUTED, WARNING, sgr
 
 
 @pytest.fixture
@@ -196,3 +197,55 @@ async def test_cancellation_restores_scroll_region() -> None:
     assert '\n' not in output.getvalue()
     assert '\x1b[r' in output.getvalue()
     assert output.getvalue().endswith('\x1b8\x1b[?25h')
+
+
+def test_plugin_segments_are_appended_and_empties_are_skipped() -> None:
+    status = Status(model='m', status_segments=(lambda: '', lambda: '/tmp/work'))
+    assert status.text().endswith('ready | /tmp/work')
+    assert status.toolbar()[-1] == (MUTED, ' | /tmp/work')
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
+    status.context_alert = True
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
+
+
+def test_a_failing_segment_reports_itself_instead_of_breaking_the_row() -> None:
+    def broken() -> str:
+        raise RuntimeError('no directory')
+
+    status = Status(model='m', status_segments=(broken, lambda: 'last'))
+    assert status.text().endswith('ready | !RuntimeError | last')
+
+
+def test_a_segment_returning_a_non_string_is_reported_not_joined() -> None:
+    status = Status(model='m', status_segments=(lambda: cast(str, 42), lambda: cast(str, None), lambda: 'ok'))
+    assert status.text().endswith('ready | !int | ok')
+
+
+def test_a_fragment_cannot_break_the_prompt_row() -> None:
+    status = Status(model='m', status_segments=(lambda: 'a\nb\x1b[31mc',))
+    assert '\n' not in status.text()
+    assert '\x1b' not in status.text()
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
+
+
+async def test_plugin_segments_are_painted_muted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('COLORTERM', 'truecolor')
+    output = io.StringIO()
+    status = Status(model='m', status_segments=(lambda: 'cwd: /tmp',))
+    async with StatusLine(Console(file=output, force_terminal=True, width=80, height=24), status):
+        pass
+    muted = sgr(MUTED)
+    painted = output.getvalue()
+    assert f'{muted}c{muted}w{muted}d' in painted
+    assert f'{muted}m{muted}p' in painted
+    assert sgr(WARNING) not in painted
+
+
+async def test_a_fragment_wider_than_the_terminal_still_mutes_only_itself() -> None:
+    output = io.StringIO()
+    status = Status(model='m', status_segments=(lambda: 'x' * 200,))
+    async with StatusLine(Console(file=output, force_terminal=True, width=60, height=24), status):
+        pass
+    painted = output.getvalue()
+    assert f'{sgr(MUTED)}m' not in painted
+    assert f'{sgr(MUTED)}x' in painted

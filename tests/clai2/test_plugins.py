@@ -91,7 +91,7 @@ async def test_host_hooks_dispatch_by_event_type() -> None:
             await handler(event)
     assert seen == ['start:openai-codex:gpt-6-astra', 'turn:hi', 'done:completed', 'end:eof']
     assert plugin.capabilities == []
-    assert plugin.summary() == '0 commands, 4 hooks, 0 capabilities, 0 renderers'
+    assert plugin.summary() == '0 commands, 4 hooks, 0 capabilities, 0 renderers, 0 status segments'
 
 
 async def test_core_hooks_events_tools_and_renderers_reach_the_run() -> None:
@@ -122,7 +122,9 @@ async def test_core_hooks_events_tools_and_renderers_reach_the_run() -> None:
     def draw(event: FunctionToolCallEvent) -> str:
         return f'drew {event.part.tool_name}'
 
-    assert plugin.summary() == '1 commands, 0 hooks, 1 capabilities, 1 renderers'
+    assert plugin.status_segment(lambda: 'here')() == 'here'
+
+    assert plugin.summary() == '1 commands, 0 hooks, 1 capabilities, 1 renderers, 1 status segments'
     assert len(plugin.capabilities) == 2
     session = Session(Agent(TestModel(call_tools=['shout'])), deps=None, plugins=plugin.capabilities)
     await session.prompt('hello')

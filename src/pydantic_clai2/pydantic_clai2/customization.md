@@ -11,13 +11,16 @@ contract; this guide is shipped with the package for use without a checkout.
   with host.add, or installed directly as a capability class.
 - Add slash commands or a custom menu: host.commands.register(Command(...)).
 - Change tool output: host.render(EventClass), returning a Rich renderable.
+- Add a fragment to the status row: host.status_segment(fn), where fn returns a short string.
 - React to prompts or session lifecycle: host.on with a typed handler.
 - Configure a plugin: host.settings with a Pydantic settings model.
 - Use a custom model/provider: supply a Pydantic AI Agent to chat from a Python
   launcher. There is no host.register_provider or host.register_model API.
-- Replace the prompt editor, splash, status line, streaming Markdown, built-in
-  model catalog, or global colour scheme: currently a CLAI source change, not
-  a supported PluginHost extension. A command can own its own UI instead.
+- Replace the prompt editor, splash, streaming Markdown, built-in model catalog,
+  or global colour scheme: currently a CLAI source change, not a supported
+  PluginHost extension. A command can own its own UI instead. You can add a
+  fragment to the status row with host.status_segment; you cannot redesign or
+  replace the row itself.
 
 Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.
 Harness owns reusable, non-terminal capabilities. CLAI owns the prompt loop,
@@ -228,6 +231,27 @@ Use host.console for plugin-owned console output outside streaming handlers.
 Use pydantic_clai2.theme roles ACCENT, INFO, WARNING, ERROR, MUTED, THINKING,
 not hard-coded colours. Raw ANSI uses theme.sgr. StreamRenderer owns text and
 thinking, not tool-specific rendering.
+
+Add a fragment to the status row with host.status_segment:
+
+```python
+import os
+
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost[None]) -> None:
+    @host.status_segment
+    def where() -> str:
+        return os.getcwd()
+```
+
+The fragment is appended after the built-in figures and painted muted. The row
+repaints about ten times a second, so it runs that often: no blocking IO, no
+awaits, no printing. Return an empty string to contribute nothing that frame.
+Fragments are truncated from the right on narrow terminals and cannot set their
+own colours. host.status_segment adds to the row; replacing the row, prompt
+editor, splash, or global colour scheme is still a CLAI source change.
 
 ## Custom TUI menus
 

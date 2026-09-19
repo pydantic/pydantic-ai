@@ -52,7 +52,7 @@ from typing_extensions import TypeVar as DefaultTypeVar
 
 from .commands import Commands
 from .config import Settings
-from .status import Status
+from .status import Status, StatusSegment
 
 DepsT = DefaultTypeVar('DepsT', default=None)
 EventT = TypeVar('EventT', bound=AgentStreamEvent)
@@ -246,6 +246,7 @@ class PluginHost(Generic[DepsT]):
         self._capabilities: list[AgentCapability[DepsT]] = []
         self._handlers: list[Callable[[HostEvent], Awaitable[None]]] = []
         self._renderers: list[Renderer[AgentStreamEvent]] = []
+        self._segments: list[StatusSegment] = []
 
     @property
     def capabilities(self) -> list[AgentCapability[DepsT]]:
@@ -262,11 +263,17 @@ class PluginHost(Generic[DepsT]):
         """Renderers; each returns `None` for events it was not registered for."""
         return list(self._renderers)
 
+    @property
+    def status_segments(self) -> list[StatusSegment]:
+        """Footer fragments; the shell appends them to the built-in status figures."""
+        return list(self._segments)
+
     def summary(self) -> str:
         """One line for the `/plugins` menu."""
         return (
             f'{len(list(self.commands))} commands, {len(self._handlers)} hooks, '
-            f'{len(self._capabilities)} capabilities, {len(self._renderers)} renderers'
+            f'{len(self._capabilities)} capabilities, {len(self._renderers)} renderers, '
+            f'{len(self._segments)} status segments'
         )
 
     def settings(self, model: type[ModelT], /) -> ModelT:
@@ -288,6 +295,17 @@ class PluginHost(Generic[DepsT]):
             return func
 
         return decorator
+
+    def status_segment(self, func: StatusSegment, /) -> StatusSegment:
+        """Add a short fragment to the status row, such as the working directory.
+
+        The shell repaints the row about ten times a second, so keep the fragment cheap
+        and synchronous: it is called for every frame, not once per turn. Fragments are
+        appended in registration order, painted `MUTED`, and truncated from the right on
+        a narrow terminal. Unloading the plugin discards them with the rest of its host.
+        """
+        self._segments.append(func)
+        return func
 
     @overload
     def on(

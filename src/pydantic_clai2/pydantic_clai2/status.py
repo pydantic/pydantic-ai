@@ -3,10 +3,10 @@
 import asyncio
 import contextlib
 import math
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Self
+from typing import Self, cast
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import (
@@ -22,6 +22,9 @@ from rich.console import Console
 from . import theme
 from .usage_report import format_cost
 
+StatusSegment = Callable[[], str]
+"""One short status-row fragment supplied by a plugin; see `PluginHost.status_segment`."""
+
 
 @dataclass(kw_only=True)
 class Status:
@@ -36,6 +39,8 @@ class Status:
     """Retained-history cost; `None` (hidden) until a priced response exists."""
     streamed_chars: int = 0
     activity: str = 'ready'
+    status_segments: tuple[StatusSegment, ...] = ()
+    """Plugin fragments appended after the built-in figures; the shell fills this in each turn."""
 
     def observe(self, event: AgentStreamEvent) -> None:
         """Include text, thinking, and streamed tool arguments in the estimate."""
@@ -58,14 +63,32 @@ class Status:
         elif isinstance(event, FunctionToolResultEvent):
             self.activity = 'working'
 
-    def segments(self, frame: str = '') -> tuple[str, str, str]:
-        """The row as (head, context figure, tail), so the figure can be painted on its own."""
+    def segments(self, frame: str = '') -> tuple[str, str, str, str]:
+        """The row as (head, context figure, tail, plugins), so the figure and fragments paint on their own."""
         context = '?' if self.context_tokens is None else f'{self.context_tokens:,}'
         output = f'~{math.ceil(self.streamed_chars / 4):,} streamed tokens'
         if self.output_tokens is not None:
             output = f'{self.output_tokens:,} output tokens'
         cost = '' if self.cost is None else f' | {format_cost(self.cost)}'
-        return f'{frame} {self.model} | context: '.lstrip(), context, f' tokens | {output}{cost} | {self.activity}'
+        head = f'{frame} {self.model} | context: '.lstrip()
+        return head, context, f' tokens | {output}{cost} | {self.activity}', self._plugin_text()
+
+    def _plugin_text(self) -> str:
+        """Plugin fragments, separated and prefixed; a fragment that raises or returns a non-string is reported."""
+        shown: list[str] = []
+        for segment in self.status_segments:
+            try:
+                # Plugins may be untyped, so validate the runtime result despite the callable's contract.
+                text = cast(object, segment())
+                if not isinstance(text, str):
+                    # A non-string cannot be joined; report its type instead of raising out of the painter.
+                    text = f'!{type(text).__name__}' if text else ''
+                if text:
+                    # Sanitized here rather than only in the row painter: the toolbar draws fragments too.
+                    shown.append(_printable(text))
+            except Exception as exc:  # noqa: BLE001 -- a plugin fragment must not take down the footer.
+                shown.append(f'!{type(exc).__name__}')
+        return '' if not shown else ' | ' + ' | '.join(shown)
 
     def text(self, frame: str = '') -> str:
         """Use no percentage when the model's context capacity is unknown."""
@@ -73,8 +96,9 @@ class Status:
 
     def toolbar(self) -> list[tuple[str, str]]:
         """prompt-toolkit fragments for the input prompt; the figure is `WARNING` while `context_alert` is set."""
-        head, figure, tail = self.segments()
-        return [('', head), (theme.WARNING if self.context_alert else '', figure), ('', tail)]
+        head, figure, tail, plugins = self.segments()
+        painted = [('', head), (theme.WARNING if self.context_alert else '', figure), ('', tail)]
+        return [*painted, (theme.MUTED, plugins)] if plugins else painted
 
 
 def _interrupted() -> bool:
@@ -149,8 +173,10 @@ class StatusLine:
             return
         rows = 4 if height >= 6 and width >= 4 else 1
         # Leave one column unused so the footer cannot trigger autowrap.
-        head, figure, tail = (_printable(segment) for segment in self.status.segments())
-        text = head + figure + tail
+        head, figure, tail, plugins = (_printable(segment) for segment in self.status.segments())
+        text = head + figure + tail + plugins
+        # From the untruncated row, so a fragment wider than the terminal cannot mute the built-in part.
+        plugin_start = max(0, len(text) - len(plugins))
         alerted = range(len(head), len(head) + len(figure)) if self.status.context_alert else range(0)
         prefix = '\x1b7'
         if (height, rows) != (self._height, self._rows):
@@ -162,10 +188,14 @@ class StatusLine:
         highlight = frame % (len(text) + 12) - 6
         shades = tuple(theme.sgr(color) for color in (theme.SUGAR, theme.LIGHT_PURPLE, theme.LITHIUM, theme.PURPLE))
         warning = theme.sgr(theme.WARNING)
-        painted = ''.join(
-            (warning if index in alerted else shades[min(abs(index - highlight) // 2, 3)]) + char
-            for index, char in enumerate(text)
-        )
+        muted = theme.sgr(theme.MUTED)
+
+        def paint(index: int) -> str:
+            if index in alerted:
+                return warning
+            return muted if index >= plugin_start else shades[min(abs(index - highlight) // 2, 3)]
+
+        painted = ''.join(paint(index) + char for index, char in enumerate(text))
         if rows == 4:
             inner_width = width - 3
             hint = '> Working... Ctrl-C to interrupt'[:inner_width].ljust(inner_width)

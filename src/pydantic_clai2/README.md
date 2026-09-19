@@ -630,6 +630,11 @@ refreshes ten times per second. Terminals shorter than six rows or narrower than
 four columns omit the input border. Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
 
+A plugin can append its own fragment to the row with `host.status_segment`, such
+as the working directory or a branch name; fragments are muted and dropped when
+the plugin unloads. See [PLUGINS.md](PLUGINS.md) for the registration and its
+cost rules.
+
 ## Plugins
 
 Everything beyond the prompt loop is a plugin, including the default coding

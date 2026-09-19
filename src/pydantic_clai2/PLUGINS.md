@@ -259,7 +259,7 @@ What "load" and "unload" mean for your plugin:
 - Load runs `activate(host)` and then fires `session_start` for that plugin, so a
   plugin loaded mid-session sees the same first event as one loaded at start.
 - Unload fires `session_end` for that plugin, then drops everything it
-  registered: handlers, commands, tools, renderers. Nothing else is touched.
+  registered: handlers, commands, tools, renderers, status fragments. Nothing else is touched.
 - Both only happen between prompts, never while the agent is running.
 - Drop-in entry modules load from current source. Installed entry modules use
   `importlib.reload`, which retains globals absent from the new source. Initialize
@@ -505,7 +505,32 @@ Bad or missing values fail at startup with a message naming your plugin.
 model the next prompt will use. `host.status` is the footer's state; set
 `context_alert` to paint the context figure in the warning colour. The built-in
 `compaction` plugin uses both. A host built outside the shell gets an in-memory
-`Transcript` and a detached `Status`, so tests need no special case.
+`Transcript` and a detached `Status`, so tests need no special case. The status
+row itself is CLAI's; a plugin adds to it with the next registration.
+
+### Add to the status row: `host.status_segment(fn)`
+
+`fn` takes no arguments and returns a short string. It is appended after the
+built-in figures, painted muted, and dropped when the plugin unloads.
+
+```python
+import os
+
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost[None]) -> None:
+    @host.status_segment
+    def where() -> str:
+        return os.getcwd()
+```
+
+The row is repainted about ten times a second, so `fn` runs that often: keep it
+cheap, synchronous, and free of blocking IO. Return `''` to contribute nothing
+for a frame. Fragments are truncated from the right on a narrow terminal and are
+readable text only; the colours in the row belong to CLAI. A fragment that raises
+shows its error name in the row instead, so one broken plugin cannot take the
+footer down.
 
 ## Rules that keep plugins predictable
 

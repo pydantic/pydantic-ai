@@ -32,7 +32,7 @@ from .plugins import (
     bare_screen,
 )
 from .settings_store import SettingsStore
-from .status import Status
+from .status import Status, StatusSegment
 
 _FOLDER_PACKAGE = 'pydantic_clai2_plugins'
 
@@ -185,6 +185,10 @@ class PluginLoader(Generic[DepsT]):
     def renderers(self) -> list[Renderer[AgentStreamEvent]]:
         """Consulted before the default display, in load order."""
         return [renderer for host in self._loaded.values() for renderer in host.renderers]
+
+    def status_segments(self) -> list[StatusSegment]:
+        """Appended to the status row, in load order."""
+        return [segment for host in self._loaded.values() for segment in host.status_segments]
 
     async def load_all(self, *, fresh: bool = False) -> None:
         """Load enabled plugins, re-importing after a shell reload so host event types match."""

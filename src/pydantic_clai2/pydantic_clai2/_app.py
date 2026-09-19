@@ -394,6 +394,7 @@ class _Shell(Generic[DepsT, OutputT]):
         while True:
             try:
                 self.status.model = self.session.model or _model_label(self.agent)
+                self.status.status_segments = tuple(self.loader.status_segments())
                 if self.editor is not None:
                     text = await self.editor.read()
                 else:
