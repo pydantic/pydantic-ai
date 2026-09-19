@@ -120,8 +120,8 @@ def says_nothing(route: str) -> str:
 
 def contains_itself(field: str) -> str:
     return (
-        f'Output field {field!r} is not supported by this model: a model that always contains itself '
-        'has no end to fill. Give the field a default, or make it optional.'
+        f'Output field {field!r} is not supported by this model: a model that contains itself has no end '
+        'to fill, and Jev asks a fixed set of questions. Give the field a type that does not contain itself.'
     )
 
 
