@@ -2391,7 +2391,9 @@ async def test_a_route_that_says_nothing_anywhere_is_still_refused(allow_model_r
     def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('a route that describes itself nowhere must be refused before any request')
 
-    agent = Agent(mock_model(unreachable), output_type=[Literal['urgent', 'normal'], Ticket])
+    # A bare `Literal` beside another type is not spelled out in the overloads; it is refused at run time
+    # for a different reason, which is what this asserts.
+    agent: Agent[None, Any] = Agent(mock_model(unreachable), output_type=[Literal['urgent', 'normal'], Ticket])  # type: ignore[arg-type]
     with pytest.raises(UserError, match="'final_result_Literal' says nothing about itself"):
         await agent.run('anything')
 
