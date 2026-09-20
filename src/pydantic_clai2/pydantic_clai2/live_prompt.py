@@ -252,24 +252,24 @@ class LivePrompt:
         title = ''
         if self.interrupts.active:
             spinner = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[int(self.clock() * 10) % 10]
-            title = truncate(f' Working {spinner} ', width - 2)
+            title = truncate(f' Working {spinner} ', width)
             title = title.replace(spinner, f'{theme.sgr(theme.ACCENT)}{spinner}{reset}{muted}')
-        rows.append(muted + '┌' + title + '─' * max(0, width - 2 - visible_length(title)) + '┐' + reset)
-        available = max(1, min(height // 3, height - len(rows) - 4))
-        draft = self.buffer.rows(width=width - 4, limit=available)
-        for index, row in enumerate(draft):
-            prefix = '> ' if index == 0 else '  '
-            rows.append(
-                muted + '│' + reset + prefix + row + ' ' * max(0, width - 4 - visible_length(row)) + muted + '│' + reset
-            )
-        rows.append(muted + '└' + '─' * (width - 2) + '┘' + reset)
-        popup_limit = max(0, min(6, height - len(rows) - 2))
+        rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
+        # The box has no side borders and no prompt marker: the draft and the
+        # suggestions are plain rows between the top and bottom rules, so no
+        # row can drift out of alignment with the corners.
+        inner = max(1, height - len(rows) - 4)
+        popup_want = min(6, len(self._completions))
+        draft = self.buffer.rows(width=width, limit=max(1, min(height // 3, inner - popup_want)))
+        rows.extend(draft)
+        popup_limit = max(0, min(6, len(self._completions), inner - len(draft)))
         start = max(0, self._selection - popup_limit + 1)
         for index, item in enumerate(self._completions[start : start + popup_limit], start=start):
             line = truncate(
                 ' '.join(terminal_text(f'{item.display or item.text}  {item.display_meta or ""}').split()), width
             )
             rows.append(('\x1b[7m' if index == self._selection else muted) + line + reset)
+        rows.append(muted + '─' * width + reset)
         if self.buffer.search is not None:
             footer = f'reverse-i-search: {self.buffer.search}'
         else:

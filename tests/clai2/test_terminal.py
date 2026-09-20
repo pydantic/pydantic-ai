@@ -286,39 +286,41 @@ async def test_prompt_frame_stays_visible_during_tools(
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run)
             await painted.wait()
-            top = next(row for row, line in enumerate(frame) if '┌' in line)
-            bottom = next(row for row, line in enumerate(frame) if '└' in line)
+            top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
+            bottom = max(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             assert bottom - top == 2
             assert bottom == len(frame) - 2
             pipe.send_text('\x12')
             await searched.wait()
-            top = next(row for row, line in enumerate(frame) if '┌' in line)
-            bottom = next(row for row, line in enumerate(frame) if '└' in line)
+            top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
+            bottom = max(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             assert bottom - top == 2
             pipe.send_text('\x07/set ')
             await completions.wait()
-            top = next(row for row, line in enumerate(frame) if '┌' in line)
-            bottom = next(row for row, line in enumerate(frame) if '└' in line)
-            assert bottom - top == 2
-            assert any('display.thinking' in row for row in frame[bottom + 1 :])
+            top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
+            bottom = max(row for row, line in enumerate(frame) if line and set(line) == {'─'})
+            assert bottom - top == 8
+            assert any('display.thinking' in row for row in frame[top + 1 : bottom])
+            assert all('display.thinking' not in row for row in frame[bottom + 1 :])
+            assert bottom == len(frame) - 2
             pipe.send_text('\x15\x1b[200~first line\nsecond line\x1b[201~')
             await pasted.wait()
-            top = next(row for row, line in enumerate(frame) if '┌' in line)
-            bottom = next(row for row, line in enumerate(frame) if '└' in line)
+            top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
+            bottom = max(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             assert bottom - top == 3
             pipe.send_text('\n')
             await working.wait()
             pipe.send_text('next message')
             await drafted.wait()
-            assert any('│> next message' in line for line in frame)
+            assert any(line.startswith('next message') for line in frame)
             pipe.send_text('\n/set display.thinking false\nretained draft')
             await queued.wait()
             follow_up = next(row for row, line in enumerate(frame) if 'Follow-up: next message' in line)
             command = next(row for row, line in enumerate(frame) if 'Command: /set display.thinking false' in line)
-            editor_top = next(row for row, line in enumerate(frame) if '┌' in line)
+            editor_top = next(row for row, line in enumerate(frame) if 'Working ' in line)
             assert follow_up < command < editor_top
             indicator = next(row for row, line in enumerate(frame) if 'Working ' in line)
-            draft = next(row for row, line in enumerate(frame) if '> retained draft' in line)
+            draft = next(row for row, line in enumerate(frame) if 'retained draft' in line)
             assert editor_top == indicator
             assert draft == editor_top + 1
             assert calls == 1

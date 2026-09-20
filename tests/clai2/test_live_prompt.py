@@ -347,6 +347,34 @@ async def test_completion_refresh_keeps_popup_without_selecting_stale_results(
             assert live.buffer.text == '/help'
 
 
+async def test_suggestions_expand_the_prompt_box() -> None:
+    ready = anyio.Event()
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if 'Hello command' in text:
+                ready.set()
+            return super().write(text)
+
+    async with editor(output=Output()) as (live, pipe, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        pipe.send_text('/he')
+        await ready.wait()
+        plain = [Text.from_ansi(row).plain for row in live.frame()]
+        dashes = [index for index, row in enumerate(plain) if row and set(row) == {'─'}]
+        top, bottom = dashes[0], dashes[-1]
+        inside = plain[top + 1 : bottom]
+        assert inside[0].startswith('/he')
+        assert inside[1].startswith('/help Help')
+        assert inside[2].startswith('/hello Hello command')
+        assert all('│' not in row and not row.startswith('>') for row in inside)
+        assert all('help' not in row for row in plain[bottom + 1 :])
+        live.feed('down')
+        frame = live.frame()
+        selected = next(row for row in frame if 'help' in row and '\x1b[7m' in row)
+        assert selected.startswith('\x1b[7m') and selected.endswith('\x1b[0m')
+
+
 async def test_completion_iteration_is_bounded_before_materializing() -> None:
     ready = anyio.Event()
     produced: list[int] = []

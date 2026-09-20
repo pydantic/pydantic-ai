@@ -61,14 +61,18 @@ tool side effects cannot be undone.
 ```text
 Follow-up: Add tests for the change
 Command: /usage
-┌─ Working ⠋ ──────────────────────────────────┐
-│> Draft your next message here                 │
-└──────────────────────────────────────────────┘
+─ Working ⠋ ────────────────────────────────────
+/
+/resume Browse or restore a saved session
+/set Change settings; no arguments opens menu
+────────────────────────────────────────────────
 model | context: ... | running: shell
 ```
 
 The prompt sits above the footer with one editable line when empty. It grows
-for wrapped or pasted text and completion suggestions, not to fill the terminal.
+for wrapped or pasted text, not to fill the terminal. Completion suggestions
+appear below the draft, between the top and bottom rules. The rows carry no
+side borders and no prompt marker, so they cannot drift out of alignment.
 History search stays compact too. The bordered prompt area stays visible below
 streamed output while CLAI works, and remains editable. A `Working` label and
 animated spinner, in the same pink accent as tool names, appear in the box's top border while a turn or its lifecycle
