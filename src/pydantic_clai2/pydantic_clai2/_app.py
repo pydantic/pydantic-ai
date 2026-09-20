@@ -10,6 +10,7 @@ from anyio import create_task_group
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import History
+from pydantic import ValidationError
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
@@ -35,7 +36,7 @@ from .input_history import input_history
 from .interrupts import Interrupts
 from .key_menu import keys_command
 from .live_prompt import LivePrompt
-from .model_menu import open_add_model_menu
+from .model_menu import model_settings_command, open_add_model_menu
 from .model_picker import model_command, model_completions
 from .plugin_loader import PluginError, PluginLoader
 from .plugin_menu import open_plugins_menu
@@ -268,6 +269,14 @@ def _create_shell(
             complete=lambda args: set_completions(['model', *args]) if len(args) <= 1 else (),
         )
     )
+    commands.register(
+        Command(
+            name='model_settings',
+            description='Choose an added model to configure, or edit a named model',
+            handler=lambda args: model_settings_command(context, args),
+            complete=lambda args: model_completions(context, args),
+        )
+    )
     commands.register(Command(name='help', description='Show commands', handler=commands.help))
     commands.register(
         Command(
@@ -488,7 +497,20 @@ class _Shell(Generic[DepsT, OutputT]):
             self.console.print()
             return TurnEnd(text=start.text, outcome='cancelled')
         self.session.plugins = (*self.plugins, *self.loader.capabilities())
-        self.session.model_settings = self.context.model_settings(self.session.model or _model_label(self.agent))
+        model = self.session.model or _model_label(self.agent)
+        try:
+            self.session.model_settings = self.context.model_settings(model)
+        except ValidationError as exc:
+            self.console.print(
+                f'Invalid saved model settings for {model}. Fix or reset them with /model_settings {model}.',
+                style=theme.ERROR,
+                markup=False,
+            )
+            for error in exc.errors(include_input=False, include_url=False):
+                location = '.'.join(str(part) for part in error['loc'])
+                self.console.print(f'{location}: {error["msg"]}', style=theme.ERROR, markup=False)
+            self.console.print()
+            return TurnEnd(text=start.text, outcome='failed', error=exc)
         return await _run_prompt(
             self.session,
             start.text,

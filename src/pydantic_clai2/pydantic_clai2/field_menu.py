@@ -34,6 +34,8 @@ class FieldRow:
     description: str
     default: str
     choices: tuple[str, ...] = ()
+    label: str = ''
+    allow_custom: bool = True
     secret: bool = False
     note: str = ''
     """Where the value comes from when not from the user; shown muted after the value."""
@@ -83,8 +85,9 @@ def first_error(exc: ValidationError) -> str:
 class FieldMenu:
     """Rows, details, and the widgets that edit them."""
 
-    def __init__(self, source: FieldSource) -> None:
+    def __init__(self, source: FieldSource, *, searchable: bool = True) -> None:
         """Everything the menu shows or saves goes through `source`."""
+        self._searchable = searchable
         self._source = source
         self.rows = list(source.rows())
 
@@ -92,7 +95,7 @@ class FieldMenu:
         """One row per field with its current value."""
         return [
             MenuItem(
-                f'{row.key:<24} {self._source.current(row)}',
+                f'{row.label or row.key:<24} {self._source.current(row)}',
                 value=row.key,
                 description=f'{theme.sgr(theme.MUTED)}{row.note}' if row.note else '',
             )
@@ -106,7 +109,7 @@ class FieldMenu:
             return ''
         current = self._source.current(row)
         lines = [
-            row.key,
+            row.label or row.key,
             '',
             f'current  {current}' + (' (default)' if current == row.default else ''),
             f'default  {row.default}',
@@ -121,19 +124,22 @@ class FieldMenu:
         return '\n'.join(lines)
 
     def build(self, initial: int = 0) -> Menu:
-        """The field list. `r` returns a reset marker instead of a row."""
-        return (
+        """The field list. Searchable lists use uppercase `R` so typing still filters."""
+        self.rows = list(self._source.rows())
+        builder = (
             MenuBuilder(self._source.title)
             .style(markdown_style())
             .items(self.items())
-            .searchable()
+            .searchable(self._searchable)
             .initial_index(min(initial, len(self.rows) - 1))
             .preview(self.details)
-            .on_key('r', self.reset_marker)
-            .footer_hint(_LIST_HINT)
+            .on_key('R' if self._searchable else 'r', self.reset_marker)
+            .footer_hint(_LIST_HINT if self._searchable else 'Enter edit - r reset - Esc back')
             .key_source(menu_key)
-            .build()
         )
+        if not self._searchable:
+            builder.list_width(46)
+        return builder.build()
 
     def reset_marker(self, menu: object, item: MenuItem) -> MenuResult:
         """R: hand the row back to the loop tagged for reset."""
@@ -145,10 +151,11 @@ class FieldMenu:
         items = [
             MenuItem(f'{choice}{" (current)" if choice == current else ""}', value=choice) for choice in row.choices
         ]
-        items += [MenuItem(CUSTOM, value=CUSTOM), MenuItem(KEEP, value=KEEP)]
+        if row.allow_custom:
+            items += [MenuItem(CUSTOM, value=CUSTOM), MenuItem(KEEP, value=KEEP)]
         initial = row.choices.index(current) if current in row.choices else 0
         return (
-            MenuBuilder(f'Choose {row.key}')
+            MenuBuilder(f'Choose {row.label or row.key}')
             .style(markdown_style())
             .items(items)
             .searchable(len(row.choices) > 8)
@@ -161,7 +168,7 @@ class FieldMenu:
     def build_editor(self, row: FieldRow) -> TextInput:
         """A typed input that validates as you go; empty resets."""
         builder = (
-            TextInputBuilder(f'New value for {row.key}')
+            TextInputBuilder(f'New value for {row.label or row.key}')
             .style(markdown_style())
             .prompt('Value: ')
             .placeholder('Enter a new secret' if row.secret else f'current: {self._source.current(row)} (empty resets)')
@@ -214,7 +221,9 @@ TERMINAL = Runners()
 """The real terminal."""
 
 
-def run_flow(menu: FieldMenu, runners: Runners = TERMINAL) -> list[str]:
+def run_flow(
+    menu: FieldMenu, runners: Runners = TERMINAL, *, submenus: dict[str, Callable[[], list[str]]] | None = None
+) -> list[str]:
     """List, edit, back to the list, until Esc. Returns the messages to show afterwards."""
     messages: list[str] = []
     cursor = 0
@@ -233,6 +242,9 @@ def run_flow(menu: FieldMenu, runners: Runners = TERMINAL) -> list[str]:
         if row is None:
             return messages
         cursor = menu.rows.index(row)
+        if submenus and row.key in submenus:
+            messages.extend(submenus[row.key]())
+            continue
         message = _edit(menu, row, runners)
         if message is not None:
             messages.append(message)

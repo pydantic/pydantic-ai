@@ -65,8 +65,9 @@ def test_settings_form_validates_and_converts() -> None:
     assert model_settings_from_json(everything).to_model_settings() == everything
     with pytest.raises(ValidationError):
         ModelSettingsForm(max_tokens=0)
+    assert model_settings_from_json({'nope': 1}).to_model_settings() is None
     with pytest.raises(ValidationError):
-        model_settings_from_json({'nope': 1})
+        ModelSettingsForm.model_validate({'nope': 1})
 
 
 def test_store_round_trips_model_settings(tmp_path: Path) -> None:
@@ -83,13 +84,14 @@ def test_model_settings_source(tmp_path: Path) -> None:
     source = ModelSettingsSource(store, 'openai:gpt-5')
     menu = FieldMenu(source)
     keys = [row.key for row in menu.rows]
-    assert keys[:3] == ['max_tokens', 'temperature', 'top_p']
+    assert keys[:3] == ['max_tokens', 'thinking', 'service_tier']
+    assert not {'temperature', 'top_p', 'seed', 'timeout', 'top_k'} & set(keys)
     thinking = menu.row_for('thinking')
     assert thinking is not None and thinking.choices == ('true', 'false', 'minimal', 'low', 'medium', 'high', 'xhigh')
     tier = menu.row_for('service_tier')
     assert tier is not None and tier.choices == ('auto', 'default', 'flex', 'priority')
     max_tokens = menu.rows[0]
-    assert max_tokens.choices == () and source.title == 'Settings for openai:gpt-5'
+    assert max_tokens.choices == () and source.title == 'Settings - openai:gpt-5'
     assert source.problem(max_tokens, '10') is None
     assert source.problem(max_tokens, '0') == 'Input should be greater than 0'
     assert source.problem(max_tokens, 'ten') is not None

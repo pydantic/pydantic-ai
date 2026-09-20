@@ -66,8 +66,8 @@ class CommandContext:
         return value, Settings.model_validate(updated)
 
     def model_settings(self, model: str) -> ModelSettings | None:
-        """Saved overrides for `model`, ready for `agent.run`; `None` when there are none."""
-        return model_settings_from_json(self.store.model_settings(model)).to_model_settings()
+        """Family defaults plus saved overrides, ready for `agent.run`."""
+        return model_settings_from_json(self.store.model_settings(model), model=model).to_model_settings()
 
     def reset_setting(self, key: str) -> str:
         """Forget the saved override and apply the default now."""
