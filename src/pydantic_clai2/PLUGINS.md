@@ -566,7 +566,8 @@ into the transcript. Large output bursts during resize spill to a private tempor
 file and are flushed in order after the viewport is rebuilt.
 The Termflow smoothing defaults match Code Puppy: responses use 12 ms ticks, a 0.5-second
 catch-up window, and at least one character per tick; thinking uses 20 ms ticks,
-a 0.4-second window, and at least two characters per tick. Plugins do not need their own redraw logic. Pending message previews appear
+a 0.4-second window, and at least two characters per tick, and renders as dimmed
+Markdown after the `Thinking` heading on the same row. Plugins do not need their own redraw logic. Pending message previews appear
 above the editor in execution order (`Follow-up:` for messages, `Command:` for
 slash commands), and disappear when consumed. The preview is read-only; clipping
 and flattening multiline text for display do not change the submitted text.

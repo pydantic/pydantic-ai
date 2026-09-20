@@ -617,9 +617,10 @@ Streaming uses the defaults from [Code Puppy's smoothing adapters](https://githu
 
 - Markdown uses Termflow `SmoothWriter`: 12 ms ticks, 0.5-second catch-up,
   minimum one visible character per tick. Markdown is parsed line-by-line.
-- Thinking deltas feed `StreamSmoother` immediately: 20 ms ticks, 0.4-second
-  catch-up, minimum two characters per tick. They display as dim literal text,
-  without waiting for newlines or interpreting Markdown.
+- Reasoning runs through the same Markdown pipeline with Termflow's dim
+  renderer, at Code Puppy's thinking pace: 20 ms ticks, 0.4-second catch-up,
+  minimum two characters per tick. The `Thinking` heading ends without a
+  newline, so the first rendered reasoning line continues on the heading's row.
 - Both writers feed the terminal scroll region directly. Partial text does not
   wait for an editor refresh, and a completed line does not clear the input box.
 - Smoothing applies only to interactive terminal output. Redirected output is
