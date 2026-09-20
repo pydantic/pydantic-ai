@@ -67,6 +67,9 @@ def truecolor() -> bool:
 
 def sgr(color: str, *, bold: bool = False) -> str:
     """Raw escape for surfaces that bypass Rich, with a 16-colour fallback."""
+    if color.startswith('bold '):
+        color = color.removeprefix('bold ')
+        bold = True
     prefix = '1;' if bold else ''
     if truecolor():
         red, green, blue = (int(color[index : index + 2], 16) for index in (1, 3, 5))

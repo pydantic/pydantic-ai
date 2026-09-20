@@ -2,13 +2,18 @@
 
 import asyncio
 import io
+from collections.abc import Callable
+from typing import IO
 
 import pytest
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartStartEvent, TextPart, ThinkingPart
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from rich.console import Console
+from rich.text import Text
+from termflow.stream import SmoothWriter, StreamSmoother  # pyright: ignore[reportMissingTypeStubs]
 
 from pydantic_clai2 import StreamRenderer
+from pydantic_clai2.config import Settings
 
 
 @pytest.fixture
@@ -139,3 +144,41 @@ async def test_cancel_during_drain_stops_writer() -> None:
         await task
     await renderer.abort()
     assert output.getvalue().count('x') < 10000
+
+
+async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin smooth_stream.py defaults from Code Puppy a862bf478b63."""
+    observed: dict[str, tuple[float, float, int]] = {}
+
+    def thinking_smoother(
+        emit: Callable[[str], None], *, tick_interval: float, catch_up_seconds: float, min_chars_per_tick: int
+    ) -> StreamSmoother:
+        observed['thinking'] = (tick_interval, catch_up_seconds, min_chars_per_tick)
+        return StreamSmoother(
+            emit, tick_interval=tick_interval, catch_up_seconds=catch_up_seconds, min_chars_per_tick=min_chars_per_tick
+        )
+
+    def response_writer(
+        target: IO[str], *, tick_interval: float, catch_up_seconds: float, min_chars_per_tick: int
+    ) -> SmoothWriter:
+        observed['response'] = (tick_interval, catch_up_seconds, min_chars_per_tick)
+        return SmoothWriter(
+            target,
+            tick_interval=tick_interval,
+            catch_up_seconds=catch_up_seconds,
+            min_chars_per_tick=min_chars_per_tick,
+        )
+
+    monkeypatch.setattr('pydantic_clai2._rendering.StreamSmoother', thinking_smoother)
+    monkeypatch.setattr('pydantic_clai2._rendering.SmoothWriter', response_writer)
+    output = io.StringIO()
+    renderer = StreamRenderer(
+        Console(file=output, force_terminal=True), stop_loading=lambda: None, smooth_seconds=Settings().smooth_seconds
+    )
+    await renderer.on_stream_event(PartStartEvent(index=0, part=ThinkingPart(content='thinking text')))
+    await renderer.on_stream_event(PartStartEvent(index=1, part=TextPart(content='response text\n')))
+    await renderer.finish()
+    assert observed == {'thinking': (0.02, 0.4, 2), 'response': (0.012, 0.5, 1)}
+    text = Text.from_ansi(output.getvalue()).plain
+    assert 'thinking text' in text
+    assert 'response text' in text

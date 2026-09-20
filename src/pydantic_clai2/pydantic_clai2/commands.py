@@ -106,7 +106,7 @@ class Commands(Completer):
         words = text[1:].split()
         if len(words) <= 1 and not text.endswith(' '):
             prefix = text[1:]
-            for command in self._commands.values():
+            for command in list(self._commands.values()):
                 if command.name.startswith(prefix):
                     yield Completion(
                         command.name,

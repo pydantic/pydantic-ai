@@ -30,6 +30,7 @@ from pydantic_clai2.image_input import (
     read_image,
     read_images,
 )
+from pydantic_clai2.prompt_surface import PromptSurface
 from pydantic_clai2.settings_store import SettingsStore
 
 
@@ -437,6 +438,14 @@ async def test_image_can_be_retried_after_selecting_a_model(
     monkeypatch.setattr(image_input, 'uuid4', lambda: UUID('12345678-0000-0000-0000-000000000000'))
     agent = Agent()
     output = io.StringIO()
+    transcript: list[str] = []
+
+    class Surface(PromptSurface):
+        def write(self, text: str) -> int:
+            transcript.append(text)
+            return super().write(text)
+
+    monkeypatch.setattr('pydantic_clai2.live_prompt.PromptSurface', Surface)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
         pipe.send_text(f'\x1b[200~{image_path}\x1b[201~caption\n/set model test\n[image:12345678]caption\n/exit\n')
         await chat(
@@ -447,4 +456,4 @@ async def test_image_can_be_retried_after_selecting_a_model(
         )
     assert 'Choose a model first' in output.getvalue()
     assert 'expired' not in output.getvalue()
-    assert 'success' in output.getvalue()
+    assert 'success' in (''.join(transcript) if terminal else output.getvalue())

@@ -71,16 +71,20 @@ The prompt sits above the footer with one editable line when empty. It grows
 for wrapped or pasted text and completion suggestions, not to fill the terminal.
 History search stays compact too. The bordered prompt area stays visible below
 streamed output while CLAI works, and remains editable. A `Working` label and
-animated spinner appear in the box's top border while a turn or its lifecycle
+animated spinner, in the same pink accent as tool names, appear in the box's top border while a turn or its lifecycle
 hooks are active, without adding a row to the input area. The animation uses the editor's existing refresh
 cycle and disappears when work finishes, fails, or is cancelled. It is not part
-of your draft or submitted message. Full-screen menus temporarily hide it along
+of your draft or submitted message. The editor reserves rows below a terminal
+scroll region. Both partial and completed output stream directly above it,
+without erasing or repainting the input box. Typing updates the draft row; a
+nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
 previews, with queued slash commands labeled `Command:`. Previews are shown in
 execution order and disappear as each submission starts. Long or multiline messages
 have a single-line preview; large queues show a `+N more queued` summary to leave
 room for the editor. The original message text is unchanged. The footer also shows
-the number waiting. This is a read-only preview, not a queue editor.
+the number waiting. This is a read-only preview, not a queue editor. Control bytes in completion-derived
+text are escaped in previews and prompt echoes; the submitted text is unchanged.
 
 Messages and slash commands run in submission order, after the current turn and its cleanup
 finish. They do not interrupt or steer the active turn. An unsubmitted draft stays
@@ -264,8 +268,17 @@ the provider prefix, then enter the model identifier; suggestions do not establi
 subscription availability. Custom model identifiers are accepted too.
 
 The command registry uses Termflow's `Completer`, `Document`, and `Completion`
-types. The current input widget and popup still use prompt-toolkit through a small
-adapter; replacing that editor with a Termflow-based editor is separate work.
+types. Completion rows stay visible while replacement suggestions are computed;
+stale suggestions cannot be selected. Provider errors appear in the footer
+without ending the session. A blocked completion lookup does not hold menus or
+shutdown open; its late result is discarded. Lookups use one daemon worker with
+one latest queued request, so a stuck provider cannot create a thread per key. Reopening or growing the popup reuses free
+space above the editor instead of adding blank transcript lines.
+The interactive editor draws its own pinned prompt and completion rows,
+using Termflow's layout helpers. It does not run a prompt-toolkit Application or
+renderer. The keyboard decoder and history-file backend still come from
+prompt-toolkit, preserving bracketed paste and modified-key handling. Redirected
+input retains the simple PromptSession path.
 `/set SETTING` shows its current value. `/set` changes apply to subsequent prompts
 and preserve conversation history; splash changes apply at next startup.
 
@@ -343,8 +356,13 @@ the agent's configured tools determine how it can access it. Separately, bracket
 paste of existing image paths creates attachments as described in
 [Pasting images](#pasting-images).
 
-Up/down recall saved prompt history. Ctrl-D exits. Ctrl-C at input clears the line; during a run it cancels
-the turn and returns to input. No cancelled run is automatically retried.
+Up/down move through multiline drafts, then recall saved prompt history.
+Shift-Enter inserts a newline; Enter submits. Alt-Enter also works as a fallback
+for terminals that do not report Shift-Enter separately. CLAI requests modified
+key reporting while the editor is active and releases it for menus and on exit.
+Ctrl-R searches history; Enter accepts a search
+result without submitting it. Ctrl-D exits when the draft is empty. Ctrl-C at
+input clears the line; during a run it cancels the turn and returns to input. No cancelled run is automatically retried.
 
 ## Reload CLAI during development
 
@@ -591,13 +609,15 @@ colour the nearest of the 16 standard colours is used. Every colour lives in
 or Termflow defaults elsewhere. Code block syntax highlighting retains Termflow's
 Monokai default.
 
-Streaming matches Code Puppy's separate output and thinking paths:
+Streaming uses the defaults from [Code Puppy's smoothing adapters](https://github.com/mpfaffenberger/code_puppy/blob/a862bf478b63822c9d97093f81e4f827e1c53d6e/code_puppy/agents/smooth_stream.py):
 
 - Markdown uses Termflow `SmoothWriter`: 12 ms ticks, 0.5-second catch-up,
   minimum one visible character per tick. Markdown is parsed line-by-line.
 - Thinking deltas feed `StreamSmoother` immediately: 20 ms ticks, 0.4-second
   catch-up, minimum two characters per tick. They display as dim literal text,
   without waiting for newlines or interpreting Markdown.
+- Both writers feed the terminal scroll region directly. Partial text does not
+  wait for an editor refresh, and a completed line does not clear the input box.
 - Smoothing applies only to interactive terminal output. Redirected output is
   written directly. Parts drain before the next heading, tool status, or prompt.
 
@@ -693,11 +713,23 @@ output count, updated after each turn and hidden until a response has price data
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
-Prompt-toolkit owns the editor, cursor, and footer during both input and agent
-turns. Complete output lines scroll above the editor; the incomplete streaming
-line is displayed separately above the input frame until it is complete. Status
-refreshes ten times per second. Terminals shorter than six rows or narrower than
-four columns omit the input border. Redirected output has no live editor or footer.
+The shell owns a pinned editor below a VT terminal scroll region, with Termflow
+layout and completion helpers. Rich and Termflow transcript output scroll above
+it without repainting the editor. The hardware cursor stays hidden during input;
+a nonblinking reverse-video cell marks the editing position. Status and resize
+checks run ten times per second, writing only changed rows. Terminals shorter
+than six rows or narrower than six columns omit the border. Below three rows,
+the draft is retained but hidden until the terminal grows. The pinned surface
+requires VT scrolling-margin support. While resizing, the visible viewport goes
+blank and incoming output is buffered. After 250 ms without another size change,
+CLAI redraws recent transcript at the new width and restores the current draft.
+It does not clear terminal scrollback or conversation history. The repaint cache
+retains up to 2,000 lines and one million characters per editor, plus a bounded
+partial line; it includes startup and plugin lifecycle notices and is carried
+across shell reloads. Output arriving during resize
+is kept separately and flushed in order, spilling to a private temporary file
+for large bursts. Full-screen menus release scrolling margins and detach the keyboard reader before taking over.
+Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
 
 A plugin can append its own fragment to the row with `host.status_segment`, such

@@ -535,13 +535,43 @@ is one) has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns: users can draft and queue messages,
-but turns and slash commands execute sequentially. While work or turn lifecycle
-hooks are active, a `Working` label and spinner appear in the editor's top border,
+but turns and slash commands execute sequentially. Shift-Enter inserts a newline;
+Enter submits. Alt-Enter remains a fallback for terminals that cannot distinguish
+Shift-Enter. Modified-key reporting is enabled only while the editor owns input.
+Completion rows remain visible while a replacement lookup runs, but stale results
+cannot be selected. Popup height changes reuse available space without adding
+blank transcript lines on each key. Completion providers should be read-only.
+Their errors are shown in the footer rather than ending the session; on menu
+handoff or shutdown, a blocked synchronous lookup may finish in the background
+and its result is ignored. A single daemon worker and a latest-only queue bound
+this work; a stuck provider delays further lookups, not input or process exit.
+While work or turn lifecycle
+hooks are active, a `Working` label and spinner appear in the editor's top border.
+The spinner uses the same pink `ACCENT` as tool names, while the label and border
+stay muted. The indicator appears
 without adding an input row or changing the draft. The indicator uses the editor's refresh cycle, adds no
-background task, and is hidden while a full-screen interface owns the terminal. Pending message previews appear
+background task, and is hidden while a full-screen interface owns the terminal.
+The editor reserves bottom rows with terminal scrolling margins. Both partial
+and complete output go straight to the transcript region, without suspending or
+repainting the input box. The shell paints changed editor rows itself, using
+Termflow layout helpers; it does not run a prompt-toolkit renderer. Its cursor
+is a nonblinking highlighted cell, separate from the transcript cursor.
+Resize blanks the visible viewport and buffers transcript writes until the size
+has been stable for 250 ms. It then replays a bounded recent transcript tail and
+restores the draft; it does not erase terminal scrollback or conversation history.
+The buffer includes startup and plugin lifecycle output. It retains ANSI styling,
+not arbitrary terminal-control operations.
+Use `host.full_screen()` for widgets instead of printing cursor-control sequences
+into the transcript. Large output bursts during resize spill to a private temporary
+file and are flushed in order after the viewport is rebuilt.
+The Termflow smoothing defaults match Code Puppy: responses use 12 ms ticks, a 0.5-second
+catch-up window, and at least one character per tick; thinking uses 20 ms ticks,
+a 0.4-second window, and at least two characters per tick. Plugins do not need their own redraw logic. Pending message previews appear
 above the editor in execution order (`Follow-up:` for messages, `Command:` for
 slash commands), and disappear when consumed. The preview is read-only; clipping
 and flattening multiline text for display do not change the submitted text.
+Control bytes are escaped in completion labels, queued previews, and prompt echoes
+rather than being executed as terminal commands.
 Esc in the live editor cancels active work, including turn lifecycle hooks,
 without clearing the draft or requesting exit. While a plugin owns the screen,
 its menu retains control of Esc.

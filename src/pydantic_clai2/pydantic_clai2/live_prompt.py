@@ -1,264 +1,352 @@
-"""An editable prompt with sequential submissions and output above the editor."""
+"""Pinned editor and scrollback ownership, without a PromptSession renderer."""
 
 import asyncio
-import io
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import IO
+from itertools import islice
 
 import anyio
-from prompt_toolkit import PromptSession
-from prompt_toolkit.application import in_terminal
-from prompt_toolkit.application.current import set_app
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.filters import Condition, is_done
-from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
-from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent, merge_key_bindings
-from prompt_toolkit.layout import ConditionalContainer, FormattedTextControl, HSplit, VSplit, Window
+from PIL import Image
+from prompt_toolkit.application.current import get_app_session
+from prompt_toolkit.history import History
 from rich.console import Console
-from rich.text import Text
+from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import CompleteEvent, Completion, Document  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.layout import truncate  # pyright: ignore[reportMissingTypeStubs]
 
 from . import theme
-from .commands import is_command_input
+from .commands import Commands, is_command_input
+from .image_input import ImageInput, clipboard_images, pasted_paths, read_images
 from .interrupts import Interrupts
-
-_WORKING_FRAMES = ('⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏')
-
-
-class PromptOutput(io.StringIO):
-    """Buffer complete lines so a redraw cannot overwrite a partially streamed line."""
-
-    def __init__(self, original: IO[str]) -> None:
-        """Retain the console destination rather than replacing the process streams."""
-        super().__init__()
-        self.original = original
-        self.pending = ''
-        self.lines: asyncio.Queue[str] = asyncio.Queue()
-        self.direct = False
-
-    def isatty(self) -> bool:
-        """Preserve terminal detection for Rich and Termflow."""
-        return self.original.isatty()
-
-    def write(self, text: str) -> int:
-        """Queue complete lines; menu output bypasses the editor."""
-        if self.direct:
-            return self.original.write(text)
-        self.pending += text
-        before, separator, self.pending = self.pending.rpartition('\n')
-        if separator:
-            self.lines.put_nowait(before + separator)
-        return len(text)
-
-    def flush(self) -> None:
-        """Leave incomplete streaming lines buffered until a boundary."""
-        if self.direct:
-            self.original.flush()
-
-    async def drain(self) -> None:
-        """Finish an unterminated line at a turn or menu boundary."""
-        if self.pending:
-            self.lines.put_nowait(self.pending + '\n')
-            self.pending = ''
-        await self.lines.join()
-
-    async def run(self) -> None:
-        """Serialize writes with prompt-toolkit terminal ownership."""
-        while True:
-            text = await self.lines.get()
-            try:
-                async with in_terminal():
-                    self.original.write(text)
-                    self.original.flush()
-            finally:
-                self.lines.task_done()
+from .prompt_buffer import PromptBuffer
+from .prompt_completion import CompletionWorker
+from .prompt_keys import PromptKeys
+from .prompt_resize import resize_notifications
+from .prompt_surface import PromptSurface
+from .prompt_transcript import TranscriptBuffer
+from .tool_output import terminal_text
 
 
 class LivePrompt:
-    """Own the editor and output worker until the shell exits, including cancellation."""
+    """One terminal surface, one keyboard reader, sequential queued submissions."""
 
     def __init__(
         self,
-        prompt: PromptSession[str],
-        console: Console,
         *,
-        prepare: Callable[[], None],
+        console: Console,
+        commands: Commands,
+        history: History,
+        images: ImageInput,
         interrupts: Interrupts,
+        toolbar: Callable[[], list[tuple[str, str]]],
         clock: Callable[[], float] = time.monotonic,
+        transcript: TranscriptBuffer | None = None,
     ) -> None:
-        """Keep all input and output resources scoped to one shell."""
-        self.prompt = prompt
+        """Bind editing state, terminal ownership and per-session services."""
         self.console = console
-        self.prepare = prepare
+        self.commands = commands
+        self.history = history
+        self.images = images
         self.interrupts = interrupts
-        self._clock = clock
+        self.toolbar = toolbar
+        self.clock = clock
+        self.buffer = PromptBuffer(history=list(reversed(list(history.load_history_strings()))))
+        self.output = PromptSurface(output=console.file, size=lambda: console.size, transcript=transcript)
+        self.keys = PromptKeys(
+            source=get_app_session().input,
+            feed=self.feed,
+            eof=lambda: self.submit(EOFError()),
+        )
         self._submissions: deque[str | KeyboardInterrupt | EOFError] = deque()
         self._submitted = asyncio.Event()
-        self.output = PromptOutput(console.file)
+        self._suspended = False
+        self._completions: list[Completion] = []
+        self._selection = -1
+        self._completion_pending = False
+        self._completion_revision = 0
+        self._complete = anyio.Event()
+        self._completion_owner = anyio.Lock()
+        self._completion_scope: anyio.CancelScope | None = None
+        self._completion_worker = CompletionWorker()
+        self._completion_error = ''
+        self._opened = False
 
-    def working_title(self) -> FormattedText:
-        """Animate the top border without adding a row to the editable area."""
-        if not self.interrupts.active:
-            return FormattedText([])
-        frame = _WORKING_FRAMES[int(self._clock() * 10) % len(_WORKING_FRAMES)]
-        return FormattedText([(theme.MUTED, ' Working '), (theme.ACCENT, frame), ('', ' ')])
+    @property
+    def queued_messages(self) -> tuple[str, ...]:
+        """Pending text, excluding control signals."""
+        return tuple(item for item in self._submissions if isinstance(item, str))
+
+    def submit(self, value: str | KeyboardInterrupt | EOFError) -> None:
+        """Publish a submission without ending or replacing the editor."""
+        self._submissions.append(value)
+        self._submitted.set()
+        self.paint()
 
     async def read(self) -> str:
-        """Consume submissions in order without overlapping agent runs."""
+        """Consume queued submissions in order."""
         await self._submitted.wait()
         value = self._submissions.popleft()
         if not self._submissions:
             self._submitted.clear()
-        self.prompt.app.invalidate()
+        self.paint()
         if isinstance(value, BaseException):
             raise value
         return value
 
-    def _submit(self, value: str | KeyboardInterrupt | EOFError) -> None:
-        self._submissions.append(value)
-        self._submitted.set()
-        self.prompt.app.invalidate()
-
-    @property
-    def queued_messages(self) -> tuple[str, ...]:
-        """Pending text in execution order, excluding input control signals."""
-        return tuple(value for value in self._submissions if isinstance(value, str))
-
-    def queue_preview(self) -> FormattedText:
-        """Show compact follow-up previews without letting a large queue fill the terminal."""
-        messages = self.queued_messages
-        limit = max(1, self.console.height // 3 - 1)
-        lines: list[str] = []
-        for message in messages[:limit]:
-            label = 'Command' if is_command_input(message) else 'Follow-up'
-            printable = ''.join(char for char in message if char.isprintable() or char.isspace())
-            text = Text(f'{label}: {" ".join(printable.split())}')
-            text.truncate(max(1, self.console.width), overflow='ellipsis')
-            lines.append(text.plain)
-        if len(messages) > limit:
-            lines.append(f'+{len(messages) - limit} more queued')
-        return FormattedText([(theme.MUTED, '\n'.join(lines))])
-
-    def accept(self, buffer: Buffer) -> bool:
-        """Submit the current buffer without ending the editor application."""
-        text = buffer.text.strip()
-        if text:
-            self._submit(text)
-        return False
-
-    def bindings(self) -> KeyBindings:
-        """Keep interrupts aimed at the turn rather than the editor task."""
-        keys = KeyBindings()
-
-        @keys.add('c-c')
-        def interrupt(event: KeyPressEvent) -> None:
-            if not self.interrupts.cancel():
-                event.current_buffer.reset()
-                self._submit(KeyboardInterrupt())
-
-        @keys.add('escape', filter=Condition(lambda: self.interrupts.active))
-        def escape(event: KeyPressEvent) -> None:
-            self.interrupts.cancel(exit_on_repeat=False)
-
-        @keys.add('c-d')
-        def eof(event: KeyPressEvent) -> None:
-            if event.current_buffer.text:
-                event.current_buffer.delete()
+    def paste(self, text: str | None) -> None:
+        """Attach clipboard/path images, or insert a literal bracketed paste."""
+        self.images.retain([self.buffer.text, *self.queued_messages])
+        self.images.notice = ''
+        try:
+            paths = pasted_paths(text) if text is not None else []
+            if text is not None and not paths:
+                self.buffer.insert(text)
             else:
-                self._submit(EOFError())
+                self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
+        except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
+            self.images.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
 
-        return keys
+    def feed(self, key: str, data: str = '') -> None:
+        """Route editing, completion and interrupts without rendering a widget tree."""
+        if key == 'ctrl-c':
+            if not self.interrupts.cancel():
+                self.buffer.replace('')
+                self.buffer.search = None
+                self.submit(KeyboardInterrupt())
+        elif key == 'escape' and self.interrupts.active:
+            self.interrupts.cancel(exit_on_repeat=False)
+        elif key == 'ctrl-d':
+            if self.buffer.text:
+                self.buffer.edit('delete')
+            else:
+                self.submit(EOFError())
+        elif key in ('paste', 'ctrl-v', 'alt-v'):
+            self.paste(data if key == 'paste' else None)
+        elif self.buffer.search is not None:
+            self.buffer.search_key(key)
+        elif key in ('tab', 'backtab'):
+            self.complete(backwards=key == 'backtab')
+        elif key == 'enter':
+            self.accept()
+        elif key in ('shift-enter', 'alt-enter', 'ctrl-j'):
+            self.buffer.insert('\n')
+        elif key in ('up', 'down') and self._completions:
+            self.complete(backwards=key == 'up', accept_single=False)
+        elif key == 'escape':
+            self.dismiss_completions()
+        else:
+            self.buffer.edit(key)
+        if key not in ('tab', 'backtab', 'escape') and (key not in ('up', 'down') or not self._completions):
+            self.refresh_completions()
+        self.paint()
+
+    def accept(self) -> None:
+        """Accept a selected completion, or queue the current nonempty draft."""
+        if self._selection >= 0:
+            self.accept_completion()
+            return
+        text = self.buffer.text.strip()
+        if text:
+            self.history.append_string(text)
+            self.buffer.history.append(text)
+            self.buffer.history_index = None
+            self.buffer.replace('')
+            self.submit(text)
+
+    def complete(self, *, backwards: bool, accept_single: bool = True) -> None:
+        """Cycle suggestions, accepting a sole candidate immediately."""
+        if self._completion_pending:
+            return
+        if len(self._completions) == 1 and accept_single:
+            self._selection = 0
+            self.accept_completion()
+        elif self._completions:
+            self._selection = (
+                len(self._completions) - 1
+                if backwards and self._selection < 0
+                else (self._selection + (-1 if backwards else 1)) % len(self._completions)
+            )
+
+    def accept_completion(self) -> None:
+        """Apply the selected Termflow completion to its original prefix."""
+        item = self._completions[self._selection]
+        start = max(0, self.buffer.cursor + item.start_position)
+        self.buffer.text = self.buffer.text[:start] + item.text + self.buffer.text[self.buffer.cursor :]
+        self.buffer.cursor = start + len(item.text)
+        self.buffer.history_index = None
+        self.dismiss_completions()
+
+    def dismiss_completions(self) -> None:
+        """Close the popup and invalidate any in-flight lookup."""
+        self._completions = []
+        self._selection = -1
+        self._completion_pending = False
+        self._completion_revision += 1
+        self._completion_error = ''
+
+    def refresh_completions(self) -> None:
+        """Compute file/command suggestions off the input loop, ignoring stale results."""
+        self._selection = -1
+        self._completion_revision += 1
+        self._completion_error = ''
+        self._completion_pending = bool(self.buffer.text) and self.buffer.search is None
+        # Retain the displayed rows until their replacements arrive. Removing
+        # them here makes the terminal band shrink and grow on every key.
+        if not self._completion_pending:
+            self._completions = []
+        self._complete.set()
+
+    async def completion_loop(self) -> None:
+        """Keep optional completion providers from blocking or terminating the shell."""
+        while True:
+            await self._complete.wait()
+            self._complete = anyio.Event()
+            text, cursor = self.buffer.text, self.buffer.cursor
+            revision = self._completion_revision
+            if not self._completion_pending:
+                continue
+            error = ''
+            items: list[Completion] = []
+            async with self._completion_owner:
+                with anyio.CancelScope() as scope:
+                    self._completion_scope = scope
+                    try:
+                        items = await self._completion_worker.run(
+                            lambda: list(
+                                islice(
+                                    self.commands.get_completions(
+                                        Document(text, cursor), CompleteEvent(text_inserted=True)
+                                    ),
+                                    100,
+                                )
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001 -- optional suggestions must not end a session.
+                        error = f'Completion unavailable: {exc}'
+                    finally:
+                        self._completion_scope = None
+                if scope.cancel_called:
+                    continue
+            if revision == self._completion_revision and (text, cursor) == (self.buffer.text, self.buffer.cursor):
+                self._completion_pending = False
+                self._completion_error = error
+                self._completions = items
+                self.paint()
+
+    def frame(self) -> tuple[str, ...]:
+        """Build the reserved rows; transcript contents are deliberately absent."""
+        width, height = self.console.size
+        width, height = max(1, width), max(2, height)
+        muted, reset = theme.sgr(theme.MUTED), '\x1b[0m'
+        if width < 6 or height < 6:
+            return tuple(self.buffer.rows(width=width, limit=1))
+        rows: list[str] = []
+        queue_limit = max(1, height // 6)
+        for text in self.queued_messages[:queue_limit]:
+            label = 'Command' if is_command_input(text) else 'Follow-up'
+            rows.append(muted + truncate(f'{label}: {" ".join(terminal_text(text).split())}', width) + reset)
+        if len(self.queued_messages) > queue_limit:
+            rows.append(muted + f'+{len(self.queued_messages) - queue_limit} more queued' + reset)
+        title = ''
+        if self.interrupts.active:
+            spinner = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[int(self.clock() * 10) % 10]
+            title = truncate(f' Working {spinner} ', width - 2)
+            title = title.replace(spinner, f'{theme.sgr(theme.ACCENT)}{spinner}{reset}{muted}')
+        rows.append(muted + '┌' + title + '─' * max(0, width - 2 - visible_length(title)) + '┐' + reset)
+        available = max(1, min(height // 3, height - len(rows) - 4))
+        draft = self.buffer.rows(width=width - 4, limit=available)
+        for index, row in enumerate(draft):
+            prefix = '> ' if index == 0 else '  '
+            rows.append(
+                muted + '│' + reset + prefix + row + ' ' * max(0, width - 4 - visible_length(row)) + muted + '│' + reset
+            )
+        rows.append(muted + '└' + '─' * (width - 2) + '┘' + reset)
+        popup_limit = max(0, min(6, height - len(rows) - 2))
+        start = max(0, self._selection - popup_limit + 1)
+        for index, item in enumerate(self._completions[start : start + popup_limit], start=start):
+            line = truncate(
+                ' '.join(terminal_text(f'{item.display or item.text}  {item.display_meta or ""}').split()), width
+            )
+            rows.append(('\x1b[7m' if index == self._selection else muted) + line + reset)
+        if self.buffer.search is not None:
+            footer = f'reverse-i-search: {self.buffer.search}'
+        else:
+            notice = self.images.notice or self._completion_error
+            footer = (
+                ' '.join(terminal_text(notice).split())
+                if notice
+                else ''.join(
+                    (theme.sgr(style) if style else muted) + ' '.join(terminal_text(text).splitlines())
+                    for style, text in self.toolbar()
+                )
+            )
+            if self.queued_messages:
+                footer += f' | queued: {len(self.queued_messages)}'
+        rows.append(muted + truncate(footer, width) + reset)
+        return tuple(rows)
+
+    def paint(self) -> None:
+        """Draw only when the editor owns the terminal."""
+        if self._opened and not self._suspended:
+            self.output.paint(self.frame())
 
     @asynccontextmanager
     async def suspended(self) -> AsyncGenerator[None]:
-        """Let a command or question menu own input without losing the draft."""
-        if self.output.direct:
+        """Hand input and terminal margins to a menu without losing the draft."""
+        if self._suspended:
             yield
             return
-        await self.output.drain()
-        async with in_terminal():
-            self.output.direct = True
-            try:
+        self._suspended = True
+        self.keys.stop()
+        self.dismiss_completions()
+        if self._completion_scope is not None:
+            self._completion_scope.cancel()
+        try:
+            async with self._completion_owner:
+                await self.output.drain()
+                self.output.release()
                 yield
-            finally:
-                self.output.direct = False
+        finally:
+            self._suspended = False
+            self.refresh_completions()
+            self.paint()
+            self.keys.start()
 
     @asynccontextmanager
     async def opened(self) -> AsyncGenerator[None]:
-        """Scope both workers to the shell and restore the console on every exit."""
-        started = anyio.Event()
-        container = self.prompt.layout.container
-        assert isinstance(container, HSplit)
-        editor = container.children[0]
-        assert isinstance(editor, ConditionalContainer)
-        frame = editor.content
-        assert isinstance(frame, HSplit)
-        original_border = frame.children[0]
-        working_border = VSplit(
-            [
-                Window(width=1, char='┌'),
-                Window(width=1, char='─'),
-                Window(FormattedTextControl(self.working_title), dont_extend_width=True),
-                Window(char='─'),
-                Window(width=1, char='┐'),
-            ],
-            height=1,
-            style='class:frame.border',
-        )
-        preview = ConditionalContainer(
-            Window(FormattedTextControl(lambda: ANSI(self.output.pending)), dont_extend_height=True),
-            filter=Condition(lambda: bool(self.output.pending)) & ~is_done,
-        )
-        queue_preview = ConditionalContainer(
-            Window(FormattedTextControl(self.queue_preview), dont_extend_height=True),
-            filter=Condition(lambda: bool(self.queued_messages)) & ~is_done,
-        )
-        toolbar = self.prompt.bottom_toolbar
-        accept_handler = self.prompt.default_buffer.accept_handler
+        """Scope keyboard, resize/status polling and output ownership to the shell."""
 
-        def prepare() -> None:
-            self.prepare()
-            frame.children[0] = working_border
-            container.children[0:0] = [preview, queue_preview]
-            self.prompt.default_buffer.accept_handler = self.accept
-            started.set()
+        async def refresh() -> None:
+            while True:
+                self.paint()
+                await anyio.sleep(0.1)
 
-        async def edit() -> None:
-            try:
-                await self.prompt.prompt_async(
-                    '> ',
-                    pre_run=prepare,
-                    key_bindings=merge_key_bindings(
-                        [self.prompt.key_bindings, self.bindings()] if self.prompt.key_bindings else [self.bindings()]
-                    ),
-                    handle_sigint=False,
-                    show_frame=~is_done & Condition(lambda: self.console.width >= 4 and self.console.height >= 6),
-                    refresh_interval=0.1,
-                    bottom_toolbar=lambda: [
-                        *to_formatted_text(toolbar),
-                        ('', f' | queued: {len(self.queued_messages)}') if self.queued_messages else ('', ''),
-                    ],
-                )
-            except EOFError:
-                self._submit(EOFError())
+        loop = asyncio.get_running_loop()
+
+        def resized() -> None:
+            self.output.resize_notice()
+            loop.call_soon_threadsafe(self.paint)
 
         original = self.console.file
-        with set_app(self.prompt.app):
-            async with anyio.create_task_group() as workers:
-                workers.start_soon(edit)
-                await started.wait()
-                self.console.file = self.output
-                workers.start_soon(self.output.run)
-                try:
-                    yield
-                    await self.output.drain()
-                finally:
-                    self.console.file = original
-                    self.prompt.bottom_toolbar = toolbar
-                    self.prompt.default_buffer.accept_handler = accept_handler
-                    frame.children[0] = original_border
-                    container.children.remove(preview)
-                    container.children.remove(queue_preview)
-                    workers.cancel_scope.cancel()
+        self._opened = True
+        self.console.file = self.output
+        try:
+            with resize_notifications(resized):
+                self.paint()
+                self.keys.start()
+                async with anyio.create_task_group() as tasks:
+                    tasks.start_soon(refresh)
+                    tasks.start_soon(self.completion_loop)
+                    try:
+                        yield
+                        await self.output.drain()
+                    finally:
+                        tasks.cancel_scope.cancel()
+        finally:
+            self._opened = False
+            self.keys.stop()
+            self._completion_worker.close()
+            self.console.file = original
+            self.output.release()
