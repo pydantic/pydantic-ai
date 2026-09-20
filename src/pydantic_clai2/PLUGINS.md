@@ -127,6 +127,20 @@ which can retain globals removed from source; initialize plugin state explicitly
 
 Plugins are trusted code running as you. Only install what you trust.
 
+## Worktree startup
+
+```bash
+clai2 --worktree my-task
+```
+
+`--worktree` (or `-w`) creates `<repository-root>/.worktrees/NAME` and changes to
+that directory before reading project settings or activating plugins. Relative paths in your plugin, the coding tools,
+and `repo_context` therefore refer to that checkout. User plugins and settings
+still load from the same database directory, even with a relative `--database`
+path. Only committed project files reach the new checkout. Worktrees and their
+`clai/NAME` branches stay on disk after the session ends; plugins do not own their
+cleanup. See [Git worktrees](README.md#git-worktrees) for naming and cleanup.
+
 ## The built-in plugins
 
 The coding tools are a plugin too, and so are asking you multiple-choice

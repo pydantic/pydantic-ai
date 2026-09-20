@@ -12,6 +12,7 @@ from .commands import config_command, plugins_command
 from .config import resolve_settings
 from .project_settings import load_project_settings
 from .settings_store import SettingsStore
+from .worktrees import create_worktree
 
 
 def run() -> None:
@@ -20,6 +21,14 @@ def run() -> None:
     parser.add_argument(
         '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
     )
+    parser.add_argument(
+        '--worktree',
+        '-w',
+        nargs='?',
+        const='',
+        metavar='NAME',
+        help='Start in a new Git worktree; omit NAME to generate one',
+    )
     parser.add_argument('--model', help='Provider-qualified model name')
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
@@ -27,13 +36,20 @@ def run() -> None:
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:
+        if args.command and (args.resume is not None or args.worktree is not None):
+            parser.error('--resume and --worktree cannot be combined with config or plugins')
+        if args.worktree is not None and args.resume is not None:
+            parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
         store = SettingsStore(args.database)
-        if args.command and args.resume is not None:
-            parser.error('--resume cannot be combined with config or plugins')
+        store.path = store.path.resolve()
         if args.command:
             handler = config_command if args.command == 'config' else plugins_command
             print(handler(store, args.arguments))
             return
+        if args.worktree is not None:
+            workspace = create_worktree(name=args.worktree)
+            print(f'Worktree: {workspace} (branch: clai/{workspace.name}). Kept on exit.')
+            os.chdir(workspace)
         project = load_project_settings(Path.cwd())
         overrides = store.overrides() | project.overrides
         if model := args.model or os.getenv('CLAI_MODEL'):
@@ -53,7 +69,7 @@ def run() -> None:
                 resume=args.resume,
             )
         )
-    except (ValueError, TypeError, ImportError, AttributeError, LookupError) as exc:
+    except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
         parser.error(str(exc))
     except KeyboardInterrupt:
         pass
