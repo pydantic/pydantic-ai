@@ -45,11 +45,12 @@ class SettingsStore:
             connection.close()
 
     def overrides(self) -> dict[str, JsonValue]:
-        """Read explicit preferences, validating the serialized values."""
+        """Read recognized preferences without modifying unknown stored entries."""
         with self._connect() as connection:
             return {
                 key: _JSON.validate_json(value)
                 for key, value in connection.execute('SELECT key, value_json FROM settings')
+                if key in SETTING_FIELDS
             }
 
     def load(self) -> Settings:

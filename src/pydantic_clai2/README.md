@@ -270,6 +270,11 @@ Codex tokens are not written to the settings database. Plugin settings are arbit
 JSON stored in plaintext in this database, including secrets if you put them there.
 Pass secret references or use plugin-owned credential storage instead of embedding keys.
 
+When you switch versions or branches, CLAI ignores saved setting names it does not
+recognize and leaves their stored values unchanged. Missing settings use the current
+defaults. New writes still reject unknown names and invalid values. Invalid saved
+values for known settings and unsupported database schema versions still cause an error.
+
 ```text
 /set
 /set model <Tab>

@@ -224,6 +224,27 @@ Keep files concise - we don't need any 10,000 line files. Single responsibility.
 - Renderers get synthetic events. They must not need `Coder` installed.
 - Cancellation: use a real `anyio` cancel scope, order with `Event`s, no sleeps.
 
+### Settings and database compatibility
+
+Before adding, removing, or renaming a setting, changing its type, meaning, or
+default, or changing the SQL schema, consider upgrades, downgrades, and branch
+switches. Different versions can share the same settings database.
+
+- Add regression cases to `tests/test_settings_compatibility.py` and affected CLI
+  tests using the previous stored format. Keep historical fixtures unchanged;
+  do not regenerate them with current models or rewrite them to make a change pass.
+- Verify older databases load with documented defaults for missing settings and
+  preserve existing preferences, plugin declarations, and model settings. Test
+  migrations and repeated initialization for data preservation and idempotence.
+- Preserve unknown saved setting names and their values when reading, editing
+  other settings, resetting, and reopening. Unknown does not mean obsolete.
+  Keep validation strict for known values, new writes, and plugin declarations.
+- For renamed fields or changed types, meanings, or defaults, define the migration
+  or intentional behavior change and test it explicitly. Comparing only against
+  the current `Settings()` defaults will not catch an unintended default change.
+- Verify rejected values and unsupported schema versions leave stored data intact.
+  If a change introduces a migration, test failure rollback as well as success.
+
 ## Local verification
 
 Run from the repository root. CLAI shares the root `uv.lock`, `.venv`, and
