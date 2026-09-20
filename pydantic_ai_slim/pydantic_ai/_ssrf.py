@@ -12,7 +12,7 @@ import socket
 import zlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, unquote
 
 import httpx2
 
@@ -368,7 +368,10 @@ def _normalized_host(host: str) -> str:
     here would change which interface a `fe80::1%25ETH0` request goes out of. Entries are
     case-folded in `_domain_key` instead, where the result is only ever compared, never dialed.
     """
-    return host.rstrip('.')
+    host = unquote(host)
+    if host.endswith('.'):
+        host = host[:-1]
+    return host
 
 
 def extract_host_and_port(url: str) -> tuple[str, str, int, bool]:
