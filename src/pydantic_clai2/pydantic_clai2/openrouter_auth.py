@@ -92,7 +92,7 @@ class OpenRouterAuth:
         try:
             async with server, asyncio.timeout(self.timeout):
                 self.console.print(
-                    'Sign in to OpenRouter in your browser. Waiting up to five minutes.', style=theme.INFO
+                    'Sign in to OpenRouter in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
                 )
                 self.console.print(url, markup=False, highlight=False)
                 try:
@@ -100,7 +100,7 @@ class OpenRouterAuth:
                 except webbrowser.Error:
                     opened = False
                 if not opened:
-                    self.console.print('Open the URL above manually.', style=theme.WARNING)
+                    self.console.print('Open the URL above manually.', style=theme.color(theme.WARNING))
                 paste = asyncio.create_task(self._paste())
                 done, _ = await asyncio.wait({code, paste}, return_when=asyncio.FIRST_COMPLETED)
                 received = code.result() if code in done else paste.result()

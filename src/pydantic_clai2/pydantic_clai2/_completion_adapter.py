@@ -4,27 +4,36 @@ from collections.abc import Iterable
 
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
-from prompt_toolkit.styles import Style
+from prompt_toolkit.styles import DynamicStyle, Style
 from termflow.tui.completion import CompleteEvent as TermflowEvent  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.completion import Document as TermflowDocument  # pyright: ignore[reportMissingTypeStubs]
 
+from . import theme
 from .commands import Commands
-from .theme import ELEMENT_PURPLE, GREY, LITHIUM, MUTED, PURPLE
 
-COMPLETION_STYLE = Style.from_dict(
-    {
-        'frame.border': MUTED,
-        'bottom-toolbar': f'noreverse bg:default {PURPLE}',
-        'bottom-toolbar.text': f'noreverse bg:default {PURPLE}',
-        'completion-menu': 'bg:default',
-        'completion-menu.completion': f'bg:default {GREY}',
-        'completion-menu.completion.current': f'bg:default {LITHIUM} bold',
-        'completion-menu.meta.completion': f'bg:default {GREY}',
-        'completion-menu.meta.completion.current': f'bg:default {LITHIUM}',
-        'scrollbar.background': 'bg:default',
-        'scrollbar.button': f'bg:default {ELEMENT_PURPLE}',
-    }
-)
+
+def completion_style() -> Style:
+    muted = theme.color(theme.MUTED)
+    thinking = theme.color(theme.THINKING)
+    primary = theme.color(theme.LITHIUM)
+    panel = theme.color(theme.ELEMENT_PURPLE)
+    return Style.from_dict(
+        {
+            'frame.border': muted,
+            'bottom-toolbar': f'noreverse bg:default {thinking}',
+            'bottom-toolbar.text': f'noreverse bg:default {thinking}',
+            'completion-menu': 'bg:default',
+            'completion-menu.completion': f'bg:default {muted}',
+            'completion-menu.completion.current': f'bg:default {primary} bold',
+            'completion-menu.meta.completion': f'bg:default {muted}',
+            'completion-menu.meta.completion.current': f'bg:default {primary}',
+            'scrollbar.background': 'bg:default',
+            'scrollbar.button': f'bg:default {panel}',
+        }
+    )
+
+
+COMPLETION_STYLE = DynamicStyle(completion_style)
 
 
 class PromptCompleter(Completer):

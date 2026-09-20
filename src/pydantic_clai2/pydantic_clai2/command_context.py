@@ -59,7 +59,9 @@ class CommandContext:
         """Parse typed text for `key` and check it against the whole settings model; nothing is saved."""
         adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
         value: JsonValue = (
-            raw if key == 'model' or (key == 'sessions.naming_model' and raw != 'null') else adapter.validate_json(raw)
+            raw
+            if key in ('model', 'display.theme') or (key == 'sessions.naming_model' and raw != 'null')
+            else adapter.validate_json(raw)
         )
         updated = self.settings.model_dump()
         updated[SETTING_FIELDS[key]] = value

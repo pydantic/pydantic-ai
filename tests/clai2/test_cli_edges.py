@@ -29,7 +29,7 @@ def test_cli_startup(tmp_path: Path, args: list[str]) -> None:
 
 
 @pytest.mark.parametrize('args', [[], ['config', 'show']])
-def test_cli_preserves_unknown_saved_settings(tmp_path: Path, args: list[str]) -> None:
+def test_cli_recovers_unsupported_theme_without_losing_unknown_settings(tmp_path: Path, args: list[str]) -> None:
     path = tmp_path / 'config.db'
     saved = {
         'display.theme': '"light"',
@@ -50,7 +50,22 @@ def test_cli_preserves_unknown_saved_settings(tmp_path: Path, args: list[str]) -
         timeout=15,
         check=False,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 2, result.stderr
+    assert 'Unknown theme: light' in result.stderr
+    with closing(sqlite3.connect(path)) as connection:
+        assert dict(connection.execute('SELECT key, value_json FROM settings')) == saved
+    for command in (['config', 'reset', 'display.theme'], args):
+        result = subprocess.run(
+            [sys.executable, '-m', 'pydantic_clai2', '--database', str(path), *command],
+            input='/exit\n',
+            text=True,
+            capture_output=True,
+            env=dict(os.environ, CLAI_NO_SPLASH='1'),
+            timeout=15,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+    del saved['display.theme']
     store = SettingsStore(path)
     assert store.overrides() == {'display.thinking': False, 'model': 'test'}
     assert not store.load().thinking

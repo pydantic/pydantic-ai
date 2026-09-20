@@ -761,6 +761,44 @@ selects one without the menu. Its Tab suggestions contain only added models.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
 
+### Terminal themes
+
+```text
+/theme tokyo_night
+/set display.theme github_light
+```
+
+`/theme` without arguments opens a searchable picker with a sample conversation,
+including Markdown, thinking, tool output, code, warnings, errors, and the input
+area. Browsing previews colours without applying them; Enter confirms, and Esc
+or Ctrl-C cancels. Choices are `default` and `termflow.themes.PALETTES`.
+`default` preserves CLAI's existing appearance without changing terminal colours
+on startup or exit. `/theme default` restores it after a palette selection.
+The picker, `/set`, project settings, and persisted `display.theme` values share
+validation. A project override takes precedence again on the next startup.
+
+```python
+from rich.console import Console
+from pydantic_clai2 import theme
+
+Console().print('Ready for your next prompt.', style=theme.color(theme.INFO))
+```
+
+Resolve the `ACCENT`, `INFO`, `WARNING`, `ERROR`, `MUTED`, and `THINKING` roles
+through `theme.color(role)` at render time. The constants retain their brand
+values; the resolver reads the active palette. `theme.sgr(role)` resolves raw
+ANSI surfaces itself. `theme.current()` returns the selected Termflow
+`TerminalPalette`, or `None` for the existing default appearance.
+
+Selecting a bundled palette changes terminal foreground, background, and ANSI
+slots via Termflow's OSC sequences. CLAI resets them to terminal defaults when
+you return to `default` or exit a selected palette, including errors and
+cancellation. Redirected output receives no palette-changing sequences.
+Unsupported terminals may ignore changes; supported ones may recolour ANSI
+scrollback. The early splash retains brand colours, and syntax keeps Monokai.
+Diff colours stay unchanged in `default`; bundled palettes use Termflow's diff
+defaults. Plugins cannot register custom palettes. Theme selection adds no model
+requests, hooks, or telemetry.
 ### Model settings and custom parameters
 
 `/model_settings` opens a searchable list of added models. Enter configures a

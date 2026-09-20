@@ -83,11 +83,13 @@ class CodexAuth:
         if args not in ([], ['openai-codex']):
             raise ValueError('Usage: /login openai-codex')
         flow = OpenAICodexOAuthFlow()
-        self.console.print('Sign in to ChatGPT/Codex in your browser. Waiting up to five minutes.', style=theme.INFO)
+        self.console.print(
+            'Sign in to ChatGPT/Codex in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
+        )
         self.console.print(flow.authorization_url(), markup=False, highlight=False)
         self.console.print(
             'If the browser cannot reach this machine (for example over SSH), paste the URL it ends up on.',
-            style=theme.MUTED,
+            style=theme.color(theme.MUTED),
         )
 
         # Launching in a thread keeps the loop available for core's callback listener.
@@ -129,7 +131,7 @@ class CodexAuth:
                 if failed is callback and isinstance(callback.exception(), OSError):
                     self.console.print(
                         f'The local callback is unavailable ({callback.exception()}). Paste the URL instead.',
-                        style=theme.WARNING,
+                        style=theme.color(theme.WARNING),
                         markup=False,
                         highlight=False,
                     )

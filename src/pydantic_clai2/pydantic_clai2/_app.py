@@ -49,6 +49,7 @@ from .sessions import Sessions
 from .set_menu import set_command
 from .settings_store import SettingsStore
 from .status import Status, StatusLine
+from .theme_picker import theme_command
 from .tool_output import terminal_text
 from .usage_report import cost_line, session_usage
 
@@ -102,12 +103,12 @@ async def chat(
     """
     console = console or Console()
     transcript = TranscriptBuffer()
-    with transcript.capture(console):
+    with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
         console.print()
         print_banner(console)
         console.print(
             '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
-            style=theme.MUTED,
+            style=theme.color(theme.MUTED),
         )
         project = project or ProjectSettings()
         _report_project(project, console)
@@ -128,26 +129,29 @@ async def chat(
     async with agent:
         while True:
             reason: SessionEndReason = 'error'
-            try:
-                async with create_task_group() as workers:
-                    workers.start_soon(shell.sessions.namer.run)
-                    try:
-                        with transcript.capture(console):
-                            await shell.loader.load_all(fresh=fresh)
-                            _report_project_plugins(shell.loader, console)
-                            if resume is not None:
-                                console.print(await shell.sessions.command([resume] if resume else []), markup=False)
-                                resume = None
-                        reason = await shell.run()
-                    finally:
-                        workers.cancel_scope.cancel()
-            except BaseExceptionGroup as exc:
-                if len(exc.exceptions) == 1:
-                    raise exc.exceptions[0] from None
-                raise
-            finally:
-                with transcript.capture(console):
-                    await shell.loader.close(reason)
+            with theme.use(lambda: shell.context.settings.theme, output=console.file if console.is_terminal else None):
+                try:
+                    async with create_task_group() as workers:
+                        workers.start_soon(shell.sessions.namer.run)
+                        try:
+                            with transcript.capture(console):
+                                await shell.loader.load_all(fresh=fresh)
+                                _report_project_plugins(shell.loader, console)
+                                if resume is not None:
+                                    console.print(
+                                        await shell.sessions.command([resume] if resume else []), markup=False
+                                    )
+                                    resume = None
+                            reason = await shell.run()
+                        finally:
+                            workers.cancel_scope.cancel()
+                except BaseExceptionGroup as exc:
+                    if len(exc.exceptions) == 1:
+                        raise exc.exceptions[0] from None
+                    raise
+                finally:
+                    with transcript.capture(console):
+                        await shell.loader.close(reason)
             if not shell.reload_requested:
                 return
             shell.reload_requested = False
@@ -170,11 +174,13 @@ async def chat(
                 )
             except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
                 with transcript.capture(console):
-                    console.print(f'Reload failed: {type(exc).__name__}: {exc}', style=theme.ERROR, markup=False)
+                    console.print(
+                        f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
+                    )
                 fresh = False
             else:
                 with transcript.capture(console):
-                    console.print('CLAI2 reloaded. Conversation preserved.', style=theme.INFO)
+                    console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
                 fresh = True
 
 
@@ -221,15 +227,21 @@ def create_shell(
 
     session.resolve_model = resolve_model
     if session.model is None and agent.model is None:
-        console.print('Add a model with /add_model.', style=theme.INFO)
+        console.print('Add a model with /add_model.', style=theme.color(theme.INFO))
+
+    previous_theme = settings.theme
 
     def apply_setting(key: str, updated: Settings) -> None:
+        nonlocal previous_theme
         if key == 'model':
             session.model = updated.model
         elif key == 'run.tool_retries':
             session.tool_retries = updated.tool_retries
         elif key == 'run.request_limit':
             session.usage_limits = replace(session.usage_limits or UsageLimits(), request_limit=updated.request_limit)
+        elif key == 'display.theme' and console.is_terminal and previous_theme != updated.theme:
+            theme.apply(updated.theme, output=console.file)
+        previous_theme = updated.theme
 
     context = CommandContext(
         settings=settings, store=store, clear_history=session.clear, apply_setting=apply_setting, project=project
@@ -253,6 +265,14 @@ def create_shell(
             description='Change settings; no arguments opens the menu',
             handler=lambda args: set_command(context, args),
             complete=set_completions,
+        )
+    )
+    commands.register(
+        Command(
+            name='theme',
+            description='Select a Termflow palette; no arguments opens the picker',
+            handler=lambda args: theme_command(context, args),
+            complete=lambda args: theme.names() if len(args) <= 1 else (),
         )
     )
     commands.register(
@@ -344,7 +364,12 @@ def create_shell(
             complete_while_typing=True,
             style=COMPLETION_STYLE,
             reserve_space_for_menu=6,
-            bottom_toolbar=lambda: FormattedText([(theme.MUTED, images.notice)] if images.notice else status.toolbar()),
+            bottom_toolbar=lambda: FormattedText(
+                [
+                    (theme.color(style), text)
+                    for style, text in ([(theme.MUTED, images.notice)] if images.notice else status.toolbar())
+                ]
+            ),
         )
     shell = _Shell(
         agent=agent,
@@ -435,7 +460,9 @@ class _Shell(Generic[DepsT, OutputT]):
             except KeyboardInterrupt:
                 if self.interrupts.press():
                     return 'exit'
-                self.console.print('Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.MUTED)
+                self.console.print(
+                    'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
+                )
                 continue
             except EOFError:
                 return 'eof'
@@ -455,7 +482,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 continue
             if self.session.model is None and self.agent.model is None:
                 self.images.retry_text = text
-                self.console.print('Choose a model first: /set model <Tab>', style=theme.WARNING)
+                self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
                 continue
             try:
                 if await self._turn(text):
@@ -468,7 +495,7 @@ class _Shell(Generic[DepsT, OutputT]):
         try:
             text, images = self.images.resolve(text)
         except ValueError as exc:
-            self.console.print(str(exc), style=theme.ERROR, markup=False)
+            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
             return False
         start = TurnStart(text=text)
         ended: TurnEnd | None = None
@@ -492,12 +519,13 @@ class _Shell(Generic[DepsT, OutputT]):
         try:
             await self.loader.fire(start)
         except PluginError as exc:
-            self.console.print(str(exc), style=theme.ERROR, markup=False)
+            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
             self.console.print()
             return TurnEnd(text=start.text, outcome='failed', error=exc)
         if start.cancelled:
             self.console.print(
-                f'Turn cancelled by a plugin: {start.cancel_reason or "no reason given"}', style=theme.WARNING
+                f'Turn cancelled by a plugin: {start.cancel_reason or "no reason given"}',
+                style=theme.color(theme.WARNING),
             )
             self.console.print()
             return TurnEnd(text=start.text, outcome='cancelled')
@@ -537,9 +565,9 @@ class _Shell(Generic[DepsT, OutputT]):
 def _report_project(project: ProjectSettings, console: Console) -> None:
     if project.path is None:
         return
-    console.print(f'Project settings: {project.path}', style=theme.MUTED)
+    console.print(f'Project settings: {project.path}', style=theme.color(theme.MUTED))
     if project.unknown:
-        console.print(f'Ignoring unknown settings: {", ".join(project.unknown)}', style=theme.WARNING)
+        console.print(f'Ignoring unknown settings: {", ".join(project.unknown)}', style=theme.color(theme.WARNING))
 
 
 def _report_project_plugins(loader: PluginLoader[DepsT], console: Console) -> None:
@@ -547,13 +575,13 @@ def _report_project_plugins(loader: PluginLoader[DepsT], console: Console) -> No
     if waiting:
         console.print(
             f'Project plugins not loaded; approve one with /plugins enable NAME: {", ".join(waiting)}',
-            style=theme.INFO,
+            style=theme.color(theme.INFO),
         )
 
 
 def _report_interrupt(completed: bool, console: Console) -> None:
     if not completed:
-        console.print('Turn cancelled. Use /exit to quit.', style=theme.MUTED, highlight=False)
+        console.print('Turn cancelled. Use /exit to quit.', style=theme.color(theme.MUTED), highlight=False)
         console.print()
 
 
@@ -561,7 +589,7 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
     try:
         console.print(await commands.execute_async(text), markup=False)
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
-        console.print(str(exc), style=theme.ERROR, markup=False)
+        console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
     console.print()
     _reset_status(text, status)
 
@@ -643,10 +671,10 @@ async def _run_prompt(
         raise
     except Exception as exc:  # noqa: BLE001 -- interactive boundary reports plugin/provider failures.
         await renderer.finish()
-        console.print(f'{type(exc).__name__}: {exc}', style=theme.ERROR, markup=False)
+        console.print(f'{type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False)
         console.print(
             'Turn failed. Retained history may include partial progress. External tool side effects may already have occurred.',
-            style=theme.MUTED,
+            style=theme.color(theme.MUTED),
         )
         console.print()
         return TurnEnd(text=text, outcome='failed', error=exc)

@@ -57,7 +57,7 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
 
 @pytest.mark.parametrize(
     ('key', 'value_json'),
-    [('display.theme', '"light"'), ('future.setting', '{"enabled":true}'), ('future.setting', 'unrecognized encoding')],
+    [('future.setting', '{"enabled":true}'), ('future.setting', 'unrecognized encoding')],
 )
 def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_json: str) -> None:
     path = tmp_path / 'config.db'
@@ -91,12 +91,20 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         }
 
 
-@pytest.mark.parametrize('value_json', ['-1', '"10"', 'invalid json'])
-def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, value_json: str) -> None:
+@pytest.mark.parametrize(
+    ('key', 'value_json'),
+    [
+        ('run.request_limit', '-1'),
+        ('run.request_limit', '"10"'),
+        ('run.request_limit', 'invalid json'),
+        ('display.theme', '"light"'),
+    ],
+)
+def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str, value_json: str) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     store.set('model', 'test')
     with closing(sqlite3.connect(store.path)) as connection, connection:
-        connection.execute('INSERT INTO settings VALUES (?, ?)', ('run.request_limit', value_json))
+        connection.execute('INSERT INTO settings VALUES (?, ?)', (key, value_json))
     snapshot = store.path.read_bytes()
     with pytest.raises(ValidationError):
         store.load()

@@ -114,14 +114,14 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     """Leave a record of what was picked in the transcript, since the menu itself is gone."""
     text = Text()
     if event.response.cancelled:
-        text.append('● You declined to answer', style=theme.MUTED)
+        text.append('● You declined to answer', style=theme.color(theme.MUTED))
         return text
     for index, answer in enumerate(event.response.answers):
         if index:
             text.append('\n')
-        text.append('● ', style=theme.MUTED)
-        text.append(answer.header, style=theme.ACCENT)
-        text.append(f': {", ".join(answer.selected)}', style=theme.MUTED)
+        text.append('● ', style=theme.color(theme.MUTED))
+        text.append(answer.header, style=theme.color(theme.ACCENT))
+        text.append(f': {", ".join(answer.selected)}', style=theme.color(theme.MUTED))
     return text
 
 

@@ -112,7 +112,7 @@ summary failure; other exceptions propagate.
 3. Fire it from exactly one place in the shell.
 4. Document it in `PLUGINS.md` in the table it belongs to.
 
-## The `/plugins`, `/set`, `/model`, and `/add_model` menus
+## The `/plugins`, `/set`, `/theme`, `/model`, and `/add_model` menus
 
 Built on termflow's `MenuBuilder` (and `TextInputBuilder` for typed values),
 exactly like Code Puppy's `/agent`, `/mcp`, `/set`, and `/model` menus:
@@ -161,13 +161,15 @@ the host does this for renderers, so do not call `console.print` from inside an
 
 ## Colours
 
-Every colour comes from `theme.py`, which holds the Pydantic brand palette and
-the roles CLAI paints with (`ACCENT`, `INFO`, `WARNING`, `ERROR`, `MUTED`,
-`THINKING`). Use a role, not a hex, and never a bare Rich colour name like
-`'cyan'` or `'dim'`. Raw ANSI surfaces (status line, splash) go through
-`theme.sgr(...)`, which handles the 16-colour fallback. `theme.py` is stdlib
-only because the splash imports it before anything heavy. Source of truth is
-the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
+`/theme` offers the unchanged `default` appearance and `termflow.themes.PALETTES`.
+Do not define new palettes. Resolve brand roles with `theme.color(...)` for Rich;
+`theme.sgr(...)` resolves raw ANSI itself. `theme.current()` returns a Termflow
+palette or `None` for the original appearance. Termflow owns palette application
+and reset; `theme.use(...)` leaves the terminal untouched in the default session.
+Markdown keeps its original style by default and uses `to_render_style()` for a
+selected palette. The preview renders a sample without OSC changes or persistence.
+Heavy imports in `theme.py` stay lazy for the splash. Syntax keeps Monokai;
+default diff colours stay unchanged, while bundled palettes use Termflow defaults.
 
 ## File map
 
@@ -206,7 +208,8 @@ the pydantic.dev `pydantic-visual-identity` skill's `brand-identity.md`.
 | `settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
 | `project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
 | `repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
-| `theme.py` | brand palette, colour roles, `sgr()` |
+| `theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
+| `theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 

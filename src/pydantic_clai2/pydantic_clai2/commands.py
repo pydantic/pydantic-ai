@@ -17,6 +17,7 @@ from termflow.tui.completion import (  # pyright: ignore[reportMissingTypeStubs]
 
 from .config import SETTING_FIELDS, PluginSettings
 from .settings_store import SettingsStore
+from .theme import names as theme_names
 
 
 def is_command_input(text: str) -> bool:
@@ -146,7 +147,7 @@ def config_command(store: SettingsStore, args: list[str]) -> str:
         store.reset(args[1])
     elif len(args) == 3 and args[0] == 'set':
         adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
-        value: JsonValue = args[2] if args[1] == 'model' else adapter.validate_json(args[2])
+        value: JsonValue = args[2] if args[1] in ('model', 'display.theme') else adapter.validate_json(args[2])
         store.set(args[1], value)
     else:
         raise ValueError('Usage: config show|get KEY|set KEY VALUE|reset KEY')
@@ -157,6 +158,8 @@ def set_completions(args: list[str]) -> Iterable[str]:
     """Complete setting names and values without network calls or credentials."""
     if len(args) <= 1:
         return (*SETTING_FIELDS, 'api_key')
+    if len(args) == 2 and args[0] == 'display.theme':
+        return theme_names()
     if len(args) == 2 and args[0] == 'model':
         names = known_model_names()
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})

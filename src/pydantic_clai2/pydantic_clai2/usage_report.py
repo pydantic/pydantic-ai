@@ -81,13 +81,13 @@ def cost_line(usage: SessionUsage) -> str:
 def usage_table(usage: SessionUsage) -> Table:
     """Per-turn rows and a totals row. Cache columns appear only when a turn used the cache."""
     cached = any(turn.cache_read_tokens or turn.cache_write_tokens for turn in usage.turns)
-    table = Table(header_style=theme.ACCENT, border_style=theme.MUTED)
+    table = Table(header_style=theme.color(theme.ACCENT), border_style=theme.color(theme.MUTED))
     for name in ('Turn', 'Requests', 'Input', *(('Cache read', 'Cache write') if cached else ()), 'Output', 'Cost'):
         table.add_column(name, justify='right')
     for index, turn in enumerate(usage.turns, start=1):
         table.add_row(str(index), *_cells(turn, cached=cached))
     table.add_section()
-    table.add_row('Total', *_cells(usage.total, cached=cached), style=theme.ACCENT)
+    table.add_row('Total', *_cells(usage.total, cached=cached), style=theme.color(theme.ACCENT))
     return table
 
 

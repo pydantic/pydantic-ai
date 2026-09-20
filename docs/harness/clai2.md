@@ -192,7 +192,7 @@ Settings are validated before writes. `/set` updates the active settings snapsho
 legacy `/config` writes apply on restart; plugin changes apply on the next prompt.
 `--request-limit` controls the full prompt's model-request budget.
 
-Interactive commands: `/login`, `/set`, `/model`, `/help`, `/new`, `/exit`, `/config`, `/plugins`, and `/reload`.
+Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/help`, `/new`, `/exit`, `/config`, `/plugins`, and `/reload`.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history
@@ -241,15 +241,47 @@ failed or cancelled turns leave the previous history intact, though external too
 side effects may already have occurred. History is in memory only. Structured
 outputs are supported and displayed after completion.
 
-CLAI is painted in the Pydantic brand palette: Lithium magenta for headings,
-the banner, and the thing to look at; Calcium for list markers and errors; Aqua
-for links and added diff lines; Pydantic AI cyan for guidance; purple with a
-magenta-to-white shimmer for the active status line and plain purple while idle;
-brand grey for tool previews and hints. On terminals without 24-bit
-colour the nearest of the 16 standard colours is used. Every colour lives in
-`theme.py`. This is local to CLAI; it does not change your terminal's colours
-or Termflow defaults elsewhere. Code blocks use Rich's syntax renderer with the
-Monokai palette and Termflow's language aliases.
+### Themes
+
+```text
+/theme
+/theme tokyo_night
+/set display.theme github_light
+/theme default
+```
+
+`/theme` opens a searchable picker. Its preview shows a sample conversation with
+Markdown, thinking, a tool call, syntax highlighting, warnings, errors, and the
+input/status area. Each bundled palette paints the sample's foreground and
+background. Browsing does not apply a palette or save a setting. Enter confirms;
+Esc or Ctrl-C keeps your current choice. Narrow terminals show the list alone.
+
+`default` preserves CLAI's existing brand colours, including Markdown, menus,
+status, and diff highlighting. Starting and exiting with this choice leaves your
+terminal palette untouched. The default preview has no forced background.
+`/theme default` restores this appearance after trying another palette.
+
+All other choices come from Termflow's bundled registry, including
+`catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds
+no new palettes. `/theme NAME` and `/set display.theme NAME` apply the same
+validated preference immediately and save it for future sessions. Tab completes
+these names. The `/set` theme row also lets you reset immediately;
+`/config reset display.theme` removes the saved override for the next startup.
+
+For a bundled palette, Markdown and newly opened menus use Termflow's
+`to_render_style()`, and shell roles use its colours. Termflow changes the terminal
+foreground, background, and 16 ANSI slots via OSC escape sequences. Supported
+terminals may also recolour existing ANSI-styled scrollback. CLAI resets terminal
+colours when you return to `default` or exit a selected palette, including failure
+and cancellation. Unsupported terminals may ignore these changes. Redirected
+output receives no palette-changing sequences. Your terminal configuration file
+is not modified.
+
+The early splash retains its brand colours. Syntax highlighting keeps Monokai;
+bundled palettes use Termflow's default diff colours. Theme selection adds no
+model requests or telemetry.
+
+### Streaming
 
 Streaming matches Code Puppy's separate output and thinking paths:
 
@@ -324,9 +356,9 @@ repeated completion heading before the diff or output.
 
 Native capability events drive specialized output: `FileEditedEvent` renders its
 bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
-uses. Addition backgrounds are muted teal (`#203c3b`), deletion backgrounds are
-muted burgundy (`#432d3b`), and brighter markers distinguish the changes. Code
-syntax colors are unchanged. Successful file writes also show the proposed diff from their matching
+uses. The default appearance keeps CLAI's existing addition and deletion
+backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
+Code syntax colours retain the Monokai default. Successful file writes also show the proposed diff from their matching
 `FileChangeRequestEvent`: new files show additions, overwrites show before/after
 changes. Without a matching request event, only the written path is shown. Failed
 or cancelled writes do not display a success diff. Large diffs retain the
@@ -353,7 +385,7 @@ unavailable. During a request it may reflect the previous response.
 
 While running, the footer reserves the terminal's bottom row using ANSI scrolling
 regions. Its text shimmers with a moving highlight at ten frames per second, with no spinner and a
-16-colour fallback when truecolour is unavailable. Prompt-toolkit owns the footer while accepting input. The run footer is
+a 16-colour fallback when truecolour is unavailable. Prompt-toolkit owns the footer while accepting input. The run footer is
 disabled for redirected output and restores normal scrolling on cancellation or
 failure. The cursor is hidden during runs and restored on completion, failure,
 or cancellation. No model requests or telemetry are added for status reporting.

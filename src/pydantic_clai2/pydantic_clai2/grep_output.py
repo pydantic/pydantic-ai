@@ -46,7 +46,9 @@ class GrepOutput:
             return True
         if not isinstance(event.part, ToolReturnPart) or not isinstance(event.part.content, str):
             self.console.print(
-                f'{terminal_text(label)}: tool did not return text results.', style=theme.MUTED, markup=False
+                f'{terminal_text(label)}: tool did not return text results.',
+                style=theme.color(theme.MUTED),
+                markup=False,
             )
             self.console.print()
             return True
@@ -54,15 +56,19 @@ class GrepOutput:
         tool_truncated = bool(rows and rows[-1] == '[truncated; narrow the search]')
         if tool_truncated:
             rows.pop()
-        self.console.print(f'Results: {terminal_text(label)}', style=theme.MUTED, markup=False, highlight=False)
+        self.console.print(
+            f'Results: {terminal_text(label)}', style=theme.color(theme.MUTED), markup=False, highlight=False
+        )
         for row in rows[: self.lines]:
-            self.console.print(terminal_text(row), style=theme.MUTED, markup=False, highlight=False)
+            self.console.print(terminal_text(row), style=theme.color(theme.MUTED), markup=False, highlight=False)
         hidden = max(0, len(rows) - self.lines)
         if hidden:
-            self.console.print(f'Truncated {hidden} result lines', style=theme.MUTED)
+            self.console.print(f'Truncated {hidden} result lines', style=theme.color(theme.MUTED))
         if tool_truncated:
-            self.console.print('Tool also truncated the search; additional result count unknown.', style=theme.MUTED)
+            self.console.print(
+                'Tool also truncated the search; additional result count unknown.', style=theme.color(theme.MUTED)
+            )
         elif not rows:
-            self.console.print('No matches.', style=theme.MUTED)
+            self.console.print('No matches.', style=theme.color(theme.MUTED))
         self.console.print()
         return True

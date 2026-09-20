@@ -18,7 +18,7 @@ from pydantic_ai_harness.step_persistence.conversations import SqliteConversatio
 from rich.console import Console
 
 import pydantic_clai2
-from pydantic_clai2 import DEFAULT_PLUGINS, chat
+from pydantic_clai2 import DEFAULT_PLUGINS, chat, theme
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.settings_store import SettingsStore
@@ -71,6 +71,7 @@ async def main(root: Path, mode: str) -> None:
             '/help',
             '/set model test',
             '/set display.thinking false',
+            '/theme github_light',
             'first',
             '/reload extra',
             '/reload',
@@ -97,6 +98,12 @@ async def main(root: Path, mode: str) -> None:
 
         async def prompt_async(self, label: str, **kwargs: object) -> str:
             nonlocal reloads
+            palette = theme.current()
+            assert (palette.name if palette is not None else 'default') == store.load().theme
+            assert [item.text for item in self.completer.get_completions(Document('/theme '), CompleteEvent())] == list(
+                theme.names()
+            )
+            assert not list(self.completer.get_completions(Document('/theme github_light '), CompleteEvent()))
             assert [item.text for item in self.completer.get_completions(Document('/rel'), CompleteEvent())] == [
                 'reload'
             ]
@@ -182,6 +189,7 @@ async def main(root: Path, mode: str) -> None:
     assert seen[2] == [*seen[1], 'third' if mode == 'unchanged' else 'third updated'], seen
     assert labels[-1] == ('> ' if mode == 'unchanged' else 'updated> ')
     assert store.load().model == 'test' and not store.load().thinking
+    assert store.load().theme == 'github_light'
     if mode in ('unchanged', 'success', 'custom', 'new_imports'):
         assert text.count('CLAI2 reloaded. Conversation preserved.') == 2, text
         assert ('Use /help.' if mode == 'unchanged' else 'Use updated /help.') in text, text

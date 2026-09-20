@@ -66,7 +66,8 @@ def activate(host: PluginHost[None]) -> None:
             finished = await to_thread.run_sync(_shutdown, instance)
             if not finished:
                 host.console.print(
-                    'Logfire shutdown timed out; some telemetry may not have been sent.', style=theme.WARNING
+                    'Logfire shutdown timed out; some telemetry may not have been sent.',
+                    style=theme.color(theme.WARNING),
                 )
 
 

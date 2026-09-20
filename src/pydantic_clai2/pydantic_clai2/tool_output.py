@@ -22,10 +22,10 @@ def terminal_text(text: str) -> str:
 
 def print_tool_header(console: Console, *, name: str, argument: str = '') -> None:
     """Highlight the tool name, leaving its marker and arguments muted."""
-    text = Text('● ', style=theme.MUTED)
-    text.append(terminal_text(name), style=theme.ACCENT)
+    text = Text('● ', style=theme.color(theme.MUTED))
+    text.append(terminal_text(name), style=theme.color(theme.ACCENT))
     if argument:
-        text.append(f' {terminal_text(argument)}', style=theme.MUTED)
+        text.append(f' {terminal_text(argument)}', style=theme.color(theme.MUTED))
     console.print(text, overflow='ellipsis', no_wrap=True)
     console.print()
 
@@ -141,7 +141,7 @@ class ToolOutput:
     def _shell_line(self, preview: ShellPreview) -> None:
         self.console.print(
             shell_text(preview.pending, preview.decoder),
-            style=theme.MUTED,
+            style=theme.color(theme.MUTED),
             markup=False,
             highlight=False,
             overflow='ellipsis',
@@ -156,17 +156,19 @@ class ToolOutput:
             self._shell_line(preview)
         omitted = max(0, event.total_lines - preview.shown) if event.total_lines is not None else 0
         if omitted:
-            self.console.print(f'Truncated {omitted} lines', style=theme.MUTED)
+            self.console.print(f'Truncated {omitted} lines', style=theme.color(theme.MUTED))
         state = f'exit {event.exit_code}' if event.exit_code is not None else 'running in background'
-        self.console.print(f'{state} | PID {event.pid}', style=theme.MUTED, markup=False, highlight=False)
+        self.console.print(f'{state} | PID {event.pid}', style=theme.color(theme.MUTED), markup=False, highlight=False)
         self.console.print(
-            f'Output: {terminal_text(event.output_path)}', style=theme.MUTED, markup=False, highlight=False
+            f'Output: {terminal_text(event.output_path)}', style=theme.color(theme.MUTED), markup=False, highlight=False
         )
         self.console.print(
-            f'Status: {terminal_text(event.status_path)}', style=theme.MUTED, markup=False, highlight=False
+            f'Status: {terminal_text(event.status_path)}', style=theme.color(theme.MUTED), markup=False, highlight=False
         )
         if event.truncated and not omitted:
-            self.console.print('Output preview truncated; full output is in the command log.', style=theme.MUTED)
+            self.console.print(
+                'Output preview truncated; full output is in the command log.', style=theme.color(theme.MUTED)
+            )
         self.console.print()
 
     def _diff(self, diff: str, *, truncated: bool) -> None:
@@ -175,20 +177,17 @@ class ToolOutput:
         safe_diff = terminal_text(diff)
         if safe_diff:
             if self.console.is_terminal:
-                self.console.file.write(
-                    DiffRenderer(
-                        theme=DiffTheme(
-                            addition=theme.DIFF_ADDITION,
-                            deletion=theme.DIFF_DELETION,
-                            marker_brighten=2.0,
-                        )
-                    ).render(safe_diff)
+                colors = (
+                    DiffTheme(addition=theme.DIFF_ADDITION, deletion=theme.DIFF_DELETION, marker_brighten=2.0)
+                    if theme.current() is None
+                    else None
                 )
+                self.console.file.write(DiffRenderer(theme=colors).render(safe_diff))
                 self.console.file.flush()
             else:
                 self.console.print(safe_diff, markup=False, highlight=False)
         if truncated:
-            self.console.print('Diff truncated.', style=theme.MUTED)
+            self.console.print('Diff truncated.', style=theme.color(theme.MUTED))
         self.console.print()
 
     def abort(self) -> None:
