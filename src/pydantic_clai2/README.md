@@ -177,6 +177,31 @@ pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
+## Headless mode
+
+```bash
+clai2 -p "Explain this repository" -m anthropic:claude-sonnet-4-6
+clai2 -p "Continue the task" --resume SESSION-ID
+```
+
+`-p` / `--prompt` requires prompt text as an argument, never reads stdin,
+and runs one turn through tools to completion. Only the final answer is printed
+to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
+Errors go to stderr with a nonzero exit status; Ctrl-C exits with status 130.
+The turn is saved and can be resumed. With `-p`, `--resume` requires an explicit
+session ID; the browser cannot open. Prompt text is literal, not a slash command.
+
+`-m` is the short form of `--model`. It overrides the saved, project, and
+`CLAI_MODEL` model for this invocation without changing your saved preference.
+It also works in interactive mode.
+
+Headless mode skips the `ask_user` plugin, including saved replacements, without
+changing your preferences. Full-screen plugin requests fail rather than waiting
+for input. Other enabled plugins and coding tools still run with your permissions.
+Trusted third-party plugins must not read input or print directly to stdout;
+CLAI cannot enforce that contract on arbitrary Python code. Plugin load failures
+abort headless runs. Background session naming is not started.
+
 ## Git worktrees
 
 ```bash

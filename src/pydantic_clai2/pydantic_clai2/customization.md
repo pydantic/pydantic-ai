@@ -418,3 +418,13 @@ edits, and verify disable removes your commands and tools. Keep README.md and
 PLUGINS.md aligned with user-facing API changes. For UI capabilities not exposed
 by PluginHost, state that limitation and propose a focused source change rather
 than monkeypatching a private global registry.
+
+## Headless invocation
+
+`clai2 -p "PROMPT" -m PROVIDER:NAME` runs one saved turn and prints only the final
+answer. Prompt text is required as an argument; stdin is not read. Use
+`--resume SESSION-ID` to continue saved history without opening the browser.
+The `ask_user` plugin is skipped without changing saved preferences. Full-screen
+requests fail, stream renderers are not called, and host console output is
+suppressed. Plugins must not read input or print directly to stdout. Errors go
+to stderr with a nonzero exit status. `-m` also works in the interactive CLI.

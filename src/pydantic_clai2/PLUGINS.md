@@ -904,3 +904,14 @@ does not remove the images. Core hooks receive the native multimodal request wit
 should use core hooks rather than parsing terminal markers. There are no new
 host lifecycle hooks. Images are persisted with the conversation, including the
 accepted request when a turn fails or is cancelled.
+
+## Headless CLI runs
+
+`clai2 -p "PROMPT" [-m PROVIDER:NAME]` runs one saved turn without an editor.
+Session and turn hooks still run; stream renderers do not. Host console output
+is suppressed, and stdout contains only the final answer. Plugin load failures
+abort the run. The `ask_user` plugin is skipped even if saved settings enable or
+replace it; this does not change those settings. `host.full_screen()` raises in
+headless mode. Plugins must not bypass the host by reading terminal input or
+printing directly to stdout. `--resume SESSION-ID` restores history without a
+browser or tool replay.

@@ -112,7 +112,7 @@ async def chat(
         project = project or ProjectSettings()
         _report_project(project, console)
         use_defaults = builtin_plugins is DEFAULT_PLUGINS
-        shell = _create_shell(
+        shell = create_shell(
             agent,
             deps=deps,
             plugins=plugins,
@@ -153,7 +153,7 @@ async def chat(
             shell.reload_requested = False
             try:
                 shell = reload_clai(
-                    lambda shell=shell: _create_shell(
+                    lambda shell=shell: create_shell(
                         agent,
                         deps=deps,
                         plugins=plugins,
@@ -178,7 +178,7 @@ async def chat(
                 fresh = True
 
 
-def _create_shell(
+def create_shell(
     agent: AbstractAgent[DepsT, OutputT],
     *,
     deps: DepsT,
@@ -192,7 +192,9 @@ def _create_shell(
     message_history: Sequence[ModelMessage] = (),
     summary: ConversationSummary | None = None,
     transcript: TranscriptBuffer | None = None,
+    headless: bool = False,
 ) -> '_Shell[DepsT, OutputT]':
+    """Build shared session services, without attaching terminal input in headless mode."""
     settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
     store = store or SettingsStore()
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
@@ -335,7 +337,7 @@ def _create_shell(
     images = ImageInput()
     history = input_history(store.path.with_name('input-history'))
     prompt = None
-    if not console.is_terminal:
+    if not headless and not console.is_terminal:
         prompt = PromptSession[str](
             history=history,
             completer=PromptCompleter(commands),
@@ -473,7 +475,7 @@ class _Shell(Generic[DepsT, OutputT]):
 
         async def run_turn() -> None:
             nonlocal ended
-            ended = await self._run_turn(start, images=images)
+            ended = await self.run_turn(start, images=images)
 
         completed = await self.interrupts.run(run_turn())
         self.sessions.namer.submit(self.session.summary.id)
@@ -483,7 +485,10 @@ class _Shell(Generic[DepsT, OutputT]):
         await self.interrupts.run(self.loader.fire(ended or TurnEnd(text=start.text, outcome='cancelled')))
         return self.interrupts.exit_requested
 
-    async def _run_turn(self, start: TurnStart, *, images: Sequence[BinaryContent] = ()) -> TurnEnd:
+    async def run_turn(
+        self, start: TurnStart, *, images: Sequence[BinaryContent] = (), headless: bool = False
+    ) -> TurnEnd:
+        """Apply turn hooks and settings, then run with optional terminal rendering."""
         try:
             await self.loader.fire(start)
         except PluginError as exc:
@@ -511,6 +516,12 @@ class _Shell(Generic[DepsT, OutputT]):
                 self.console.print(f'{location}: {error["msg"]}', style=theme.ERROR, markup=False)
             self.console.print()
             return TurnEnd(text=start.text, outcome='failed', error=exc)
+        if headless:
+            try:
+                result = await self.session.prompt(start.text)
+            except Exception as exc:  # noqa: BLE001 -- report a failed headless turn to the CLI.
+                return TurnEnd(text=start.text, outcome='failed', error=exc)
+            return TurnEnd(text=start.text, outcome='completed', result=result)
         return await _run_prompt(
             self.session,
             start.text,
