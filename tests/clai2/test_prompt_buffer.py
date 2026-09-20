@@ -41,6 +41,35 @@ def test_empty_edges_and_single_word_deletion() -> None:
     assert buffer.text == ''
 
 
+@pytest.mark.parametrize('key', ['ctrl-w', 'alt-backspace'])
+@pytest.mark.parametrize(
+    ('text', 'cursor', 'expected', 'expected_cursor'),
+    [
+        ('one two', 7, 'one ', 4),
+        ('one two   ', 10, 'one ', 4),
+        ('one two three', 7, 'one  three', 4),
+        ('one two', 6, 'one o', 4),
+        ('word', 4, '', 0),
+        ('', 0, '', 0),
+        ('one two', 0, 'one two', 0),
+        ('   ', 3, '', 0),
+        ('hello 世界', 8, 'hello ', 6),
+        ('one\ntwo', 7, 'one\n', 4),
+        ('one\ttwo', 7, 'one\t', 4),
+        ('one\u2003two', 7, 'one\u2003', 4),
+        ('one\n\t two \t\n', 12, 'one\n\t ', 6),
+        ('one\ntwo three', 7, 'one\n three', 4),
+        ('one\ntwo', 6, 'one\no', 4),
+        ('\n\t', 2, '', 0),
+    ],
+)
+def test_delete_previous_word(key: str, text: str, cursor: int, expected: str, expected_cursor: int) -> None:
+    buffer = PromptBuffer(text=text, cursor=cursor)
+    assert buffer.edit(key)
+    assert buffer.text == expected
+    assert buffer.cursor == expected_cursor
+
+
 def test_multiline_navigation_and_history_restore_draft() -> None:
     buffer = PromptBuffer(history=['first', 'second'])
     buffer.replace('one\ntwo')

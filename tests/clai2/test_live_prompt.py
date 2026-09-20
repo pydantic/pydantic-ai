@@ -75,6 +75,18 @@ async def test_input_queue_and_controls() -> None:
             await live.read()
 
 
+@pytest.mark.parametrize(
+    'sequence',
+    ['\x1b\x7f', '\x1b\x08', '\x1b[27;3;127~', '\x1b[27;3;8~', '\x1b[127;3u', '\x1b[8;3u'],
+)
+async def test_option_backspace_deletes_word_before_cursor(sequence: str) -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text('one two three' + '\x1b[D' * 6 + sequence + '\n')
+        assert await live.read() == 'one  three'
+        pipe.send_text('one\x1b[13;2utwo' + sequence + 'three\n')
+        assert await live.read() == 'one\nthree'
+
+
 async def test_completed_and_partial_output_never_repaint_editor() -> None:
     async with editor() as (live, _, output):
         live.buffer.replace('retained draft')

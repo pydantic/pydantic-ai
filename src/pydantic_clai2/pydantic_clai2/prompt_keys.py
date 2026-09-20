@@ -8,6 +8,15 @@ from prompt_toolkit.input import Input
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 
+_MODIFIED_KEYS = {
+    '\x1b[13;2u': 'shift-enter',
+    '\x1b[27;2;13~': 'shift-enter',
+    '\x1b[27;3;127~': 'alt-backspace',
+    '\x1b[27;3;8~': 'alt-backspace',
+    '\x1b[127;3u': 'alt-backspace',
+    '\x1b[8;3u': 'alt-backspace',
+}
+
 
 class PromptKeys:
     """Reuse the portable escape/paste decoder while owning input attachment.
@@ -82,18 +91,18 @@ class PromptKeys:
         if key.key == Keys.CPRResponse:
             # Ignore a late response left over from a previous renderer/menu.
             return
-        if key.data in ('\x1b[13;2u', '\x1b[27;2;13~') and key.key != Keys.BracketedPaste:
+        if key.data in _MODIFIED_KEYS and key.key != Keys.BracketedPaste:
             self._escape = False
-            self.feed('shift-enter', key.data)
+            self.feed(_MODIFIED_KEYS[key.data], key.data)
             return
         if self._csi:
-            # The installed decoder splits unrecognized CSI-u into individual
+            # The installed decoder splits unrecognized modified keys into individual
             # keys. Reassemble it here, without modifying its global key table.
             self._csi += key.data
             if len(self._csi) > 32 or len(key.data) != 1 or '@' <= key.data <= '~':
                 sequence, self._csi = self._csi, ''
-                if sequence == '\x1b[13;2u':
-                    self.feed('shift-enter', sequence)
+                if sequence in _MODIFIED_KEYS:
+                    self.feed(_MODIFIED_KEYS[sequence], sequence)
             return
         if key.key == Keys.Escape:
             self._escape = True

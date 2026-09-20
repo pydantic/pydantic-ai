@@ -8,6 +8,13 @@ not protect secret files or repository metadata. OS permissions still apply.
 Relative paths use the launch workspace. Use a custom agent with `Coder()` to
 retain workspace-scoped file tools. Shell output is displayed dimly.
 
+## Word deletion
+
+Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
+including trailing whitespace. Spaces, tabs, and newlines separate words. Text
+after the cursor is preserved. Your terminal must send Option as Alt/Meta for
+this shortcut; legacy and modified-key encodings are supported.
+
 ## Interrupting a turn
 
 Press Ctrl-C once to cancel the active agent turn and return to input. Tool cleanup

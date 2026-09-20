@@ -37,6 +37,13 @@ Prose outside fences still streams line by line. Unlabelled and Markdown fences
 stay literal, including indentation and blank lines; unknown languages use plain
 text. Long code lines wrap to the terminal width.
 
+## Word deletion
+
+Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
+including trailing whitespace. Spaces, tabs, and newlines separate words. Text
+after the cursor is preserved. Your terminal must send Option as Alt/Meta for
+this shortcut; legacy and modified-key encodings are supported.
+
 ## Interrupting a turn
 
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.

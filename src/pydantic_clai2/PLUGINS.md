@@ -538,6 +538,11 @@ The editor remains active during agent turns: users can draft and queue messages
 but turns and slash commands execute sequentially. Shift-Enter inserts a newline;
 Enter submits. Alt-Enter remains a fallback for terminals that cannot distinguish
 Shift-Enter. Modified-key reporting is enabled only while the editor owns input.
+Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
+including trailing whitespace. Spaces, tabs, and newlines separate words. Text
+after the cursor is preserved. Your terminal must send Option as Alt/Meta for
+this shortcut; legacy and modified-key encodings are supported.
+
 Completion rows remain visible while a replacement lookup runs, but stale results
 cannot be selected. Popup height changes reuse available space without adding
 blank transcript lines on each key. Completion providers should be read-only.

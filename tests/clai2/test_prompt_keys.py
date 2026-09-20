@@ -92,6 +92,34 @@ def test_csi_partial_unknown_and_oversized_sequences_do_not_become_draft_text() 
         assert len(events) == 2
 
 
+@pytest.mark.parametrize(
+    'sequence',
+    ['\x1b\x7f', '\x1b\x08', '\x1b[27;3;127~', '\x1b[27;3;8~', '\x1b[127;3u', '\x1b[8;3u'],
+)
+@pytest.mark.parametrize('split', [False, True])
+async def test_alt_backspace_through_actual_decoder(sequence: str, split: bool) -> None:
+    events: list[tuple[str, str]] = []
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append((key, data)), eof=lambda: None)
+        try:
+            for chunk in sequence if split else [sequence]:
+                pipe.send_text(chunk)
+                keys.read()
+            assert [key for key, _ in events] == ['alt-backspace']
+        finally:
+            keys.stop()
+
+
+@pytest.mark.parametrize('sequence', ['\x1b[27;3;127~', '\x1b[27;3;8~', '\x1b[127;3u', '\x1b[8;3u'])
+def test_modified_alt_backspace_tokens_and_literal_paste(sequence: str) -> None:
+    events: list[tuple[str, str]] = []
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append((key, data)), eof=lambda: None)
+        keys.dispatch(KeyPress(Keys.ControlH, sequence))
+        keys.dispatch(KeyPress(Keys.BracketedPaste, sequence))
+        assert events == [('alt-backspace', sequence), ('paste', sequence)]
+
+
 async def test_cursor_reports_are_not_draft_keys() -> None:
     events: list[tuple[str, str]] = []
     with create_pipe_input() as pipe:
