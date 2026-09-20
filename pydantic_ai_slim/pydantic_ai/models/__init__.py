@@ -33,7 +33,7 @@ from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import UserError
+from ..exceptions import ModelCapabilityError, UserError
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
@@ -685,16 +685,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         # Check if output mode is supported
         if params.output_mode == 'native' and not self.profile.get('supports_json_schema_output', False):
-            raise UserError('Native structured output is not supported by this model.')
+            raise ModelCapabilityError('Native structured output is not supported by this model.')
         if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
-            raise UserError('Tool output is not supported by this model.')
+            raise ModelCapabilityError('Tool output is not supported by this model.')
         if params.allow_text_output and not self.profile.get('supports_text_output', True):
-            raise UserError(
+            raise ModelCapabilityError(
                 'Text output is not supported by this model. Give the agent one structured `output_type`, '
                 'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
             )
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
-            raise UserError('Image output is not supported by this model.')
+            raise ModelCapabilityError('Image output is not supported by this model.')
 
         # Check native tools, handle fallback swap, and resolve deferred-tool visibility. A deferred
         # tool has to get here on its own account: one gated by an on-demand capability belongs to no

@@ -12,7 +12,7 @@ from .. import _utils, usage
 from .._http import to_httpx2_timeout
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION
 from .._run_context import RunContext
-from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, ModelCapabilityError, UnexpectedModelBehavior, UserError
 from ..messages import (
     BaseToolReturnPart,
     CachePoint,
@@ -860,7 +860,7 @@ def _questions(
                 )
             questions[name] = Noul(instructions=asked)
         else:
-            raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
+            raise ModelCapabilityError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
 
 
@@ -912,7 +912,7 @@ def _tool_question(
     agent's instructions; the stock output tool description says nothing Jev could weigh a tool against.
     """
     if not output_tools and len(tools) < 2:
-        raise UserError(
+        raise ModelCapabilityError(
             'An `output_type` with no fields is not supported by this model; there is nothing to ask Jev. '
             'Give it fields, or more than one tool to pick between.'
         )
@@ -927,7 +927,7 @@ def _tool_question(
         if not (described or (instructions and len(output_tools) == 1)):
             # With one output type the agent's instructions can say what filling it is for. With several, only
             # each type's own docstring can tell them apart: one instruction cannot describe two different routes.
-            raise UserError(
+            raise ModelCapabilityError(
                 'Jev weighs each route by what it is for, and '
                 f'{output_tool.name!r} says nothing about itself. Give the output type a docstring that says what '
                 'filling it does' + ('.' if len(output_tools) > 1 else ', or the agent `instructions`.')
@@ -935,7 +935,7 @@ def _tool_question(
         criteria[output_tool.name] = described or instructions
     criteria.update((tool.name, tool.description) for tool in tools)
     if len(criteria) > _MAX_CHOICE_OPTIONS:
-        raise UserError(
+        raise ModelCapabilityError(
             f'Jev picks from at most {_MAX_CHOICE_OPTIONS} options, and it is being offered {len(criteria)} routes: '
             f'each output type counts as one beside the tools. Attach fewer tools, or withhold some of them until '
             f'they are needed.'
@@ -952,14 +952,14 @@ def _score_question(name: str, options: dict[int, str | None], asked: JSONConten
     """
     levels = sorted(options)
     if levels != list(range(len(levels))) or len(levels) < 2:
-        raise UserError(
+        raise ModelCapabilityError(
             f'Output field {name!r} is not supported by this model: a rubric must be the whole numbers from 0 '
             f'upwards, in order, and there must be at least two of them. {_UNSUPPORTED_FIELD_HINT}'
         )
     criteria = [options[level] for level in levels]
     if not all(criteria):
         missing = ', '.join(str(level) for level in levels if not options[level])
-        raise UserError(
+        raise ModelCapabilityError(
             f'Output field {name!r} is a rubric, so every level needs to say what it means, and {missing} does not. '
             f'Give each level a description in the schema.'
         )

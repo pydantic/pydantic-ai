@@ -41,6 +41,7 @@ from .exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    ModelCapabilityError,
     PydanticAIDeprecationWarning,
     RunCancelled,
     SkipModelRequest,
@@ -251,6 +252,7 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
+    'ModelCapabilityError',
     # messages
     'AgentInstructionSource',
     'AgentStreamEvent',

@@ -23,7 +23,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import await_maybe, get_first_param_type
 
 from .._genai_prices import fill_response_cost
-from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
+from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError, ModelCapabilityError
 from ..messages import ModelResponse
 from ..profiles import ModelProfile
 from . import (
@@ -109,7 +109,7 @@ class FallbackModel(Model):
         self,
         default_model: Model | KnownModelName | str,
         *fallback_models: Model | KnownModelName | str,
-        fallback_on: FallbackOn = (ModelAPIError,),
+        fallback_on: FallbackOn = (ModelAPIError, ModelCapabilityError),
     ):
         """Initialize a fallback model instance.
 
@@ -117,8 +117,9 @@ class FallbackModel(Model):
             default_model: The name or instance of the default model to use.
             fallback_models: The names or instances of the fallback models to use upon failure.
             fallback_on: Conditions that trigger fallback to the next model. Accepts:
+                Defaults to `(ModelAPIError, ModelCapabilityError)`. Accepts:
 
-                - A tuple of exception types: `(ModelAPIError, RateLimitError)`
+                - A tuple of exception types: `(ModelAPIError, ModelCapabilityError)`
                 - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
                 - A response handler (sync or async): `def check(r: ModelResponse) -> bool`
                 - A sequence mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`

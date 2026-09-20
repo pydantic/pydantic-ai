@@ -33,6 +33,7 @@ __all__ = (
     'SkipModelRequest',
     'SkipToolValidation',
     'SkipToolExecution',
+    'ModelCapabilityError',
     'UserError',
     'UndrainedPendingMessagesError',
     'AgentRunError',
@@ -235,6 +236,10 @@ class UserError(RuntimeError):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+
+class ModelCapabilityError(UserError):
+     """Request shape this model can't express, that a better model might."""
 
 
 class UndrainedPendingMessagesError(UserError):

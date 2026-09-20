@@ -24,6 +24,7 @@ from pydantic_ai import (
     ModelProfile,
     ModelRequest,
     ModelResponse,
+    ModelCapabilityError,
     TextPart,
     ToolCallPart,
     ToolDefinition,
@@ -3395,3 +3396,16 @@ def test_context_window_is_smallest_known_candidate_window() -> None:
     with pytest.raises(NotImplementedError):
         FallbackModel(windowed(200_000)).profile
     assert WrapperModel(FallbackModel(windowed(200_000), windowed(128_000))).context_window == 128_000
+
+def capability_error_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+    raise ModelCapabilityError('Text output is not supported by this model.')
+
+
+capability_error_model = FunctionModel(capability_error_response)
+
+
+async def test_default_fallback_on_falls_back_for_model_capability_error() -> None:
+    fallback_model = FallbackModel(capability_error_model, success_model)
+    agent = Agent(fallback_model)
+    response = await agent.run('hello')
+    assert response.output == 'success'
