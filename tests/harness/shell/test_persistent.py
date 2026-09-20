@@ -5,6 +5,7 @@ import os
 import shlex
 import signal
 import sys
+import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -195,15 +196,63 @@ class TestShellTool:
     async def test_missing_working_directory(self, tmp_path: Path) -> None:
         assert 'no longer exists' in await shell(tmp_path / 'absent', {'command': 'echo hi'})
 
-    async def test_supervisor_killed_mid_command_returns_stale_status(self, tmp_path: Path) -> None:
+    async def test_supervisor_killed_mid_command_returns_stale_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The supervisor publishes its status before the command runs, so the test sequences the
+        # steps itself: wait for the command's output and for that file, then kill the supervisor.
+        # A `kill $PPID` inside the command races that publication, which is what made this flaky.
+        # The temp directory is this test's own, so the supervisor's files are unambiguous here.
+        supervisor_dir = tmp_path / 'supervisor'
+        supervisor_dir.mkdir()
+        monkeypatch.setattr(tempfile, 'tempdir', str(supervisor_dir))
         recorder = Recorder()
-        # The command kills its own supervisor (its parent) and keeps running.
-        output = await shell(tmp_path, {'command': 'kill $PPID; sleep 30', 'timeout': 5}, capabilities=[recorder])
-        assert '"exit_code": null' in output
-        assert recorder.finished.exit_code is None
-        started = recorder.events[0]
-        assert isinstance(started, CommandStartedEvent)
-        os.killpg(started.pid, signal.SIGKILL)
+        supervisors: list[int] = []
+        running = anyio.Event()
+
+        class Running(AbstractCapability[None]):
+            """Record the supervisor's pid, then signal once the command has produced output."""
+
+            @on_event(CommandStartedEvent, CommandOutputEvent)
+            async def observe(self, ctx: RunContext[None], event: CommandStartedEvent | CommandOutputEvent) -> None:
+                if isinstance(event, CommandStartedEvent):
+                    supervisors.append(event.pid)
+                else:
+                    running.set()
+
+        def published_statuses() -> list[Path]:
+            return list(supervisor_dir.glob('harness-shell-*/status.json'))
+
+        results: list[str] = []
+
+        async def run() -> None:
+            results.append(
+                await shell(
+                    tmp_path,
+                    {'command': 'printf ready; sleep 30', 'timeout': 5},
+                    capabilities=[Running(), recorder],
+                )
+            )
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+            with anyio.fail_after(10):
+                await running.wait()
+                while not published_statuses():  # pragma: lax no cover
+                    await anyio.sleep(0.01)
+            # The command keeps running with nobody left to publish its exit code.
+            os.kill(supervisors[0], signal.SIGTERM)
+
+        output = results[0]
+        try:
+            assert '"exit_code": null' in output
+            assert recorder.finished.exit_code is None
+            started = recorder.events[0]
+            assert isinstance(started, CommandStartedEvent)
+        finally:
+            # The command still runs in the supervisor's session; kill it even when an assertion
+            # fails, so a failure does not leave the process and its temp directory behind.
+            os.killpg(supervisors[0], signal.SIGKILL)
 
     async def test_supervisor_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv('PYTHONHOME', str(tmp_path / 'missing-python'))
