@@ -2325,8 +2325,8 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
         return answers(
             urgent={'type': 'noul', 'noul': 0.2},
             tool=_route(
-                'final_result_NoneType',
-                {'final_result_Ticket': 0.1, 'final_result_NoneType': 0.9},
+                'final_result_None',
+                {'final_result_Ticket': 0.1, 'final_result_None': 0.9},
             ),
         )
 
@@ -2341,11 +2341,11 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
     assert len(seen) == 1
     assert sorted(seen[0]['questions']) == snapshot(['tool', 'urgent'])
     assert seen[0]['questions']['tool']['criteria'] == snapshot(
-        {'final_result_Ticket': 'Triage a support ticket.', 'final_result_NoneType': 'None of these.'}
+        {'final_result_Ticket': 'Triage a support ticket.', 'final_result_None': 'None of these.'}
     )
     # The `None` is written into the wrapper Pydantic AI put around it, not asked for and not left out.
     call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
-    assert (call.tool_name, call.args) == snapshot(('final_result_NoneType', {'response': None}))
+    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
 
 
 async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_requests: None):
@@ -2385,7 +2385,7 @@ async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_m
                 'type': 'choice',
                 'choice': 'refund',
                 'confidence': 0.4,
-                'probabilities': {'final_result_Ticket': 0.1, 'final_result_NoneType': 0.5, 'refund': 0.4},
+                'probabilities': {'final_result_Ticket': 0.1, 'final_result_None': 0.5, 'refund': 0.4},
             },
         )
 
@@ -2398,7 +2398,7 @@ async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_m
 
     assert result.output is None
     call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
-    assert (call.tool_name, call.args) == snapshot(('final_result_NoneType', {'response': None}))
+    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
 
 
 async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_requests: None):
@@ -2428,7 +2428,7 @@ async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_
 
     assert result.output is None
     call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
-    assert (call.tool_name, call.args) == snapshot(('final_result_NoneType', {'response': None}))
+    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
 
 
 async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: None):

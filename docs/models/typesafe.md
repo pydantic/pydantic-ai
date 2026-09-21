@@ -862,7 +862,7 @@ result = agent.run_sync('Thanks, that fixed it. Nothing else needed.')
 print(result.output)
 #> None
 print(result.response.provider_details['tool']['choice'])
-#> final_result_NoneType
+#> final_result_None
 ```
 
 `None` cannot carry a docstring, so the library describes it, the same way an [optional pick-one field](#what-each-mapping-does) gets its "None of these." option. There is nothing to fill either, so the route is taken on the pick alone: declining costs one request, never two.
