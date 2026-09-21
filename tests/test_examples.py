@@ -855,6 +855,20 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif isinstance(m.content, list) and m.content[0] == 'Extract this paper.':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=info.output_tools[0].name,
+                        args={
+                            'title': 'The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits',
+                            'document_type': 'research paper',
+                            'published_year': 2024,
+                        },
+                        tool_call_id='document_paper',
+                    )
+                ]
+            )
         assert isinstance(m.content, str)
         if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
             t.name == 'mark_task_done' for t in info.function_tools
@@ -1419,6 +1433,76 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'order_status':
         return ModelResponse(parts=[TextPart('Order A100 has shipped and is expected Friday.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'Which product has the most revenue?':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='top_products',
+                    args={'limit': 5},
+                    tool_call_id='top_products_call',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'top_products':
+        return ModelResponse(parts=[TextPart('Logfire has the most revenue at $2,100.')])
+    elif isinstance(m, UserPromptPart) and m.content == '[EMAIL] says card [PAYMENT_CARD] was charged twice.':
+        return ModelResponse(
+            parts=[TextPart('This is a duplicate card charge request involving redacted customer data.')]
+        )
+    elif (
+        isinstance(m, UserPromptPart)
+        and isinstance(m.content, str)
+        and m.content.startswith('Security review: Move session storage')
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=info.output_tools[0].name,
+                    args={
+                        'response': [
+                            {
+                                'area': 'security',
+                                'risk': 'Session rows may cross tenant boundaries',
+                                'mitigation': 'Enforce tenant-scoped queries and database policies.',
+                            }
+                        ]
+                    },
+                    tool_call_id='security_review',
+                )
+            ]
+        )
+    elif (
+        isinstance(m, UserPromptPart)
+        and isinstance(m.content, str)
+        and m.content.startswith('Reliability review: Move session storage')
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=info.output_tools[0].name,
+                    args={
+                        'response': [
+                            {
+                                'area': 'reliability',
+                                'risk': 'A direct cutover can lose active sessions',
+                                'mitigation': 'Dual-write, backfill, and roll out gradually.',
+                            }
+                        ]
+                    },
+                    tool_call_id='reliability_review',
+                )
+            ]
+        )
+    elif isinstance(m, UserPromptPart) and isinstance(m.content, str) and m.content.startswith('Incident update:'):
+        return ModelResponse(parts=[TextPart('Noted.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'What is the latest mitigation?':
+        assert any(
+            isinstance(part, UserPromptPart) and part.content == 'Incident update: rollback started.'
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        return ModelResponse(parts=[TextPart('The latest mitigation is a rollback.')])
     elif isinstance(m, UserPromptPart) and 'ACME Hosting — Invoice INV-2048' in m.content:
         return ModelResponse(
             parts=[
