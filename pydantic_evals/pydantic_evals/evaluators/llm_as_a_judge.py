@@ -29,9 +29,7 @@ __all__ = (
 
 
 _default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
-# A judge without text output answers a rubric instead of writing a number, and the tightest
-# rubric among them is Jev's ten levels: https://docs.typesafe.ai/primitives/score
-_MAX_G_EVAL_SCORE_LEVELS = 10
+_MAX_G_EVAL_SCORE_LEVELS = 20
 _JUDGE_REASON_DESCRIPTION = 'A concise 1-2 sentence justification for the verdict.'
 
 

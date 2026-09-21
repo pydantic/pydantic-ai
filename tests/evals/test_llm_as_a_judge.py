@@ -310,12 +310,12 @@ async def test_judge_g_eval_without_text_support_rejects_too_many_score_levels()
     with pytest.raises(
         UserError,
         match=re.escape(
-            '`score_range` can contain at most 10 levels for a judge that does not support text output; '
-            'got 11 in (0, 10).'
+            '`score_range` can contain at most 20 levels for a judge that does not support text output; '
+            'got 21 in (0, 20).'
         ),
     ):
         await _judge_g_eval(
-            'Clear output.', 'clarity', ['Read it.'], score_range=(0, 10), model=model, allow_reasonless=True
+            'Clear output.', 'clarity', ['Read it.'], score_range=(0, 20), model=model, allow_reasonless=True
         )
 
 
