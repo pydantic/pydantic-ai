@@ -587,6 +587,67 @@ class ContactPreference(BaseModel):
     urgent_only: bool = Field(description='Should contact be limited to urgent updates?')
 
 
+async def test_the_fill_names_the_route_that_was_picked(allow_model_requests: None):
+    """The fill is a second request about the same text: without the name, nothing says a route was picked."""
+    seen: list[dict[str, Any]] = []
+
+    def no_docstring_tool(reason: Literal['refund', 'outage', 'other']) -> str:
+        return 'done'  # pragma: no cover
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        given: dict[str, dict[str, object]] = {}
+        for name, question in body['questions'].items():
+            if question['type'] == 'choice':
+                options = list(question['criteria'])
+                pick = 'no_docstring_tool' if name == 'tool' else options[0]
+                given[name] = {
+                    'type': 'choice',
+                    'choice': pick,
+                    'confidence': 0.9,
+                    'probabilities': {option: (0.9 if option == pick else 0.1) for option in options},
+                }
+            else:
+                given[name] = {'type': 'noul', 'noul': 0.9}
+        return answers(**given)
+
+    agent = Agent(mock_model(record), output_type=Ticket, tools=[no_docstring_tool], instructions='Sort it out.')
+    await agent.run('charged twice')
+
+    # The choice question offers the names; nothing has been picked yet, so nothing is named as picked.
+    assert 'chosen' not in str(seen[0]['questions']['urgent'])
+    # An undocumented tool has no `goal`, so its name is the only thing identifying what is being filled.
+    assert seen[1]['questions']['reason']['instructions'] == snapshot(
+        {'field': 'reason', 'chosen': 'no_docstring_tool', 'instructions': 'Sort it out.'}
+    )
+
+
+async def test_the_fill_names_a_union_member_by_what_the_user_called_it(allow_model_requests: None):
+    """A union route is named `final_result_<Member>`; only the member is the user's, so only it is sent."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        if 'tool' in body['questions']:
+            return answers(
+                tool={
+                    'type': 'choice',
+                    'choice': 'final_result_Escalation',
+                    'confidence': 0.9,
+                    'probabilities': {'final_result_Ticket': 0.1, 'final_result_Escalation': 0.9},
+                }
+            )
+        return answers(security={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation], instructions='Sort it out.')
+    result = await agent.run('someone is exfiltrating the database')
+
+    assert result.output == Escalation(security=True)
+    assert seen[1]['questions']['security']['instructions']['chosen'] == snapshot('Escalation')
+
+
 async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model_requests: None):
     """The first request picks the tool and the second asks only its arguments using the output-field mapping."""
     seen: list[dict[str, Any]] = []
@@ -723,6 +784,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'instructions': {
                     'field': 'team',
                     'question': 'Which team should handle this ticket?',
+                    'chosen': 'configure_contact',
                     'goal': 'Configure how the support team should handle this ticket.',
                     'instructions': 'Handle the customer request as written.',
                 },
@@ -732,6 +794,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'instructions': {
                     'field': 'urgent',
                     'question': 'Does this ticket need urgent handling?',
+                    'chosen': 'configure_contact',
                     'goal': 'Configure how the support team should handle this ticket.',
                     'instructions': 'Handle the customer request as written.',
                 },
@@ -741,6 +804,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'instructions': {
                     'field': 'risk',
                     'question': 'Is this ticket likely to cause customer harm?',
+                    'chosen': 'configure_contact',
                     'goal': 'Configure how the support team should handle this ticket.',
                     'instructions': 'Handle the customer request as written.',
                 },
@@ -750,6 +814,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'instructions': {
                     'field': 'channels',
                     'question': 'Which channels should receive updates?',
+                    'chosen': 'configure_contact',
                     'goal': 'Configure how the support team should handle this ticket.',
                     'instructions': 'Handle the customer request as written.',
                     'option': 'email',
@@ -760,6 +825,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'instructions': {
                     'field': 'channels',
                     'question': 'Which channels should receive updates?',
+                    'chosen': 'configure_contact',
                     'goal': 'Configure how the support team should handle this ticket.',
                     'instructions': 'Handle the customer request as written.',
                     'option': 'sms',
@@ -771,6 +837,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'instructions': {
                     'field': 'window',
                     'question': 'Which contact window did the customer request, if any?',
+                    'chosen': 'configure_contact',
                     'goal': 'Configure how the support team should handle this ticket.',
                     'instructions': 'Handle the customer request as written.',
                 },
@@ -780,6 +847,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'criteria': {'email': None, 'phone': None},
                 'instructions': {
                     'field': 'contact.method',
+                    'chosen': 'configure_contact',
                     'goal': 'Configure how the support team should handle this ticket.',
                     'instructions': 'Handle the customer request as written.',
                 },
@@ -789,6 +857,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'instructions': {
                     'field': 'contact.urgent_only',
                     'question': 'Should contact be limited to urgent updates?',
+                    'chosen': 'configure_contact',
                     'goal': 'Configure how the support team should handle this ticket.',
                     'instructions': 'Handle the customer request as written.',
                 },
@@ -1402,6 +1471,7 @@ async def test_the_last_route_left_has_its_supported_arguments_filled(allow_mode
                 'instructions': {
                     'field': 'direction',
                     'question': 'Which direction should be taken?',
+                    'chosen': 'set_direction',
                     'goal': 'Set the direction to take.',
                 },
             }

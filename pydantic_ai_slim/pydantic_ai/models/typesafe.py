@@ -10,7 +10,7 @@ from typing_extensions import assert_never
 
 from .. import _utils, usage
 from .._http import to_httpx2_timeout
-from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION
+from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..messages import (
@@ -420,7 +420,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         and it is refused before any request. Offered beside others, it is a route like any other.
         """
         try:
-            ask = _Ask.about(tool, instructions)
+            ask = _Ask.about(tool, instructions, picked=True)
         except UserError:
             raise ToolCallProposed(self._model_name, tool.name, probability) from None
 
@@ -782,7 +782,7 @@ def _options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
 
 
 def _ask(
-    name: str, prop: dict[str, Any], output_tool: ToolDefinition, instructions: str | None
+    name: str, prop: dict[str, Any], output_tool: ToolDefinition, instructions: str | None, *, picked: bool = False
 ) -> dict[str, JSONContent]:
     """What a field asks, as the labelled parts TypeSafe's own examples use."""
     # Only what the user wrote goes to Jev. A bare `bool` output is wrapped in a field named `response`
@@ -795,6 +795,11 @@ def _ask(
         ask['field'] = name
     if description := prop.get('description'):
         ask['question'] = description
+    if picked and (route := _route_name(output_tool)):
+        # A fill is a second request about the same text, so nothing in it says a route was already picked.
+        # Its name is what the choice question offered and what the answer named, and a field of that route
+        # reads differently once you know which one you are filling.
+        ask['chosen'] = route
     if described := _described(output_tool):
         ask['goal'] = described
     if instructions:
@@ -822,10 +827,14 @@ class _Ask:
     questions: dict[str, Noul | Choice | Score]
 
     @classmethod
-    def about(cls, tool: ToolDefinition, instructions: str | None) -> _Ask:
-        """The questions this route's fields become, or a `UserError` if Jev cannot express one of them."""
+    def about(cls, tool: ToolDefinition, instructions: str | None, *, picked: bool = False) -> _Ask:
+        """The questions this route's fields become, or a `UserError` if Jev cannot express one of them.
+
+        `picked` is for the second request of a turn that chose a route first: those questions name the
+        route they belong to, which the first request's questions have no reason to.
+        """
         properties = _fields(tool)
-        return cls(tool, properties, _questions(properties, tool, instructions))
+        return cls(tool, properties, _questions(properties, tool, instructions, picked=picked))
 
     @classmethod
     def nothing(cls) -> _Ask:
@@ -837,12 +846,16 @@ class _Ask:
 
 
 def _questions(
-    properties: dict[str, dict[str, Any]], output_tool: ToolDefinition, instructions: str | None
+    properties: dict[str, dict[str, Any]],
+    output_tool: ToolDefinition,
+    instructions: str | None,
+    *,
+    picked: bool = False,
 ) -> dict[str, Noul | Choice | Score]:
     """One Jev question per output field."""
     questions: dict[str, Noul | Choice | Score] = {}
     for name, prop in properties.items():
-        ask = _ask(name, prop, output_tool, instructions)
+        ask = _ask(name, prop, output_tool, instructions, picked=picked)
         prop, none_key = _optional(prop)
         options = _options(prop)
         if none_key is not None:
@@ -901,6 +914,18 @@ def _questions(
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
+
+
+def _route_name(tool: ToolDefinition) -> str | None:
+    """What to call a picked route when telling Jev which one it picked.
+
+    Only what the user wrote means anything: an output route is named for the library's own tool, either
+    `final_result` on its own or `final_result_<Member>` for a union member, and the bare prefix says no
+    more than "the answer" does. A function tool's name is the user's.
+    """
+    if tool.kind != 'output':
+        return tool.name
+    return tool.name.removeprefix(DEFAULT_OUTPUT_TOOL_NAME).lstrip('_') or None
 
 
 def _described(tool: ToolDefinition) -> str | None:
