@@ -16,7 +16,17 @@ from rich.text import Text
 from termflow.ansi.utils import ANSI_ESCAPE_RE, visible_length  # pyright: ignore[reportMissingTypeStubs]
 
 # Rich does not recognize palette OSC commands and renders their payload as text.
-_OSC = re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)')
+_OSC = re.compile(r'\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)')
+
+
+def replay_osc(match: re.Match[str]) -> str:
+    """Keep only hyperlink metadata, normalizing BEL for Rich's ANSI decoder."""
+    payload = match[1]
+    if payload.startswith('8;'):
+        _, separator, url = payload[2:].partition(';')
+        if separator and (not url or url.isprintable()):
+            return f'\x1b]8;;{url}\x1b\\'
+    return ''
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -29,7 +39,7 @@ class TranscriptFrame:
 
 def style_prefix(style: Style) -> str:
     """Render an SGR prefix without replaying hyperlinks or visible text."""
-    return render_ansi(text=' ', style=style).split(' ', 1)[0]
+    return render_ansi(text=' ', style=style.update_link(None)).split(' ', 1)[0]
 
 
 def render_ansi(*, text: str, style: Style) -> str:
@@ -50,6 +60,7 @@ def render_ansi(*, text: str, style: Style) -> str:
         frame=style.frame,
         encircle=style.encircle,
         overline=style.overline,
+        link=style.link,
     )
     return fresh.render(text, color_system=ColorSystem.TRUECOLOR)
 
@@ -84,6 +95,20 @@ def incomplete_escape_start(text: str) -> int:
     return text.find('\x1b', end)
 
 
+class TranscriptDecoder(AnsiDecoder):
+    """Keep OSC 8 state independent of SGR resets, as terminals do."""
+
+    def decode_line(self, line: str) -> Text:
+        """Decode styles without letting a colour reset close an active hyperlink."""
+        text = Text()
+        for index, chunk in enumerate(re.split(r'(\x1b\[[0-9;]*m)', line.rsplit('\r', 1)[-1])):
+            link = self.style.link
+            text.append_text(super().decode_line(chunk))
+            if index % 2:
+                self.style = self.style.update_link(link)
+        return text
+
+
 class TranscriptBuffer:
     """Retain recent output, never editor paint or terminal-control transactions."""
 
@@ -97,7 +122,7 @@ class TranscriptBuffer:
         self._chars = 0
         self._pending = ''
         self._discard_until_newline = False
-        self._decoder = AnsiDecoder()
+        self._decoder = TranscriptDecoder()
         self._console = Console(file=io.StringIO(), force_terminal=True, color_system='truecolor')
 
     def write(self, text: str) -> None:
@@ -108,7 +133,7 @@ class TranscriptBuffer:
                 return
             text = '\n' + text
             self._discard_until_newline = False
-        self._pending = _OSC.sub('', self._pending + text)
+        self._pending = _OSC.sub(replay_osc, self._pending + text)
         lines = self._pending.split('\n')
         self._pending = lines.pop()
         for line in lines:
@@ -151,7 +176,7 @@ class TranscriptBuffer:
 
     def frame(self, *, width: int, height: int) -> TranscriptFrame:
         """Rewrap recent styled text without performing any terminal IO."""
-        decoder = AnsiDecoder()
+        decoder = TranscriptDecoder()
         decoder.style = self._decoder.style
         complete = self._pending
         escape = incomplete_escape_start(complete)
@@ -174,7 +199,7 @@ class TranscriptBuffer:
             for piece in text.divide(offsets):
                 piece.truncate(width, overflow='crop')
                 # Rich only decodes recorded ANSI styling here. It owns neither
-                # the editor nor a live renderer. Non-SGR controls are not replayed.
+                # the editor nor a live renderer. Only SGR and hyperlinks are replayed.
                 rows.append(
                     ''.join(
                         render_ansi(text=segment.text, style=segment.style) if segment.style else segment.text

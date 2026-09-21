@@ -10,7 +10,7 @@ from rich.text import Text
 from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
 
 from pydantic_clai2 import theme
-from pydantic_clai2.prompt_transcript import TranscriptBuffer, render_ansi
+from pydantic_clai2.prompt_transcript import TranscriptBuffer, render_ansi, style_prefix
 
 
 def plain(buffer: TranscriptBuffer, *, width: int = 80, height: int = 24) -> list[str]:
@@ -47,12 +47,42 @@ def test_tabs_carriage_returns_crlf_and_non_sgr_controls() -> None:
     assert '\x1b[2J' not in ''.join(buffer.frame(width=80, height=24).rows)
 
 
-def test_hyperlinks_are_not_replayed_as_terminal_commands() -> None:
+@pytest.mark.parametrize('terminator', ['\x07', '\x1b\\'])
+@pytest.mark.parametrize('split', [False, True])
+def test_hyperlinks_survive_wrapping_and_replay(*, terminator: str, split: bool) -> None:
     buffer = TranscriptBuffer()
-    buffer.write('\x1b]8;;https://example.com\x1b\\link')
-    snapshot = buffer.frame(width=20, height=10)
-    assert plain(buffer) == ['link']
-    assert '\x1b]' not in ''.join(snapshot.rows) + snapshot.continuation_style
+    value = f'\x1b]8;id=pr;https://example.com{terminator}PR #1006'
+    for chunk in list(value) if split else [value]:
+        buffer.write(chunk)
+    snapshot = buffer.frame(width=4, height=10)
+    assert plain(buffer, width=4) == ['PR #', '1006']
+    console = Console()
+    for row in snapshot.rows:
+        text = Text.from_ansi(row)
+        assert text.get_style_at_offset(console, 0).link == 'https://example.com'
+        assert row.endswith('\x1b]8;;\x1b\\')
+    assert '\x1b]' not in snapshot.continuation_style
+    buffer.write(f'\x1b]8;;{terminator} plain\nnext')
+    snapshot = buffer.frame(width=80, height=10)
+    assert plain(buffer) == ['PR #1006 plain', 'next']
+    text = Text.from_ansi(snapshot.rows[0])
+    assert text.get_style_at_offset(console, 0).link == 'https://example.com'
+    assert text.get_style_at_offset(console, 9).link is None
+    assert '\x1b]' not in snapshot.rows[1]
+
+
+@pytest.mark.parametrize('payload', ['52;c;Y2xpcGJvYXJk', '0;title', '8;malformed', '8;;https://bad\x01url'])
+def test_replay_drops_other_or_malformed_osc(*, payload: str) -> None:
+    buffer = TranscriptBuffer()
+    buffer.write(f'before\x1b]{payload}\x1b\\after')
+    snapshot = buffer.frame(width=80, height=10)
+    assert plain(buffer) == ['beforeafter']
+    assert '\x1b]' not in ''.join(snapshot.rows)
+
+
+def test_link_style_prefix_restores_only_sgr() -> None:
+    prefix = style_prefix(Style(color='red', link='https://example.com'))
+    assert prefix == '\x1b[31m'
 
 
 def test_limits_cover_completed_and_unterminated_lines() -> None:
@@ -177,3 +207,16 @@ def test_adjacent_palette_controls_do_not_swallow_visible_text() -> None:
     buffer = TranscriptBuffer()
     buffer.write('before\x1b]11;#ffffff\x07middle\x1b]104\x07after\n')
     assert plain(buffer) == ['beforemiddleafter', '']
+
+
+def test_colour_reset_does_not_close_a_hyperlink_across_lines() -> None:
+    buffer = TranscriptBuffer()
+    buffer.write('\x1b]8;;https://example.com\x1b\\\x1b[31mred\x1b[0m plain\nnext')
+    console = Console()
+    for row in buffer.frame(width=80, height=10).rows:
+        text = Text.from_ansi(row)
+        for index in range(len(text)):
+            assert text.get_style_at_offset(console, index).link == 'https://example.com'
+    buffer.write('\x1b]8;;\x1b\\ unlinked')
+    text = Text.from_ansi(buffer.frame(width=80, height=10).rows[-1])
+    assert text.get_style_at_offset(console, -1).link is None

@@ -1,7 +1,10 @@
 """Incremental Markdown rendering for native Pydantic AI events."""
 
 import asyncio
+import io
+import re
 from collections.abc import Callable, Sequence
+from typing import IO
 
 from pydantic_ai import (
     AgentStreamEvent,
@@ -52,6 +55,34 @@ def markdown_style() -> RenderStyle:
         link=theme.AQUA,
         error=theme.CALCIUM,
     )
+
+
+class LinkOutput(io.StringIO):
+    """Scope streamed hyperlinks to each write so editor paints and aborts stay unlinked."""
+
+    def __init__(self, *, output: IO[str]) -> None:
+        """Wrap one part's output without closing the underlying destination."""
+        super().__init__()
+        self.output = output
+        self._link = ''
+
+    def write(self, text: str) -> int:
+        """SmoothWriter supplies whole ANSI tokens, but can split a link's label."""
+        length = len(text)
+        prefix = self._link
+        text = re.sub(r'\x1b\]8;;([^\x1b]*)\x1b\\', self._track_link, text)
+        self.output.write(prefix + text + ('\x1b]8;;\x1b\\' if self._link else ''))
+        return length
+
+    def _track_link(self, match: re.Match[str]) -> str:
+        # Smoothing repeats metadata per chunk. Cap the destination so large
+        # model-generated URLs cannot amplify terminal output without bound.
+        self._link = match[0] if 0 < len(match[1]) <= 2048 else ''
+        return self._link or '\x1b]8;;\x1b\\'
+
+    def flush(self) -> None:
+        """Forward flushes without taking ownership of the terminal."""
+        self.output.flush()
 
 
 class StreamRenderer:
@@ -155,17 +186,16 @@ class StreamRenderer:
             output=self._writer or self.console.file,  # pyright: ignore[reportArgumentType]
             width=self.console.width,
             style=markdown_style(),
-            features=RenderFeatures(clipboard=False, hyperlinks=False, images=False),
+            features=RenderFeatures(clipboard=False, hyperlinks=self.console.is_terminal, images=False),
             dim=self._thinking,
         )
 
     def _make_writer(self) -> SmoothWriter:
         """Reasoning keeps Code Puppy's slower thinking pace; responses use the configured catch-up."""
+        output = LinkOutput(output=self.console.file)
         if self._thinking:
-            return SmoothWriter(self.console.file, tick_interval=0.02, catch_up_seconds=0.4, min_chars_per_tick=2)
-        return SmoothWriter(
-            self.console.file, tick_interval=0.012, catch_up_seconds=self.smooth_seconds, min_chars_per_tick=1
-        )
+            return SmoothWriter(output, tick_interval=0.02, catch_up_seconds=0.4, min_chars_per_tick=2)
+        return SmoothWriter(output, tick_interval=0.012, catch_up_seconds=self.smooth_seconds, min_chars_per_tick=1)
 
     def _feed(self, content: str) -> None:
         content = terminal_text(content)
