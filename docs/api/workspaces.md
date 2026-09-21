@@ -4,6 +4,7 @@
     options:
         members:
             - Workspace
+            - CompositeFilesystem
             - FileEntry
             - FileWindow
             - WorkspaceBackend

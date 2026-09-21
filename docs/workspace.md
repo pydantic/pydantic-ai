@@ -42,6 +42,52 @@ You can write a workspace for another environment by implementing a small backen
 [Writing a backend](#writing-a-backend). Provider integrations such as Modal and E2B are available
 as separate packages.
 
+## Composing virtual filesystems
+
+[`CompositeFilesystem`][pydantic_ai.workspaces.CompositeFilesystem] routes one POSIX namespace
+across filesystems mounted at absolute paths. Each value implements `SupportsFilesystem` and sees
+its own namespace rooted at `/`.
+
+```python
+from typing import cast
+
+from pydantic_ai.workspaces import CompositeFilesystem, SupportsFilesystem, Workspace
+
+# Replace these placeholders with filesystem implementations such as S3 or GCS adapters.
+project_filesystem = cast(SupportsFilesystem, ...)
+data_filesystem = cast(SupportsFilesystem, ...)
+skills_filesystem = cast(SupportsFilesystem, ...)
+
+workspace = Workspace(
+    CompositeFilesystem(
+        {
+            '/': project_filesystem,
+            '/data': data_filesystem,
+            '/skills': skills_filesystem,
+        }
+    )
+)
+```
+
+Here `/README.md` becomes `project_filesystem.read_bytes('/README.md')`, while
+`/skills/guide.md` becomes `skills_filesystem.read_bytes('/guide.md')`. Longest-prefix routing
+allows nested mounts; a mount shadows an entry with the same name in its parent filesystem.
+Directory listings merge ordinary entries with mounted children.
+
+The virtual root, mount points, and shared parents always appear as directories. Operations outside
+the mount table fail when there is no `/` mount, and mount points or their ancestors cannot be
+removed. Read-only behavior belongs to each mounted filesystem.
+
+A bare `CompositeFilesystem` has files but no command implementation. This does not mean that a
+command-capable workspace cannot use filesystem composition: a provider backend can use the same
+router for its native file methods. That provider must also mount every source at the same path in
+its command environment, using its FUSE, volume, or bind-mount support. It then exposes one backend
+to `Workspace`, implementing both `SupportsCommands` and `SupportsFilesystem`.
+
+`Workspace` deliberately does not accept an independent command backend and filesystem. Keeping one
+backend responsible for the complete environment prevents configurations where
+`read_file('/data/x')` succeeds but `cat /data/x` observes a different file.
+
 ## Reading and writing files
 
 Relative paths resolve against the workspace's working directory. Path resolution normalizes
@@ -179,7 +225,7 @@ then adds [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 resolution, text helpers, and windowed reads. For a command-only backend it derives file operations
 through shell commands. A filesystem-only backend works without a shell; calling `run` on its
 facade raises `UserError`. When both capabilities are present, commands and file operations must
-use the same environment.
+use the same environment and path namespace.
 
 This backend runs commands on the host under a directory selected from its reference:
 
