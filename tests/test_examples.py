@@ -32,6 +32,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelHTTPError,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -1334,6 +1335,19 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
+    elif isinstance(m, UserPromptPart) and m.content == 'My deployment region is eu-west-1.':
+        return ModelResponse(parts=[TextPart("I'll remember that.")])
+    elif (
+        isinstance(m, UserPromptPart)
+        and m.content == 'Which deployment region did I choose?'
+        and any(
+            isinstance(part, UserPromptPart) and part.content == 'My deployment region is eu-west-1.'
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+    ):
+        return ModelResponse(parts=[TextPart('You chose eu-west-1.')])
     elif isinstance(m, UserPromptPart) and m.content == 'Refund $49.99 from payment pay_123.':
         return ModelResponse(
             parts=[
