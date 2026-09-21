@@ -66,9 +66,11 @@ from ._utils import (
     apply_message_metadata,
     dump_message_metadata,
     dump_provider_metadata,
+    get_ui_message_id,
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
+    store_ui_message_id,
     tool_return_output,
 )
 from .request_types import (
@@ -618,6 +620,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             target_type = ModelResponse if msg.role == 'assistant' else ModelRequest
             if (target := builder.last_modified(checkpoint, of_type=target_type)) is not None:
                 apply_message_metadata(target, msg.metadata)
+                # Keep the client `UIMessage.id` so `dump_messages` can restore it instead of
+                # minting a new one (needed for regenerate / message sync by id).
+                store_ui_message_id(target, msg.role, msg.id)
 
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
@@ -991,7 +996,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Application keys in `ModelRequest.metadata` round-trip, but the reserved `__pydantic_ai__`
         namespace and top-level `ModelResponse.provider_details` do not. `UIMessage.metadata` is
         client-controlled, so framework and provider response state is not exposed or restored through
-        it; see `_PydanticAIMessageMetadata`.
+        it; see `_PydanticAIMessageMetadata`. Inbound `UIMessage.id` values are stored under
+        `__pydantic_ai__` on load and preferred again on dump (unless `generate_message_id` is
+        provided), so regenerate / sync-by-id round-trips keep the client id.
 
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the
@@ -1022,7 +1029,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, RetryPromptPart) and part.tool_name:
                         tool_results[part.tool_call_id] = part
 
-        id_generator = generate_message_id or _generate_message_id
+        def resolve_message_id(
+            message: ModelRequest | ModelResponse, role: Literal['system', 'user', 'assistant'], index: int
+        ) -> str:
+            if generate_message_id is not None:
+                return generate_message_id(message, role, index)
+            if preserved_id := get_ui_message_id(message, role):
+                return preserved_id
+            return _generate_message_id(message, role, index)
+
         result: list[UIMessage] = []
         message_index = 0
 
@@ -1035,7 +1050,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 if system_ui_parts:
                     result.append(
                         UIMessage(
-                            id=id_generator(msg, 'system', message_index),
+                            id=resolve_message_id(msg, 'system', message_index),
                             role='system',
                             metadata=None if user_ui_parts else request_metadata,
                             parts=system_ui_parts,
@@ -1046,7 +1061,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 if user_ui_parts:
                     result.append(
                         UIMessage(
-                            id=id_generator(msg, 'user', message_index),
+                            id=resolve_message_id(msg, 'user', message_index),
                             role='user',
                             metadata=request_metadata,
                             parts=user_ui_parts,
@@ -1061,7 +1076,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 if ui_parts:  # pragma: no branch
                     result.append(
                         UIMessage(
-                            id=id_generator(msg, 'assistant', message_index),
+                            id=resolve_message_id(msg, 'assistant', message_index),
                             role='assistant',
                             metadata=dump_message_metadata(msg),
                             parts=ui_parts,

@@ -148,15 +148,27 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
     restored as-is onto `message.metadata`; an empty/missing app-side dict leaves any
     previously-attached `message.metadata` untouched, which matters when consecutive
     `UIMessage`s merge into the same `ModelRequest` and only one carries application fields.
+
+    Existing server-side `__pydantic_ai__` state on `message.metadata` (e.g. preserved
+    `UIMessage.id`s) is kept when application metadata is written, and client-supplied
+    `__pydantic_ai__` keys are never restored.
     """
     if not is_str_dict(metadata):
         return
+
+    existing_internal = None
+    if message.metadata:
+        raw_existing_internal = message.metadata.get(_INTERNAL_METADATA_KEY)
+        if isinstance(raw_existing_internal, dict):
+            existing_internal = raw_existing_internal
 
     raw_pydantic_metadata = metadata.get(PROVIDER_METADATA_KEY)
     if application_metadata := {
         key: value for key, value in metadata.items() if key not in (PROVIDER_METADATA_KEY, _INTERNAL_METADATA_KEY)
     }:
         message.metadata = application_metadata
+        if existing_internal is not None:
+            message.metadata[_INTERNAL_METADATA_KEY] = existing_internal
 
     if not is_str_dict(raw_pydantic_metadata):
         return
@@ -168,6 +180,41 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 
     if pydantic_metadata.timestamp is not None:
         message.timestamp = pydantic_metadata.timestamp
+
+
+_UI_MESSAGE_IDS_KEY = 'ui_message_ids'
+
+
+def store_ui_message_id(message: ModelMessage, role: str, ui_message_id: str) -> None:
+    """Persist a client `UIMessage.id` under the reserved `__pydantic_ai__` metadata namespace.
+
+    Kept out of `UIMessage.metadata` on dump (see `dump_message_metadata`) so it never rides
+    the client-controlled wire as a forgeable server field — only `UIMessage.id` itself is
+    restored. Role-keyed so a split system+user `ModelRequest` can retain both inbound IDs.
+    """
+    metadata = dict(message.metadata) if message.metadata else {}
+    raw_internal = metadata.get(_INTERNAL_METADATA_KEY)
+    internal: dict[str, Any] = dict(raw_internal) if isinstance(raw_internal, dict) else {}
+    raw_ids = internal.get(_UI_MESSAGE_IDS_KEY)
+    ids: dict[str, Any] = dict(raw_ids) if isinstance(raw_ids, dict) else {}
+    ids[role] = ui_message_id
+    internal[_UI_MESSAGE_IDS_KEY] = ids
+    metadata[_INTERNAL_METADATA_KEY] = internal
+    message.metadata = metadata
+
+
+def get_ui_message_id(message: ModelMessage, role: str) -> str | None:
+    """Return a previously stored `UIMessage.id` for `role`, if any."""
+    if not message.metadata:
+        return None
+    raw_internal = message.metadata.get(_INTERNAL_METADATA_KEY)
+    if not isinstance(raw_internal, dict):
+        return None
+    raw_ids = raw_internal.get(_UI_MESSAGE_IDS_KEY)
+    if not isinstance(raw_ids, dict):
+        return None
+    value = raw_ids.get(role)
+    return value if isinstance(value, str) else None
 
 
 # Data-carrying chunk types that have a direct UIMessagePart counterpart in the
