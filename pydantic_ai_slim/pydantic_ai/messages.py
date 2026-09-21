@@ -1132,6 +1132,18 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.content, Sequence):
+            # Without this, a non-sequence that happens to be iterable (like a `dict`) is iterated by every
+            # model's message mapper, silently sending e.g. the dict's keys to the model as the prompt.
+            # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
+            # message history, where a `ValueError` becomes a `ValidationError` with location info.
+            raise ValueError(
+                '`UserPromptPart.content` must be a `str` or a sequence of `UserContent` items, '
+                f'got `{type(self.content).__name__}`. Serialize the value yourself before passing it, '
+                'e.g. with Pydantic (`pydantic_core.to_json()`) or `pydantic_ai.format_as_xml()`.'
+            )
+
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
         content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content

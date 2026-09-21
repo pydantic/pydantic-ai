@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json, to_jsonable_python
 
 from pydantic_ai import (
@@ -3281,3 +3281,43 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)
     assert isinstance(window[1], ModelRequest)
+
+
+def test_user_prompt_part_content_must_be_a_str_or_sequence():
+    """A non-sequence like a `dict` is iterable, so without a guard every model mapper would send its keys as the prompt.
+
+    A unit test rather than a VCR test: the guard fires before any request is built, so there is nothing to record.
+    """
+    error = re.escape(
+        '`UserPromptPart.content` must be a `str` or a sequence of `UserContent` items, got `dict`. '
+        'Serialize the value yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) '
+        'or `pydantic_ai.format_as_xml()`.'
+    )
+
+    with pytest.raises(ValueError, match=error):
+        UserPromptPart(cast(Any, {'name': 'John', 'height': 6}))
+
+    # Non-string keys used to reach `assert_never` and raise a bare `AssertionError` from inside the model mapper.
+    with pytest.raises(ValueError, match=error):
+        UserPromptPart(cast(Any, {1: 'John'}))
+
+    # Deserialized message history is validated by Pydantic before `__post_init__` runs.
+    with pytest.raises(ValidationError):
+        ModelMessagesTypeAdapter.validate_python(
+            [{'kind': 'request', 'parts': [{'part_kind': 'user-prompt', 'content': {'name': 'John'}}]}]
+        )
+
+    # Valid content is unaffected.
+    assert UserPromptPart('hello').content == 'hello'
+    assert UserPromptPart(['hello', ImageUrl('https://example.com/image.png')]).content == [
+        'hello',
+        ImageUrl('https://example.com/image.png'),
+    ]
+
+
+@pytest.mark.anyio
+async def test_agent_run_rejects_non_sequence_user_prompt():
+    """The same guard reached through the public API, where the prompt becomes a `UserPromptPart` inside the run."""
+    agent = Agent(TestModel())
+    with pytest.raises(ValueError, match='must be a `str` or a sequence of `UserContent` items, got `dict`'):
+        await agent.run(cast(Any, {'name': 'John'}))
