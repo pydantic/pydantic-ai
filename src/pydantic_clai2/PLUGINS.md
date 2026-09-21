@@ -247,6 +247,14 @@ the editor's input reader. It does not switch to the alternate screen. The draft
 is restored on exit, and your picks are printed to the transcript afterwards.
 `/plugins disable ask_user` takes the tool away.
 
+The inline `ask_user_question` picker also offers `Other (type answer)`.
+Choose it to type your own answer instead of the suggested options, including for
+multi-select questions. Enter submits nonblank text. Esc returns to the choices
+and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
+edit the text. Multiline paste is inserted as text and waits for Enter; it does
+not submit an answer or select choices. The conversation stays visible while you type. Custom answers
+appear in the transcript and reach the model as a one-item list under the question's header.
+
 The capability does not know it is in a terminal. It hands an `AskUserRequest`
 to an `Answerer` (one async callable returning an `AskUserResponse`) and waits.
 To answer questions somewhere else, a web page or a chat bridge, say, replace

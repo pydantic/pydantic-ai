@@ -110,10 +110,11 @@ class AskUserRequest:
 
 @dataclass(frozen=True, kw_only=True)
 class AskUserAnswer:
-    """The labels the user picked for one question."""
+    """Picked labels, or a custom answer instead of those labels, for one question."""
 
     header: str
-    selected: tuple[str, ...]
+    selected: tuple[str, ...] = ()
+    custom_answer: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -140,7 +141,7 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
     """Raise `ValueError` when a response does not fit its request.
 
     A cancelled response carries no answers. A completed one answers every question with distinct
-    labels that question offered, one of them unless `multi_select`.
+    labels that question offered, one of them unless `multi_select`, or a nonblank custom answer.
     """
     if response.cancelled:
         if response.answers:
@@ -151,6 +152,13 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
         question = questions.pop(answer.header, None)
         if question is None:
             raise ValueError(f'answer for unknown or repeated question {answer.header!r}')
+        if answer.custom_answer is not None:
+            if answer.selected:
+                raise ValueError('a custom answer cannot also select options')
+            if not answer.custom_answer.strip():
+                raise ValueError('a custom answer must not be blank')
+            _printable(answer.custom_answer, newlines=True)
+            continue
         labels = {option.label for option in question.options}
         if unknown := [label for label in answer.selected if label not in labels]:
             raise ValueError(f'answer for {answer.header!r} picked options it does not offer: {unknown}')

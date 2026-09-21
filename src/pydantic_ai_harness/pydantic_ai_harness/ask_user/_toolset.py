@@ -42,8 +42,9 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
         """Ask the user one or more multiple-choice questions and wait for the answers.
 
         Use it when the task is ambiguous and the answer cannot be found in the workspace.
-        Offer concrete options; the user can only pick from them. The result maps each
-        question's `header` to the labels the user picked, or explains that the user declined.
+        Offer concrete options; the answerer may also accept a custom answer. The result maps
+        each question's `header` to picked labels or a one-item list containing the custom
+        answer, or explains that the user declined.
 
         Args:
             ctx: Framework-provided run context.
@@ -58,4 +59,7 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
         check_response(request, response)
         if response.cancelled:
             return DECLINED
-        return {answer.header: list(answer.selected) for answer in response.answers}
+        return {
+            answer.header: [answer.custom_answer] if answer.custom_answer is not None else list(answer.selected)
+            for answer in response.answers
+        }

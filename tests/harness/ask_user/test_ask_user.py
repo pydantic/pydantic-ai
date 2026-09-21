@@ -361,3 +361,49 @@ class TestSchema:
     def test_request_ids_are_unique(self) -> None:
         first, second = AskUserRequest(questions=(question(),)), AskUserRequest(questions=(question(),))
         assert first.id != second.id
+
+
+class TestCustomAnswers:
+    async def test_custom_and_selected_answers_reach_model_and_observers(self) -> None:
+        response = AskUserResponse(
+            answers=(
+                AskUserAnswer(header='Approach', custom_answer='Use a different approach\nKeep 中文'),
+                AskUserAnswer(header='Targets', selected=('api.py',)),
+            )
+        )
+        observer = Observer()
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[
+                AskUser(answerer=ScriptedAnswerer(response)),
+                observer,
+            ],
+        )
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert returns[0].content == {'Approach': ['Use a different approach\nKeep 中文'], 'Targets': ['api.py']}
+        assert observer.answered[0].response == response
+
+    @pytest.mark.parametrize(
+        'custom, selected, message',
+        [
+            ('', (), 'must not be blank'),
+            (' \n ', (), 'must not be blank'),
+            ('custom', ('A',), 'cannot also select'),
+            ('bad\x1b[31m', (), 'control characters'),
+            ('bad\ttext', (), 'control characters'),
+        ],
+    )
+    def test_invalid_custom_answers(self, custom: str, selected: tuple[str, ...], message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            check_response(
+                AskUserRequest(questions=(question(),)),
+                AskUserResponse(answers=(AskUserAnswer(header='Approach', selected=selected, custom_answer=custom),)),
+            )
+
+    def test_custom_answer_replaces_multi_select(self) -> None:
+        check_response(
+            AskUserRequest(questions=(question(multi_select=True),)),
+            AskUserResponse(answers=(AskUserAnswer(header='Approach', custom_answer='Neither'),)),
+        )

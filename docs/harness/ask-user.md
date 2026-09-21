@@ -56,6 +56,11 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
 - A completed `AskUserResponse` carries one `AskUserAnswer` per question, keyed by `header`,
   with the picked option labels in `selected`: exactly one unless the question is
   `multi_select`, at least one either way, and no label twice.
+- An answerer may instead return `AskUserAnswer(header=q.header, custom_answer='My own answer')`.
+  Leave `selected` empty. Custom text must be nonblank and contain no control characters
+  other than newlines. The tool returns it as a one-item list under the same header;
+  existing selected-label responses keep their format. The answerer, not the model's
+  question schema, decides whether to offer text entry.
 - When the user declines, return `AskUserResponse(cancelled=True)` with no answers. The tool
   result tells the model the user declined; nothing is raised into the run.
 - A response that does not fit the request (an unknown header, a label the question did not
@@ -108,7 +113,7 @@ carrying a field the schema does not have, is returned to the model as a validat
 not sent to the answerer. Once
 validated the questions are frozen: what the answerer sees is what the model asked.
 
-The result is a JSON object mapping each header to the list of picked labels, or the sentence
+The result is a JSON object mapping each header to the list of picked labels (or one custom answer), or the sentence
 `The user declined to answer. Continue without the answer, or ask differently if it is essential.`
 
 The capability adds one instruction: ask when the task is ambiguous and the answer is not in
