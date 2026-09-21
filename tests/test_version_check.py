@@ -9,6 +9,7 @@ from importlib import metadata
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import httpx2
 import pytest
@@ -32,14 +33,15 @@ def version_check_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.delenv('DO_NOT_TRACK', raising=False)
     monkeypatch.delenv('AI_AGENT', raising=False)
     monkeypatch.delenv('AGENT', raising=False)
-    for _, signals in _display._CODING_AGENTS:  # pyright: ignore[reportPrivateUsage]
-        for signal in signals:
-            if signal.endswith('*'):
-                for name in tuple(os.environ):
-                    if name.startswith(signal[:-1]):
-                        monkeypatch.delenv(name)
-            else:
-                monkeypatch.delenv(signal.partition('=')[0], raising=False)
+    # The agent running the suite sets some of these itself, so which of them exist depends on who
+    # ran `pytest`: gathered first, so that clearing them is the same code path either way.
+    signals = [signal for _, signals in _display._CODING_AGENTS for signal in signals]  # pyright: ignore[reportPrivateUsage]
+    names = {signal.partition('=')[0] for signal in signals if not signal.endswith('*')}
+    names |= {
+        name for name in os.environ for signal in signals if signal.endswith('*') and name.startswith(signal[:-1])
+    }
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(_version_check.time, 'time', lambda: _NOW)
     monkeypatch.setattr(_display, 'detect_coding_agent', lambda: None)
 
@@ -134,12 +136,11 @@ def test_fresh_machine_checks_without_a_cached_notice(monkeypatch: pytest.Monkey
 def test_recent_cache_does_not_check(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
     write_cache(cache_file, checked_at=_NOW - _CACHE_AGE + 1, latest={'pydantic-ai': '2.46.0'})
 
-    def unexpected_get(*args: object, **kwargs: object) -> None:
-        pytest.fail('unexpected request')
-
-    monkeypatch.setattr(_version_check.httpx2, 'get', unexpected_get)
+    get = Mock()
+    monkeypatch.setattr(_version_check.httpx2, 'get', get)
 
     assert _version_check.start_version_check() is None
+    get.assert_not_called()
 
 
 def test_stale_cache_checks(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
@@ -259,15 +260,15 @@ def test_corrupt_cache_is_a_miss(monkeypatch: pytest.MonkeyPatch, cache_file: Pa
 )
 def test_opt_out_never_accesses_cache_or_network(variable: str, value: str, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(variable, value)
-    monkeypatch.setattr(_version_check, '_read_cache', lambda: pytest.fail('unexpected cache read'))
-
-    def unexpected_get(*args: object, **kwargs: object) -> None:
-        pytest.fail('unexpected request')
-
-    monkeypatch.setattr(_version_check.httpx2, 'get', unexpected_get)
+    read_cache = Mock()
+    get = Mock()
+    monkeypatch.setattr(_version_check, '_read_cache', read_cache)
+    monkeypatch.setattr(_version_check.httpx2, 'get', get)
 
     assert _version_check.cached_updates() == []
     assert _version_check.start_version_check() is None
+    read_cache.assert_not_called()
+    get.assert_not_called()
 
 
 @pytest.mark.parametrize('value', ['', '0', 'false', 'FALSE'])

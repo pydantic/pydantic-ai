@@ -9,6 +9,7 @@ from collections.abc import Callable
 from importlib import metadata
 from io import StringIO
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from pydantic import BaseModel
@@ -870,12 +871,7 @@ def test_display_banner_once_per_process(monkeypatch: pytest.MonkeyPatch, stderr
 
 def test_claimed_banner_is_not_displayed(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
     """How `clai` stops a run from printing a second banner over the answer to the first prompt."""
-    started = False
-
-    def start_version_check() -> None:
-        nonlocal started
-        started = True
-
+    start_version_check = Mock()
     monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
     monkeypatch.setattr(sys, 'stderr', stderr)
     monkeypatch.setattr(_version_check, 'start_version_check', start_version_check)
@@ -885,7 +881,7 @@ def test_claimed_banner_is_not_displayed(monkeypatch: pytest.MonkeyPatch, stderr
     display_banner()
 
     assert stderr.getvalue() == ''
-    assert started is False
+    start_version_check.assert_not_called()
 
 
 def test_banner_is_shown_by_agent_run(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
