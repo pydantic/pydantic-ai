@@ -27,6 +27,8 @@ from ..conftest import IsDatetime, IsStr, try_import
 from .conftest import RequestCapture
 
 with try_import() as imports_successful:
+    from openai.types import chat
+
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 
 pytestmark = [
@@ -366,3 +368,307 @@ async def test_native_tool_unsupported(allow_model_requests: None) -> None:
 
     with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('What is the weather in Paris?')
+
+
+# ---------------------------------------------------------------------------
+# Bedrock-native finish_reason handling (#7816)
+#
+# `BedrockMantleChatModel` rides the generic OpenAI re-validation path, whose strict
+# 5-value `finish_reason` Literal rejects platform-native values such as
+# `guardrail_intervened` (litellm documents that value as Bedrock-specific in
+# BerriAI/litellm#22138). The tests below pin the same contract set the `ZaiModel`
+# fix (#7685) established:
+#
+#   * widened validation accepts the non-standard literal (raw value survives),
+#   * normalisation maps it onto the standard `FinishReason` enum,
+#   * the un-normalised raw string is preserved for forensics in
+#     `provider_details['finish_reason']`,
+#   * both non-streaming and streaming paths behave identically,
+#   * genuinely malformed payloads still fail loudly as `UnexpectedModelBehavior`.
+#
+# Setup follows the mock-construct pattern the repo uses for provider-level override
+# tests (see `test_zai.py` / `test_openrouter.py`): `.model_construct()` bypasses
+# Pydantic field validation because the strict public SDK constructors would reject
+# the dialect values before pydantic-ai sees them.
+# ---------------------------------------------------------------------------
+
+
+def _mantle_chat_model():
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel
+    from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
+
+    provider = BedrockMantleProvider(openai_client=AsyncOpenAI(api_key='offline', base_url='http://127.0.0.1:9/v1'))
+    return BedrockMantleChatModel('openai.gpt-oss-safeguard-120b', provider=provider)
+
+
+@pytest.mark.parametrize(
+    ('raw_finish_reason', 'mapped_finish_reason'),
+    [
+        ('guardrail_intervened', 'content_filter'),
+    ],
+)
+def test_bedrock_mantle_nonstd_finish_reason_nonstream(raw_finish_reason: str, mapped_finish_reason: str) -> None:
+    """Non-streaming path: Bedrock-native finish reasons survive widened validation."""
+    from typing import cast
+
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    from pydantic_ai.messages import FinishReason
+
+    msg = ChatCompletionMessage(role='assistant', content='blocked')
+    bad_choice = Choice.model_construct(finish_reason=raw_finish_reason, index=0, message=msg)
+    bad_completion = chat.ChatCompletion.model_construct(
+        id='123',
+        choices=[bad_choice],
+        created=1704067200,  # 2024-01-01
+        model='openai.gpt-oss-safeguard-120b',
+        object='chat.completion',
+    )
+
+    model = _mantle_chat_model()
+
+    # 1. Widened validation accepts the non-standard literal without raising.
+    validated = model._validate_completion(bad_completion)  # type: ignore[reportPrivateUsage]
+    v_choice = validated.choices[0]
+    assert v_choice.finish_reason == raw_finish_reason, 'Raw finish_reason must survive widened validation'
+
+    # 2. Normalisation maps to the standard pydantic-ai FinishReason str-Literal.
+    mapped: FinishReason = model._map_finish_reason(v_choice.finish_reason)  # type: ignore[reportPrivateUsage, reportArgumentType, assignment]
+    assert mapped is not None
+    assert mapped == mapped_finish_reason
+
+    # 3. The inherited `_process_provider_details` helper stores the un-normalised raw
+    #    value for downstream forensics.
+    provider_details = model._process_provider_details(validated)  # type: ignore[reportPrivateUsage, arg-type]
+    assert provider_details is not None
+    raw_from_provider_details = cast(dict[str, object], provider_details).get('finish_reason')
+    assert raw_from_provider_details == raw_finish_reason
+
+
+@pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
+def test_bedrock_mantle_standard_finish_reasons_still_map_nonstream() -> None:
+    """Regression guard: the widened Literal leaves standard `stop` mapping untouched.
+
+    Unlike the non-standard cases above we intentionally use the strict public
+    constructors for `Choice` / `ChatCompletion` — the standard literals are in the
+    SDK's strict Literal, so they *should* survive public-ctor validation, and building
+    them this way guards against the widened schema accidentally altering behaviour for
+    normal values.
+    """
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    from pydantic_ai.messages import FinishReason
+
+    msg = ChatCompletionMessage(role='assistant', content='hello')
+    good_choice = Choice(finish_reason='stop', index=0, message=msg)
+    good_completion = chat.ChatCompletion(
+        id='789',
+        choices=[good_choice],
+        created=1704067200,
+        model='openai.gpt-oss-safeguard-120b',
+        object='chat.completion',
+    )
+
+    model = _mantle_chat_model()
+    validated = model._validate_completion(good_completion)  # type: ignore[reportPrivateUsage]
+    v_choice = validated.choices[0]
+    mapped: FinishReason = model._map_finish_reason(v_choice.finish_reason)  # type: ignore[reportPrivateUsage, assignment]
+    assert mapped is not None
+    assert mapped == 'stop'
+
+
+@pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
+async def test_bedrock_mantle_nonstd_finish_reason_stream() -> None:
+    """Streaming path: Bedrock-native terminal finish reason passes widened validation.
+
+    Exercises the same contracts as the non-stream test against the
+    `BedrockMantleStreamedResponse` overrides on the stream consumer side:
+
+      * `_validate_response` re-validates every chunk through the widened
+        `_BedrockMantleChatCompletionChunk`; the non-standard terminal chunk is
+        accepted rather than raising `ValidationError`.
+      * `_map_finish_reason` normalises the raw value onto the standard
+        `FinishReason` enum.
+      * Text deltas from intermediate chunks continue to stream through
+        (`'A' + 'B' == 'AB'` guard).
+    """
+    from collections.abc import AsyncIterator
+    from typing import cast
+
+    from pydantic_ai.messages import FinishReason
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleStreamedResponse
+
+    chunk_a = chat.ChatCompletionChunk.model_construct(
+        id='c1',
+        choices=[
+            chat.chat_completion_chunk.Choice.model_construct(
+                finish_reason=None,
+                index=0,
+                delta=chat.chat_completion_chunk.ChoiceDelta.model_construct(content='A'),
+            )
+        ],
+        created=1704067200,
+        model='openai.gpt-oss-safeguard-120b',
+        object='chat.completion.chunk',
+    )
+    chunk_b = chat.ChatCompletionChunk.model_construct(
+        id='c2',
+        choices=[
+            chat.chat_completion_chunk.Choice.model_construct(
+                finish_reason='guardrail_intervened',
+                index=0,
+                delta=chat.chat_completion_chunk.ChoiceDelta.model_construct(content='B'),
+            )
+        ],
+        created=1704067200,
+        model='openai.gpt-oss-safeguard-120b',
+        object='chat.completion.chunk',
+    )
+
+    async def chunk_source() -> AsyncIterator[chat.ChatCompletionChunk]:
+        yield chunk_a
+        yield chunk_b
+
+    # Bypass the public dataclass constructor: `_validate_response` only consumes the
+    # `_response` async iterator, and the strict inherited field type (`PeekableAsyncStream`)
+    # does not matter for this narrow `async for` usage. Mirrors the `test_zai.py` approach.
+    resp = object.__new__(BedrockMantleStreamedResponse)
+    object.__setattr__(resp, '_response', chunk_source())
+
+    text_parts: list[str] = []
+    last_chunk: chat.ChatCompletionChunk | None = None
+    async for validated_chunk in resp._validate_response():  # type: ignore[reportPrivateUsage]
+        last_chunk = validated_chunk
+        if validated_chunk.choices:
+            delta = validated_chunk.choices[0].delta
+            content: str = cast(str, getattr(delta, 'content', None)) or ''
+            if content:
+                text_parts.append(content)
+
+    assert ''.join(text_parts) == 'AB', 'Streamed text deltas must concatenate correctly'
+    assert last_chunk is not None
+    terminal_choice = last_chunk.choices[0]
+
+    # Raw non-standard value survives widened chunk validation.
+    assert terminal_choice.finish_reason == 'guardrail_intervened'
+
+    # Normalisation maps to the standard pydantic-ai FinishReason str-Literal.
+    mapped: FinishReason = BedrockMantleStreamedResponse._map_finish_reason(  # type: ignore[reportPrivateUsage, reportArgumentType, assignment]
+        resp,
+        terminal_choice.finish_reason,
+    )
+    assert mapped is not None
+    assert mapped == 'content_filter'
+
+
+@pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
+def test_bedrock_mantle_streamed_response_cls_wiring() -> None:
+    """The model factory must hand out `BedrockMantleStreamedResponse` for streams.
+
+    Coverage contract: `_streamed_response_cls` is the seam between the shared
+    OpenAI stream machinery and Mantle's chunk re-validation; the `object.__new__`
+    harness used by the chunk tests above bypasses it, so this direct assertion
+    keeps the wiring checked and the repo-wide fail_under=100 coverage gate green.
+    """
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleStreamedResponse
+
+    model = _mantle_chat_model()
+    assert model._streamed_response_cls is BedrockMantleStreamedResponse  # type: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
+def test_bedrock_mantle_validate_completion_raises_unexpected_behavior_on_malformed_payload() -> None:
+    """Malformed SDK completions are normalised to `UnexpectedModelBehavior` on the non-stream path.
+
+    Coverage contract: `BedrockMantleChatModel._validate_completion` has an
+    `except ValidationError` branch whose sole responsibility is to wrap Pydantic
+    validation failures raised by the widened completion type, then re-raise as
+    `UnexpectedModelBehavior`. Without this test the exception-only branch stays
+    un-exercised and the repo-wide `fail_under = 100` coverage rule aborts CI.
+    """
+    from unittest.mock import MagicMock
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    # Deliberately malformed payload: missing required top-level keys (`id`, `created`,
+    # `object`, `model`) and a choice with the wrong shape, so the widened
+    # `_BedrockMantleChatCompletion.model_validate` MUST raise `ValidationError`.
+    bad = MagicMock(name='malformed-chat-completion')
+    bad.model_dump.return_value = {
+        'choices': [{'finish_reason': 'stop'}],
+    }
+
+    model = _mantle_chat_model()
+    with pytest.raises(UnexpectedModelBehavior, match=r'Invalid response from') as exc_info:
+        model._validate_completion(bad)  # type: ignore[reportPrivateUsage, arg-type]
+    assert exc_info.value.__cause__ is not None, 'The chain must preserve the original ValidationError'
+
+
+@pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
+def test_bedrock_mantle_unknown_finish_reason_still_fails_loudly() -> None:
+    """Widening is per-provider vocabulary, not a catch-all: unknown values still abort.
+
+    A made-up termination cause must keep the base-class semantics —
+    `UnexpectedModelBehavior`-wrapped validation failure — so schema drift is caught
+    rather than silently mapped.
+    """
+    from unittest.mock import MagicMock
+
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    msg = ChatCompletionMessage(role='assistant', content='...')
+    bad_choice = Choice.model_construct(finish_reason='totally_not_a_real_cause', index=0, message=msg)
+    completion = chat.ChatCompletion.model_construct(
+        id='456',
+        choices=[bad_choice],
+        created=1704067200,
+        model='openai.gpt-oss-safeguard-120b',
+        object='chat.completion',
+    )
+
+    # The fake value must not be in the widened literal; sanity-check via a spy dump so we
+    # really exercise the model_validate path of `_BedrockMantleChatCompletion`.
+    spy = MagicMock(name='completion-spy')
+    spy.model_dump.return_value = completion.model_dump()
+
+    model = _mantle_chat_model()
+    with pytest.raises(UnexpectedModelBehavior, match=r"Input should be 'stop'"):
+        model._validate_completion(spy)  # type: ignore[reportPrivateUsage, arg-type]
+
+
+@pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')
+async def test_bedrock_mantle_malformed_chunk_fails_loudly_in_stream() -> None:
+    """Streaming path keeps fail-loud semantics for genuinely malformed chunks.
+
+    Coverage contract for the `except ValidationError` branch inside
+    `BedrockMantleStreamedResponse._validate_response`.
+    """
+    from collections.abc import AsyncIterator
+    from unittest.mock import MagicMock
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleStreamedResponse
+
+    malformed = MagicMock(name='malformed-chunk')
+    malformed.model_dump.return_value = {
+        # missing: id, created, object, model, index, delta
+        'choices': [{'finish_reason': 'stop'}],
+    }
+
+    async def chunk_source() -> AsyncIterator[chat.ChatCompletionChunk]:
+        yield malformed
+
+    resp = object.__new__(BedrockMantleStreamedResponse)
+    object.__setattr__(resp, '_response', chunk_source())
+    object.__setattr__(resp, '_model_name', 'openai.gpt-oss-safeguard-120b')
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'chat completions stream'):
+        async for _chunk in resp._validate_response():  # type: ignore[reportPrivateUsage]
+            pass
