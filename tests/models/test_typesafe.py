@@ -594,7 +594,8 @@ async def test_the_fill_names_the_route_that_was_picked(allow_model_requests: No
     seen: list[dict[str, Any]] = []
 
     def no_docstring_tool(reason: Literal['refund', 'outage', 'other']) -> str:
-        return 'done'  # pragma: no cover
+        # Jev picks this route and fills it, so the tool really runs: no `pragma: no cover` here.
+        return 'done'
 
     def record(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
