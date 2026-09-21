@@ -49,6 +49,7 @@ from .exceptions import (
     ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
+    UsageExtractionFailedWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -235,6 +236,7 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
+    'UsageExtractionFailedWarning',
     'ModelRetry',
     'ToolFailed',
     'ModelAPIError',

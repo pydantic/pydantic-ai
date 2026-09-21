@@ -14,7 +14,7 @@ from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning
+from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -326,15 +326,30 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
+        extraction_error: Exception | None = None
         for provider_id, provider_api_url in iter_provider_references(
             provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
         ):
             try:
                 provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
+            except LookupError:
+                continue
+            except Exception as e:
+                extraction_error = e
+                continue
+
+            try:
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
                 return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
-            except Exception:
-                pass
+            except Exception as e:
+                extraction_error = e
+
+        if extraction_error is not None:
+            warnings.warn(
+                f'Failed to extract usage with `genai-prices`: {type(extraction_error).__name__}: {extraction_error}',
+                UsageExtractionFailedWarning,
+                stacklevel=2,
+            )
         return cls(details=details)
 
 

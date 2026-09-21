@@ -14,5 +14,9 @@ class CostCalculationFailedWarning(Warning):
     """Warning raised when cost calculation fails."""
 
 
+class UsageExtractionFailedWarning(Warning):
+    """Warning raised when usage extraction fails."""
+
+
 class CostNotFoundWarning(Warning):
     """Warning raised when cost is not found."""

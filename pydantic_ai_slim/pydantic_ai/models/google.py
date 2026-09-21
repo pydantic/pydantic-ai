@@ -2089,6 +2089,21 @@ def _usage_metadata_as_usage(
     [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
     speaks the generate-content field names, so a Live caller translates before handing it over.
     """
+    if not any(
+        (
+            prompt_token_count,
+            output_token_count,
+            cached_content_token_count,
+            thoughts_token_count,
+            tool_use_prompt_token_count,
+            prompt_tokens_details,
+            cache_tokens_details,
+            output_tokens_details,
+            tool_use_prompt_tokens_details,
+        )
+    ):
+        return existing_usage or usage.RequestUsage()
+
     details: dict[str, int] = {}
     if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
