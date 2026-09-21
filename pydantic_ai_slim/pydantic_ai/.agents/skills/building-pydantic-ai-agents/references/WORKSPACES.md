@@ -1,30 +1,27 @@
 # Workspaces
 
-Attach a workspace to a run and use `ctx.workspace` in tools:
+Attach a workspace capability to the agent and use `ctx.workspace` in tools:
 
 ```python
-from pathlib import Path
-
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.capabilities import LocalWorkspace
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.2', capabilities=[LocalWorkspace('~/project')])
 
 
 @agent.tool
 async def execute(ctx: RunContext[None], command: list[str]) -> str:
     result = await ctx.workspace.run(command, timeout=30)
     return result.stdout
-
-
-async def main() -> None:
-    workspace = LocalWorkspaceBackend(Path.cwd())
-    await agent.run('Inspect the project.', workspace=workspace)
 ```
 
-`LocalWorkspaceBackend` runs host subprocesses and provides no isolation: `working_dir` is only the
-default directory and the base for relative paths, not a jail. Use it only for trusted work.
-`working_dir` must be absolute (a leading `~` is expanded), and the caller owns that directory.
+`LocalWorkspace(working_dir, *, read_only=False)` runs host subprocesses and provides no isolation:
+`working_dir` is only the default directory and the base for relative paths, not a jail. Use it only
+for trusted work. `working_dir` is required and must be absolute (a leading `~` is expanded); the
+caller owns that directory. `read_only=True` wraps it in `ReadOnlyWorkspace`. It has the default id
+`local_workspace`, so a second one replaces the first unless it gets its own `id`, and it never
+claims a `WorkspaceRef`. For a single run, pass the backend instead:
+`agent.run(..., workspace=LocalWorkspaceBackend('/absolute/path'))`.
 Without an attached workspace, operations raise `UserError`. `Workspace` offers the same run,
 file, and bounded-read methods for every backend; wrappers can override primitives and
 `ReadOnlyWorkspace` blocks commands and changes.

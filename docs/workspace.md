@@ -7,13 +7,13 @@ Tools use it through [`ctx.workspace`][pydantic_ai.tools.RunContext.workspace]. 
 is available but native filesystem access is not, [`Workspace`][pydantic_ai.workspaces.Workspace]
 performs file operations through the shell.
 
-```python
+```python {title="workspace_agent.py"}
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.capabilities import LocalWorkspace
 
-agent = Agent('anthropic:claude-sonnet-5')
+agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace(Path.cwd())])
 
 
 @agent.tool
@@ -23,18 +23,48 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
 
 
 async def main() -> None:
-    workspace = LocalWorkspaceBackend(Path.cwd())
-    await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', workspace=workspace)
+    await agent.run('Write fizzbuzz to fizzbuzz.py and run it.')
 ```
 
 ## Choosing a workspace
 
-[`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend] runs commands on this
-machine and uses its filesystem. It isolates nothing and is not a jail: its `working_dir` is only
-where commands start and what relative paths resolve against, so absolute paths and commands reach
-anywhere on the host that this process can. Use it for trusted, local work; run untrusted code in a
-container or VM through a provider workspace. `working_dir` must be absolute (a leading `~` is
-expanded), and the caller owns that directory's creation and cleanup.
+The [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] capability gives every run of an
+agent a workspace on this machine: commands are host subprocesses and files are the host's files.
+It isolates nothing and is not a jail. Its `working_dir` is only where commands start and what
+relative paths resolve against, so absolute paths and commands reach anywhere on the host that this
+process can. Use it for trusted, local work; run untrusted code in a container or VM through a
+provider workspace. `working_dir` is required and must be absolute, such as `Path.cwd()` or
+`'~/project'` (a leading `~` is expanded), so a run never lands in the host process's working
+directory implicitly. The caller owns that directory's creation and cleanup.
+
+Pass `read_only=True` to let tools read and list files while refusing commands and file changes:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('/srv/data', read_only=True)])
+```
+
+An agent has one `LocalWorkspace`: like other capabilities with a default `id`, a second one
+replaces the first unless you give it its own `id`.
+
+The capability supplies a [`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend].
+To choose the workspace for a single run instead, pass a backend through `workspace=`, which takes
+precedence over the agent's capabilities:
+
+```python {requires="workspace_agent.py"}
+from pathlib import Path
+
+from pydantic_ai.workspaces import LocalWorkspaceBackend
+
+from workspace_agent import agent
+
+
+async def main() -> None:
+    workspace = LocalWorkspaceBackend(Path.cwd())
+    await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', workspace=workspace)
+```
 
 `LocalWorkspaceBackend` passes only `PATH`, `HOME`, `LANG`, and `TMPDIR` through to commands, plus any `env`
 you supply. It caps captured command output at 10 MiB and raises
@@ -150,30 +180,10 @@ selected workspace.
 
 `get_workspace` is synchronous and must have no side effects.
 
-```python
-from dataclasses import dataclass
-from pathlib import Path
-
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
-
-
-@dataclass
-class LocalWorkspaceCapability(AbstractCapability[None]):
-    root: Path
-
-    def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        if ref is not None:
-            return None
-        return LocalWorkspaceBackend(self.root)
-
-
-agent = Agent(
-    'anthropic:claude-sonnet-5',
-    capabilities=[LocalWorkspaceCapability(root=Path.cwd())],
-)
-```
+[`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] never claims a reference, because a
+local workspace has none. List it after provider capabilities to make it the fallback when there is
+no environment to continue in. To supply workspaces from your own capability, implement
+`get_workspace`; see [Durable execution](#durable-execution) for an example.
 
 To disable workspace access explicitly, pass an
 [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] as `workspace=`:

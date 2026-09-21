@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
+    LocalWorkspace,
     NativeTool,
     PrefixTools,
     RaiseContentFilterError,
@@ -96,6 +97,7 @@ def test_capability_types() -> None:
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'Instrumentation': Instrumentation,
+            'LocalWorkspace': LocalWorkspace,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
@@ -1817,6 +1819,18 @@ def test_model_json_schema_with_capabilities():
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
+                'short_spec_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'LocalWorkspace': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Localworkspace',
+                        }
+                    },
+                    'required': ['LocalWorkspace'],
+                    'title': 'short_spec_LocalWorkspace',
+                    'type': 'object',
+                },
                 'short_spec_NativeTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1887,6 +1901,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'Instrumentation': {'$ref': '#/$defs/spec_params_Instrumentation'}},
                     'required': ['Instrumentation'],
                     'title': 'spec_Instrumentation',
+                    'type': 'object',
+                },
+                'spec_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {'LocalWorkspace': {'$ref': '#/$defs/spec_params_LocalWorkspace'}},
+                    'required': ['LocalWorkspace'],
+                    'title': 'spec_LocalWorkspace',
                     'type': 'object',
                 },
                 'spec_Thinking': {
@@ -1997,6 +2018,22 @@ def test_model_json_schema_with_capabilities():
                         },
                     },
                     'title': 'spec_params_Instrumentation',
+                    'type': 'object',
+                },
+                'spec_params_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'working_dir': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Working Dir',
+                        },
+                        'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                    },
+                    'required': ['working_dir'],
+                    'title': 'spec_params_LocalWorkspace',
                     'type': 'object',
                 },
                 'spec_params_Thinking': {
@@ -2196,6 +2233,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                                 {'const': 'Instrumentation', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Instrumentation'},
+                                {'$ref': '#/$defs/short_spec_LocalWorkspace'},
+                                {'$ref': '#/$defs/spec_LocalWorkspace'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
@@ -2421,6 +2460,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                             {'const': 'Instrumentation', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Instrumentation'},
+                            {'$ref': '#/$defs/short_spec_LocalWorkspace'},
+                            {'$ref': '#/$defs/spec_LocalWorkspace'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},

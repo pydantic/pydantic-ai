@@ -29,6 +29,7 @@ from pydantic_ai.capabilities import (
     Hooks,
     ImageGeneration,
     Instrumentation,
+    LocalWorkspace,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
@@ -133,6 +134,11 @@ _FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
 _SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
 
 
+def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
+    assert merged.working_dir == '/second', 'a scalar takes the later value'
+    assert merged.read_only is True
+
+
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
@@ -191,6 +197,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'carries no configuration at all, so two are interchangeable',
         lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
         _check_content_filter,
+    ),
+    'LocalWorkspace': Combines(
+        'a run has one workspace, and only the first capability in order could supply it anyway',
+        lambda: (LocalWorkspace('/first'), LocalWorkspace('/second', read_only=True)),
+        _check_local_workspace,
     ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',

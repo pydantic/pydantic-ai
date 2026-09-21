@@ -115,8 +115,8 @@ def unattached_workspace() -> Workspace:
 
     return Workspace(
         UnavailableWorkspace(
-            'No workspace is attached: this context has no workspace; pass `workspace=` to the run method '
-            "or supply one from a capability's `get_workspace`."
+            'No workspace is attached: this context has no workspace; attach a workspace capability such as '
+            "`capabilities=[LocalWorkspace('/absolute/path')]`, or pass `workspace=` to the run method."
         )
     )
 
@@ -237,7 +237,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The [`Workspace`][pydantic_ai.workspaces.Workspace] attached to this run.
 
     An explicit backend or facade passed through `workspace=` is available during `for_run`. Otherwise,
-    capability selection after `for_run` uses the one capability whose
+    capability selection after `for_run` uses the first capability whose
     [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace] returned a backend;
     if none does, a placeholder explains how to attach one. Never the host by default.
 

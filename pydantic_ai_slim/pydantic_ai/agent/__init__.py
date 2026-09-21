@@ -429,10 +429,11 @@ _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
 
 _NO_WORKSPACE_REASON = (
-    "No workspace is attached to this run. Pass `workspace=LocalWorkspaceBackend('/absolute/path')` to the run method to "
-    'use the local machine (unsafe: commands and file operations run with the full permissions of this process), '
-    'attach a capability that supplies a workspace through its `get_workspace` hook, or pass a `WorkspaceRef` '
-    'to connect to an existing environment. See https://ai.pydantic.dev/workspace/ for details.'
+    "No workspace is attached to this run. Attach `capabilities=[LocalWorkspace('/absolute/path')]` to the agent, or "
+    "pass `workspace=LocalWorkspaceBackend('/absolute/path')` to the run method, to use the local machine (unsafe: "
+    'commands and file operations run with the full permissions of this process); attach another capability that '
+    'supplies a workspace through its `get_workspace` hook; or pass a `WorkspaceRef` to connect to an existing '
+    'environment. See https://ai.pydantic.dev/workspace/ for details.'
 )
 
 
@@ -1777,7 +1778,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             elif workspace == 'new':
                 raise exceptions.UserError(
                     "`workspace='new'` needs a capability that can create a workspace, but every `get_workspace` "
-                    'returned `None`. Attach a capability whose `get_workspace` creates one.'
+                    "returned `None`. Attach one, such as `capabilities=[LocalWorkspace('/absolute/path')]`."
                 )
             elif explicit_ref is not None:
                 raise exceptions.UserError(

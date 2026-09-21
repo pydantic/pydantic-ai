@@ -822,7 +822,7 @@ async def test_unavailable_workspace_uses_the_configured_reason_for_every_operat
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
-    with pytest.raises(UserError, match=r'pass `workspace=`.*capability'):
+    with pytest.raises(UserError, match=r'LocalWorkspace.*pass `workspace=`'):
         await ctx.workspace.run(['true'])
 
 
