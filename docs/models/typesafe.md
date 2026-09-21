@@ -213,7 +213,6 @@ print(result.output.refunded)
 
 The two descriptions are enough on their own, so unlike a bare `bool` such a field needs no description of its own. A `Literal[True, False]` has nowhere to write them and asks exactly what a `bool` asks.
 
-A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them and at most ten, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 
 A level's description reaches the schema the [same way an option's meaning does](#where-the-wording-comes-from), which makes an `IntEnum` mixing in `UseEnumMemberDocstrings` the way to declare one. A bare `Literal[0, 1, 2]` or a plain `IntEnum` is a [`UserError`][pydantic_ai.exceptions.UserError]: the levels are there, but nothing says what they mean.
