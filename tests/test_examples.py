@@ -268,6 +268,7 @@ def test_docs_examples(
     mocker.patch.object(UpdatePrices, 'fetch', return_value=get_snapshot())
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
+    mocker.patch('builtins.input', return_value='y')
 
     # Avoid filesystem access when examples call ssl.create_default_context(cafile=...) with non-existent paths
     mocker.patch('ssl.create_default_context', return_value=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
@@ -1333,6 +1334,18 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
+    elif isinstance(m, UserPromptPart) and m.content == 'Refund $49.99 from payment pay_123.':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='refund_payment',
+                    args={'payment_id': 'pay_123', 'amount_cents': 4999},
+                    tool_call_id='refund_payment_call',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'refund_payment':
+        return ModelResponse(parts=[TextPart('The $49.99 refund for payment pay_123 was completed.')])
     elif isinstance(m, UserPromptPart) and m.content == 'Where is order A100?':
         return ModelResponse(
             parts=[
