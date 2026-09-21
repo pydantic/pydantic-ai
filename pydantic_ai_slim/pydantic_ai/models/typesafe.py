@@ -93,6 +93,10 @@ TypeSafeModelName = str | LatestTypeSafeModelNames
 # https://docs.typesafe.ai/model-jaggedness/jev-1.13
 _MAX_CHOICE_OPTIONS = 255
 
+# Jev scores against at most this many rubric levels; an 11th is a 400 from the API.
+# https://docs.typesafe.ai/primitives/score
+_MAX_SCORE_LEVELS = 10
+
 _UNSUPPORTED_FIELD_HINT = (
     'Use `bool`, a `Literal` or `Enum` of two or more strings, a `float` bounded with `ge=0` and `le=1`, a `list` of '
     'a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its schema, or a model '
@@ -990,6 +994,11 @@ def _score_question(name: str, options: dict[int, str | None], asked: JSONConten
         raise UserError(
             f'Output field {name!r} is not supported by this model: a rubric must be the whole numbers from 0 '
             f'upwards, in order, and there must be at least two of them. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    if len(levels) > _MAX_SCORE_LEVELS:
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: Jev scores against at most '
+            f'{_MAX_SCORE_LEVELS} levels, and this rubric has {len(levels)}.'
         )
     criteria = [options[level] for level in levels]
     if not all(criteria):
