@@ -1337,6 +1337,11 @@ async def model_logic(  # noqa: C901
         )
     elif (
         isinstance(m, UserPromptPart)
+        and m.content == 'Give the incident commander one concise status update.'
+    ):
+        return ModelResponse(parts=[TextPart('Checkout is degraded; rollback is in progress.')])
+    elif (
+        isinstance(m, UserPromptPart)
         and m.content == 'Email the launch update to alice@example.com and bob@example.com.'
     ):
         return ModelResponse(
