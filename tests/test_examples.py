@@ -1333,6 +1333,18 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
+    elif isinstance(m, UserPromptPart) and m.content == 'Where is order A100?':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='order_status',
+                    args={'order_id': 'A100'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'order_status':
+        return ModelResponse(parts=[TextPart('Order A100 has shipped and is expected Friday.')])
     elif isinstance(m, UserPromptPart) and 'ACME Hosting — Invoice INV-2048' in m.content:
         return ModelResponse(
             parts=[
