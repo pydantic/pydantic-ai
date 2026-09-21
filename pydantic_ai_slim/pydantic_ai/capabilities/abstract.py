@@ -583,9 +583,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Supply the run's workspace backend, or `None` if this capability does not provide one.
 
-        Called synchronously on every non-deferred capability on every run, including capabilities
-        visited after another one has answered so that the run can detect two suppliers. It must
-        have no side effects, including bookkeeping: return a backend configured from this
+        Called synchronously on each run. The first non-deferred capability, in capability order,
+        that returns a backend supplies the run's workspace, and the capabilities after it are not
+        asked. Attaching several workspace capabilities is therefore how an agent stays able to
+        continue in an environment from any of their providers: each returns `None` for a `ref` it
+        does not own, so the capability that recognizes the `ref` answers, and without a `ref` the
+        first one creates the fresh environment.
+
+        It must have no side effects, including bookkeeping: return a backend configured from this
         capability's own settings, carrying `ref` when one was recovered or passed in. The backend
         creates or attaches on its first operation, so nothing here reaches the network.
 
@@ -593,7 +598,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] through `workspace=`. `None` means the
         backend should create a fresh environment. When continuing from message history, the latest
         response's `workspace_ref` is used unless the caller passes an explicit backend, facade, or ref.
-        At most one attached capability may answer.
         """
         return None
 

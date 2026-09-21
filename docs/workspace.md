@@ -120,10 +120,16 @@ async def main() -> None:
 
 Pass a workspace with the `workspace=` argument. An explicit backend or
 [`Workspace`][pydantic_ai.workspaces.Workspace] is used directly. An explicit
-[`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is offered to each non-deferred capability's
-[`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace] hook. If no capability
-recognizes an explicit reference, the run raises `UserError`. If two capabilities return a
-workspace, the run also raises `UserError`.
+[`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is offered to the
+[`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace] hook of each
+non-deferred capability, in capability order, until one returns a workspace. If no capability
+recognizes an explicit reference, the run raises `UserError`.
+
+The first capability that returns a workspace wins, and the ones after it are not asked. Attach
+several workspace capabilities, such as one per provider, to let one agent continue in an
+environment from any of them: each returns `None` for a reference it does not own, so the capability
+that recognizes the reference supplies the workspace. Without a reference, the first workspace
+capability in the list creates the fresh environment.
 
 With `workspace=None`, the hook receives the `workspace_ref` on the most recent `ModelResponse` in
 `message_history`, or `None` if there is no such reference. If no capability returns a workspace,
@@ -134,8 +140,7 @@ Selection happens after each capability's `for_run` hook. `for_run` sees the pla
 caller passed an explicit backend or `Workspace`. `before_run`, `wrap_run`, and tools see the
 selected workspace.
 
-`get_workspace` is synchronous and must have no side effects. It is called on every non-deferred
-capability, even after another capability has returned a workspace.
+`get_workspace` is synchronous and must have no side effects.
 
 ```python
 from dataclasses import dataclass

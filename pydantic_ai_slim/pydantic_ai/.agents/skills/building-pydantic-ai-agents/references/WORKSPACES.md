@@ -38,8 +38,10 @@ An explicit backend or facade passed through `workspace=` is used directly. An e
 `WorkspaceRef` is offered to configured capabilities, and raises if none recognizes it. With
 `workspace=None`, capabilities receive the latest `ModelResponse.workspace_ref` from message
 history, or `None` when there is no reference. A latest `None` suppresses older references. History
-supplies identity, not provider configuration. Exactly one capability may supply a workspace;
-multiple suppliers raise. With no supplier, the unavailable default explains how to attach a
+supplies identity, not provider configuration. The first capability, in order, whose
+`get_workspace` returns a backend wins and later ones are not asked, so attaching several workspace
+capabilities lets an agent pick up a ref from any of their providers; without a ref the first one
+creates the fresh workspace. With no supplier, the unavailable default explains how to attach a
 workspace without raising. `get_workspace` runs after `for_run`, is synchronous, and must have no
 side effects. A capability should return `None` for references it does not own.
 

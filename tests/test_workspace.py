@@ -53,6 +53,7 @@ from .workspace_fakes import (
     FakeWorkspace,
     FakeWorkspaceResult,
     FilesystemOnlyWorkspaceBackend,
+    RecordingWorkspaceBackend,
     RunOnlyWorkspaceBackend,
     WorkspaceCapability,
 )
@@ -1027,16 +1028,52 @@ async def test_a_result_built_outside_a_run_explains_that_no_workspace_is_attach
         await result.workspace.run(['true'])
 
 
-async def test_two_capabilities_supplying_a_workspace_name_both() -> None:
-    """One run, one workspace: a second supplier is a configuration mistake, not a silent winner."""
+class ProviderWorkspaceCapability(AbstractCapability[Any]):
+    """Creates a fresh backend without a ref, and claims only refs from its own provider."""
 
-    class SecondWorkspaceCapability(WorkspaceCapability):
-        id = 'second-workspace'
+    def __init__(self, provider: str) -> None:
+        self.id = self.provider = provider
+        self.refs: list[WorkspaceRef | None] = []
+        self.supplied: list[WorkspaceBackend] = []
 
-    agent = Agent(TestModel(), capabilities=[WorkspaceCapability(), SecondWorkspaceCapability()])
+    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        self.refs.append(ref)
+        if ref is not None and ref.provider != self.provider:
+            return None
+        backend = RecordingWorkspaceBackend('fresh', ref=ref)
+        self.supplied.append(backend)
+        return backend
 
-    with pytest.raises(UserError, match='WorkspaceCapability and SecondWorkspaceCapability both did'):
-        await agent.run('go')
+
+async def test_first_capability_in_order_supplies_a_fresh_workspace() -> None:
+    """Without a ref every workspace capability could answer, so capability order decides and the rest are not asked."""
+    first, second = ProviderWorkspaceCapability('first'), ProviderWorkspaceCapability('second')
+    agent = Agent(TestModel(), capabilities=[first, second])
+
+    result = await agent.run('go')
+
+    assert [result.workspace.backend] == first.supplied
+    assert first.refs == [None]
+    assert second.refs == []
+
+
+@pytest.mark.parametrize('source', ['explicit', 'history'])
+async def test_ref_routes_to_the_first_capability_that_recognizes_it(source: str) -> None:
+    """Several attached providers let one agent continue in an environment from any of them."""
+    first, second = ProviderWorkspaceCapability('first'), ProviderWorkspaceCapability('second')
+    agent = Agent(TestModel(), capabilities=[first, second])
+    ref = WorkspaceRef(provider='second', id='existing')
+
+    if source == 'explicit':
+        result = await agent.run('go', workspace=ref)
+    else:
+        result = await agent.run('go', message_history=[ModelResponse(parts=[TextPart('old')], workspace_ref=ref)])
+
+    assert [result.workspace.backend] == second.supplied
+    assert result.workspace.ref == ref
+    assert first.supplied == []
+    assert first.refs == [ref]
+    assert second.refs == [ref]
 
 
 async def test_deferred_capability_never_contributes_a_backend() -> None:
@@ -1065,7 +1102,7 @@ async def test_wrapper_composes_workspace_policy_over_combined_capability() -> N
             backend = super().get_workspace(ctx, ref=ref)
             return ReadOnlyWorkspace(Workspace(backend)) if backend is not None else None
 
-    capability = Policy(CombinedCapability([provider, other]))
+    capability = Policy(CombinedCapability([other, provider]))
     agent = Agent(TestModel(call_tools=['probe']), capabilities=[capability])
 
     @agent.tool
@@ -1090,21 +1127,6 @@ async def test_workspace_ref_forwards_backend_identity() -> None:
 async def test_run_rejects_relative_cwd() -> None:
     with pytest.raises(ValueError, match='absolute'):
         await Workspace(FakeWorkspace('cwd')).run(['true'], cwd='relative')
-
-
-async def test_two_capabilities_cannot_supply_the_workspace() -> None:
-    class FirstWorkspaceCapability(AbstractCapability[Any]):
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            return FakeWorkspace('first')
-
-    class SecondWorkspaceCapability(AbstractCapability[Any]):
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-            return FakeWorkspace('second')
-
-    agent = Agent(_tool_call_model(), capabilities=[FirstWorkspaceCapability(), SecondWorkspaceCapability()])
-
-    with pytest.raises(UserError, match=r'FirstWorkspaceCapability.*SecondWorkspaceCapability'):
-        await agent.run('go')
 
 
 async def test_declining_capability_leaves_the_run_workspace_unavailable() -> None:

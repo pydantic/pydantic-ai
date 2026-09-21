@@ -14,7 +14,7 @@ from pydantic_ai._instructions import (
     validate_instruction_id_segment,
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -443,22 +443,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return native_tools
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        workspace: WorkspaceBackend | None = None
-        supplier: AbstractCapability[AgentDepsT] | None = None
         for capability in self.capabilities:
             if capability.defer_loading is True:
                 continue
-            contribution = capability.get_workspace(ctx, ref=ref)
-            if contribution is None:
-                continue
-            if supplier is not None:
-                raise UserError(
-                    'Exactly one capability may supply the run workspace; '
-                    f'{type(supplier).__name__} and {type(capability).__name__} both did.'
-                )
-            workspace = contribution
-            supplier = capability
-        return workspace
+            if (workspace := capability.get_workspace(ctx, ref=ref)) is not None:
+                return workspace
+        return None
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset
