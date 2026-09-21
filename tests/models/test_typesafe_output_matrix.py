@@ -127,6 +127,13 @@ def contains_itself(field: str) -> str:
     )
 
 
+def contains_itself(field: str) -> str:
+    return (
+        f'Output field {field!r} is not supported by this model: a model that contains itself has no end '
+        'to fill, and Jev asks a fixed set of questions. Give the field a type that does not contain itself.'
+    )
+
+
 NOT_OPTIONAL = ': only a `Literal` or `Enum` of strings can be optional, since `None` is one more option to pick'
 NOT_A_LIST = ': a list must be of two or more string options'
 NOT_A_RUBRIC = ': a rubric must be the whole numbers from 0 upwards, in order, and there must be at least two of them'
