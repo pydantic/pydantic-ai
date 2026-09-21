@@ -19,6 +19,15 @@ _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetch
 `AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
 per-model in the profile below."""
 
+ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
+"""The unified sampling settings gated by `anthropic_disallows_sampling_settings`.
+
+Models whose profile sets that flag reject these settings outright with a 400, so every provider
+serving them has to drop and warn rather than forward. It lives here rather than beside either
+model because `models/bedrock.py` cannot import from `models/anthropic.py` without pulling the
+`anthropic` SDK into the `bedrock` extra.
+"""
+
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
 

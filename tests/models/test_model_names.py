@@ -24,6 +24,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
     from pydantic_ai.models.snowflake import SnowflakeModelName
+    from pydantic_ai.models.typesafe import TypeSafeModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
@@ -37,6 +38,7 @@ if not imports_successful():  # pragma: lax no cover
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
+    TypeSafeModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -81,6 +83,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
     'snowflake': SnowflakeModelName,
+    'typesafe': TypeSafeModelName,
     'zai': ZaiModelName,
 }
 
@@ -128,6 +131,10 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:cohere.command-r-plus-v1:0',
         'gateway/bedrock:cohere.command-r-v1:0',
         'gateway/bedrock:cohere.command-text-v14',
+        # Gateway rejects the geographic GPT-5.6 IDs with "The provided model identifier is invalid."
+        # The global IDs succeed through the same route.
+        'gateway/bedrock:in.openai.gpt-5.6-luna',
+        'gateway/bedrock:in.openai.gpt-5.6-terra',
         'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
         'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
         'gateway/bedrock:meta.llama3-1-8b-instruct-v1:0',
@@ -160,6 +167,9 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+        'gateway/bedrock:us.openai.gpt-5.6-luna',
+        'gateway/bedrock:us.openai.gpt-5.6-sol',
+        'gateway/bedrock:us.openai.gpt-5.6-terra',
         'gateway/google-cloud:gemini-2.0-flash',
         'gateway/google-cloud:gemini-2.0-flash-lite',
         'gateway/google-cloud:gemini-2.5-flash-preview-09-2025',

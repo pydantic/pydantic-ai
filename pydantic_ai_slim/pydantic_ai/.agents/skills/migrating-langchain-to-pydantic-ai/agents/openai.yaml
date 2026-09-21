@@ -1,4 +1,4 @@
 interface:
-  display_name: "Migrate LangChain to Pydantic AI"
-  short_description: "Migrate LangChain and LangGraph safely"
-  default_prompt: "Use $migrating-langchain-to-pydantic-ai to migrate the smallest complete LangChain or LangGraph slice to Pydantic AI while preserving its observed contracts with proportionate tests."
+  display_name: "Migrate LangChain or Deep Agents to Pydantic AI"
+  short_description: "Migrate LangChain, LangGraph, and Deep Agents safely"
+  default_prompt: "Use $migrating-langchain-to-pydantic-ai to migrate the smallest complete LangChain, LangGraph, or Deep Agents slice to Pydantic AI and Pydantic AI Harness while preserving its observed contracts with proportionate tests."

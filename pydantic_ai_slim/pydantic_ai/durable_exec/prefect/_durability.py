@@ -44,7 +44,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         codec=IDENTITY_CODEC,  # object-passing: Prefect serializes/caches internally
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         wrapped_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-always', 'dynamic': 'enter-never'},
+        toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
         tool_call_result_upgrade_lenient=True,  # cached payloads may predate value-wrapping
         journal_discovery=True,
         sequential_tools_in_durable_context=False,

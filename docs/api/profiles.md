@@ -14,6 +14,8 @@
 
 ::: pydantic_ai.profiles.openai
 
+::: pydantic_ai.profiles.openai_codex
+
 ::: pydantic_ai.profiles.anthropic
 
 ::: pydantic_ai.profiles.google

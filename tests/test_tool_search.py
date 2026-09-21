@@ -97,7 +97,9 @@ with try_import() as evals_available:
     from pydantic_evals.reporting import EvaluationReport
 
 with try_import() as ag_ui_available:
-    from pydantic_ai.ui.ag_ui import AGUIAdapter
+    from ag_ui.core import ToolCallResultEvent, ToolCallStartEvent
+
+    from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
 
 
 def ag_ui_preserves_tool_kind() -> bool:
@@ -4007,29 +4009,39 @@ def test_openai_preserves_unmatched_hosted_tool_search_output(call_id: str | Non
     assert return_part.tool_call_id == (call_id or 'tso_a')
 
 
-async def test_openai_does_not_guess_ambiguous_hosted_tool_search_pairing() -> None:
-    """Ambiguous null-ID pairs retain and replay every provider item without guessed correlation."""
+@pytest.mark.parametrize(
+    ('first_call_id', 'first_output_call_id'),
+    [(None, None), (None, 'ts_a'), ('call_a', 'call_a')],
+    ids=['anonymous', 'output-id-only', 'explicit'],
+)
+async def test_openai_pairs_multiple_hosted_tool_search_items_in_order(
+    first_call_id: str | None, first_output_call_id: str | None
+) -> None:
+    """Hosted searches pair in provider order when output call IDs are absent or mixed."""
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())))
     calls, outputs = _openai_hosted_tool_search_items()
+    calls[0] = calls[0].model_copy(update={'call_id': first_call_id})
+    outputs[0] = outputs[0].model_copy(update={'call_id': first_output_call_id})
 
-    ambiguous = model._process_response(  # pyright: ignore[reportPrivateUsage]
+    response = model._process_response(  # pyright: ignore[reportPrivateUsage]
         response_message([calls[0], outputs[0], calls[1], outputs[1]]),
         OpenAIResponsesModelSettings(),
         ModelRequestParameters(),
     )
-    ambiguous_parts = [
-        part for part in ambiguous.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
+    search_parts = [
+        part for part in response.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
     ]
-    assert [part.tool_call_id for part in ambiguous_parts] == ['ts_a', 'tso_a', 'ts_b', 'tso_b']
+    first_tool_call_id = first_call_id or 'ts_a'
+    assert [part.tool_call_id for part in search_parts] == [first_tool_call_id, first_tool_call_id, 'ts_b', 'ts_b']
 
     _, replayed_items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ambiguous],
+        [response],
         OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
         _openai_hosted_tool_search_parameters(),
     )
     assert [(item.get('type'), item.get('id'), item.get('call_id')) for item in replayed_items] == [
-        ('tool_search_call', 'ts_a', None),
-        ('tool_search_output', 'tso_a', None),
+        ('tool_search_call', 'ts_a', first_call_id),
+        ('tool_search_output', 'tso_a', first_output_call_id),
         ('tool_search_call', 'ts_b', None),
         ('tool_search_output', 'tso_b', None),
     ]
@@ -4083,65 +4095,51 @@ async def test_openai_streaming_ignores_client_tool_search_output(allow_model_re
     assert streamed_response.get().parts == []
 
 
-@pytest.mark.parametrize('terminal_status', ['completed', 'failed', 'incomplete'])
 @pytest.mark.parametrize(
-    ('pair_count', 'expected_ids'),
-    [(1, ['ts_a', 'ts_a']), (2, ['ts_a', 'tso_a', 'ts_b', 'tso_b'])],
-    ids=['singleton', 'ambiguous'],
+    ('first_call_id', 'first_output_call_id'),
+    [(None, None), (None, 'ts_a'), ('call_a', 'call_a')],
+    ids=['anonymous', 'output-id-only', 'explicit'],
 )
-async def test_openai_hosted_tool_search_null_id_streaming_parity(
+async def test_openai_streams_multiple_hosted_tool_searches_in_order(
     allow_model_requests: None,
-    pair_count: int,
-    expected_ids: list[str],
-    terminal_status: Literal['completed', 'failed', 'incomplete'],
+    first_call_id: str | None,
+    first_output_call_id: str | None,
 ) -> None:
-    """Single and ambiguous null-ID responses converge to identical parts in both modes.
-
-    Every terminal event variant runs the singleton backfill, so failed and incomplete
-    streams re-key the return part just like completed ones.
-    """
+    """Streaming preserves the provider's adjacent call/output order."""
     from openai.types import responses as resp
 
     calls, outputs = _openai_hosted_tool_search_items()
-    final_items = [item for pair in zip(calls[:pair_count], outputs[:pair_count]) for item in pair]
-    completed_response = response_message(final_items).model_copy(update={'status': terminal_status})
+    calls[0] = calls[0].model_copy(update={'call_id': first_call_id})
+    outputs[0] = outputs[0].model_copy(update={'call_id': first_output_call_id})
+    response_items = [calls[0], outputs[0], calls[1], outputs[1]]
+    completed_response = response_message(response_items).model_copy(update={'status': 'completed'})
     created_response = response_message([]).model_copy(update={'status': 'in_progress'})
     stream: list[resp.ResponseStreamEvent] = [
-        resp.ResponseCreatedEvent(response=created_response, type='response.created', sequence_number=0)
-    ]
-    sequence_number = 1
-    for output_index, item in enumerate(final_items):
-        added_item = item.model_copy(update={'status': 'in_progress'})
-        stream.extend(
-            [
+        resp.ResponseCreatedEvent(response=created_response, type='response.created', sequence_number=0),
+        *[
+            event
+            for output_index, item in enumerate(response_items)
+            for event in (
                 resp.ResponseOutputItemAddedEvent(
-                    item=added_item,
+                    item=item.model_copy(update={'status': 'in_progress'}),
                     output_index=output_index,
                     type='response.output_item.added',
-                    sequence_number=sequence_number,
+                    sequence_number=output_index * 2 + 1,
                 ),
                 resp.ResponseOutputItemDoneEvent(
                     item=item,
                     output_index=output_index,
                     type='response.output_item.done',
-                    sequence_number=sequence_number + 1,
+                    sequence_number=output_index * 2 + 2,
                 ),
-            ]
-        )
-        sequence_number += 2
-    if terminal_status == 'completed':
-        terminal: resp.ResponseStreamEvent = resp.ResponseCompletedEvent(
-            response=completed_response, type='response.completed', sequence_number=sequence_number
-        )
-    elif terminal_status == 'failed':
-        terminal = resp.ResponseFailedEvent(
-            response=completed_response, type='response.failed', sequence_number=sequence_number
-        )
-    else:
-        terminal = resp.ResponseIncompleteEvent(
-            response=completed_response, type='response.incomplete', sequence_number=sequence_number
-        )
-    stream.append(terminal)
+            )
+        ],
+        resp.ResponseCompletedEvent(
+            response=completed_response,
+            type='response.completed',
+            sequence_number=len(response_items) * 2 + 1,
+        ),
+    ]
 
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
@@ -4162,10 +4160,11 @@ async def test_openai_hosted_tool_search_null_id_streaming_parity(
     non_streamed_parts = [
         part for part in non_streamed.parts if isinstance(part, NativeToolSearchCallPart | NativeToolSearchReturnPart)
     ]
-    assert [part.tool_call_id for part in streamed_parts] == expected_ids
+    first_tool_call_id = first_call_id or 'ts_a'
+    assert [part.tool_call_id for part in streamed_parts] == [first_tool_call_id, first_tool_call_id, 'ts_b', 'ts_b']
 
     def normalized(
-        parts: list[NativeToolSearchCallPart | NativeToolSearchReturnPart],
+        parts: Sequence[NativeToolSearchCallPart | NativeToolSearchReturnPart],
     ) -> list[NativeToolSearchCallPart | NativeToolSearchReturnPart]:
         # Return parts stamp a construction-time timestamp; align it so the equality
         # check covers every other field.
@@ -4911,6 +4910,45 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None, o
         isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolSearchReturnPart)
         for event in streamed_events
     )
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not ag_ui_available(), reason='ag-ui-protocol not installed')
+async def test_openai_multiple_native_tool_searches_stream_through_ag_ui(
+    allow_model_requests: None, openai_api_key: str
+) -> None:
+    """AG-UI pairs the ordered call/output items OpenAI streams without call IDs."""
+    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    @agent.tool_plain(defer_loading=True)
+    def alpha_lookup(query: str) -> str:
+        """Look up alpha."""
+        return query
+
+    @agent.tool_plain(defer_loading=True)
+    def bravo_lookup(query: str) -> str:
+        """Look up bravo."""
+        return query
+
+    async with agent.run_stream_events(
+        'Reveal alpha_lookup and bravo_lookup using two separate tool searches, one path per search. '
+        'Then answer "done" without calling the discovered tools.'
+    ) as agent_events:
+        events = [event async for event in AGUIEventStream().transform_stream(agent_events)]
+
+    search_call_ids = [
+        event.tool_call_id
+        for event in events
+        if isinstance(event, ToolCallStartEvent) and event.tool_call_name == ToolSearchTool.kind
+    ]
+    search_result_ids = [
+        event.tool_call_id
+        for event in events
+        if isinstance(event, ToolCallResultEvent) and event.tool_call_id in search_call_ids
+    ]
+    assert len(search_call_ids) == 2
+    assert search_result_ids == search_call_ids
 
 
 @pytest.mark.vcr

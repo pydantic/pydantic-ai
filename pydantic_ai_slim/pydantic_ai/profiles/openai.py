@@ -145,8 +145,10 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # The original GPT-5 family (incl. -mini/-pro/-codex) reasons at 'medium' by default.
     # See https://platform.openai.com/docs/guides/reasoning
     'gpt-5': _ALWAYS_ON_REASONING,
-    # The o-series.
-    'o': _ALWAYS_ON_REASONING,
+    # Match o-series families explicitly so gateway prefixes like `openrouter/` don't match.
+    'o1': _ALWAYS_ON_REASONING,
+    'o3': _ALWAYS_ON_REASONING,
+    'o4': _ALWAYS_ON_REASONING,
 }
 """Reasoning support per model-name prefix; the first matching prefix wins, so a more specific
 prefix (e.g. `'gpt-5.3-chat'`) must be listed before the broader one it would otherwise match
@@ -372,6 +374,28 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When enabled, [`CachePoint`][pydantic_ai.messages.CachePoint] markers are translated into
     `prompt_cache_breakpoint` fields on the preceding content block, on both the Chat Completions and
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
+    """
+
+    openai_responses_requires_streaming: bool
+    """Whether the Responses endpoint serves streaming responses only. Default: `False`.
+
+    When `True`, nominally non-streaming requests are sent with `stream=True` and aggregated from the
+    terminal `response.completed` event, so callers see an ordinary non-streaming [`ModelResponse`][pydantic_ai.messages.ModelResponse].
+    Set for subscription-auth endpoints (e.g. OpenAI Codex) that reject `stream=False`.
+    """
+
+    openai_responses_requires_store_false: bool
+    """Whether the Responses endpoint requires `store=false` on every request. Default: `False`.
+
+    When `True`, `store=false` is sent even when no `openai_store` setting is given (the field cannot be
+    omitted), and an explicit `openai_store=True` setting is silently overridden, consistent with how
+    other backend-rejected settings are dropped.
+    """
+
+    openai_supports_input_token_counting: bool
+    """Whether the provider exposes server-side input-token counting (`responses/input_tokens`). Default: `True`.
+
+    When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
     """
 
 

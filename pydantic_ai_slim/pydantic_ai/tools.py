@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
@@ -21,6 +22,7 @@ from ._deferred import (
     ToolApproved as ToolApproved,
     ToolDenied as ToolDenied,
 )
+from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
 from .function_signature import FunctionSignature
@@ -247,7 +249,7 @@ or omit it completely from a step.
 
 Returning `None` omits the tool. The one exception is a
 [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool] capability that routes native configuration
-into a `fallback_model` subagent, where the subagent has already been invoked and cannot omit; see
+into a `fallback_subagent_model` subagent, where the subagent has already been invoked and cannot omit; see
 [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration].
 """
 
@@ -271,6 +273,41 @@ A = TypeVar('A')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
+    def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
+        # A docstring under an enum member describes that option, as `anyOf` of `const`s with descriptions
+        # (the JSON Schema way to describe single values), so models can tell the options apart.
+        #
+        # Opted into by mixing in `UseEnumMemberDocstrings`, rather than by the enclosing model's
+        # `use_attribute_docstrings` config: that config is pushed while the *core* schema is built and nothing
+        # pushes it while the JSON schema is generated, so an enum reached from a tool's parameters never sees it
+        # even though `_function_schema` sets it. A base class is also the only marker an `Enum` can carry — a
+        # plain class attribute, annotated or not, becomes a member — so the opt-in is read off the class itself.
+        json_schema = super().enum_schema(schema)
+        # `schema['cls']` is `Any`, and narrowing an `Any` by `issubclass` loses the enum along with it, so the
+        # declared type is spelled out here to keep both sides of the intersection.
+        enum_cls: type[Enum] = schema['cls']
+        if not issubclass(enum_cls, UseEnumMemberDocstrings):
+            return json_schema
+        # A docstring is read under the name it was declared under, but an alias (`urgent = 'high'` beside
+        # `high = 'high'`) is the same member, so the schema only ever names the canonical one. Resolve the
+        # declared names through `__members__` so an alias's docstring describes the option it was written
+        # for; `setdefault` keeps the canonical name's own docstring when both have one, since `__members__`
+        # lists a member before its aliases.
+        declared = _utils.enum_member_docstrings(enum_cls)
+        docstrings: dict[str, str] = {}
+        for name, member in enum_cls.__members__.items():
+            if (docstring := declared.get(name)) is not None:
+                docstrings.setdefault(member.name, docstring)
+        # A `None` member has no `const` a schema can carry: `{'const': None}` reads as "no const" to anything
+        # that looks the key up with a default, and the option silently loses its constraint. Such an enum keeps
+        # the plain `enum` list, which states every value including the null.
+        if docstrings and all(value is not None for value in json_schema.get('enum', ())):
+            json_schema['anyOf'] = [
+                {'const': value, **({'description': docstrings[member.name]} if member.name in docstrings else {})}
+                for member, value in zip(schema['members'], json_schema.pop('enum'))
+            ]
+        return json_schema
+
     def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:
         # Remove largely-useless property titles
         s = super()._named_required_fields_schema(named_required_fields)

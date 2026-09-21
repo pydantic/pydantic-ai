@@ -1,0 +1,51 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '179'
+      content-type:
+      - application/json
+      copilot-integration-id:
+      - vscode-chat
+      editor-plugin-version:
+      - copilot-chat/0.26.7
+      editor-version:
+      - vscode/1.95.0
+      host:
+      - api.githubcopilot.com
+      openai-intent:
+      - conversation-panel
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise.
+        role: system
+      - content: Is 221 prime?
+        role: user
+      model: claude-sonnet-5
+      reasoning_effort: none
+      stream: false
+    uri: https://api.githubcopilot.com/chat/completions
+  response:
+    body:
+      string: |
+        {"error":{"message":"reasoning_effort \"none\" is not supported by model claude-sonnet-5; supported values: [low medium high xhigh max]","code":"invalid_reasoning_effort"}}
+    headers:
+      content-length:
+      - '173'
+      content-security-policy:
+      - default-src 'none'; sandbox
+      content-type:
+      - text/plain; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000
+    status:
+      code: 400
+      message: Bad Request
+version: 1

@@ -67,7 +67,9 @@ Need structured data with Pydantic validation?
         └── Yes → Use output_type=str [default]
 
 Dynamic schema at runtime?
-└── Yes → Use StructuredDict(json_schema)
+├── Pick one of a set of options built at runtime?
+│   └── Yes → Use Choices({key: description}) [Choice(description, value=...) to pick an action]
+└── Otherwise → Use StructuredDict(json_schema)
 ```
 
 ### Choosing a Multi-Agent Pattern
@@ -169,6 +171,7 @@ Need deterministic, fast tests?
 | Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
+| TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |
@@ -179,7 +182,8 @@ Need deterministic, fast tests?
 | Together | `together:` | `together:meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` |
 | Ollama (local) | `ollama:` | `ollama:llama3.2` |
 | vLLM (local or remote) | `vllm:` | `vllm:Qwen/Qwen3.8-27B` |
-| GitHub Models | `github:` | `github:openai/gpt-5.2` |
+| GitHub Models (retired) | `github:` | `github:openai/gpt-5.2` |
+| GitHub Copilot | `github-copilot:` | `github-copilot:claude-haiku-4.5` |
 | Hugging Face | `huggingface:` | `huggingface:meta-llama/Llama-3.3-70B-Instruct` |
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
@@ -205,7 +209,7 @@ Need deterministic, fast tests?
 | `RaiseContentFilterError` | Raises `ContentFilterError` for model responses with `finish_reason='content_filter'` | Yes |
 | `WebSearch` | Web search — native when supported, local fallback | Yes |
 | `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
-| `ImageGeneration` | Image generation — native when supported, custom fallback | Yes |
+| `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
 | `MCP` | MCP server — native when supported, direct connection | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
