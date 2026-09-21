@@ -3,9 +3,9 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, Literal, overload
+from typing import Annotated, Any, ClassVar, Generic, Literal, overload
 
-from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
+from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler, WithJsonSchema
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar
@@ -25,6 +25,7 @@ __all__ = (
     'StructuredDict',
     'Choice',
     'Choices',
+    'YesNo',
     'OutputObjectDefinition',
     'OutputContext',
     # types
@@ -663,6 +664,57 @@ _OutputSpecItem = TypeAliasType(
     OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co],
     type_params=(T_co,),
 )
+
+
+def YesNo(*, yes: str, no: str) -> type[bool]:
+    """A `bool` that says what a yes and what a no would each mean.
+
+    A `bool` field's description says what is being asked; these two say what either answer amounts to,
+    which is what a set of options gets from [`Choices()`][pydantic_ai.output.Choices] and an `Enum` gets
+    from [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings]. Both descriptions reach the model
+    in the schema, as a description on each of the two constants a boolean can be.
+
+    Unlike `Choices()` and [`StructuredDict()`][pydantic_ai.output.StructuredDict], which return a `str` or
+    `dict` subclass, this returns an annotated `bool`: `bool` cannot be subclassed, so there is nothing to
+    subclass. The value you get back is therefore a plain `True` or `False` rather than a wrapper.
+
+    ```python {title="yes_no.py"}
+    from pydantic import BaseModel, Field
+
+    from pydantic_ai import Agent, YesNo
+
+
+    class Settled(BaseModel):
+        # Review the transcript.
+        refunded: YesNo(
+            yes='Money was returned to the customer.',
+            no='No refund was issued.',
+        ) = Field(description='Was a refund issued?')
+
+
+    agent = Agent('openai:gpt-5.2', output_type=Settled)
+    result = agent.run_sync('We have sent the 40 pounds back to your card.')
+    print(result.output.refunded)
+    #> True
+    ```
+
+    On [TypeSafe's Jev](../models/typesafe.md), which asks a yes/no as its own primitive, the two land in
+    that question's `criteria` as `true` and `false` respectively, sent verbatim.
+
+    Args:
+        yes: What it means for the answer to be `True`.
+        no: What it means for the answer to be `False`.
+    """
+    return Annotated[  # type: ignore[return-value]
+        bool,
+        WithJsonSchema(
+            {
+                'type': 'boolean',
+                'anyOf': [{'const': True, 'description': yes}, {'const': False, 'description': no}],
+            }
+        ),
+    ]
+
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
