@@ -782,6 +782,8 @@ only. Structured outputs are supported and displayed after completion.
 /theme default
 ```
 
+Theme selection and cancellation are silent.
+
 `/theme` opens a searchable picker. Its preview shows a sample conversation with
 Markdown, thinking, a tool call, syntax highlighting, warnings, errors, and the
 input/status area. Each bundled palette paints the sample's foreground and

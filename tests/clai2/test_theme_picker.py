@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from rich.console import Console
+from rich.text import Text
 from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
@@ -32,7 +33,7 @@ async def test_picker_and_settings_share_registry_and_persistence(tmp_path: Path
     assert build_theme_picker(context).highlighted == MenuItem('default (current)', value='default')
     script = Script(lists=[pick('github_light')], choices=[], texts=[])
     with theme.use(lambda: context.settings.theme):
-        assert await theme_command(context, [], runners=script.runners) == 'Saved display.theme. Applied.'
+        assert await theme_command(context, [], runners=script.runners) == ''
         assert theme.current() is PALETTES['github_light']
         assert SettingsStore(context.store.path).load().theme == 'github_light'
         assert build_theme_picker(context).highlighted == MenuItem('github_light (current)', value='github_light')
@@ -70,7 +71,7 @@ async def test_picker_and_settings_share_registry_and_persistence(tmp_path: Path
 async def test_cancel_keeps_preference(tmp_path: Path, result: MenuResult) -> None:
     context, applied = make_context(tmp_path)
     script = Script(lists=[result], choices=[], texts=[])
-    assert await theme_command(context, [], runners=script.runners) == 'No changes.'
+    assert await theme_command(context, [], runners=script.runners) == ''
     assert applied == [] and context.store.overrides() == {}
 
 
@@ -104,7 +105,7 @@ async def test_shell_applies_saved_theme_and_resets_on_exit(
 
     class Output(io.StringIO):
         def write(self, text: str) -> int:
-            if 'Saved display.theme.' in text:
+            if 'Unknown command /theme-done' in Text.from_ansi(text).plain:
                 changed.set()
             return super().write(text)
 
@@ -125,7 +126,7 @@ async def test_shell_applies_saved_theme_and_resets_on_exit(
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run)
-            pipe.send_text(f'/theme {selected}\n')
+            pipe.send_text(f'/theme {selected}\n/theme-done\n')
             await changed.wait()
             pipe.send_text('/exit\n')
             await done.wait()

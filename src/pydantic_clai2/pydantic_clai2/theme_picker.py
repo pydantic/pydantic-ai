@@ -81,6 +81,7 @@ async def theme_command(context: CommandContext, args: list[str], *, runners: Ru
     else:
         result = await run_worker(lambda: runners.run_list(build_theme_picker(context)))
         if result.cancelled or result.item is None or not isinstance(result.item.value, str):
-            return 'No changes.'
+            return ''
         name = result.item.value
-    return context.set_setting(['display.theme', name])
+    context.set_setting(['display.theme', name])
+    return ''

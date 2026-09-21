@@ -1,6 +1,7 @@
 """Bounded, styled transcript tail for repainting the viewport after resize."""
 
 import io
+import re
 from collections import deque
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -13,6 +14,9 @@ from rich.console import Console
 from rich.style import Style
 from rich.text import Text
 from termflow.ansi.utils import ANSI_ESCAPE_RE, visible_length  # pyright: ignore[reportMissingTypeStubs]
+
+# Rich does not recognize palette OSC commands and renders their payload as text.
+_OSC = re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)')
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,7 +108,7 @@ class TranscriptBuffer:
                 return
             text = '\n' + text
             self._discard_until_newline = False
-        self._pending += text
+        self._pending = _OSC.sub('', self._pending + text)
         lines = self._pending.split('\n')
         self._pending = lines.pop()
         for line in lines:

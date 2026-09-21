@@ -763,6 +763,9 @@ when upgrading; `/set model NAME` also saves the model in this list.
 
 ### Terminal themes
 
+Theme selection and cancellation do not print status messages. Terminal colour
+controls are never replayed as conversation text.
+
 ```text
 /theme tokyo_night
 /set display.theme github_light

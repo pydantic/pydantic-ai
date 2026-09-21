@@ -9,6 +9,7 @@ from rich.style import Style
 from rich.text import Text
 from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
 
+from pydantic_clai2 import theme
 from pydantic_clai2.prompt_transcript import TranscriptBuffer, render_ansi
 
 
@@ -142,3 +143,37 @@ def test_capture_forwards_and_restores_console_on_error() -> None:
     assert output.getvalue() == 'startup notice\n'
     assert plain(buffer) == ['startup notice', '']
     assert not output.closed
+
+
+@pytest.mark.parametrize('terminator', ['\x07', '\x1b\\'])
+@pytest.mark.parametrize('split', [False, True])
+def test_palette_controls_never_become_transcript_text(terminator: str, split: bool) -> None:
+    buffer = TranscriptBuffer()
+    buffer.write('\x1b[31mbefore')
+    for payload in ('11;#0a1929', '10;#d6eaf8', '4;0;#0a1929', '104', '111', '110'):
+        control = f'\x1b]{payload}{terminator}'
+        chunks = list(control) if split else [control]
+        for chunk in chunks:
+            buffer.write(chunk)
+            assert plain(buffer) == ['before']
+    buffer.write(' after\nnext')
+    assert plain(buffer) == ['before after', 'next']
+    assert '\x1b[31m' in buffer.frame(width=80, height=24).rows[1]
+
+
+def test_real_palette_output_is_forwarded_but_not_replayed() -> None:
+    buffer = TranscriptBuffer()
+    output = io.StringIO()
+    console = Console(file=output)
+    with buffer.capture(console):
+        theme.apply('github_light', output=console.file)
+        console.print('conversation')
+        theme.apply('default', output=console.file)
+    assert '\x1b]' in output.getvalue()
+    assert plain(buffer) == ['conversation', '']
+
+
+def test_adjacent_palette_controls_do_not_swallow_visible_text() -> None:
+    buffer = TranscriptBuffer()
+    buffer.write('before\x1b]11;#ffffff\x07middle\x1b]104\x07after\n')
+    assert plain(buffer) == ['beforemiddleafter', '']
