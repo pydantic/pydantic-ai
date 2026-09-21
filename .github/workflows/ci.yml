@@ -152,7 +152,7 @@ jobs:
       # (.github/scripts/pydantic-ai-runner).
       - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0"
 
-      - name: Test GitHub agentic workflow policy
+      - name: Test repository scripts and the action
         env:
           UV_NO_SYNC: "1"
         run: >-
@@ -168,6 +168,7 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          action/test_runner.py
           .github/scripts/test_check_harness_navigation.py
 
       # The pre-commit `typecheck` hook narrows Pyright to the files a change reaches, so
