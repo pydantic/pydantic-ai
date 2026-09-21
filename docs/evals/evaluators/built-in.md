@@ -388,7 +388,7 @@ GEval(
 
 When the judge model cannot generate text, like [TypeSafe's Jev](../../models/typesafe.md), the
 score keeps the requested integer scale and the reason is `None`. Scoring becomes one question with
-a level per score, so `score_range` may contain at most 20 levels.
+a level per score, so `score_range` may contain at most 10 levels.
 
 **See Also:** [Standard Quality Metrics](standard-quality-metrics.md)
 

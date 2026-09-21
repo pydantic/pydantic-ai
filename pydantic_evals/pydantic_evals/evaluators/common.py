@@ -319,7 +319,7 @@ class GEval(Evaluator[object, object, object]):
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
 
     A judge whose profile has `supports_text_output=False` returns the same integer score scale without a reason;
-    its `score_range` may contain at most 20 levels.
+    its `score_range` may contain at most 10 levels.
 
     !!! note "Simplified G-Eval"
         The paper computes a probability-weighted expectation over score tokens using log-probs.
