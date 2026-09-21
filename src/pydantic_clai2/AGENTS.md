@@ -71,9 +71,16 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **`reload` is unload, re-import, load.** Drop-in entry modules use fresh source.
   Installed modules use `importlib.reload`, which retains globals absent from the
   new source. Plugins must explicitly initialize their state on activation.
+- **Instruction order is capability order.** Placement is a core
+  `CapabilityOrdering` (`position`, `wraps`, `wrapped_by`), not a CLAI list.
 - **Registration is idempotent per name.** A capability is bound per run
   (`agent.run(capabilities=...)`), so "active for the next prompt" is the
   natural unit; nothing rebuilds the agent.
+- **Shipped plugins register first, in declared order.** The menu's alphabetical
+  order is for scanning only. Registration order is the order instructions,
+  renderers, and status segments are consulted in, so `coder`'s guidance leads
+  the prompt. `customization_guide()` orders itself after the guidance plugins
+  contribute and before harness `RepoContext`, so the CLAI hint never leads.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
   `_app.py` lists what CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `logfire`). The loader treats them like drop-ins with the lowest

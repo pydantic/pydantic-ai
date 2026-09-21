@@ -154,6 +154,19 @@ class PluginLoader(Generic[DepsT]):
         self._entries = refreshed
         return list(refreshed.values())
 
+    def _registration_order(self) -> list[PluginEntry[DepsT]]:
+        """Shipped plugins first, in declaration order, then everything else by name.
+
+        `entries()` sorts by name so the menu and `/plugins list` are easy to scan, but that sort
+        must not decide which instructions, renderer, or status segment comes first: alphabetical
+        order put `ask_user`'s guidance ahead of `coder`'s. Claiming a built-in's id still counts
+        as shipped, so a replaced declaration keeps its position.
+        """
+        entries = self.entries()
+        order = {name: index for index, name in enumerate(self._builtin)}
+        shipped = sorted((entry for entry in entries if entry.name in order), key=lambda entry: order[entry.name])
+        return [*shipped, *(entry for entry in entries if entry.name not in order)]
+
     def _discover(self) -> dict[str, Path]:
         folder = self._store.plugins_dir
         if not folder.is_dir():
@@ -194,7 +207,7 @@ class PluginLoader(Generic[DepsT]):
 
     async def load_all(self, *, fresh: bool = False) -> None:
         """Load enabled plugins, re-importing after a shell reload so host event types match."""
-        for entry in self.entries():
+        for entry in self._registration_order():
             if entry.declaration.enabled and entry.host is None:
                 try:
                     await self.load(entry.name, fresh=fresh)

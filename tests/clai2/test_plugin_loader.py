@@ -123,6 +123,24 @@ async def test_status_segments_follow_load_and_unload(tmp_path: Path) -> None:
     assert harness.loader.status_segments() == []
 
 
+async def test_registration_order_follows_the_shipped_declarations(tmp_path: Path) -> None:
+    """Names order the menu and the list; the built-in declarations order what a turn sees first."""
+
+    def shipped(name: str) -> PluginSettings:
+        path = tmp_path / f'shipped_{name}.py'
+        path.write_text(
+            RECORDER.format(name=name, command=name, end_body='pass', start_body='pass', turn_end_body='pass')
+        )
+        return PluginSettings(id=name, factory=name, path=str(path))
+
+    harness = Harness(tmp_path, builtin=(shipped('zulu'), shipped('alpha')))
+    harness.write('mike')
+    await harness.loader.load_all()
+    assert [entry.name for entry in harness.loader.entries()] == ['alpha', 'mike', 'zulu']
+    assert harness.text.index('zulu started') < harness.text.index('alpha started')
+    assert harness.text.index('alpha started') < harness.text.index('mike started')
+
+
 async def test_folder_discovery_and_load_order(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('beta')

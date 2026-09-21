@@ -743,9 +743,10 @@ refresh with the next request; `/compact` alone does not change them.
 
 Ask, for example, "Create a plugin with a custom menu" or "Use my model provider".
 The default agent has a `read_clai_customization_guide` tool and a short instruction
-to read it before advising on CLAI customization. The guide is bundled with the
-installed package and loaded only when the tool is called, not included in every
-prompt. No network access or source checkout is needed to read it.
+to read it before advising on CLAI customization. That hint is placed after the coding
+guidance the plugins contribute and before the repository instruction file. The guide
+is bundled with the installed package and loaded only when the tool is called, not
+included in every prompt. No network access or source checkout is needed to read it.
 This tool needs no arguments and ignores extra arguments supplied by a model.
 Other tools keep their existing validation.
 

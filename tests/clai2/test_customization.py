@@ -5,9 +5,13 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.repo_context import RepoContext
 
 from pydantic_clai2 import Session
 from pydantic_clai2._app import create_agent
@@ -46,6 +50,52 @@ async def test_default_agent_can_read_guide_through_tool() -> None:
         if isinstance(part, ToolReturnPart) and part.tool_name == 'read_clai_customization_guide'
     ]
     assert returns == [read_clai_customization_guide()]
+
+
+async def test_instruction_order_puts_the_hint_between_guidance_and_repository(tmp_path: Path) -> None:
+    """The hint follows what the agent is here to do, and precedes the repository's own instructions."""
+    (tmp_path / 'AGENTS.md').write_text('# House rules\n')
+
+    async def decline(request: AskUserRequest, /) -> AskUserResponse:
+        return AskUserResponse(cancelled=True)
+
+    agent = create_agent()
+    model = TestModel(call_tools=[], custom_output_text='hello')
+    capabilities: list[AgentCapability[None]] = [
+        Coder(workspace=tmp_path, unrestricted_filesystem=True, repo_context=False),
+        AskUser(answerer=decline),
+        RepoContext(workspace_dir=tmp_path, expose_inventory_tool=False),
+    ]
+    with agent.override(model=model):
+        await agent.run('hello', capabilities=capabilities)
+    params = model.last_model_request_parameters
+    assert params is not None
+    parts = [part.content for part in params.instruction_parts or []]
+    assert parts[0].startswith('You are a software engineering agent')
+    assert 'ask_user_question' in parts[1]
+    assert parts[2].startswith('When asked to customize CLAI itself')
+    assert parts[3].startswith('<context-file path="AGENTS.md">')
+    assert '# House rules' in parts[3]
+    assert 'read_clai_customization_guide' in {tool.name for tool in params.function_tools}
+
+
+async def test_hint_still_follows_the_coding_guidance_without_ask_user(tmp_path: Path) -> None:
+    """Disabling the questions plugin leaves the hint behind the coding guidance, not ahead of it."""
+    (tmp_path / 'AGENTS.md').write_text('# House rules\n')
+    agent = create_agent()
+    model = TestModel(call_tools=[], custom_output_text='hello')
+    capabilities: list[AgentCapability[None]] = [
+        Coder(workspace=tmp_path, unrestricted_filesystem=True, repo_context=False),
+        RepoContext(workspace_dir=tmp_path, expose_inventory_tool=False),
+    ]
+    with agent.override(model=model):
+        await agent.run('hello', capabilities=capabilities)
+    params = model.last_model_request_parameters
+    assert params is not None
+    parts = [part.content for part in params.instruction_parts or []]
+    assert parts[0].startswith('You are a software engineering agent')
+    assert parts[1].startswith('When asked to customize CLAI itself')
+    assert parts[2].startswith('<context-file path="AGENTS.md">')
 
 
 async def test_custom_agent_can_opt_in() -> None:

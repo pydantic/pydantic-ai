@@ -13,7 +13,8 @@ what you want, you're done.
 The default CLAI agent exposes `read_clai_customization_guide`. When you ask for
 customization, its instructions tell it to read this guide first. Only the short
 hint and tool description are present initially; the bundled text is read on tool
-invocation. Reading it needs neither a checkout nor a network connection.
+invocation. That hint is ordered after the guidance the plugins contribute and
+before the repository instruction file, so it never leads the system prompt. Reading it needs neither a checkout nor a network connection.
 This tool needs no arguments and ignores extra arguments supplied by a model.
 Other tools keep their existing validation.
 
@@ -146,7 +147,11 @@ cleanup. See [Git worktrees](README.md#git-worktrees) for naming and cleanup.
 The coding tools are a plugin too, and so are asking you multiple-choice
 questions mid-run, reading the repository's instruction file, and keeping the
 conversation inside the context window. These five plugins are marked
-`(built-in)` and enabled unless you say otherwise:
+`(built-in)` and enabled unless you say otherwise. Built-ins activate first, in
+the order listed below, so `coder`'s guidance leads the system prompt; saved,
+drop-in, and project plugins follow in name order. Registration order is also the
+order plugin instructions, renderers, and status segments are consulted in.
+`/plugins` and `/plugins list` stay alphabetical for scanning:
 
 | Id | Backed by | Settings | Does |
 |---|---|---|---|
