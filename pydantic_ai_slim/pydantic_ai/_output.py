@@ -849,8 +849,9 @@ def _output_type_name(output: Any) -> str | None:
 
     `NoneType` is Python's name for the type of `None`; `None` is what the user wrote. A model offered
     `final_result_NoneType` has to know a Python implementation detail to read it as "no answer", so the
-    route is named for the value instead. `ToolOutput(None)` carries the value rather than the type and
-    has no `__name__` at all, which would otherwise leave its route named `final_result_`.
+    route is named for the value instead. Both spellings arrive here: `int | None` resolves to the type,
+    while `ToolOutput(None)` and a bare `None` in a list of output types are unwrapped to the value, which
+    has no `__name__` at all and would otherwise leave its route named `final_result_`.
     """
     if output is NoneType or output is None:
         return 'None'
