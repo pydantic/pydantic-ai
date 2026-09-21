@@ -17,6 +17,7 @@ from pydantic_ai import (
     ThinkingPartDelta,
 )
 from rich.console import Console, RenderableType
+from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
 from termflow import Parser, Renderer  # pyright: ignore[reportMissingTypeStubs]
@@ -185,10 +186,7 @@ class StreamRenderer:
     def _render_events(self, events: list[ParseEvent]) -> None:
         assert self._renderer is not None
         for event in events:
-            if self._thinking:
-                # Termflow's dim renderer paints the whole block, fences included.
-                self._renderer.render(event)
-            elif isinstance(event, CodeBlockStartEvent):
+            if isinstance(event, CodeBlockStartEvent):
                 self._code_language = (event.language or 'text').split()[0]
                 self._code_lines = []
             elif isinstance(event, CodeBlockLineEvent):
@@ -201,10 +199,11 @@ class StreamRenderer:
                         Syntax(
                             '\n'.join(self._code_lines),
                             LANGUAGE_ALIASES.get(self._code_language.lower(), self._code_language.lower()),
-                            theme='monokai',
+                            theme=theme.syntax_theme(),
                             background_color='default',
                             word_wrap=True,
-                        )
+                        ),
+                        style=Style(dim=self._thinking),
                     )
                     self.console.rule(style=theme.color(theme.MUTED))
                 (self._writer or self.console.file).write(capture.get())

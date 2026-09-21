@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from rich.syntax import SyntaxTheme
     from termflow.themes import TerminalPalette  # pyright: ignore[reportMissingTypeStubs]
 
 _ACTIVE: ContextVar[Callable[[], str]] = ContextVar('clai_theme', default=lambda: 'default')
@@ -40,6 +41,22 @@ def color(role: str) -> str:
     if palette is None or shade not in _SLOTS:
         return role
     return ('bold ' if role.startswith('bold ') else '') + palette.ansi[_SLOTS[shade]]
+
+
+def syntax_theme() -> SyntaxTheme:
+    """Use native ANSI syntax colours, resolving selected palettes for previews too."""
+    from rich.style import Style
+    from rich.syntax import ANSI_LIGHT, ANSISyntaxTheme
+
+    palette = current()
+    styles = ANSI_LIGHT.copy()
+    if palette is not None:
+        for token, style in styles.items():
+            color = style.color
+            if color is not None:
+                assert color.number is not None
+                styles[token] = style + Style(color=palette.ansi[color.number])
+    return ANSISyntaxTheme(styles)
 
 
 def apply(name: str, *, output: IO[str]) -> None:

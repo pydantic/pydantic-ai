@@ -168,8 +168,10 @@ palette or `None` for the original appearance. Termflow owns palette application
 and reset; `theme.use(...)` leaves the terminal untouched in the default session.
 Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
-Heavy imports in `theme.py` stay lazy for the splash. Syntax keeps Monokai;
-default diff colours stay unchanged, while bundled palettes use Termflow defaults.
+Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
+foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
+streamed fences and theme previews. Default diff colours stay unchanged, while
+bundled palettes use Termflow defaults.
 
 ## File map
 

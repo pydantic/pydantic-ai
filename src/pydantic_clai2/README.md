@@ -35,7 +35,9 @@ block when its closing fence arrives, or when the text part ends if the fence
 is unfinished. This keeps multiline strings and comments correctly colored.
 Prose outside fences still streams line by line. Unlabelled and Markdown fences
 stay literal, including indentation and blank lines; unknown languages use plain
-text. Long code lines wrap to the terminal width.
+text. Long code lines wrap to the terminal width. Response and reasoning code
+blocks use the terminal foreground and ANSI syntax colours, rather than pale
+text intended for a dark background. Bundled themes supply their own ANSI colours.
 
 ## Word deletion
 
@@ -811,8 +813,8 @@ and cancellation. Unsupported terminals may ignore these changes. Redirected
 output receives no palette-changing sequences. Your terminal configuration file
 is not modified.
 
-The early splash retains its brand colours. Syntax highlighting keeps Monokai;
-bundled palettes use Termflow's default diff colours. Theme selection adds no
+The early splash retains its brand colours. Code uses the terminal foreground
+and ANSI syntax colours; bundled palettes use Termflow's default diff colours. Theme selection adds no
 model requests or telemetry.
 
 ### Streaming
@@ -891,7 +893,8 @@ Native capability events drive specialized output: `FileEditedEvent` renders its
 bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
 uses. The default appearance keeps CLAI's existing addition and deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
-Code syntax colours retain the Monokai default. Successful file writes also show the proposed diff from their matching
+Code uses the terminal foreground and ANSI syntax colours on the terminal
+background. Successful file writes also show the proposed diff from their matching
 `FileChangeRequestEvent`: new files show additions, overwrites show before/after
 changes. Without a matching request event, only the written path is shown. Failed
 or cancelled writes do not display a success diff. Large diffs retain the

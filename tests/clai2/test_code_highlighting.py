@@ -3,11 +3,13 @@
 import io
 
 import pytest
-from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta
+from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
+from rich.color import Color
 from rich.console import Console
 from rich.text import Text
+from termflow.themes import PALETTES  # pyright: ignore[reportMissingTypeStubs]
 
-from pydantic_clai2 import StreamRenderer
+from pydantic_clai2 import StreamRenderer, theme
 
 
 @pytest.mark.parametrize('chunk_size', [1, 1000])
@@ -87,3 +89,28 @@ async def test_cancelled_fence_does_not_leak_into_next_part() -> None:
     await renderer.finish()
     assert 'secret' not in output.getvalue()
     assert 'fresh' in output.getvalue()
+
+
+@pytest.mark.parametrize('name', ['default', 'github_light', 'tokyo_night'])
+@pytest.mark.parametrize('thinking', [False, True])
+@pytest.mark.parametrize('language', ['python', 'unknown-language', ''])
+async def test_code_uses_terminal_foreground_and_palette_syntax(name: str, thinking: bool, language: str) -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor')
+    content = f'```{language}\nif items < 2:\n    return items\n```\n'
+    with theme.use(lambda: name):
+        renderer = StreamRenderer(console, stop_loading=lambda: None)
+        await renderer.on_stream_event(
+            PartStartEvent(index=0, part=ThinkingPart(content) if thinking else TextPart(content))
+        )
+        await renderer.finish()
+    text = Text.from_ansi(output.getvalue())
+    for fragment in ('items', '<', ':'):
+        style = text.get_style_at_offset(console, text.plain.index(fragment))
+        assert style.color is None or style.color.is_default
+        assert style.bgcolor is None or style.bgcolor.is_default
+        assert bool(style.dim) == thinking
+    if language == 'python':
+        keyword = text.get_style_at_offset(console, text.plain.index('return'))
+        assert keyword.color == Color.parse(PALETTES[name].ansi[4] if name != 'default' else 'color(4)')
+    assert '\x1b]' not in output.getvalue()

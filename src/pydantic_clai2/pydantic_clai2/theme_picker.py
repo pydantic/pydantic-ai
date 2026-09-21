@@ -36,7 +36,12 @@ def theme_preview(name: str, *, width: int) -> str:
                 renderer.render(event)
         palette = theme.current()
         console.print(
-            Syntax('return "ready"', 'python', theme='monokai', background_color=palette.bg if palette else 'default')
+            Syntax(
+                'return "ready"',
+                'python',
+                theme=theme.syntax_theme(),
+                background_color=palette.bg if palette else 'default',
+            )
         )
         console.print('Warning: output truncated', style=theme.color(theme.WARNING))
         console.print('Error: example.py not found', style=theme.color(theme.ERROR))

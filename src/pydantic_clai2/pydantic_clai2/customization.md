@@ -283,8 +283,8 @@ returns the selected TerminalPalette or None for default. Starting and exiting
 in default leaves terminal colours untouched. For bundled palettes, Termflow
 applies foreground, background, and ANSI slots via OSC; returning to default or
 exiting resets terminal colours. Redirected output receives no palette changes.
-The early splash keeps brand colours and syntax keeps Monokai. Default diffs stay
-unchanged; bundled palettes use Termflow's diff defaults. StreamRenderer owns text and
+The early splash keeps brand colours. Code uses the terminal foreground and ANSI
+syntax colours. Default diffs stay unchanged; bundled palettes use Termflow's diff defaults. StreamRenderer owns text and
 thinking, not tool-specific rendering.
 
 Add a fragment to the status row with host.status_segment:
