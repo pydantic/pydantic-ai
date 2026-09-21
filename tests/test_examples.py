@@ -1337,6 +1337,24 @@ async def model_logic(  # noqa: C901
         )
     elif (
         isinstance(m, UserPromptPart)
+        and m.content == 'Email the launch update to alice@example.com and bob@example.com.'
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='send_email',
+                    args={'address': 'alice@example.com', 'subject': 'Launch update'},
+                    tool_call_id='email_alice',
+                ),
+                ToolCallPart(
+                    tool_name='send_email',
+                    args={'address': 'bob@example.com', 'subject': 'Launch update'},
+                    tool_call_id='email_bob',
+                ),
+            ]
+        )
+    elif (
+        isinstance(m, UserPromptPart)
         and m.content == 'Write a response plan for elevated API latency after a deployment.'
     ):
         return ModelResponse(
