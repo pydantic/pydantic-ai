@@ -34,7 +34,7 @@ class TextUIPart(BaseUIPart):
     state: Literal['streaming', 'done'] | None = None
     """The state of the text part."""
 
-    provider_metadata: ProviderMetadata | None = None
+    provider_metadata: ProviderMetadata | None = Field(default=None, exclude_if=lambda value: value is None)
     """The provider metadata."""
 
 
@@ -52,7 +52,7 @@ class ReasoningUIPart(BaseUIPart):
     state: Literal['streaming', 'done'] | None = None
     """The state of the reasoning part."""
 
-    provider_metadata: ProviderMetadata | None = None
+    provider_metadata: ProviderMetadata | None = Field(default=None, exclude_if=lambda value: value is None)
     """The provider metadata."""
 
 
@@ -63,7 +63,7 @@ class SourceUrlUIPart(BaseUIPart):
     source_id: str
     url: str
     title: str | None = None
-    provider_metadata: ProviderMetadata | None = None
+    provider_metadata: ProviderMetadata | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class SourceDocumentUIPart(BaseUIPart):
@@ -74,7 +74,7 @@ class SourceDocumentUIPart(BaseUIPart):
     media_type: str
     title: str
     filename: str | None = None
-    provider_metadata: ProviderMetadata | None = None
+    provider_metadata: ProviderMetadata | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class FileUIPart(BaseUIPart):
@@ -97,7 +97,7 @@ class FileUIPart(BaseUIPart):
     It can either be a URL to a hosted file or a [Data URL](https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URLs).
     """
 
-    provider_metadata: ProviderMetadata | None = None
+    provider_metadata: ProviderMetadata | None = Field(default=None, exclude_if=lambda value: value is None)
     """The provider metadata."""
 
 
