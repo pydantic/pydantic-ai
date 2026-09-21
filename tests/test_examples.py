@@ -1333,6 +1333,25 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
+    elif isinstance(m, UserPromptPart) and 'ACME Hosting — Invoice INV-2048' in m.content:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={
+                        'invoice_number': 'INV-2048',
+                        'invoice_date': '2026-09-18',
+                        'customer': 'Northstar Labs',
+                        'items': [
+                            {'description': 'Managed database', 'quantity': 2, 'unit_price': '120.00'},
+                            {'description': 'Object storage', 'quantity': 1, 'unit_price': '35.50'},
+                        ],
+                        'total': '275.50',
+                    },
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')

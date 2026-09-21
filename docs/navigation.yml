@@ -792,6 +792,9 @@ navigation:
   - section: "Cookbook"
     slug: ""
     contents:
+      - page: "Extract structured data from text"
+        path: "cookbook/structured-extraction.md"
+        slug: "cookbook/structured-extraction"
       - page: "Research a decision with sources"
         path: "cookbook/research-brief.md"
         slug: "cookbook/research-brief"
