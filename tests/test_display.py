@@ -265,9 +265,12 @@ def test_render_banner_leaves_out_a_tool_count_the_caller_could_not_take(render:
 
 def test_the_observability_links_each_survive_on_one_line(render: Callable[..., str]):
     """A URL `textwrap` splits stops being clickable, which is the only reason it's in the banner."""
-    lines = [  # pyright: ignore[reportPrivateUsage]
-        *_display._observability_lines(_MIN_TEXT_WIDTH),
-        *_display._wrapped(_display._VERSION_CHECK_LINE, _MIN_TEXT_WIDTH),
+    lines = [
+        *_display._observability_lines(_MIN_TEXT_WIDTH),  # pyright: ignore[reportPrivateUsage]
+        *_display._wrapped(  # pyright: ignore[reportPrivateUsage]
+            _display._VERSION_CHECK_LINE,  # pyright: ignore[reportPrivateUsage]
+            _MIN_TEXT_WIDTH,
+        ),
     ]
     urls = [word for line in lines for word in line.split() if word.startswith('http')]
 

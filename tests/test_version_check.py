@@ -89,11 +89,11 @@ def test_fresh_machine_checks_without_a_cached_notice(monkeypatch: pytest.Monkey
     monkeypatch.setattr(_version_check.platform, 'system', lambda: 'TestOS')
     monkeypatch.setattr(_version_check.platform, 'machine', lambda: 'test-cpu')
     monkeypatch.setattr(models, 'get_user_agent', lambda: 'pydantic-ai/2.45.0')
-    monkeypatch.setattr(
-        _version_check,
-        '_distribution_version',
-        lambda module, distribution: '0.1.6' if distribution == 'genai-prices' else None,
-    )
+
+    def distribution_version(_module: str, distribution: str) -> str | None:
+        return '0.1.6' if distribution == 'genai-prices' else None
+
+    monkeypatch.setattr(_version_check, '_distribution_version', distribution_version)
     requests = install_transport(
         monkeypatch,
         lambda request: httpx2.Response(
@@ -114,18 +114,17 @@ def test_fresh_machine_checks_without_a_cached_notice(monkeypatch: pytest.Monkey
 
     assert len(requests) == 1
     request = requests[0]
-    assert (request.method, str(request.url), dict(request.headers)) == snapshot(
-        (
-            'GET',
-            'https://pydantic.dev/docs/api/versions',
-            {
-                'host': 'pydantic.dev',
-                'accept': '*/*',
-                'accept-encoding': 'gzip, deflate, br, zstd',
-                'connection': 'keep-alive',
-                'user-agent': ('pydantic-ai/2.45.0 (Python 3.14.1; TestOS; test-cpu) genai-prices/0.1.6'),
-            },
-        )
+    with httpx2.Client() as client:
+        default_headers = dict(client.build_request('GET', _version_check.VERSION_CHECK_URL).headers)
+    default_headers.pop('user-agent')
+    request_headers = dict(request.headers)
+    assert request_headers.pop('user-agent') == snapshot(
+        'pydantic-ai/2.45.0 (Python 3.14.1; TestOS; test-cpu) genai-prices/0.1.6'
+    )
+    assert (request.method, str(request.url), request_headers) == (
+        'GET',
+        _version_check.VERSION_CHECK_URL,
+        default_headers,
     )
     assert json.loads(cache_file.read_text(encoding='utf-8')) == snapshot(
         {'checked_at': 2000000000.0, 'latest': {'pydantic-ai': '2.46.0'}}
@@ -134,7 +133,11 @@ def test_fresh_machine_checks_without_a_cached_notice(monkeypatch: pytest.Monkey
 
 def test_recent_cache_does_not_check(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
     write_cache(cache_file, checked_at=_NOW - _CACHE_AGE + 1, latest={'pydantic-ai': '2.46.0'})
-    monkeypatch.setattr(_version_check.httpx2, 'get', lambda *args, **kwargs: pytest.fail('unexpected request'))
+
+    def unexpected_get(*args: object, **kwargs: object) -> None:
+        pytest.fail('unexpected request')
+
+    monkeypatch.setattr(_version_check.httpx2, 'get', unexpected_get)
 
     assert _version_check.start_version_check() is None
 
@@ -207,7 +210,7 @@ def test_invalid_responses_are_silent(response: httpx2.Response, monkeypatch: py
     ],
 )
 def test_latest_from_malformed_response(response: object, expected: dict[str, str] | None):
-    assert _version_check._latest_from_response(response) == expected
+    assert _version_check._latest_from_response(response) == expected  # pyright: ignore[reportPrivateUsage]
 
 
 def test_unwritable_cache_still_checks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -257,7 +260,11 @@ def test_corrupt_cache_is_a_miss(monkeypatch: pytest.MonkeyPatch, cache_file: Pa
 def test_opt_out_never_accesses_cache_or_network(variable: str, value: str, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(variable, value)
     monkeypatch.setattr(_version_check, '_read_cache', lambda: pytest.fail('unexpected cache read'))
-    monkeypatch.setattr(_version_check.httpx2, 'get', lambda *args, **kwargs: pytest.fail('unexpected request'))
+
+    def unexpected_get(*args: object, **kwargs: object) -> None:
+        pytest.fail('unexpected request')
+
+    monkeypatch.setattr(_version_check.httpx2, 'get', unexpected_get)
 
     assert _version_check.cached_updates() == []
     assert _version_check.start_version_check() is None
@@ -297,8 +304,12 @@ def test_cached_updates_compare_release_tuples(
 
 
 def test_release_tuple_compares_numeric_components_and_drops_trailing_zeros():
-    assert _version_check._release_tuple('2.46') == _version_check._release_tuple('2.46.0')
-    assert _version_check._release_tuple('2.10') > _version_check._release_tuple('2.9')
+    assert _version_check._release_tuple('2.46') == _version_check._release_tuple(  # pyright: ignore[reportPrivateUsage]
+        '2.46.0'
+    )
+    assert _version_check._release_tuple('2.10') > _version_check._release_tuple(  # pyright: ignore[reportPrivateUsage]
+        '2.9'
+    )
 
 
 def test_unsafe_versions_are_never_returned(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
@@ -351,13 +362,13 @@ def test_user_agent_reports_only_known_agent_names(
 ):
     monkeypatch.setenv(variable, value)
     monkeypatch.setattr(_display, 'detect_coding_agent', _DETECT_CODING_AGENT)
-    monkeypatch.setattr(
-        _version_check,
-        '_distribution_version',
-        lambda module, distribution: '0.8.0' if distribution == 'pydantic-ai-harness' else None,
-    )
 
-    user_agent = _version_check._user_agent()
+    def distribution_version(_module: str, distribution: str) -> str | None:
+        return '0.8.0' if distribution == 'pydantic-ai-harness' else None
+
+    monkeypatch.setattr(_version_check, '_distribution_version', distribution_version)
+
+    user_agent = _version_check._user_agent()  # pyright: ignore[reportPrivateUsage]
 
     assert expected in user_agent
     assert ('pydantic-ai-harness/0.8.0' in user_agent) is True
@@ -366,9 +377,13 @@ def test_user_agent_reports_only_known_agent_names(
 
 def test_no_coding_agent_adds_no_agent_token(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_display, 'detect_coding_agent', lambda: None)
-    monkeypatch.setattr(_version_check, '_distribution_version', lambda module, distribution: None)
 
-    assert ' agent/' not in _version_check._user_agent()
+    def distribution_version(_module: str, _distribution: str) -> None:
+        return None
+
+    monkeypatch.setattr(_version_check, '_distribution_version', distribution_version)
+
+    assert ' agent/' not in _version_check._user_agent()  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(
@@ -387,21 +402,24 @@ def test_distribution_version_is_defensive(cached: list[object], expected: str |
         return value
 
     monkeypatch.setattr(importlib.util, 'find_spec', find_spec)
-    monkeypatch.setattr(metadata, 'version', lambda distribution: '1.2.3')
 
-    assert _version_check._distribution_version('example', 'example') == expected
+    def version(_distribution: str) -> str:
+        return '1.2.3'
+
+    monkeypatch.setattr(metadata, 'version', version)
+
+    assert _version_check._distribution_version('example', 'example') == expected  # pyright: ignore[reportPrivateUsage]
 
 
 def test_installed_versions_include_an_available_harness(monkeypatch: pytest.MonkeyPatch):
-    assert 'pydantic-ai-harness' not in _version_check._installed_versions()
+    assert 'pydantic-ai-harness' not in _version_check._installed_versions()  # pyright: ignore[reportPrivateUsage]
 
-    monkeypatch.setattr(
-        _version_check,
-        '_distribution_version',
-        lambda module, distribution: '0.8.0' if distribution == 'pydantic-ai-harness' else None,
-    )
+    def distribution_version(_module: str, distribution: str) -> str | None:
+        return '0.8.0' if distribution == 'pydantic-ai-harness' else None
 
-    assert _version_check._installed_versions()['pydantic-ai-harness'] == '0.8.0'
+    monkeypatch.setattr(_version_check, '_distribution_version', distribution_version)
+
+    assert _version_check._installed_versions()['pydantic-ai-harness'] == '0.8.0'  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(
@@ -417,28 +435,37 @@ def test_wrong_cache_types_are_a_miss(contents: str, cache_file: Path):
     cache_file.parent.mkdir(parents=True)
     cache_file.write_text(contents, encoding='utf-8')
 
-    assert _version_check._read_cache() is None
+    assert _version_check._read_cache() is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_cache_paths_follow_the_platform(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.delenv('XDG_CACHE_HOME')
     monkeypatch.setattr(Path, 'home', lambda: tmp_path / 'home')
-    assert _version_check._cache_file() == tmp_path / 'home' / '.cache' / 'pydantic-ai' / 'version-check.json'
+    assert _version_check._cache_file() == (  # pyright: ignore[reportPrivateUsage]
+        tmp_path / 'home' / '.cache' / 'pydantic-ai' / 'version-check.json'
+    )
 
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
     monkeypatch.setattr(_version_check, 'os', SimpleNamespace(name='nt', environ=os.environ))
-    assert _version_check._cache_file() == tmp_path / 'local' / 'pydantic-ai' / 'version-check.json'
+    assert _version_check._cache_file() == (  # pyright: ignore[reportPrivateUsage]
+        tmp_path / 'local' / 'pydantic-ai' / 'version-check.json'
+    )
 
     monkeypatch.delenv('LOCALAPPDATA')
-    assert _version_check._cache_file() == (
+    assert _version_check._cache_file() == (  # pyright: ignore[reportPrivateUsage]
         tmp_path / 'home' / 'AppData' / 'Local' / 'pydantic-ai' / 'version-check.json'
     )
 
 
 def test_atomic_write_failure_removes_the_temporary_file(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
-    monkeypatch.setattr(_version_check.os, 'replace', lambda source, target: (_ for _ in ()).throw(OSError('no')))
+    def fail_replace(_source: object, _target: object) -> None:
+        raise OSError('no')
 
-    _version_check._write_cache({'checked_at': _NOW, 'latest': {}})
+    monkeypatch.setattr(_version_check.os, 'replace', fail_replace)
+
+    _version_check._write_cache(  # pyright: ignore[reportPrivateUsage]
+        {'checked_at': _NOW, 'latest': {}}
+    )
 
     assert not cache_file.exists()
     assert list(cache_file.parent.iterdir()) == []
@@ -462,10 +489,20 @@ def test_temporary_file_cleanup_failure_is_silent(monkeypatch: pytest.MonkeyPatc
         def flush(self) -> None:
             pass
 
-    monkeypatch.setattr(tempfile, 'NamedTemporaryFile', lambda **kwargs: BrokenTemporaryFile())
-    monkeypatch.setattr(Path, 'unlink', lambda self, missing_ok=False: (_ for _ in ()).throw(OSError('still no')))
+    def broken_temporary_file(**_kwargs: object) -> BrokenTemporaryFile:
+        return BrokenTemporaryFile()
 
-    _version_check._write_cache({'checked_at': _NOW, 'latest': {}})
+    def fail_unlink(self: Path, missing_ok: bool = False) -> None:
+        assert isinstance(self, Path)
+        assert missing_ok is True
+        raise OSError('still no')
+
+    monkeypatch.setattr(tempfile, 'NamedTemporaryFile', broken_temporary_file)
+    monkeypatch.setattr(Path, 'unlink', fail_unlink)
+
+    _version_check._write_cache(  # pyright: ignore[reportPrivateUsage]
+        {'checked_at': _NOW, 'latest': {}}
+    )
 
 
 def test_invalid_installed_version_has_an_empty_release_tuple(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
@@ -473,4 +510,4 @@ def test_invalid_installed_version_has_an_empty_release_tuple(monkeypatch: pytes
     monkeypatch.setattr(_version_check, '_installed_versions', lambda: {'pydantic-ai': 'development'})
 
     assert _version_check.cached_updates() == [('pydantic-ai', '2.46.0')]
-    assert _version_check._release_tuple('development') == ()
+    assert _version_check._release_tuple('development') == ()  # pyright: ignore[reportPrivateUsage]

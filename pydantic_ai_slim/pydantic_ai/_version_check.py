@@ -12,6 +12,7 @@ import threading
 import time
 from importlib import metadata
 from pathlib import Path
+from typing import cast
 
 import httpx2
 from typing_extensions import TypedDict
@@ -104,13 +105,13 @@ def _cache_file() -> Path:
 
 def _read_cache() -> _VersionCache | None:
     try:
-        value = json.loads(_cache_file().read_bytes())
-        if not isinstance(value, dict):
+        data = _json_object(json.loads(_cache_file().read_bytes()))
+        if data is None:
             return None
-        checked_at = value.get('checked_at')
+        checked_at = data.get('checked_at')
         if not isinstance(checked_at, (int, float)) or isinstance(checked_at, bool):
             return None
-        latest = _validated_latest(value.get('latest'))
+        latest = _validated_latest(data.get('latest'))
         if latest is None:
             return None
         return {'checked_at': float(checked_at), 'latest': latest}
@@ -139,13 +140,22 @@ def _write_cache(cache: _VersionCache) -> None:
                 pass
 
 
-def _validated_latest(value: object) -> dict[str, str] | None:
+def _json_object(value: object) -> dict[str, object] | None:
+    """`value` as a JSON object, or `None` when it's anything else."""
     if not isinstance(value, dict):
+        return None
+    # A decoded JSON object's keys are always strings, which `isinstance` can't tell the type checker.
+    return cast('dict[str, object]', value)
+
+
+def _validated_latest(value: object) -> dict[str, str] | None:
+    data = _json_object(value)
+    if data is None:
         return None
 
     latest: dict[str, str] = {}
     for distribution in _DISTRIBUTIONS:
-        version = value.get(distribution)
+        version = data.get(distribution)
         if isinstance(version, str) and _VERSION_PATTERN.fullmatch(version):
             latest[distribution] = version
     return latest
@@ -153,11 +163,14 @@ def _validated_latest(value: object) -> dict[str, str] | None:
 
 def _latest_from_response(value: object) -> dict[str, str] | None:
     """Flatten the endpoint's `registry -> package -> {'latest': version}` into what the cache keeps."""
-    packages = value.get('pypi') if isinstance(value, dict) else None
-    if not isinstance(packages, dict):
+    if (data := _json_object(value)) is None or (packages := _json_object(data.get('pypi'))) is None:
         return None
     return _validated_latest(
-        {name: package.get('latest') for name, package in packages.items() if isinstance(package, dict)}
+        {
+            name: fields.get('latest')
+            for name, package in packages.items()
+            if (fields := _json_object(package)) is not None
+        }
     )
 
 
