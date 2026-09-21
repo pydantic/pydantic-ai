@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 import httpx2
 import pytest
@@ -159,7 +159,7 @@ REFUSED = [
         'field: None | None',
         probe(
             'nothing',
-            Annotated[None, Field(description='one')] | Annotated[None, Field(description='the other')],
+            Union[Annotated[None, Field(description='one')], Annotated[None, Field(description='the other')]],  # noqa: UP007
             description='Which?',
         ),
         unsupported('nothing'),
