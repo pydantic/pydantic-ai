@@ -4908,9 +4908,7 @@ async def test_adapter_dump_messages():
                 'id': IsStr(),
                 'role': 'system',
                 'metadata': None,
-                'parts': [
-                    {'type': 'text', 'text': 'You are a helpful assistant.', 'state': 'done'}
-                ],
+                'parts': [{'type': 'text', 'text': 'You are a helpful assistant.', 'state': 'done'}],
             },
             {
                 'id': IsStr(),
@@ -4936,9 +4934,9 @@ def test_adapter_dump_messages_omits_null_provider_metadata():
     assert serialized['parts'][0]['type'] == 'text'
     assert 'providerMetadata' not in serialized['parts'][0]
 
-    with_metadata = TextUIPart(
-        text='Hello', provider_metadata={'pydantic_ai': {'id': 'text-part-id'}}
-    ).model_dump(by_alias=True)
+    with_metadata = TextUIPart(text='Hello', provider_metadata={'pydantic_ai': {'id': 'text-part-id'}}).model_dump(
+        by_alias=True
+    )
     assert with_metadata['providerMetadata'] == {'pydantic_ai': {'id': 'text-part-id'}}
 
 
@@ -5003,9 +5001,7 @@ async def test_adapter_dump_messages_with_tools():
                 'id': IsStr(),
                 'role': 'assistant',
                 'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
-                'parts': [
-                    {'type': 'text', 'text': 'Here are the results.', 'state': 'done'}
-                ],
+                'parts': [{'type': 'text', 'text': 'Here are the results.', 'state': 'done'}],
             },
         ]
     )
