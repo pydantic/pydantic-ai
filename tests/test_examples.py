@@ -174,9 +174,9 @@ class MockRealtimeConnection(RealtimeConnection):
     """A scripted realtime connection for executable documentation examples.
 
     The default script speaks one assistant turn. When the example's agent defines a
-    `check_availability` tool, the script plays a full spoken exchange instead — user turn, tool
-    round, assistant answer — so the quickstart's printed conversation is produced by the real
-    session/tool loop rather than pasted into the docs.
+    `check_availability` or `refund_authenticated_order` tool, the script plays the corresponding
+    full spoken exchange instead — user turn, tool round, assistant answer — so the printed
+    conversation is produced by the real session/tool loop rather than pasted into the docs.
     """
 
     def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
@@ -192,7 +192,22 @@ class MockRealtimeConnection(RealtimeConnection):
             self._tool_result_received.set()
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        if 'check_availability' in self._function_tool_names:
+        if 'refund_authenticated_order' in self._function_tool_names:
+            yield InputTranscript(text='Refund $50 for order A100.', is_final=True)
+            yield ToolCall(
+                tool_call_id='refund_1',
+                tool_name='refund_authenticated_order',
+                args='{"order_id": "A100", "amount": 50}',
+            )
+            yield ResponseDone()
+            await self._tool_result_received.wait()
+            yield AudioDelta(data=b'\x00\x00')
+            yield OutputTranscript(
+                text='I cannot access that order; I can connect you to an agent.',
+                is_final=True,
+            )
+            yield ResponseDone()
+        elif 'check_availability' in self._function_tool_names:
             yield InputTranscript(text='Hi! Do you have a table for two tomorrow night?', is_final=True)
             yield ToolCall(
                 tool_call_id='call_1', tool_name='check_availability', args='{"day": "tomorrow", "party_size": 2}'
@@ -529,6 +544,8 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     "run_shell: {'command': 'rm -rf ./build'}": ToolCallPart(tool_name='final_result', args={'irreversible': True}),
     'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(tool_name='reject_all', args={}),
     'Write a one-sentence deployment update.': 'Version 2.4 is deployed successfully in all regions.',
+    'Summarize rollback readiness.': 'Rollback is ready once traffic-shift checks pass.',
+    'Who should approve the rollback?': 'The incident commander should approve the rollback.',
     'What does this repo do?': 'It is a provider-agnostic agent framework for Python.',
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',

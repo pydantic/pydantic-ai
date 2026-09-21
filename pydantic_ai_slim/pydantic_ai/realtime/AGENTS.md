@@ -51,6 +51,6 @@ tools given cancelled returns) so history never ends on a dangling `ToolCallPart
 - Realtime WebSocket cassettes live in `tests/realtime/cassettes/` (raw frames, secrets scrubbed,
   audio truncated); record with `uv run --env-file .env pytest --record-mode=rewrite <test>`. The
   cross-provider matrix test is the parity net — extend it when adding provider behavior.
-- Docs examples run against the scripted `MockRealtimeConnection` in `tests/test_examples.py`; an
-  agent defining a `check_availability` tool triggers the scripted conversation reserved for the
-  quickstart, so don't use that tool name elsewhere.
+- Docs examples run against the scripted `MockRealtimeConnection` in `tests/test_examples.py`;
+  agents defining `check_availability` or `refund_authenticated_order` trigger their corresponding
+  scripted conversations, so don't use those tool names elsewhere.

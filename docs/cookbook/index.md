@@ -25,6 +25,8 @@ These recipes form a progressive introduction to the core agent loop:
 - [Put a hard limit on tool execution](usage-limits.md)
 - [Fall back when a model provider fails](model-fallback.md)
 - [Require approval for a sensitive tool](tool-approval.md)
+- [Resume a tool approval in a later request](persisted-approval.md)
+- [Share one usage budget across a conversation](conversation-budget.md)
 - [Keep conversation history within a fixed window](bounded-history.md)
 - [Evaluate agent behavior in CI](evaluate-agent.md)
 
@@ -35,5 +37,6 @@ These recipes form a progressive introduction to the core agent loop:
 - [Answer from private documents with citations](rag-citations.md)
 - [Redact personal data before a model request](redact-pii.md)
 - [Review a change with parallel specialists](parallel-review.md)
+- [Authorize a refund during a realtime call](realtime-refund-policy.md)
 
 Each recipe recommends one bounded pattern. It deliberately links to the relevant guide instead of duplicating every configuration option or provider variation.
