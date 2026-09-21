@@ -374,6 +374,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
     # code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
+    # The first-run banner asks whether the harness is installed and what version it is, to name it
+    # in the banner. That happens once per process, before the first request.
+    ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
+    ('os.listdir', 'pydantic_ai/_display.py', '_version_line'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_display.py', '_version_line'),
+    ('io.BufferedReader.read', 'pydantic_ai/_display.py', '_version_line'),
     # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
     ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
     ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
@@ -401,6 +407,11 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
     ('io.TextIOWrapper.read', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    # Enum member docstrings are read from source the same way, once per enum, when a schema is built.
+    ('os.stat', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('os.getcwd', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     # logfire resolves the current working directory while classifying user stack frames.
     ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
     # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
@@ -1093,6 +1104,11 @@ def groq_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def typesafe_api_key() -> str:
+    return os.getenv('TYPESAFE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def anthropic_api_key() -> str:
     return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')
 
@@ -1190,6 +1206,11 @@ def zai_api_key() -> str:
 @pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def github_copilot_api_key() -> str:
+    return os.getenv('GITHUB_COPILOT_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')

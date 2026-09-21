@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+import inspect
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, Literal
+from typing import Any, ClassVar, Generic, Literal, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -22,6 +23,8 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    'Choice',
+    'Choices',
     'OutputObjectDefinition',
     'OutputContext',
     # types
@@ -35,6 +38,8 @@ __all__ = (
 
 T = TypeVar('T')
 T_co = TypeVar('T_co', covariant=True)
+ChoiceValueT = TypeVar('ChoiceValueT')
+"""Function-scoped type variable for what a `Choice` stands for, so `Choice.__init__` can specialize `self`."""
 
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the output data type of a run."""
@@ -414,6 +419,243 @@ def StructuredDict(
             return json_schema
 
     return _StructuredDict
+
+
+@dataclass(init=False)
+class Choice(Generic[T_co]):
+    """One choice in a [`Choices`][pydantic_ai.output.Choices] set: what it means, and what it stands for.
+
+    Building a set from descriptions alone yields the key the model picked, so `Choice` is only reached for
+    when a choice stands for something other than its key:
+
+    ```python {title="choice.py"}
+    from pydantic_ai import Agent, Choice, Choices
+
+    Card = Choices(
+        {
+            'visa': Choice('Any card starting with a 4.', value=4),
+            'amex': Choice('Any card starting with a 3.', value=3),
+        }
+    )
+
+    agent = Agent('openai:gpt-5.2', output_type=Card)
+    result = agent.run_sync('4111 1111 1111 1111')
+    print(result.output)
+    #> 4
+    ```
+    """
+
+    description: str | None
+    """What this choice means, shown to the model beside the choice itself."""
+
+    value: T_co
+    """What the picked choice resolves to. Defaults to the choice's own key.
+
+    A callable value is *called* when the model picks this choice, the way an
+    [output function](../output.md#output-functions) is, so the run's output is what the action returned.
+    It is called with no arguments, so bind what it needs with `functools.partial` or a closure, and it can
+    be `async`. A `Choices` set with a callable value can only be used as an agent's `output_type`.
+    """
+
+    @overload
+    def __init__(self: Choice[str], description: str | None = None) -> None: ...
+
+    @overload
+    def __init__(
+        self: Choice[ChoiceValueT], description: str | None = None, *, value: Callable[[], Awaitable[ChoiceValueT]]
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self: Choice[ChoiceValueT], description: str | None = None, *, value: Callable[[], ChoiceValueT]
+    ) -> None: ...
+
+    @overload
+    def __init__(self: Choice[ChoiceValueT], description: str | None = None, *, value: ChoiceValueT) -> None: ...
+
+    def __init__(self, description: str | None = None, *, value: Any = _utils.UNSET) -> None:
+        if _requires_arguments(value):
+            raise exceptions.UserError(
+                'A callable `Choice` value is called with no arguments when the model picks it, '
+                f'but {value!r} requires some. Bind them with `functools.partial` or a closure.'
+            )
+        self.description = description
+        self.value = value
+
+
+def _requires_arguments(value: Any) -> bool:
+    """Whether `value` is a callable that would fail when called with no arguments."""
+    if not callable(value):
+        return False
+    try:
+        parameters = inspect.signature(value).parameters.values()
+    except (TypeError, ValueError):
+        # Some C callables have no introspectable signature; assume the best and let the call speak for itself.
+        return False
+    return any(
+        parameter.default is parameter.empty
+        and parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY)
+        for parameter in parameters
+    )
+
+
+class _ChoicesActions:
+    """Base class of the type [`Choices`][pydantic_ai.output.Choices] returns when a choice value is callable.
+
+    Such a set is only meaningful as an agent's `output_type`, where `_output.py` validates the pick against
+    `keys_type` and resolves and calls the value itself. Anywhere else there is nothing to call the action, so
+    the core schema refuses to be built at all.
+    """
+
+    keys_type: ClassVar[type[Any]]
+    """The same set of keys with no values attached, which is what validates the model's pick."""
+
+    values: ClassVar[Mapping[str, Any]]
+    """What each key stands for, resolved once the pick is final."""
+
+    @staticmethod
+    def of(output: Any) -> type[_ChoicesActions] | None:
+        """`output` if it is a `Choices` set whose values include callables, else `None`."""
+        if isinstance(output, type) and issubclass(output, _ChoicesActions):
+            return output
+        return None
+
+
+@overload
+def Choices(
+    choices: Sequence[str] | Mapping[str, str], *, name: str | None = None, description: str | None = None
+) -> type[str]: ...
+
+
+@overload
+def Choices(
+    choices: Mapping[str, Choice[T_co]], *, name: str | None = None, description: str | None = None
+) -> type[T_co]: ...
+
+
+@overload
+def Choices(
+    choices: Mapping[str, str | Choice[T_co]], *, name: str | None = None, description: str | None = None
+) -> type[str | T_co]: ...
+
+
+def Choices(
+    choices: Sequence[str] | Mapping[str, str | Choice[Any]],
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> type[Any]:
+    """Returns a type the model can only fill with one of `choices`, each described where it is built.
+
+    Use it when the set is only known once the run is under way -- the actions available on the screen in front
+    of an agent, the records a search returned. For a set you know when you write the code, use a `Literal` or
+    an `Enum` (with [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] to describe its
+    members), which give you exhaustiveness checking that a run-time set cannot.
+
+    Like [`StructuredDict`][pydantic_ai.output.StructuredDict] it returns a type, so it works as an
+    `output_type`, as a field of a Pydantic model, and as a tool parameter.
+
+    Args:
+        choices: The choices, as a sequence of keys, a mapping from key to its description, or a mapping from
+            key to a [`Choice`][pydantic_ai.output.Choice] carrying both a description and what the key stands
+            for.
+        name: Name of the output tool or structured output. Defaults to `'Choices'`.
+        description: What the model is being asked to pick, e.g. `'Which action to take next.'`.
+
+    Example:
+    ```python {title="choices.py"}
+    from pydantic_ai import Agent, Choices
+
+    Intent = Choices(
+        {
+            'refund': 'The customer wants their money back.',
+            'replace': 'The customer wants a working unit instead.',
+            'escalate': 'Nobody on this tier can resolve it.',
+        },
+        name='customer_intent',
+        description='What the customer is asking for.',
+    )
+
+    agent = Agent('openai:gpt-5.2', output_type=Intent)
+    result = agent.run_sync('The blender arrived smashed. Just send me another one.')
+    print(result.output)
+    #> replace
+    ```
+    """
+    if isinstance(choices, str):
+        raise exceptions.UserError('`Choices` takes a sequence or mapping of choices, not a single string.')
+
+    resolved: dict[str, Choice[Any]] = (
+        {key: Choice(choice) if isinstance(choice, str) else choice for key, choice in choices.items()}
+        if isinstance(choices, Mapping)
+        else {key: Choice() for key in choices}
+    )
+    if not resolved:
+        raise exceptions.UserError('`Choices` requires at least one choice.')
+
+    choice_values: dict[str, Any] = {
+        key: choice.value if _utils.is_set(choice.value) else key for key, choice in resolved.items()
+    }
+    # The values are only worth resolving when at least one of them isn't the key itself.
+    resolves_values = any(value is not key for key, value in choice_values.items())
+    has_actions = any(callable(value) for value in choice_values.values())
+
+    descriptions = {key: choice.description for key, choice in resolved.items() if choice.description}
+    if descriptions:
+        # The same `anyOf`-of-`const`s shape `GenerateToolJsonSchema.enum_schema` emits for an enum whose
+        # members carry docstrings, so that "pick one of these, and here is what each means" has one shape on
+        # the wire however it was authored.
+        options: list[JsonSchemaValue] = []
+        for key in choice_values:
+            option: JsonSchemaValue = {'const': key}
+            if choice_description := descriptions.get(key):
+                option['description'] = choice_description
+            options.append(option)
+        json_schema: JsonSchemaValue = {'type': 'string', 'anyOf': options}
+    else:
+        json_schema = {'type': 'string', 'enum': list(choice_values)}
+    if description:
+        json_schema['description'] = description
+
+    class _Choices:
+        @classmethod
+        def __get_pydantic_core_schema__(
+            cls, source_type: Any, handler: GetCoreSchemaHandler
+        ) -> core_schema.CoreSchema:
+            schema = core_schema.literal_schema(list(choice_values))
+            # An action's value is resolved and called once the pick is final, not here: a validator has
+            # nowhere to await, and streaming re-validates a completed value on every later chunk.
+            if resolves_values and not has_actions:
+                schema = core_schema.no_info_after_validator_function(choice_values.__getitem__, schema)
+            return schema
+
+        @classmethod
+        def __get_pydantic_json_schema__(
+            cls, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+        ) -> JsonSchemaValue:
+            return dict(json_schema)
+
+    _Choices.__name__ = _Choices.__qualname__ = name or 'Choices'
+    if not has_actions:
+        return _Choices
+
+    class _ChoicesWithActions(_ChoicesActions):
+        keys_type = _Choices
+        values = choice_values
+
+        @classmethod
+        def __get_pydantic_core_schema__(
+            cls, source_type: Any, handler: GetCoreSchemaHandler
+        ) -> core_schema.CoreSchema:
+            raise exceptions.UserError(
+                "A `Choices` set with a callable `Choice` value can only be used as an agent's `output_type`, "
+                'as that is the only place Pydantic AI can call the action the model picked. '
+                'To pick one as a tool parameter or a model field, give the choices plain values and call the '
+                'action yourself.'
+            )
+
+    _ChoicesWithActions.__name__ = _ChoicesWithActions.__qualname__ = name or 'Choices'
+    return _ChoicesWithActions
 
 
 _OutputSpecItem = TypeAliasType(

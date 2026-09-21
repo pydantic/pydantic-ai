@@ -50,6 +50,8 @@
 
 ::: pydantic_ai.providers.github.GitHubProvider
 
+::: pydantic_ai.providers.github_copilot.GitHubCopilotProvider
+
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
 
 ::: pydantic_ai.providers.vercel.VercelProvider
@@ -75,5 +77,7 @@
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
 
 ::: pydantic_ai.providers.snowflake.SnowflakeProvider
+
+::: pydantic_ai.providers.typesafe.TypeSafeProvider
 
 ::: pydantic_ai.providers.zai.ZaiProvider

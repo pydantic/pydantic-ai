@@ -57,7 +57,12 @@ from ...tools import (
     DeferredToolResults,
 )
 from ...toolsets import AbstractToolset
-from .._adapter import compaction_part_from_payload, compaction_payload, tool_availability_delta_from_payload
+from .._adapter import (
+    DEFAULT_ALLOWED_CONTENT_TYPES,
+    compaction_part_from_payload,
+    compaction_payload,
+    tool_availability_delta_from_payload,
+)
 
 try:
     from ag_ui.core import (
@@ -317,6 +322,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -329,6 +335,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
+            allowed_content_types=allowed_content_types,
             **kwargs,
         )
 
@@ -908,6 +915,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless:
 
+        - `ModelRequest.metadata` and top-level `ModelResponse.provider_details` are lost. AG-UI has
+          no trusted message-level carrier for framework or provider state; general client-controlled
+          metadata must not be restored as server-side state.
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
@@ -940,8 +950,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
         - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` always round-trip,
           regardless of `preserve_file_data`: the full content (files as base64/URL dicts) is serialized
-          inline into the JSON `ToolMessage.content` and rehydrated on reload via the `ToolReturnContent`
-          discriminator. The same serialization is used for both history (`dump_messages`) and the live
+          inline into the JSON `ToolMessage.content` and rehydrated on reload through the `ToolReturnContent`
+          union. The same serialization is used for both history (`dump_messages`) and the live
           event stream (`ToolCallResultEvent.content`), so files survive either round-trip.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 

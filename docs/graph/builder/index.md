@@ -320,7 +320,5 @@ Both APIs are fully supported and can even be integrated together when needed.
 
 ## Persistence and Resumability
 
-!!! info "No Native Persistence"
-    Unlike the [original Graph API](../../graph.md), the graph builder API does not include built-in state persistence. This is due to the [complexity of achieving consistent snapshotting with parallel execution](https://github.com/pydantic/pydantic-ai/issues/530#issuecomment-3504609992).
-
-For workflows that need to preserve progress across failures, restarts, or long-running operations, use one of the supported [durable execution](../../durable_execution/overview.md) solutions.
+!!! info "Graph state is not snapshotted"
+    Neither the graph builder API nor the [original Graph API](../../graph.md) snapshots graph state; `pydantic_graph.persistence` was removed in V2, because of the [complexity of achieving consistent snapshotting with parallel execution](https://github.com/pydantic/pydantic-ai/issues/530#issuecomment-3504609992). To save, resume, and fork **agent run** state, use the Harness's [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) capability, covered in [Storage](../../storage.md). To keep a whole run alive across crashes and restarts, use a [durable execution](../../durable_execution/overview.md) engine.

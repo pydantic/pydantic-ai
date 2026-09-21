@@ -75,6 +75,7 @@ from ..conftest import (
     IsInt,
     IsNow,
     IsStr,
+    RequestCapture,
     TestEnv,
     message,
     try_import,
@@ -2500,6 +2501,39 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
         ]
     )
     assert result.output == snapshot('14195730')
+
+
+async def test_openai_responses_model_web_search_tool_with_blocked_domains(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    model = OpenAIResponsesModel(
+        'gpt-5.6-luna',
+        provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client),
+    )
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    blocked_domains=['ai.pydantic.dev'],
+                )
+            )
+        ],
+    )
+
+    await agent.run('Search the web for Pydantic AI. Return one source URL.')
+
+    assert request_capture.body('/v1/responses')['tools'] == snapshot(
+        [
+            {
+                'type': 'web_search',
+                'filters': {
+                    'blocked_domains': ['ai.pydantic.dev'],
+                },
+                'search_context_size': 'medium',
+            }
+        ]
+    )
 
 
 async def test_openai_responses_model_web_search_tool_without_external_access(
