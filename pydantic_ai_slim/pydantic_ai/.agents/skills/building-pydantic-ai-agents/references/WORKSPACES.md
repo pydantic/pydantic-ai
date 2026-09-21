@@ -34,8 +34,11 @@ file, and bounded-read methods for every backend; wrappers can override primitiv
 includes a continuation notice when a cap fired. Pass `limit=None` and `max_bytes=None` together
 for an uncapped read, or use `read_text` / `read_bytes` for exact whole-file access.
 
-An explicit backend or facade passed through `workspace=` is used directly. An explicit
-`WorkspaceRef` is offered to configured capabilities, and raises if none recognizes it. With
+An explicit backend passed through `workspace=` is used directly, and a `Workspace` facade or
+wrapper (`ReadOnlyWorkspace(...)`, `result.workspace`, `ctx.workspace`) is kept as-is. An explicit
+`WorkspaceRef` is offered to configured capabilities, and raises if none recognizes it.
+`workspace='new'` ignores any ref in message history and asks capabilities with `ref=None` for a
+fresh workspace, raising if none supplies one. With
 `workspace=None`, capabilities receive the latest `ModelResponse.workspace_ref` from message
 history, or `None` when there is no reference. A latest `None` suppresses older references. History
 supplies identity, not provider configuration. The first capability, in order, whose

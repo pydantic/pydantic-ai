@@ -16,7 +16,7 @@ from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from types import FrameType, TracebackType
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream
@@ -494,7 +494,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -521,7 +521,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -547,7 +547,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -595,7 +595,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -695,7 +695,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -722,7 +722,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -748,7 +748,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -800,7 +800,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -860,7 +860,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -887,7 +887,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -914,7 +914,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
@@ -971,7 +971,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1172,7 +1172,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, OutputDataT]: ...
 
@@ -1198,7 +1198,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, RunOutputDataT]: ...
 
@@ -1223,7 +1223,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
@@ -1292,7 +1292,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1350,7 +1350,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
 
@@ -1376,7 +1376,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
@@ -1401,7 +1401,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
@@ -1474,7 +1474,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1533,7 +1533,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1559,7 +1559,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1586,7 +1586,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1681,7 +1681,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -2049,7 +2049,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             model: Optional model to use for the agent run.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is, or a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment. See the [workspace docs](../workspace.md).
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -2099,7 +2099,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             model: Optional model to use for the agent run.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is, or a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment. See the [workspace docs](../workspace.md).
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent

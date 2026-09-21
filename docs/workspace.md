@@ -118,8 +118,11 @@ async def main() -> None:
 
 ## Selecting a workspace for a run
 
-Pass a workspace with the `workspace=` argument. An explicit backend or
-[`Workspace`][pydantic_ai.workspaces.Workspace] is used directly. An explicit
+Pass a workspace with the `workspace=` argument. An explicit backend is used directly, and so is a
+[`Workspace`][pydantic_ai.workspaces.Workspace] facade or any
+[`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace] around one, such as
+`ReadOnlyWorkspace(...)`, a previous run's `result.workspace`, or a parent run's `ctx.workspace`:
+it reaches tools as the same object, wrappers included. An explicit
 [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is offered to the
 [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace] hook of each
 non-deferred capability, in capability order, until one returns a workspace. If no capability
@@ -130,6 +133,11 @@ several workspace capabilities, such as one per provider, to let one agent conti
 environment from any of them: each returns `None` for a reference it does not own, so the capability
 that recognizes the reference supplies the workspace. Without a reference, the first workspace
 capability in the list creates the fresh environment.
+
+Pass `workspace='new'` to start in a fresh environment: like `conversation_id='new'`, it ignores any
+`workspace_ref` in `message_history` and calls the hook without a reference, so the first workspace
+capability creates one. Because the caller asked for a workspace, the run raises `UserError` if no
+capability returns one.
 
 With `workspace=None`, the hook receives the `workspace_ref` on the most recent `ModelResponse` in
 `message_history`, or `None` if there is no such reference. If no capability returns a workspace,
@@ -176,7 +184,8 @@ from pydantic_ai.workspaces import UnavailableWorkspace
 disabled = UnavailableWorkspace(reason='Workspace access is disabled for this run.')
 ```
 
-The same `workspace=` argument is available on the streaming, CLI, and web interfaces.
+The same `workspace=` argument is available on the streaming, CLI, and web interfaces. The CLI and web
+interfaces apply it to every run of a session, so they do not accept `'new'`.
 
 ## Writing a backend
 

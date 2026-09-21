@@ -128,7 +128,7 @@ def create_api_app(
         native_tools: Optional list of additional native tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
-        workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for all requests; overrides capability contributions. See the [workspace docs](../../workspace.md).
+        workspace: Optional workspace for all requests; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is, or a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment. See the [workspace docs](../../workspace.md).
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
         sdk_version: Vercel AI SDK version to target on the chat endpoint: 5, 6, or 7. Defaults to

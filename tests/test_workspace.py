@@ -1076,6 +1076,27 @@ async def test_ref_routes_to_the_first_capability_that_recognizes_it(source: str
     assert second.refs == [ref]
 
 
+async def test_new_workspace_ignores_the_ref_in_history() -> None:
+    """`workspace='new'` mirrors `conversation_id='new'`: history's ref is not offered, so a fresh one is created."""
+    first, second = ProviderWorkspaceCapability('first'), ProviderWorkspaceCapability('second')
+    agent = Agent(TestModel(), capabilities=[first, second])
+    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='second', id='existing'))
+
+    result = await agent.run('go', message_history=[historical], workspace='new')
+
+    assert [result.workspace.backend] == first.supplied
+    assert first.refs == [None]
+    assert second.refs == []
+
+
+async def test_new_workspace_without_a_supplier_raises() -> None:
+    """Unlike `None`, `'new'` is an explicit request, so an agent that cannot create a workspace says so."""
+    agent = Agent(TestModel(), capabilities=[DecliningWorkspaceCapability()])
+
+    with pytest.raises(UserError, match="`workspace='new'` needs a capability that can create a workspace"):
+        await agent.run('go', workspace='new')
+
+
 async def test_deferred_capability_never_contributes_a_backend() -> None:
     capability = WorkspaceCapability()
     capability.defer_loading = True

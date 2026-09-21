@@ -566,7 +566,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
@@ -590,7 +590,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../../workspace.md).
         """
         if deferred_tool_results is None:
             deferred_tool_results = self.deferred_tool_results
@@ -679,7 +679,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
@@ -705,7 +705,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../../workspace.md).
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
@@ -757,7 +757,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
@@ -794,7 +794,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../../workspace.md).
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.

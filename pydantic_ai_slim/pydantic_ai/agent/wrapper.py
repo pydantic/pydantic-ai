@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .. import (
     _instructions,
@@ -162,7 +162,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -188,7 +188,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -214,7 +214,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -305,7 +305,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:

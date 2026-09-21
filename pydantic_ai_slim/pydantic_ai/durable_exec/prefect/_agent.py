@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, AsyncIterable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from prefect import flow, task
 from prefect.context import FlowRunContext
@@ -264,7 +264,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -291,7 +291,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -317,7 +317,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -362,7 +362,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -430,7 +430,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -457,7 +457,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -483,7 +483,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -530,7 +530,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -603,7 +603,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -630,7 +630,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -657,7 +657,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -699,7 +699,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -758,7 +758,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
 
@@ -784,7 +784,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
@@ -809,7 +809,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
@@ -871,7 +871,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -936,7 +936,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -962,7 +962,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -988,7 +988,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
@@ -1081,7 +1081,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run.
 
         Returns:

@@ -1250,7 +1250,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1276,7 +1276,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1302,7 +1302,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1397,7 +1397,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for this run; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for this run; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is; a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment; or `'new'` to have a capability create a fresh one, ignoring any `workspace_ref` on `message_history`. See the [workspace docs](../workspace.md).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1450,7 +1450,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int | AgentRetries | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        workspace: WorkspaceBackend | WorkspaceRef | None = None,
+        workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
@@ -1727,7 +1727,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # supplied by a capability is selected from the final per-run capability tree below, so a
         # capability that replaces itself in `for_run` cannot leave behind the bootstrap backend.
         run_workspace = initial_ctx.workspace
-        if workspace is not None and not isinstance(workspace, WorkspaceRef):
+        if workspace is not None and workspace != 'new' and not isinstance(workspace, WorkspaceRef):
             # An explicit backend, or an existing `Workspace` passed straight through from a
             # parent run or a previous result.
             run_workspace = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
@@ -1767,17 +1767,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Nothing here does I/O: the backend creates or attaches on its first operation. Resolve
         # capability-provided workspaces only now, after `for_run()` has chosen the instances whose
         # hooks and durable operations this run will actually use.
-        if workspace is None or isinstance(workspace, WorkspaceRef):
-            selection_ref = workspace if isinstance(workspace, WorkspaceRef) else historical_workspace_ref
+        if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef):
+            explicit_ref = workspace if isinstance(workspace, WorkspaceRef) else None
+            # `'new'` asks for a fresh environment, so the ref in history is deliberately not offered.
+            selection_ref = historical_workspace_ref if workspace is None else explicit_ref
             selection = run_capability.get_workspace(initial_ctx, ref=selection_ref)
             if selection is not None:
                 run_workspace = selection if isinstance(selection, Workspace) else Workspace(selection)
-            elif isinstance(workspace, WorkspaceRef):
+            elif workspace == 'new':
                 raise exceptions.UserError(
-                    f'No capability can supply workspace {workspace.id!r}: every `get_workspace` returned '
+                    "`workspace='new'` needs a capability that can create a workspace, but every `get_workspace` "
+                    'returned `None`. Attach a capability whose `get_workspace` creates one.'
+                )
+            elif explicit_ref is not None:
+                raise exceptions.UserError(
+                    f'No capability can supply workspace {explicit_ref.id!r}: every `get_workspace` returned '
                     '`None`. Attach a capability whose `get_workspace` recognizes it.'
                 )
-            # Without an explicit ref, no answer leaves the placeholder in place; this includes
+            # Without an explicit request, no answer leaves the placeholder in place; this includes
             # a run with no workspace and no historical ref.
         initial_ctx.workspace = run_workspace
 
@@ -4167,7 +4174,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 The agent's model is always included. Native tool support is automatically
                 determined from each model's profile.
             deps: Optional dependencies to use for all requests.
-            workspace: Optional workspace backend or [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] for all requests; overrides capability contributions. See the [workspace docs](../workspace.md).
+            workspace: Optional workspace for all requests; overrides capability contributions. Pass a backend, or a [`Workspace`][pydantic_ai.workspaces.Workspace] facade or wrapper such as [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], to use it as-is, or a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] to have a capability connect to that environment. See the [workspace docs](../workspace.md).
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
             html_source: Path or URL for the chat UI HTML. Can be:
