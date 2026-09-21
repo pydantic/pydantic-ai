@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import contextvars
 import functools
-import importlib
+import importlib.util
 import os
 import sys
 import threading
@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
+from types import ModuleType
 from typing import Any
 
 import anyio
@@ -475,35 +476,45 @@ async def test_disable_threads_takes_priority_over_custom_executor() -> None:
         executor.shutdown(wait=True)
 
 
+def _load_utils_module_for_current_platform() -> ModuleType:
+    """Execute `pydantic_ai._utils` into a private module object under the current `sys.platform`.
+
+    `_disable_threads` evaluates its default at import time, so the platform tests below need the module
+    executed under a patched platform. Loading a separate copy keeps the shared module untouched: reloading
+    it in place rebinds module-level singletons such as `UNSET`, which breaks every later test that compares
+    against the identity imported at collection time.
+    """
+    spec = importlib.util.find_spec(utils_module.__name__)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 async def test_disable_threads_defaults_false_on_non_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, 'platform', 'linux')
-    importlib.reload(utils_module)
-    try:
-        main_thread = threading.current_thread()
+    platform_utils = _load_utils_module_for_current_platform()
+    main_thread = threading.current_thread()
 
-        def check_thread() -> threading.Thread:
-            return threading.current_thread()
+    def check_thread() -> threading.Thread:
+        return threading.current_thread()
 
-        result = await utils_module.run_in_executor(check_thread)
-        assert result is not main_thread
-    finally:
-        importlib.reload(utils_module)
+    result = await platform_utils.run_in_executor(check_thread)
+    assert result is not main_thread
+    assert utils_module.UNSET is UNSET
 
 
 async def test_run_in_executor_runs_inline_by_default_on_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, 'platform', 'emscripten')
-    importlib.reload(utils_module)
-    try:
-        main_thread = threading.current_thread()
+    platform_utils = _load_utils_module_for_current_platform()
+    main_thread = threading.current_thread()
 
-        def check_thread() -> threading.Thread:
-            return threading.current_thread()
+    def check_thread() -> threading.Thread:
+        return threading.current_thread()
 
-        result = await utils_module.run_in_executor(check_thread)
-        assert result is main_thread
-    finally:
-        monkeypatch.setattr(sys, 'platform', 'linux')
-        importlib.reload(utils_module)
+    result = await platform_utils.run_in_executor(check_thread)
+    assert result is main_thread
+    assert utils_module.UNSET is UNSET
 
 
 def test_is_async_callable():
