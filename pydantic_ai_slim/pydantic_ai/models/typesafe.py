@@ -824,8 +824,9 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
                     # depth at which to stop asking. An optional or list self-reference is refused on the field
                     # itself before the walk gets here.
                     raise UserError(
-                        f'Output field {prefix + name!r} is not supported by this model: a model that always '
-                        'contains itself has no end to fill. Give the field a default, or make it optional.'
+                        f'Output field {prefix + name!r} is not supported by this model: a model that contains '
+                        'itself has no end to fill, and Jev asks a fixed set of questions. Give the field a type '
+                        'that does not contain itself.'
                     )
                 fields.update(flatten(prop['properties'], f'{prefix}{name}.', seen | {ref} if ref else seen))
             else:

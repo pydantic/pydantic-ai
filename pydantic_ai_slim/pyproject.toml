@@ -145,7 +145,7 @@ evals = ["pydantic-evals=={{ version }}"]
 # UI
 ui = ["starlette>=0.46.2"]
 # AG-UI
-ag-ui = ["ag-ui-protocol>=0.1.10", "starlette>=0.46.2"]
+ag-ui = ["ag-ui-protocol>=0.1.10,<1", "starlette>=0.46.2"]
 # Web — Starlette is floored higher here than in the `ui` and `ag-ui` extras because this extra
 # runs an HTTP server we ship (`Agent.to_web()` / `clai web`), so its Starlette version is ours to
 # pick. The adapters in `ui`/`ag-ui` are mounted into the user's own application, which owns its
