@@ -57,3 +57,7 @@ if __name__ == '__main__':
 ```
 
 Set a timeout and usage limit on each run in production. `asyncio.gather()` fails the operation when either specialist raises; use `return_exceptions=True` only when the product can explicitly report a partial review rather than silently treating it as complete.
+
+## Related
+
+See [Multi-agent applications](../multi-agent-applications.md) for delegation and hand-off patterns where agents need to interact.

@@ -7,7 +7,12 @@ description: Run a small regression dataset against an agent and fail when requi
 
 Use Pydantic Evals to express behavior as cases and evaluators rather than asserting an exact model sentence.
 
-```python {test="skip"}
+```bash
+pip/uv-add "pydantic-ai-slim[openai]" pydantic-evals
+export OPENAI_API_KEY=your-api-key
+```
+
+```python {dunder_name="not_main"}
 import asyncio
 
 from pydantic_ai import Agent
@@ -39,8 +44,10 @@ async def answer(question: str) -> str:
 
 async def main() -> None:
     report = await dataset.evaluate(answer)
-    report.print()
-    assert report.averages() and report.averages().assertions == 1
+    averages = report.averages()
+    assert averages and averages.assertions == 1
+    print('All required behaviors passed.')
+    #> All required behaviors passed.
 
 
 if __name__ == '__main__':
@@ -48,3 +55,7 @@ if __name__ == '__main__':
 ```
 
 Keep deterministic unit tests for wiring and use a small behavioral dataset for outcomes that require a model. Evaluate required concepts or structured fields rather than exact prose, and record the model and date used by CI.
+
+## Related
+
+See [Evals](../evals.md) for evaluators, custom evaluation logic, and experiment reporting.

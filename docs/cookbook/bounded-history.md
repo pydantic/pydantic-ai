@@ -17,6 +17,7 @@ import asyncio
 
 from pydantic_ai import Agent, ModelMessage
 from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 
 def keep_recent_text_turns(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -32,22 +33,30 @@ agent = Agent(
 
 
 async def main() -> None:
-    history: list[ModelMessage] = []
+    transcript: list[ModelMessage] = []
     for update in (
         'Incident update: checkout latency is high.',
         'Incident update: the team paused deployments.',
         'Incident update: rollback started.',
     ):
-        result = await agent.run(update, message_history=history)
-        history = result.all_messages()
+        result = await agent.run(update, message_history=transcript)
+        transcript.extend(result.new_messages())
 
-    final = await agent.run('What is the latest mitigation?', message_history=history)
+    final = await agent.run('What is the latest mitigation?', message_history=transcript)
+    transcript.extend(final.new_messages())
     print(final.output)
     #> The latest mitigation is a rollback.
+    stored = ModelMessagesTypeAdapter.dump_json(transcript).decode()
+    print('checkout latency is high' in stored)
+    #> True
 
 
 if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-Simple slicing is appropriate only for text-only turns. Tool calls and returns must remain paired; for tool-using agents, trim at complete turn boundaries or use Harness compaction. Summarization preserves more context but adds cost and can lose details, so start with deterministic trimming when recent turns are sufficient.
+A history processor replaces the history inside that run. Extending a separately stored transcript with `result.new_messages()` prevents trimming from deleting the application's record. Simple slicing is appropriate only for text-only turns. Tool calls and returns must remain paired; for tool-using agents, trim at complete turn boundaries or use Harness compaction. Summarization preserves more context but adds cost and can lose details, so start with deterministic trimming when recent turns are sufficient.
+
+## Related
+
+See [Process History](../capabilities/process-history.md) for safe trimming rules and summarization options.

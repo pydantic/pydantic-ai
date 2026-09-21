@@ -128,6 +128,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 path = ex.path
             test_id = f'{path}:{ex.start_line}'
             prefix_settings = ex.prefix_settings()
+            if path.parts[:2] == ('docs', 'cookbook') and prefix_settings.get('test', '').startswith('skip'):
+                raise AssertionError(f'Cookbook recipes must be executable: {path}:{ex.start_line}')
             if title := prefix_settings.get('title'):
                 if title.endswith('.py'):
                     code_examples[title] = ex
@@ -861,7 +863,7 @@ async def model_logic(  # noqa: C901
                     ToolCallPart(
                         tool_name=info.output_tools[0].name,
                         args={
-                            'title': 'The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits',
+                            'title': 'Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context',
                             'document_type': 'research paper',
                             'published_year': 2024,
                         },
@@ -1496,13 +1498,43 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, UserPromptPart) and isinstance(m.content, str) and m.content.startswith('Incident update:'):
         return ModelResponse(parts=[TextPart('Noted.')])
     elif isinstance(m, UserPromptPart) and m.content == 'What is the latest mitigation?':
-        assert any(
-            isinstance(part, UserPromptPart) and part.content == 'Incident update: rollback started.'
+        prompts = [
+            part.content
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-        )
+            if isinstance(part, UserPromptPart)
+        ]
+        assert 'Incident update: checkout latency is high.' not in prompts
+        assert 'Incident update: rollback started.' in prompts
         return ModelResponse(parts=[TextPart('The latest mitigation is a rollback.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'What is the first rollback step?':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='search_documents',
+                    args={'query': 'first rollback step'},
+                    tool_call_id='search_documents_call',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'search_documents':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={
+                        'text': 'Shift traffic to the previous release.',
+                        'sources': ['runbook.md#rollback'],
+                    },
+                    tool_call_id='rag_answer',
+                )
+            ]
+        )
+    elif isinstance(m, UserPromptPart) and m.content == 'I lost an API key. What should I do?':
+        return ModelResponse(parts=[TextPart('Revoke the lost key and issue a replacement.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'A secret may be in our logs. What is the first action?':
+        return ModelResponse(parts=[TextPart('Rotate the secret, then investigate its exposure.')])
     elif isinstance(m, UserPromptPart) and 'ACME Hosting — Invoice INV-2048' in m.content:
         return ModelResponse(
             parts=[
@@ -1626,20 +1658,18 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         model = infer_model(model)
 
     if isinstance(model, FallbackModel):
-        # When a fallback model is encountered, replace any OpenAIChatModel with a model that will raise a ModelHTTPError.
-        # Otherwise, do the usual inference.
+        # Make OpenAI models fail so documentation examples exercise their configured fallback.
         def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')
 
         mock_fallback_models: list[Model] = []
         for m in model.models:
             try:
-                from pydantic_ai.models.openai import OpenAIChatModel
+                from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
             except ImportError:  # pragma: lax no cover
-                OpenAIChatModel = type(None)
+                OpenAIChatModel = OpenAIResponsesModel = type(None)
 
-            if isinstance(m, OpenAIChatModel):
-                # Raise an HTTP error for OpenAIChatModel
+            if isinstance(m, OpenAIChatModel | OpenAIResponsesModel):
                 mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
             else:
                 mock_fallback_models.append(mock_infer_model(m))

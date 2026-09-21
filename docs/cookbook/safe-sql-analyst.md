@@ -75,3 +75,7 @@ if __name__ == '__main__':
 ```
 
 In production, open a database account with read-only permissions as a second boundary. Add tenant and date filters inside the tool from authenticated dependencies; do not accept them solely from model-generated arguments.
+
+## Related
+
+See [Function tools](../tools.md) for tool schemas and validation. The [SQL generation example](../examples/sql-gen.md) shows the alternative pattern for a sandboxed database.

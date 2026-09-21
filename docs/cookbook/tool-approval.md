@@ -7,6 +7,11 @@ description: Pause an agent before it executes a consequential action, then resu
 
 Set `requires_approval=True` on a tool that must never run solely because the model requested it.
 
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+export OPENAI_API_KEY=your-api-key
+```
+
 ```python {dunder_name="not_main"}
 import asyncio
 
@@ -49,3 +54,7 @@ if __name__ == '__main__':
 ```
 
 The first run returns the proposed call without executing `refund_payment`. The second run executes it only when the corresponding tool-call ID is approved. Authentication and authorization still belong inside the application; approval protects against autonomous model action rather than an untrusted client.
+
+## Related
+
+See [Deferred tools](../deferred-tools.md) for approvals, external tool execution, and durable resume patterns.

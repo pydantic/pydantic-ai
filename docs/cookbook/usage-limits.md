@@ -7,6 +7,11 @@ description: Stop an agent before a model-generated batch exceeds the allowed nu
 
 Pass `UsageLimits` to each run when model requests, tokens, cost, or tool execution must stay inside an application-controlled budget.
 
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+export OPENAI_API_KEY=your-api-key
+```
+
 ```python {dunder_name="not_main"}
 import asyncio
 
@@ -42,3 +47,7 @@ if __name__ == '__main__':
 ```
 
 The model requests two calls in one batch, but the limit allows only one. Pydantic AI rejects the entire batch before either tool executes, avoiding a misleading partial result. Choose limits at the application boundary rather than relying on the prompt to control spending or side effects.
+
+## Related
+
+See [Usage limits](../agent.md#usage-limits) for request, token, tool-call, and concurrency limits.

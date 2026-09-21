@@ -7,6 +7,11 @@ description: Pass request-scoped services and data to agent tools through typed 
 
 Use `deps_type` and `RunContext` to give tools access to application state without globals or closures.
 
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+export OPENAI_API_KEY=your-api-key
+```
+
 ```python {dunder_name="not_main"}
 import asyncio
 from dataclasses import dataclass
@@ -48,3 +53,7 @@ if __name__ == '__main__':
 ```
 
 The dependency type is part of the agent's type signature, so tools and call sites are checked together. In an application, the same container can hold database connections, API clients, authenticated user details, or other request-scoped services.
+
+## Related
+
+See [Dependencies](../dependencies.md) for dynamic instructions, testing overrides, and dependency typing across an application.

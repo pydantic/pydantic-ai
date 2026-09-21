@@ -7,6 +7,10 @@ description: Exercise agent tools and orchestration deterministically with TestM
 
 Use `TestModel` through `Agent.override()` to exercise the real agent and tools without changing production configuration or calling a provider.
 
+```bash
+pip/uv-add pydantic-ai-slim pytest
+```
+
 ```python {title="test_inventory_agent.py" call_name="test_inventory_agent"}
 from pydantic_ai import Agent, models
 from pydantic_ai.models.test import TestModel
@@ -33,3 +37,7 @@ def test_inventory_agent() -> None:
 ```
 
 `ALLOW_MODEL_REQUESTS = False` prevents an accidental provider call anywhere in the test process. The override is scoped to the `with` block, while the production agent keeps its real model configuration.
+
+## Related
+
+See [Unit testing](../testing.md) for `FunctionModel`, pytest fixtures, and testing model requests directly.

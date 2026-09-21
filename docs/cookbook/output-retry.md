@@ -7,6 +7,11 @@ description: Validate a typed result and give the model one focused chance to co
 
 Use an output validator when valid JSON is not enough and the result must also satisfy an application rule.
 
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+export OPENAI_API_KEY=your-api-key
+```
+
 ```python {dunder_name="not_main"}
 import asyncio
 
@@ -47,3 +52,7 @@ if __name__ == '__main__':
 ```
 
 Pydantic validates the structure first. The output validator then enforces the business rule and sends its focused correction back to the model. Keep `retries` bounded so a persistently bad response fails clearly instead of looping.
+
+## Related
+
+See [Output validators](../output.md#output-validator-functions) for validation context, retries, and transforming output.

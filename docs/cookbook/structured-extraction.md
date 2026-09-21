@@ -7,6 +7,11 @@ description: Turn an unstructured business document into validated application d
 
 Pass a Pydantic model as `output_type` when the application needs validated data rather than a prose response.
 
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+export OPENAI_API_KEY=your-api-key
+```
+
 ```python {dunder_name="not_main"}
 import asyncio
 from datetime import date
@@ -56,3 +61,7 @@ if __name__ == '__main__':
 ```
 
 Pydantic AI supplies the model with the output schema and validates the response. The rest of the application receives an `Invoice`, including parsed `date` and `Decimal` values, without maintaining a separate extraction prompt or JSON parser.
+
+## Related
+
+See [Structured output](../output.md#structured-output) for output modes, unions, and schema customization.

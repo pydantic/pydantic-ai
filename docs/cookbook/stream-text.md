@@ -7,6 +7,11 @@ description: Send text to a terminal, HTTP response, or UI without waiting for t
 
 Use `run_stream()` when the consumer needs the final text incrementally rather than every internal agent event.
 
+```bash
+pip/uv-add "pydantic-ai-slim[openai]"
+export OPENAI_API_KEY=your-api-key
+```
+
 ```python {dunder_name="not_main"}
 import asyncio
 
@@ -31,3 +36,7 @@ if __name__ == '__main__':
 ```
 
 `delta=True` yields only newly arrived text, which can be forwarded directly. Use `run_stream_events()` instead when the client also needs tool-call, thinking, usage, or final-result events.
+
+## Related
+
+See [Streaming text](../output.md#streaming-text) for validation behavior and [streaming all events](../agent.md#streaming-all-events) for tool-call and usage events.

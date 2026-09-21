@@ -41,7 +41,9 @@ async def main() -> None:
         ]
     )
     print(result.output.title)
-    #> The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits
+    """
+    Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context
+    """
     print(result.output.published_year)
     #> 2024
 
@@ -51,3 +53,7 @@ if __name__ == '__main__':
 ```
 
 Keep the source URL or content hash with the validated result for auditability. Add optional fields when a value may legitimately be absent; making every field optional hides extraction failures. Use `BinaryContent` instead when the document must not be fetched from a public or signed URL.
+
+## Related
+
+See [Image, audio, video, and document input](../input.md) for supported document inputs and provider-specific limits.

@@ -47,3 +47,7 @@ if __name__ == '__main__':
 ```
 
 Regexes only cover identifiers with predictable formats. Use a dedicated detector for names, addresses, and domain-specific identifiers, and test it against representative data. Keep raw input in an access-controlled system rather than logs or message history.
+
+## Related
+
+See [Messages and chat history](../message-history.md) before storing or accepting conversation data outside the agent.
