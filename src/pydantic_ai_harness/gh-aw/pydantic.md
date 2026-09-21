@@ -10,13 +10,16 @@ pre-agent-steps:
       # sys.path, so a repo-local pip.py or pydantic_ai_harness/ cannot be
       # imported in place of the installed packages.
       #
-      # 2.36.0 is the first pydantic-ai-slim release carrying `pai --mcp-config`,
-      # which is how the gateway's MCP servers reach the agent.
+      # 2.36.0 carried `pai --mcp-config`, which is how the gateway's MCP servers
+      # reach the agent. The floor is 2.44.0 for a second reason: it is the first
+      # release where `Agent.from_spec()` accepts a spec that names no model, so a
+      # `PAI_AGENT` spec file no longer has to carry a `model:` that the engine's
+      # own `-m` immediately replaces.
       #
       # The anthropic extra is what an `anthropic/` model runs on: that backend of
       # the api-proxy serves the Messages API, not Chat Completions.
       # The spec extra supplies YAML parsing for PAI_AGENT spec files.
-      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[cli]==$GH_AW_ENGINE_VERSION" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.36.0"
+      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[cli]==$GH_AW_ENGINE_VERSION" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.44.0"
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
       # when gh-aw supplies an OTLP endpoint, so other runs pay no installation cost.
       if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
@@ -632,6 +635,6 @@ counts only from any JSON lines the run happens to emit.
 
 The CLI and the coder capabilities are installed before the agent runs with
 `pip install --user "pydantic-ai-harness[cli]==<engine version>"
-"pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.36.0"`, into `~/.local` because the
+"pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.44.0"`, into `~/.local` because the
 runner tool cache holding `uv` is not writable from inside the sandbox.
 -->

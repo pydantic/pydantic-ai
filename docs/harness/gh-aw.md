@@ -189,7 +189,6 @@ engine:
 
 ```yaml {title="triage_agent.yml"}
 name: triage
-model: openai-chat:gpt-5
 instructions: |
   You triage one GitHub issue. Read the issue in the prompt, then post exactly one
   comment with the `safeoutputs_add_comment` tool. Suggest a label; do not apply one.
@@ -201,15 +200,9 @@ capabilities:
 
 The engine installs the `spec` extra for YAML parsing.
 
-**The spec needs a `model:` even though it does not decide the model.** A module can leave
-the model out, because an `Agent` may be constructed without one, but `Agent.from_spec()`
-rejects a spec that names none, and it builds that model while loading the file, before
-the CLI's `-m` override. Use the client prefix that the engine configures, not the
-workflow's provider prefix: `openai-chat:<model>` for `copilot/`, `codex/` and `openai/`,
-or `anthropic:<model>` for `anthropic/`. With `PAI_BASE_URL`, use `openai-chat:<model>`
-regardless of the workflow provider. The engine then passes `-m` to replace the model.
-For example, pair `openai/gpt-5` in the workflow with `openai-chat:gpt-5` in the spec;
-only the workflow's copy selects the model used for the run.
+No `model:` in the spec, for the same reason a module carries none: the engine always
+passes `-m` built from the workflow's `engine.model`, and an explicit `-m` replaces
+whatever a loaded agent declares. The workflow is the one place the model is configured.
 
 The gateway's MCP servers still arrive through `--mcp-config`, so a spec agent gets the
 safe outputs and the GitHub tools on the same terms as a module.
