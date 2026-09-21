@@ -99,8 +99,8 @@ class Commands(Completer):
                 prefix = '' if word.endswith('/') else path.name
                 try:
                     for child in sorted(directory.iterdir()):
-                        if child.name.startswith(prefix):
-                            yield Completion(child.name[len(prefix) :] + ('/' if child.is_dir() else ''))
+                        if prefix in child.name:
+                            yield Completion(child.name + ('/' if child.is_dir() else ''), start_position=-len(prefix))
                 except OSError:
                     return
             return
@@ -108,7 +108,7 @@ class Commands(Completer):
         if len(words) <= 1 and not text.endswith(' '):
             prefix = text[1:]
             for command in list(self._commands.values()):
-                if command.name.startswith(prefix):
+                if prefix in command.name:
                     yield Completion(
                         command.name,
                         start_position=-len(prefix),
@@ -126,7 +126,7 @@ class Commands(Completer):
             args.append('')
         prefix = args[-1] if args else ''
         for candidate in command.complete(args):
-            if candidate.startswith(prefix):
+            if prefix in candidate:
                 yield Completion(candidate, start_position=-len(prefix))
 
     def help(self, _: list[str]) -> str:

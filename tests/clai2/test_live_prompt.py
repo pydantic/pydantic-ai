@@ -235,7 +235,7 @@ async def test_completion_acceptance_and_cycling() -> None:
         pipe.send_text('\t\t\n\n')
         assert await live.read() == '/hello'
         ready = anyio.Event()
-        pipe.send_text('/hell')
+        pipe.send_text('/ell')
         await ready.wait()
         pipe.send_text('\t\n')
         assert await live.read() == '/hello'

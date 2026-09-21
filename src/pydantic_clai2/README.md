@@ -519,7 +519,9 @@ every later session; `/plugins enable repo_context` brings it back. See
 Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/add_model`, `/model_settings`, `/help`, `/new`, `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/usage`, `/cost`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
-and paths after `@`. Path completion inserts a path; it does not attach file contents.
+and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
+matching applies to the filename within the typed directory. Path completion inserts
+a path; it does not attach file contents.
 Unknown command-shaped input such as `/missing` still reports an error instead
 of reaching the model. Absolute paths such as `/Users/me/Desktop/Screenshot.png`
 are prompts, not commands: a slash, dot, or backslash in the first token after

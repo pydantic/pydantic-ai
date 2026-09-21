@@ -98,4 +98,36 @@ def test_path_prompt_keeps_file_completion(tmp_path: Path) -> None:
     commands.register(Command(name='help', description='Help', handler=lambda _: 'help'))
     assert list(commands.get_completions(Document('/help/screenshot.png'), CompleteEvent())) == []
     completions = list(commands.get_completions(Document(f'/screenshot.png compare @{tmp_path}/fi'), CompleteEvent()))
-    assert [item.text for item in completions] == ['le.txt']
+    assert [(item.text, item.start_position) for item in completions] == [('file.txt', -2)]
+
+
+@pytest.mark.parametrize('fragment', ['', 'he', 'ell', 'lo', 'hello', 'EL', 'missing'])
+def test_substring_command_and_argument_completion(*, fragment: str) -> None:
+    commands = Commands()
+    commands.register(
+        Command(name='hello', description='Greeting', handler=lambda _: '', complete=lambda _: ('hello', 'other'))
+    )
+    for text in (f'/{fragment}', f'/hello {fragment}'):
+        completions = list(commands.get_completions(Document(text), CompleteEvent()))
+        expected = ['hello'] if fragment in 'hello' else []
+        if text.startswith('/hello ') and fragment in 'other':
+            expected.append('other')
+        assert [item.text for item in completions] == expected
+        assert all(item.start_position == -len(fragment) for item in completions)
+
+
+@pytest.mark.parametrize('fragment', ['', 'exam', 'ample', '.py', 'example.py', 'AMPLE', 'missing'])
+@pytest.mark.parametrize('directory', [False, True])
+def test_substring_file_completion(*, tmp_path: Path, fragment: str, directory: bool) -> None:
+    child = tmp_path / 'example.py'
+    if directory:
+        child.mkdir()
+    else:
+        child.touch()
+    text = f'read @{tmp_path}/{fragment}'
+    completions = list(Commands().get_completions(Document(text), CompleteEvent()))
+    expected = 'example.py' + ('/' if directory else '')
+    assert [item.text for item in completions] == ([expected] if fragment in child.name else [])
+    for item in completions:
+        end = len(text) + item.start_position
+        assert text[:end] + item.text == f'read @{tmp_path}/{expected}'

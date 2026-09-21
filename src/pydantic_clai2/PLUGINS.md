@@ -484,7 +484,10 @@ host.commands.register(
 ```
 
 The handler gets the arguments as a list of strings and returns the text to show.
-It may be `async`. Add `complete=` to offer Tab suggestions. Names must be unique;
+It may be `async`. Add `complete=` to offer Tab suggestions. The registry filters
+command names and returned candidates by case-sensitive substring, replacing the
+whole typed fragment when selected. Return full candidates, not just suffixes.
+Names must be unique;
 clashing with a built-in is an error at startup, not a silent override.
 
 Path-like input is not dispatched to commands. A slash, dot, or backslash in the
