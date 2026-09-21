@@ -524,6 +524,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Clear out the build directory.': ToolCallPart(tool_name='run_shell', args={'command': 'rm -rf ./build'}),
     "run_shell: {'command': 'rm -rf ./build'}": ToolCallPart(tool_name='final_result', args={'irreversible': True}),
     'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(tool_name='reject_all', args={}),
+    'Write a one-sentence deployment update.': 'Version 2.4 is deployed successfully in all regions.',
     'What does this repo do?': 'It is a provider-agnostic agent framework for Python.',
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
