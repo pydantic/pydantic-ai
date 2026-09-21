@@ -45,6 +45,7 @@ from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -2446,6 +2447,90 @@ async def test_a_route_that_says_nothing_anywhere_is_still_refused(allow_model_r
     agent: Agent[None, Any] = Agent(mock_model(unreachable), output_type=[Literal['urgent', 'normal'], Ticket])  # type: ignore[arg-type]
     with pytest.raises(UserError, match="'final_result_Literal' says nothing about itself"):
         await agent.run('anything')
+
+
+async def test_the_fill_repeats_the_state_and_carries_the_picked_routes_purpose(allow_model_requests: None):
+    """The two requests of a union are one question each, not a conversation.
+
+    Jev is not told what it picked: the route was decided here, and putting it back in front of a request that
+    only fills fields would be a second decision. What does travel is what the chosen route is *for*, as each
+    field question's `goal`, so the fields are answered for the route they belong to.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route('final_result_Escalation', {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8})
+            )
+        return answers(security={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation])
+    await agent.run('Someone else can see my invoices when they log in.')
+
+    assert seen[0]['state'] == seen[1]['state'] == snapshot('Someone else can see my invoices when they log in.')
+    assert 'tool' not in seen[1]['questions']
+    assert seen[1]['questions']['security']['instructions'] == snapshot(
+        {
+            'field': 'security',
+            'question': 'Does this involve a security or privacy risk?',
+            'goal': 'Hand the ticket to a human specialist.',
+        }
+    )
+
+
+async def test_a_proposed_tool_call_hands_the_whole_step_over_and_jev_judges_the_result(
+    allow_model_requests: None,
+):
+    """What the model behind Jev is handed, and what Jev sees once that model's tool call has run.
+
+    The step is handed over whole, so the model gets the prompt and the tools and decides for itself: none of
+    Jev's work reaches it, not the route it picked nor how sure it was. That request is paid for and its answer
+    thrown away, which is the cost of the hand-off and the reason to watch the rate.
+    """
+    seen: list[dict[str, Any]] = []
+    handed: list[tuple[list[str], list[str], list[str]]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        questions = seen[-1]['questions']
+        if 'tool' in questions:
+            # `refund` takes a `float`, which Jev cannot write, so picking it proposes the call.
+            return answers(
+                urgent={'type': 'noul', 'noul': 0.9},
+                tool=_route('refund', {'final_result': 0.05, 'refund': 0.95}),
+            )
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    def behind(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        handed.append(
+            (
+                [type(part).__name__ for message in messages for part in message.parts],
+                [tool.name for tool in info.function_tools],
+                [tool.name for tool in info.output_tools or []],
+            )
+        )
+        return ModelResponse(parts=[ToolCallPart('refund', {'amount': 40.0})])
+
+    agent = Agent(FallbackModel(mock_model(record), FunctionModel(behind)), output_type=Ticket, tools=[refund])
+    result = await agent.run('You charged me 40 dollars twice, please refund one.')
+
+    assert result.output == Ticket(urgent=True)
+    # The model behind Jev is handed the step as if Jev had never run: the prompt and the tools, nothing else.
+    assert handed == snapshot([(['UserPromptPart'], ['refund'], ['final_result'])])
+    # Jev is asked again with the call and its result in the state, and `refund` is no longer a route, so
+    # there is nothing left to choose between and no route question at all.
+    assert seen[1]['state'] == snapshot(
+        {
+            'history': [
+                {'user': 'You charged me 40 dollars twice, please refund one.'},
+                {'tool_call': {'name': 'refund', 'args': {'amount': 40.0}}},
+                {'tool_return': {'name': 'refund', 'content': 'Refunded 40.0'}},
+            ]
+        }
+    )
+    assert list(seen[1]['questions']) == snapshot(['urgent'])
 
 
 async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_model_requests: None):
