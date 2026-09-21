@@ -873,6 +873,11 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'read_ticket':
+        assert all(t.name != 'issue_refund' for t in info.function_tools)
+        return ModelResponse(
+            parts=[TextPart('The customer reports that exports are slow. I did not take any account action.')]
+        )
     elif isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
@@ -903,6 +908,32 @@ async def model_logic(  # noqa: C901
             add_name = next(t.name for t in info.function_tools if t.name in ('_add', 'add'))
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=add_name, args={'a': 2, 'b': 3}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'I was charged twice for invoice INV-42. Can you reverse one charge?':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=info.output_tools[0].name,
+                        args={'destination': 'billing', 'reason': 'The request concerns a duplicate charge.'},
+                    )
+                ]
+            )
+        elif m.content == 'Respond to the request. Routing reason: The request concerns a duplicate charge.':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=info.output_tools[0].name,
+                        args={
+                            'answer': 'I found the duplicate charge and sent it for refund review.',
+                            'needs_refund_review': True,
+                        },
+                    )
+                ]
+            )
+        elif m.content == 'Summarize ticket T-19 and take any appropriate action.':
+            assert all(t.name != 'issue_refund' for t in info.function_tools)
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='read_ticket', args={'ticket_id': 'T-19'}, tool_call_id='ticket_19')]
             )
         elif m.content == 'What is the latest news in AI?':
             return ModelResponse(
