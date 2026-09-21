@@ -844,9 +844,12 @@ def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     Measured on labelled tickets, an explicit option is as accurate as an `other` member the user wrote and more
     accurate than reading `None` off low confidence, which is what the field's confidence is for.
     """
-    if 'anyOf' not in prop or len(prop['anyOf']) != 2 or not any(_null(option) for option in prop['anyOf']):
+    options = prop.get('anyOf')
+    # Exactly one of the two has to be `None`, and the other one has to be something: a union of nothing but
+    # `None`s has no `X` to ask about, and is refused as the unsupported field it is rather than crashing here.
+    if not options or len(options) != 2 or sum(_null(option) for option in options) != 1:
         return prop, None
-    inner = next(option for option in prop['anyOf'] if not _null(option))
+    inner = next(option for option in options if not _null(option))
     prop = {**inner, **{k: v for k, v in prop.items() if k not in ('anyOf', 'default')}}
     key = 'none'
     while key in (_options(prop) or {}):

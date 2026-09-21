@@ -153,6 +153,17 @@ REFUSED = [
         probe('areas', list[Area] | None, description='Which?'),
         unsupported('areas', NOT_OPTIONAL),
     ),
+    # `None` beside `None` is a union with nothing to ask about, so there is no `X` for the extra option to
+    # stand beside. It is refused as an unsupported field, not as an optional one.
+    Refused(
+        'field: None | None',
+        probe(
+            'nothing',
+            Annotated[None, Field(description='one')] | Annotated[None, Field(description='the other')],
+            description='Which?',
+        ),
+        unsupported('nothing'),
+    ),
     # A route is weighed by what it says about itself, and a `Literal` has nowhere to write that down.
     Refused('union with a pick-one', [Ticket, Area], says_nothing('final_result_Literal')),
     # A union of structured types is a route set; the same union as a *field* is not a question.
