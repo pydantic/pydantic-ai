@@ -44,40 +44,42 @@ as separate packages.
 
 ## Composing virtual filesystems
 
-[`CompositeFilesystem`][pydantic_ai.workspaces.CompositeFilesystem] creates a filesystem-only
-workspace from non-overlapping mount points. File operations are routed by path prefix, while the
-root, mount points, and shared parent directories are presented as virtual directories.
+[`CompositeFilesystem`][pydantic_ai.workspaces.CompositeFilesystem] routes one POSIX namespace
+across filesystems mounted at absolute paths. Each value implements `SupportsFilesystem` and sees
+its own namespace rooted at `/`.
 
 ```python
-from pydantic_ai.workspaces import CompositeFilesystem, FilesystemMount, Workspace
+from pydantic_ai.workspaces import CompositeFilesystem, Workspace
 
 workspace = Workspace(
     CompositeFilesystem(
         {
-            '/data': FilesystemMount(filesystem=s3_filesystem),
-            '/skills': FilesystemMount(filesystem=gcs_filesystem),
-        },
-        working_dir='/data',
+            '/': project_filesystem,
+            '/data': data_filesystem,
+            '/skills': skills_filesystem,
+        }
     )
 )
 ```
 
-Here `/data/input.csv` is read from `s3_filesystem` and `/skills/guide.md` from `gcs_filesystem`.
-The mounted filesystems implement `SupportsFilesystem`; object-store-style implementations normally
-use the default `source_root='/'`. To expose a subtree of another workspace, set `source_root` to
-that subtree's canonical absolute path.
+Here `/README.md` becomes `project_filesystem.read_bytes('/README.md')`, while
+`/skills/guide.md` becomes `skills_filesystem.read_bytes('/guide.md')`. Longest-prefix routing
+allows nested mounts; a mount shadows an entry with the same name in its parent filesystem.
+Directory listings merge ordinary entries with mounted children.
 
-Mount paths may share virtual parents (`/team/data` and `/team/skills`) but cannot overlap
-(`/data` and `/data/archive`). Operations outside a mount fail, mount roots cannot be removed, and
-metadata paths are rewritten into the composite namespace. Read-only behavior comes from each
-mounted filesystem.
+The virtual root, mount points, and shared parents always appear as directories. Operations outside
+the mount table fail when there is no `/` mount, and mount points or their ancestors cannot be
+removed. Read-only behavior belongs to each mounted filesystem.
 
-`CompositeFilesystem` deliberately does not implement command execution and does not mount storage
-into an unrelated command environment. This preserves the workspace invariant that, whenever both
-commands and filesystem access are available, a path names the same file through both interfaces.
-A provider backend may delegate its native filesystem methods to a `CompositeFilesystem` only if it
-also makes those mounts visible at the same absolute paths inside its command environment, for
-example using the provider's FUSE or volume-mount support.
+A bare `CompositeFilesystem` has files but no command implementation. This does not mean that a
+command-capable workspace cannot use filesystem composition: a provider backend can use the same
+router for its native file methods. That provider must also mount every source at the same path in
+its command environment, using its FUSE, volume, or bind-mount support. It then exposes one backend
+to `Workspace`, implementing both `SupportsCommands` and `SupportsFilesystem`.
+
+`Workspace` deliberately does not accept an independent command backend and filesystem. Keeping one
+backend responsible for the complete environment prevents configurations where
+`read_file('/data/x')` succeeds but `cat /data/x` observes a different file.
 
 ## Reading and writing files
 

@@ -1,175 +1,166 @@
-"""A virtual workspace filesystem composed from independently backed mount points."""
+"""A virtual workspace filesystem composed from independently rooted filesystems."""
 
 from __future__ import annotations as _annotations
 
 import posixpath
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from types import MappingProxyType
 
 from .protocol import FileEntry, SupportsFilesystem, WorkspaceBackend, WorkspaceError, WorkspaceFileEntry, WorkspaceRef
 
-__all__ = ('CompositeFilesystem', 'FilesystemMount')
-
-
-@dataclass(frozen=True, kw_only=True)
-class FilesystemMount:
-    """A filesystem subtree exposed at a path in a [`CompositeFilesystem`][pydantic_ai.workspaces.CompositeFilesystem].
-
-    `source_root` names the existing absolute directory in the source filesystem that becomes the
-    mount's root. The caller keeps that directory available for the composite's lifetime. For an
-    object-store-style filesystem this is normally `/`; for a workspace backend it can be that
-    backend's working directory. Construction performs no I/O, so the composite does not verify it.
-    """
-
-    filesystem: SupportsFilesystem
-    """The source filesystem."""
-    source_root: str = '/'
-    """Canonical absolute path in `filesystem` exposed at the mount point."""
-
-    def __post_init__(self) -> None:
-        _validate_path(self.source_root, label='source_root')
+__all__ = ('CompositeFilesystem',)
 
 
 class CompositeFilesystem(WorkspaceBackend, SupportsFilesystem):
-    """A filesystem-only workspace that routes absolute paths to non-overlapping mounts.
+    """Route one POSIX namespace across filesystems mounted at absolute paths.
 
-    The composite is deliberately not command-capable. It composes the logical filesystem
-    namespace only; it does not make those files visible inside an unrelated command environment.
-    A command-capable backend may delegate its native file operations to this class only when it
-    also mounts the same sources at the same paths inside its command environment.
+    Each mounted filesystem owns the behavior below its root: the composite strips the mount
+    prefix, passes it an absolute path rooted at `/`, and rewrites returned metadata into the
+    composite namespace. Longest-prefix routing gives nested mounts ordinary Unix-like shadowing.
 
-    Mount points may share virtual parents but may not overlap. For example, `/data` and `/skills`
-    are valid, as are `/team/data` and `/team/skills`; `/data` and `/data/archive` are rejected.
-    The composite synthesizes virtual parent directories and mount roots in `stat`, `exists`, and
-    `list_dir` results.
+    A bare composite is a filesystem-only workspace with `/` as its working directory. A
+    command-capable backend may use a composite internally, but that backend is responsible for
+    making every mount visible at the same path to its commands. The composite only routes file
+    operations; it does not perform FUSE, volume, or bind mounts.
     """
 
-    def __init__(self, mounts: Mapping[str, FilesystemMount], *, working_dir: str = '/') -> None:
+    def __init__(self, mounts: Mapping[str, SupportsFilesystem]) -> None:
         if not mounts:
             raise ValueError('CompositeFilesystem requires at least one mount.')
 
-        normalized_mounts: dict[str, FilesystemMount] = {}
-        for path, mount in mounts.items():
+        normalized_mounts: dict[str, SupportsFilesystem] = {}
+        for path, filesystem in mounts.items():
             _validate_path(path, label='mount path')
-            if path == '/':
-                raise ValueError("The root path '/' cannot be a mount; it is the composite's virtual root.")
-            for existing in normalized_mounts:
-                if path.startswith(existing + '/') or existing.startswith(path + '/'):
-                    raise ValueError(f'Mount paths must not overlap: {existing!r} and {path!r}.')
-            normalized_mounts[path] = mount
+            normalized_mounts[path] = filesystem
 
-        _validate_path(working_dir, label='working_dir')
-        if not self._is_guaranteed_directory(working_dir, normalized_mounts):
-            raise ValueError(
-                f'working_dir {working_dir!r} must be the virtual root, a mount point, or a virtual parent.'
-            )
+        self._mounts = MappingProxyType(dict(sorted(normalized_mounts.items())))
+        self._routing_order = tuple(sorted(self._mounts, key=len, reverse=True))
 
-        self._mounts = dict(sorted(normalized_mounts.items()))
-        self._working_dir = working_dir
+    @property
+    def mounts(self) -> Mapping[str, SupportsFilesystem]:
+        """The read-only mapping of canonical mount paths to their filesystems."""
+        return self._mounts
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        """Composite filesystems have no independently reconnectable identity."""
+        """A composite has no independently reconnectable identity."""
         return None
 
     async def working_dir(self) -> str:
-        """Return the configured working directory in the composite namespace."""
-        return self._working_dir
+        """Return the virtual root, the default for relative paths in a standalone composite."""
+        return '/'
 
     async def read_bytes(self, path: str) -> bytes:
-        _, mount, source_path = self._route(path)
+        path = _checked_operation_path(path)
+        if self._is_mount_or_virtual_directory(path):
+            raise IsADirectoryError(path)
+        _, filesystem, source_path = self._route(path)
         try:
-            return await mount.filesystem.read_bytes(source_path)
+            return await filesystem.read_bytes(source_path)
         except FileNotFoundError as error:
             raise FileNotFoundError(path) from error
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        _, mount, source_path = self._route(path)
+        path = _checked_operation_path(path)
+        if self._is_mount_or_virtual_directory(path):
+            raise IsADirectoryError(path)
+        _, filesystem, source_path = self._route(path)
         try:
-            await mount.filesystem.write_bytes(source_path, data)
+            await filesystem.write_bytes(source_path, data)
         except FileNotFoundError as error:
             raise FileNotFoundError(path) from error
 
     async def stat(self, path: str) -> WorkspaceFileEntry:
         path = _checked_operation_path(path)
-        if path == '/' or self._is_virtual_directory(path) or path in self._mounts:
+        if self._is_mount_or_virtual_directory(path):
             return _directory_entry(path)
-        mount_path, mount, source_path = self._route(path)
+
+        mount_path, filesystem, source_path = self._route(path)
         try:
-            entry = await mount.filesystem.stat(source_path)
+            entry = await filesystem.stat(source_path)
         except FileNotFoundError as error:
             raise FileNotFoundError(path) from error
-        return self._rewrite_entry(mount_path, mount, entry)
+        return self._rewrite_entry(mount_path, entry)
 
     async def list_dir(self, path: str) -> Sequence[WorkspaceFileEntry]:
         path = _checked_operation_path(path)
         virtual_children = self._virtual_children(path)
-        if virtual_children:
-            return tuple(_directory_entry(child) for child in virtual_children)
-        if path == '/' or self._is_virtual_directory(path):
-            return ()
+        entries_by_name: dict[str, WorkspaceFileEntry] = {}
 
-        mount_path, mount, source_path = self._route(path)
         try:
-            entries = await mount.filesystem.list_dir(source_path)
-        except FileNotFoundError as error:
-            raise FileNotFoundError(path) from error
-        return tuple(self._rewrite_entry(mount_path, mount, entry) for entry in entries)
+            mount_path, filesystem, source_path = self._route(path)
+        except FileNotFoundError:
+            if not virtual_children and not self._is_mount_or_virtual_directory(path):
+                raise
+        else:
+            try:
+                entries = await filesystem.list_dir(source_path)
+            except FileNotFoundError:
+                if not virtual_children:
+                    raise FileNotFoundError(path) from None
+            else:
+                for entry in entries:
+                    rewritten = self._rewrite_entry(mount_path, entry)
+                    entries_by_name[rewritten.name] = rewritten
+
+        # A mount shadows an entry with the same name in its parent filesystem.
+        for child in virtual_children:
+            entry = _directory_entry(child)
+            entries_by_name[entry.name] = entry
+        return tuple(entries_by_name[name] for name in sorted(entries_by_name))
 
     async def make_dir(self, path: str) -> None:
         path = _checked_operation_path(path)
-        if path == '/' or self._is_virtual_directory(path) or path in self._mounts:
+        if self._is_mount_or_virtual_directory(path):
             return
-        _, mount, source_path = self._route(path)
+        _, filesystem, source_path = self._route(path)
         try:
-            await mount.filesystem.make_dir(source_path)
+            await filesystem.make_dir(source_path)
         except FileNotFoundError as error:
             raise FileNotFoundError(path) from error
 
     async def remove(self, path: str) -> None:
         path = _checked_operation_path(path)
-        if path == '/' or self._is_virtual_directory(path) or path in self._mounts:
+        if self._is_mount_or_virtual_directory(path):
             raise PermissionError(f'Cannot remove composite mount or virtual directory {path!r}.')
-        _, mount, source_path = self._route(path)
+        _, filesystem, source_path = self._route(path)
         try:
-            await mount.filesystem.remove(source_path)
+            await filesystem.remove(source_path)
         except FileNotFoundError as error:
             raise FileNotFoundError(path) from error
 
     async def exists(self, path: str) -> bool:
         path = _checked_operation_path(path)
-        if path == '/' or self._is_virtual_directory(path) or path in self._mounts:
+        if self._is_mount_or_virtual_directory(path):
             return True
         try:
-            _, mount, source_path = self._route(path)
+            _, filesystem, source_path = self._route(path)
         except FileNotFoundError:
             return False
-        return await mount.filesystem.exists(source_path)
+        return await filesystem.exists(source_path)
 
-    @staticmethod
-    def _is_guaranteed_directory(path: str, mounts: Mapping[str, FilesystemMount]) -> bool:
-        if path == '/':
-            return True
-        return path in mounts or any(mount_path.startswith(path + '/') for mount_path in mounts)
-
-    def _route(self, path: str) -> tuple[str, FilesystemMount, str]:
+    def _route(self, path: str) -> tuple[str, SupportsFilesystem, str]:
         path = _checked_operation_path(path)
-        for mount_path, mount in self._mounts.items():
+        for mount_path in self._routing_order:
             if path == mount_path:
-                return mount_path, mount, mount.source_root
-            if path.startswith(mount_path + '/'):
-                relative = path[len(mount_path) + 1 :]
-                return mount_path, mount, posixpath.join(mount.source_root, relative)
+                return mount_path, self._mounts[mount_path], '/'
+            prefix = '/' if mount_path == '/' else mount_path + '/'
+            if path.startswith(prefix):
+                relative = path[len(prefix) :]
+                return mount_path, self._mounts[mount_path], '/' + relative
         raise FileNotFoundError(path)
 
-    def _is_virtual_directory(self, path: str) -> bool:
-        return any(mount_path.startswith(path + '/') for mount_path in self._mounts)
+    def _is_mount_or_virtual_directory(self, path: str) -> bool:
+        if path in self._mounts:
+            return True
+        prefix = '/' if path == '/' else path + '/'
+        return any(mount_path.startswith(prefix) for mount_path in self._mounts)
 
     def _virtual_children(self, path: str) -> tuple[str, ...]:
         prefix = '/' if path == '/' else path + '/'
         children: set[str] = set()
         for mount_path in self._mounts:
-            if not mount_path.startswith(prefix):
+            if not mount_path.startswith(prefix) or mount_path == path:
                 continue
             remainder = mount_path[len(prefix) :]
             child_name = remainder.split('/', 1)[0]
@@ -177,18 +168,12 @@ class CompositeFilesystem(WorkspaceBackend, SupportsFilesystem):
         return tuple(sorted(children))
 
     @staticmethod
-    def _rewrite_entry(mount_path: str, mount: FilesystemMount, entry: WorkspaceFileEntry) -> WorkspaceFileEntry:
+    def _rewrite_entry(mount_path: str, entry: WorkspaceFileEntry) -> WorkspaceFileEntry:
         source_path = _checked_operation_path(entry.path)
-        if source_path == mount.source_root:
-            relative = ''
-        else:
-            source_prefix = '/' if mount.source_root == '/' else mount.source_root + '/'
-            if not source_path.startswith(source_prefix):
-                raise WorkspaceError(
-                    f'Mounted filesystem returned path {source_path!r} outside source root {mount.source_root!r}.'
-                )
-            relative = source_path[len(source_prefix) :]
+        relative = source_path.removeprefix('/')
         target_path = mount_path if not relative else posixpath.join(mount_path, relative)
+        if mount_path != '/' and target_path != mount_path and not target_path.startswith(mount_path + '/'):
+            raise WorkspaceError(f'Mounted filesystem returned path {source_path!r} outside its root.')
         return FileEntry(name=posixpath.basename(target_path), path=target_path, is_dir=entry.is_dir, size=entry.size)
 
 

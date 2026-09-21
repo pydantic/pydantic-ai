@@ -5,7 +5,6 @@
         members:
             - Workspace
             - CompositeFilesystem
-            - FilesystemMount
             - FileEntry
             - FileWindow
             - WorkspaceBackend
