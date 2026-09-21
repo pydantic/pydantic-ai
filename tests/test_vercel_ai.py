@@ -4928,7 +4928,6 @@ async def test_adapter_dump_messages():
     )
 
 
-
 def test_adapter_dump_messages_omits_null_provider_metadata():
     """AI SDK optional providerMetadata must be absent, not JSON null."""
     messages = [ModelResponse(parts=[TextPart(content='Hello')])]
