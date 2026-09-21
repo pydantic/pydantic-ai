@@ -1253,6 +1253,38 @@ async def test_an_output_function_is_a_hand_off_jev_picks(
     )
 
 
+def route_to_team(team: Literal['billing', 'legal', 'technical'], urgent: bool) -> str:
+    """Hand the ticket to the specialist team that handles it."""
+    return f'routed to {team}, urgent={urgent}'
+
+
+@pytest.mark.vcr
+async def test_an_output_functions_arguments_are_filled_like_an_output_types_fields(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """An output function that takes arguments is a route Jev fills, not only one it hands off to."""
+    agent = Agent(typesafe_model, output_type=[Ticket, route_to_team])
+    result = await agent.run(
+        'I have contacted you four times about being double charged and I am about to call my lawyer.'
+    )
+    assert result.output == snapshot('routed to billing, urgent=True')
+    assert (result.response.provider_details or {})['tool']['choice'] == snapshot('final_result_route_to_team')
+    # The route is picked first, then its arguments go out as their own questions in a second request.
+    assert cast(dict[str, Any], request_capture.bodies('/v1/systemone')[-1]['questions']) == snapshot(
+        {
+            'team': {
+                'type': 'choice',
+                'criteria': {'billing': None, 'legal': None, 'technical': None},
+                'instructions': {'field': 'team', 'goal': 'Hand the ticket to the specialist team that handles it.'},
+            },
+            'urgent': {
+                'type': 'noul',
+                'instructions': {'field': 'urgent', 'goal': 'Hand the ticket to the specialist team that handles it.'},
+            },
+        }
+    )
+
+
 async def test_an_arg_less_tool_is_called_by_jev_itself(allow_model_requests: None):
     """A tool with no arguments has nothing for Jev to write, so Jev calls it and judges the result next request."""
     seen: list[dict[str, Any]] = []
