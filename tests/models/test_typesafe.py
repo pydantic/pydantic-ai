@@ -1446,6 +1446,23 @@ async def test_a_field_with_more_options_than_jev_picks_from_is_refused(
         await Agent(typesafe_model, output_type=Routed).run('anything')
 
 
+async def test_a_rubric_with_more_levels_than_jev_scores_against_is_refused(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """Jev scores against at most 10 levels; an 11th is a 400, so it is refused before the request."""
+
+    class Rated(BaseModel):
+        """Rate the ticket."""
+
+        severity: Annotated[
+            Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            rubric(*((level, f'Level {level}.') for level in range(11))),
+        ] = Field(description='How severe is it?')
+
+    with pytest.raises(UserError, match='scores against at most 10 levels, and this rubric has 11'):
+        await Agent(typesafe_model, output_type=Rated).run('anything')
+
+
 async def test_more_routes_than_jev_picks_from_are_refused(allow_model_requests: None, typesafe_model: TypeSafeModel):
     """The output type is one route beside the tools, so 255 tools is already one too many."""
     tools = [_named_tool(f'tool_{i:03d}') for i in range(255)]
