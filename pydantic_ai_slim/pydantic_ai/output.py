@@ -25,7 +25,7 @@ __all__ = (
     'StructuredDict',
     'Choice',
     'Choices',
-    'YesNo',
+    'DescribedBool',
     'OutputObjectDefinition',
     'OutputContext',
     # types
@@ -666,7 +666,7 @@ _OutputSpecItem = TypeAliasType(
 )
 
 
-def YesNo(*, yes: str, no: str) -> type[bool]:
+def DescribedBool(*, true: str, false: str) -> type[bool]:
     """A `bool` that says what a yes and what a no would each mean.
 
     A `bool` field's description says what is being asked; these two say what either answer amounts to,
@@ -678,17 +678,17 @@ def YesNo(*, yes: str, no: str) -> type[bool]:
     `dict` subclass, this returns an annotated `bool`: `bool` cannot be subclassed, so there is nothing to
     subclass. The value you get back is therefore a plain `True` or `False` rather than a wrapper.
 
-    ```python {title="yes_no.py"}
+    ```python {title="described_bool.py"}
     from pydantic import BaseModel, Field
 
-    from pydantic_ai import Agent, YesNo
+    from pydantic_ai import Agent, DescribedBool
 
 
     class Settled(BaseModel):
         # Review the transcript.
-        refunded: YesNo(
-            yes='Money was returned to the customer.',
-            no='No refund was issued.',
+        refunded: DescribedBool(
+            true='Money was returned to the customer.',
+            false='No refund was issued.',
         ) = Field(description='Was a refund issued?')
 
 
@@ -699,18 +699,18 @@ def YesNo(*, yes: str, no: str) -> type[bool]:
     ```
 
     On [TypeSafe's Jev](../models/typesafe.md), which asks a yes/no as its own primitive, the two land in
-    that question's `criteria` as `true` and `false` respectively, sent verbatim.
+    that question's `criteria` as `true` and `false`, sent verbatim.
 
     Args:
-        yes: What it means for the answer to be `True`.
-        no: What it means for the answer to be `False`.
+        true: What it means for the answer to be `True`.
+        false: What it means for the answer to be `False`.
     """
     return Annotated[  # type: ignore[return-value]
         bool,
         WithJsonSchema(
             {
                 'type': 'boolean',
-                'anyOf': [{'const': True, 'description': yes}, {'const': False, 'description': no}],
+                'anyOf': [{'const': True, 'description': true}, {'const': False, 'description': false}],
             }
         ),
     ]

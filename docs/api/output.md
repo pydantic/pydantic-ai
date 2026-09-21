@@ -12,6 +12,6 @@
             - StructuredDict
             - Choice
             - Choices
-            - YesNo
+            - DescribedBool
             - DeferredToolRequests
             - OutputObjectDefinition

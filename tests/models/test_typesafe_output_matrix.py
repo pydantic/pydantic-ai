@@ -309,7 +309,7 @@ def scripted(picks: str | None) -> tuple[TypeSafeModel, list[dict[str, Any]]]:
 
 
 # `True` and `False` are a yes/no's own two options, so either spelling of them is one.
-YesNo = probe('which', Literal[True, False], description='Which?')
+TrueFalse = probe('which', Literal[True, False], description='Which?')
 
 
 class Settled(BaseModel):
@@ -336,7 +336,7 @@ ACCEPTED = [
     Accepted('a list of options', list[Area], ['billing', 'shipping', 'security']),
     Accepted('an optional pick-one field', OptionalArea, OptionalArea(area='billing')),
     Accepted('a rubric field', Graded, Graded(clarity=Clarity.partial)),
-    Accepted('field: yes/no from two options', YesNo, YesNo(which=True)),
+    Accepted('field: yes/no from two options', TrueFalse, TrueFalse(which=True)),
     Accepted('field: yes/no with each answer described', Settled, Settled(refunded=Refunded.yes)),
     # A union is a route set: one request picks the member, a second asks only that member's fields.
     Accepted(

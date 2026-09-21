@@ -15,6 +15,7 @@ from pydantic_ai import (
     BinaryContent,
     CachePoint,
     CompactionPart,
+    DescribedBool,
     FilePart,
     ModelAPIError,
     ModelHTTPError,
@@ -37,7 +38,6 @@ from pydantic_ai import (
     UseEnumMemberDocstrings,
     UserPromptPart,
     WebSearchTool,
-    YesNo,
 )
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import NativeTool
@@ -1575,28 +1575,28 @@ async def test_meanings_alone_are_enough_for_a_yes_no_with_nothing_else_to_go_on
     )
 
 
-# `YesNo()` returns an annotation, so under `from __future__ import annotations` it has to be reachable by
+# `DescribedBool()` returns an annotation, so under `from __future__ import annotations` it has to be reachable by
 # name where the annotation is evaluated — the same caveat `Choices()` carries.
-Refund = YesNo(yes='Money was returned to the customer.', no='No refund was issued.')
+Refund = DescribedBool(true='Money was returned to the customer.', false='No refund was issued.')
 
 
-class SettledByYesNo(BaseModel):
+class SettledByDescribedBool(BaseModel):
     """Review the transcript."""
 
     refunded: Refund = Field(description='Was a refund issued?')  # pyright: ignore[reportInvalidTypeForm]
 
 
-async def test_yes_no_describes_both_answers_and_gives_back_a_plain_bool(allow_model_requests: None):
-    """`YesNo()` puts the two meanings in the schema without an `Enum`, so the value stays a `bool`."""
+async def test_a_described_bool_describes_both_answers_and_gives_back_a_plain_bool(allow_model_requests: None):
+    """`DescribedBool()` puts the two meanings in the schema without an `Enum`, so the value stays a `bool`."""
     seen: list[dict[str, Any]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         return answers(refunded={'type': 'noul', 'noul': 0.9})
 
-    result = await Agent(mock_model(record), output_type=SettledByYesNo).run('we sent the money back')
+    result = await Agent(mock_model(record), output_type=SettledByDescribedBool).run('we sent the money back')
 
-    # A real `bool`, not an enum member needing `.value`: `bool` cannot be subclassed, so `YesNo()` annotates.
+    # A real `bool`, not an enum member needing `.value`: `bool` cannot be subclassed, so `DescribedBool()` annotates.
     assert result.output.refunded is True  # pyright: ignore[reportUnknownMemberType]
     assert seen[0]['questions']['refunded'] == snapshot(
         {

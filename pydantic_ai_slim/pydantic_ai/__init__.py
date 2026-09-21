@@ -157,12 +157,12 @@ from .native_tools import (
 from .output import (
     Choice,
     Choices,
+    DescribedBool,
     NativeOutput,
     PromptedOutput,
     StructuredDict,
     TextOutput,
     ToolOutput,
-    YesNo,
 )
 from .profiles import (
     DEFAULT_PROFILE,
@@ -395,7 +395,7 @@ __all__ = (
     'StructuredDict',
     'Choice',
     'Choices',
-    'YesNo',
+    'DescribedBool',
     # template
     'TemplateStr',
     # format_prompt

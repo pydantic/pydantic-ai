@@ -541,24 +541,24 @@ The descriptions are what make this worth a helper: each option carries its mean
 
 Like [`StructuredDict()`](#structured-dict), `Choices()` returns a type rather than a marker, so the same value works as an `output_type`, as a field of a Pydantic model, and as a [tool](tools.md) parameter.
 
-#### A yes/no whose answers need explaining {#yes-no}
+#### A `bool` whose answers need explaining {#described-bool}
 
 A `bool` field's description says what is being asked; it has nowhere to say what either answer would
-amount to. [`YesNo()`][pydantic_ai.output.YesNo] takes both, and describes each of the two values a boolean
+amount to. [`DescribedBool()`][pydantic_ai.output.DescribedBool] takes both, and describes each of the two values a boolean
 can be:
 
-```python {title="yes_no.py"}
+```python {title="described_bool.py"}
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent, YesNo
+from pydantic_ai import Agent, DescribedBool
 
 
 class Settled(BaseModel):
     """Review the transcript."""
 
-    refunded: YesNo(
-        yes='Money was returned to the customer.',
-        no='No refund was issued.',
+    refunded: DescribedBool(
+        true='Money was returned to the customer.',
+        false='No refund was issued.',
     ) = Field(description='Was a refund issued?')
 
 
@@ -569,11 +569,11 @@ print(result.output.refunded)
 ```
 
 Unlike `Choices()` and [`StructuredDict()`](#structured-dict), which return a `str` and a `dict` subclass,
-`YesNo()` returns an annotated `bool`, because `bool` cannot be subclassed. The value is a plain `True` or
+`DescribedBool()` returns an annotated `bool`, because `bool` cannot be subclassed. The value is a plain `True` or
 `False`, and the descriptions travel in the schema.
 
 !!! note
-    Being an annotation, `YesNo()` is subject to the same caveat as `Choices()`: in a module with
+    Being an annotation, `DescribedBool()` is subject to the same caveat as `Choices()`: in a module with
     `from __future__ import annotations`, it can only be used in an annotation if it's reachable by name
     where the annotation is evaluated, so a module-level assignment works and one built inside a function
     does not.
