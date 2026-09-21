@@ -789,6 +789,12 @@ navigation:
           - page: "Parallel Execution"
             path: "graph/builder/parallel.md"
             slug: "graph/builder/parallel"
+  - section: "Cookbook"
+    slug: ""
+    contents:
+      - page: "Research a decision with sources"
+        path: "cookbook/research-brief.md"
+        slug: "cookbook/research-brief"
   - section: "Examples"
     slug: ""
     contents:
