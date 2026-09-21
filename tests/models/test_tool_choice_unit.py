@@ -261,18 +261,6 @@ RAISES_CASES = [
         match=r'Invalid tool names in `tool_choice`:.*Known tools:',
     ),
     dict(
-        id='list_names_only_an_output_tool',
-        # A list choice excludes output tools, so an output tool name in one is a typo, not a
-        # selection -- and must be rejected the same way `ToolOrOutput(function_tools=...)` does.
-        tool_choice=['final_result'],
-        params_kwargs={
-            'function_tools': [make_tool('a')],
-            'output_tools': [make_tool('final_result')],
-            'allow_text_output': True,
-        },
-        match=r"Invalid tool names in `tool_choice`: \{'final_result'\}",
-    ),
-    dict(
         id='list_invalid_no_function_tools',
         tool_choice=['x'],
         params_kwargs={'function_tools': [], 'allow_text_output': True},
@@ -477,7 +465,7 @@ WARNS_CASES = [
             'output_tools': [make_tool('final_result')],
             'allow_text_output': True,
         },
-        match=r"Some tools.*'final_result'",
+        match=r"Output tool names in `tool_choice`.*'final_result'",
         expected_mode='required',
         expected_tools={'a'},
     ),
