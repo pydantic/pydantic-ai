@@ -33,6 +33,10 @@ permissions:
 
 jobs:
   summarize:
+    # A pull request from a fork gets no secrets, so the agent would have nothing to authenticate
+    # with, and its prompt and checkout would both be attacker-controlled. That case belongs in
+    # gh-aw, not here.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -56,7 +60,10 @@ jobs:
 Pin the action to a commit SHA rather than a branch in anything you rely on.
 
 The agent's output is printed to the log, written to the job summary, and exposed as the step's
-`result` output. A multi-line answer survives all three.
+`result` output. A multi-line answer survives all three, and the runner reads none of it as
+instructions: the log output is bracketed so that a model writing `::add-mask::` or
+`::stop-commands::` is printed rather than obeyed, and the `result` output is delimited with a
+random token so an answer cannot forge a second output.
 
 Set exactly one of `prompt` and `prompt-file`. A prompt kept in the repository keeps long
 instructions out of the workflow file, and is read relative to `working-directory`:

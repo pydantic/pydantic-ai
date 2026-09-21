@@ -83,6 +83,31 @@ def _append_step_summary(path: str, output: str) -> None:
             summary_file.write('\n')
 
 
+def _print_output(output: str) -> None:
+    """Print the agent's output with workflow-command processing turned off around it.
+
+    The runner reads workflow commands such as `::add-mask::` out of a step's own stdout, so a
+    model that writes one is
+    steering the workflow rather than answering: masking text, faking annotations, or stopping log
+    processing for everything after it. Bracketing the output with a random stop token makes the
+    runner read all of it as text. Outside Actions nothing reads those lines, and printing the
+    markers would only be noise.
+    """
+    if os.environ.get('GITHUB_ACTIONS') != 'true':
+        print(output)
+        return
+
+    token = f'PAI_{secrets.token_hex(16)}'
+    while token in output:
+        token = f'PAI_{secrets.token_hex(16)}'
+
+    print(f'::stop-commands::{token}')
+    try:
+        print(output)
+    finally:
+        print(f'::{token}::')
+
+
 def _configure_observability() -> None:
     """Send the run to Logfire when the workflow's environment says where to.
 
@@ -153,7 +178,7 @@ def main() -> int:
             print(f'error: could not write `GITHUB_STEP_SUMMARY`: {error}', file=sys.stderr)
             return 1
 
-    print(output)
+    _print_output(output)
     return 0
 
 

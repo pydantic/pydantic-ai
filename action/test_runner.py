@@ -11,6 +11,7 @@ import pytest
 from pytest import CaptureFixture, MonkeyPatch
 
 from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 
 # `action/` isn't on `sys.path` by default. The runtime equivalent is the action running
 # `python3 runner.py`, which puts the script's own directory first.
@@ -23,6 +24,8 @@ import runner
 agent = Agent(instructions='Be helpful.')
 agent_with_model = Agent('test', instructions='Be helpful.')
 not_an_agent = 'nope'
+# Stands in for a model that answers with workflow commands instead of an answer.
+agent_that_forges_commands = Agent(TestModel(custom_output_text='::error::forged\n::add-mask::secret'))
 
 SPEC = """
 name: reviewer
@@ -35,7 +38,7 @@ def inputs(monkeypatch: MonkeyPatch, tmp_path: Path) -> Path:
     """Clear every input the action sets, so each test names only the ones it cares about."""
     names = ('PAI_AGENT', 'PAI_MODEL', 'PAI_PROMPT', 'PAI_PROMPT_FILE', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY')
     # A developer's own Logfire credentials would otherwise trace the test suite's runs.
-    for name in (*names, 'LOGFIRE_TOKEN', 'OTEL_EXPORTER_OTLP_ENDPOINT'):
+    for name in (*names, 'LOGFIRE_TOKEN', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'GITHUB_ACTIONS'):
         monkeypatch.delenv(name, raising=False)
 
     (tmp_path / 'reviewer.yml').write_text(SPEC)
@@ -247,3 +250,28 @@ def test_tracing_without_logfire_installed(inputs: Path, monkeypatch: MonkeyPatc
     runner._configure_observability()  # pyright: ignore[reportPrivateUsage]
 
     assert 'warning: the environment asks for tracing' in capsys.readouterr().err
+
+
+def test_output_cannot_forge_workflow_commands(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
+    """A model that answers with workflow commands gets printed as text, not obeyed."""
+    monkeypatch.setenv('GITHUB_ACTIONS', 'true')
+    monkeypatch.setenv('PAI_AGENT', 'test_runner:agent_that_forges_commands')
+    monkeypatch.setenv('PAI_PROMPT', 'Review the diff.')
+
+    assert runner.main() == 0
+
+    lines = capsys.readouterr().out.strip().splitlines()
+    token = lines[0].removeprefix('::stop-commands::')
+    assert lines[0] == f'::stop-commands::{token}'
+    assert lines[-1] == f'::{token}::'
+    # The forged commands are still there, inert, between the markers.
+    assert lines[1:-1] == ['::error::forged', '::add-mask::secret']
+
+
+def test_output_is_printed_plainly_outside_actions(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
+    """Nothing reads workflow commands off a terminal, so the markers would only be noise."""
+    monkeypatch.setenv('PAI_AGENT', 'test_runner:agent_that_forges_commands')
+    monkeypatch.setenv('PAI_PROMPT', 'Review the diff.')
+
+    assert runner.main() == 0
+    assert capsys.readouterr().out == '::error::forged\n::add-mask::secret\n'
