@@ -1335,6 +1335,34 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
+    elif (
+        isinstance(m, UserPromptPart)
+        and m.content == 'Write a response plan for elevated API latency after a deployment.'
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'summary': 'The deployment increased API latency.', 'action_items': []},
+                    tool_call_id='incident_plan',
+                )
+            ]
+        )
+    elif isinstance(m, RetryPromptPart) and m.content == 'Include at least one concrete action item.':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={
+                        'summary': 'The deployment increased API latency.',
+                        'action_items': [
+                            'Roll back the deployment and compare latency with the previous release.'
+                        ],
+                    },
+                    tool_call_id='incident_plan_retry',
+                )
+            ]
+        )
     elif isinstance(m, UserPromptPart) and m.content == 'My deployment region is eu-west-1.':
         return ModelResponse(parts=[TextPart("I'll remember that.")])
     elif (
