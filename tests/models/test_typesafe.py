@@ -2405,7 +2405,6 @@ async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_
     )
 
 
-<<<<<<< HEAD
 async def test_a_choices_route_is_described_by_what_the_set_says_about_itself(allow_model_requests: None):
     """A `Choices` set is not object-like, so what it is for is written on the property it is wrapped in.
 
@@ -2534,53 +2533,6 @@ async def test_a_proposed_tool_call_hands_the_whole_step_over_and_jev_judges_the
     assert list(seen[1]['questions']) == snapshot(['urgent'])
 
 
-||||||| 1e6257b47
-=======
-async def test_a_choices_route_is_described_by_what_the_set_says_about_itself(allow_model_requests: None):
-    """A `Choices` set is not object-like, so what it is for is written on the property it is wrapped in.
-
-    `Choices(description=...)` describes the set, not the tool around it — `ToolOutput` is what describes the
-    tool — so the route question has to read it where it actually landed, or a described set looks to Jev like
-    a route that says nothing about itself.
-    """
-    seen: list[dict[str, Any]] = []
-
-    def record(request: httpx2.Request) -> httpx2.Response:
-        seen.append(json.loads(request.content))
-        if len(seen) == 1:
-            return answers(tool=_route('final_result_triage', {'final_result_triage': 0.9, 'final_result_Ticket': 0.1}))
-        # The set is the picked route's one field, so it is asked on its own in the second request.
-        return answers(response=_route('urgent', {'urgent': 0.8, 'normal': 0.2}))
-
-    triage = Choices(
-        {'urgent': 'Needs a reply within the hour.', 'normal': 'Can wait until Monday.'},
-        name='triage',
-        description='Triage the ticket.',
-    )
-    agent = Agent(mock_model(record), output_type=[triage, Ticket])
-    result = await agent.run('My card was charged twice again.')
-
-    assert result.output == snapshot('urgent')
-
-    assert seen[0]['questions']['tool']['criteria'] == snapshot(
-        {'final_result_triage': 'Triage the ticket.', 'final_result_Ticket': 'Triage a support ticket.'}
-    )
-
-
-async def test_a_route_that_says_nothing_anywhere_is_still_refused(allow_model_requests: None):
-    """A bare `Literal` has no docstring, no `ToolOutput` and no description on what it is wrapped in."""
-
-    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
-        raise AssertionError('a route that describes itself nowhere must be refused before any request')
-
-    # A bare `Literal` beside another type is not spelled out in the overloads; it is refused at run time
-    # for a different reason, which is what this asserts.
-    agent: Agent[None, Any] = Agent(mock_model(unreachable), output_type=[Literal['urgent', 'normal'], Ticket])  # type: ignore[arg-type]
-    with pytest.raises(UserError, match="'final_result_Literal' says nothing about itself"):
-        await agent.run('anything')
-
-
->>>>>>> origin/main
 async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_model_requests: None):
     """`None` is offered as a hand-off but weighed as a result, so the fallback ranks it with the output types.
 
