@@ -1346,11 +1346,19 @@ async def test_an_output_functions_arguments_are_filled_like_an_output_types_fie
             'team': {
                 'type': 'choice',
                 'criteria': {'billing': None, 'legal': None, 'technical': None},
-                'instructions': {'field': 'team', 'goal': 'Hand the ticket to the specialist team that handles it.'},
+                'instructions': {
+                    'field': 'team',
+                    'chosen': 'route_to_team',
+                    'goal': 'Hand the ticket to the specialist team that handles it.',
+                },
             },
             'urgent': {
                 'type': 'noul',
-                'instructions': {'field': 'urgent', 'goal': 'Hand the ticket to the specialist team that handles it.'},
+                'instructions': {
+                    'field': 'urgent',
+                    'chosen': 'route_to_team',
+                    'goal': 'Hand the ticket to the specialist team that handles it.',
+                },
             },
         }
     )
