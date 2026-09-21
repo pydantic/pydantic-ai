@@ -57,7 +57,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
     # `anyio>=4.15.0`: `Process.wait()` returns when the command exits even if a background child
-    # still holds its output pipe (agronholm/anyio#1174); `LocalWorkspace` relies on it. The earlier
+    # still holds its output pipe (agronholm/anyio#1174); `LocalWorkspaceBackend` relies on it. The earlier
     # floor of 4.7.0 was for cancellation delivery in streaming teardown (#6422).
     "anyio>=4.15.0",
     "griffelib>=2.0",

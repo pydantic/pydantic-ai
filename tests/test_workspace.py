@@ -33,7 +33,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileWindow,
-    LocalWorkspace,
+    LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     SupportsCommands,
     SupportsFilesystem,
@@ -314,7 +314,7 @@ async def test_bounded_read_falls_back_to_the_shell_filesystem_when_sed_is_missi
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
-    window = await Workspace(NoSedBackend(LocalWorkspace(tmp_path))).read_file('data.txt', offset=2, limit=1)
+    window = await Workspace(NoSedBackend(LocalWorkspaceBackend(tmp_path))).read_file('data.txt', offset=2, limit=1)
 
     assert (window.lines, window.has_more, window.total_lines) == (('two',), True, 3)
 
@@ -329,7 +329,7 @@ async def test_native_filesystem_fallback_is_used_when_fake_sed_is_unavailable()
 
 
 async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_path: Path) -> None:
-    backend = RunOnlyWorkspaceBackend(LocalWorkspace(tmp_path))
+    backend = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
     workspace = Workspace(backend)
     payload = bytes(range(256)) * 800
     filename = "nested/weird '\n blob.bin"
@@ -363,7 +363,7 @@ async def test_run_only_filesystem_lists_symlinked_directories(tmp_path: Path) -
     root_link = tmp_path / 'root-link'
     root_link.symlink_to(target, target_is_directory=True)
 
-    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspace(tmp_path)))
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     entries = {entry.name: entry for entry in await workspace.list_dir(str(root_link))}
 
     assert entries['child'].is_dir
@@ -395,7 +395,7 @@ async def test_shell_write_preserves_the_original_error_when_cleanup_fails(tmp_p
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
     with pytest.raises(RuntimeError, match='write failed'):
-        await Workspace(FailedWriteBackend(LocalWorkspace(tmp_path))).write_bytes('data.bin', b'data')
+        await Workspace(FailedWriteBackend(LocalWorkspaceBackend(tmp_path))).write_bytes('data.bin', b'data')
 
     assert cleanup_attempted
 
@@ -416,7 +416,7 @@ async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
-    workspace = Workspace(InvalidStatBackend(LocalWorkspace(tmp_path)))
+    workspace = Workspace(InvalidStatBackend(LocalWorkspaceBackend(tmp_path)))
     await workspace.write_bytes('data.bin', b'data')
     with pytest.raises(WorkspaceError, match='invalid size'):
         await workspace.stat('data.bin')
@@ -438,7 +438,7 @@ async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> 
             result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
-    workspace = Workspace(InvalidListingBackend(LocalWorkspace(tmp_path)))
+    workspace = Workspace(InvalidListingBackend(LocalWorkspaceBackend(tmp_path)))
     await workspace.make_dir('directory')
     with pytest.raises(WorkspaceError, match='invalid directory listing'):
         await workspace.list_dir('.')
@@ -482,7 +482,7 @@ async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None
             return FakeWorkspaceResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
 
     with pytest.raises(WorkspaceError):
-        await Workspace(FailedFindBackend(LocalWorkspace(tmp_path))).list_dir('.')
+        await Workspace(FailedFindBackend(LocalWorkspaceBackend(tmp_path))).list_dir('.')
 
 
 async def test_slice_timeout_falls_back_to_filesystem() -> None:
@@ -981,7 +981,7 @@ async def test_latest_none_workspace_ref_suppresses_an_older_historical_ref(tmp_
     agent = Agent(TestModel(custom_output_text='done'), deps_type=type(None), capabilities=[HistoryCapability()])
 
     older = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='fake', id='old'))
-    first = await agent.run('first', message_history=[older], workspace=LocalWorkspace(tmp_path))
+    first = await agent.run('first', message_history=[older], workspace=LocalWorkspaceBackend(tmp_path))
     await agent.run('new', message_history=first.all_messages())
 
     assert seen == [None]

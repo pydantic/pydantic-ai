@@ -88,7 +88,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import (
-    LocalWorkspace,
+    LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
     WorkspaceRef,
@@ -2704,7 +2704,7 @@ def _workspace_context(workspace: Workspace) -> RunContext[None]:
 
 
 def test_temporal_run_context_omits_ref_for_local_workspace():
-    workspace = Workspace(LocalWorkspace(os.getcwd()))
+    workspace = Workspace(LocalWorkspaceBackend(os.getcwd()))
     serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
     assert 'workspace_ref' not in serialized
 

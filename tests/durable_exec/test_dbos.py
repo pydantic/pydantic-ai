@@ -82,7 +82,7 @@ from pydantic_ai.realtime import (
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
-from pydantic_ai.workspaces import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from ..conftest import IsDatetime, IsNow, IsStr
 
@@ -251,7 +251,7 @@ async def test_dbos_agent_forwards_local_workspace(dbos: DBOS, tmp_path: Path) -
     )
     dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
 
-    result = await dbos_agent.run('Use the workspace.', workspace=LocalWorkspace(tmp_path))
+    result = await dbos_agent.run('Use the workspace.', workspace=LocalWorkspaceBackend(tmp_path))
 
     assert result.output == '{"round_trip_workspace":"workspace content"}'
     await result.workspace.write_text('after.txt', 'after run')
@@ -2439,10 +2439,10 @@ async def test_dbos_durability_forwards_local_workspace_workflow_input(dbos: DBO
     )
 
     @DBOS.workflow()
-    async def run_durable_agent(workspace: LocalWorkspace) -> AgentRunResult[str]:
+    async def run_durable_agent(workspace: LocalWorkspaceBackend) -> AgentRunResult[str]:
         return await agent.run('Use the workspace.', workspace=workspace)
 
-    result = await run_durable_agent(LocalWorkspace(tmp_path))
+    result = await run_durable_agent(LocalWorkspaceBackend(tmp_path))
 
     assert result.output == '{"round_trip_workspace":"workspace content"}'
     await result.workspace.write_text('after.txt', 'after run')

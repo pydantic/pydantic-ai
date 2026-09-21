@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import UserError
-from pydantic_ai.workspaces import LocalWorkspace, ReadOnlyWorkspace, Workspace, WorkspaceRef
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
 
 from .workspace_fakes import FakeWorkspace, RunOnlyWorkspaceBackend
 
@@ -50,7 +50,7 @@ async def test_read_only_workspace_forwards_every_read_and_refuses_every_write()
 async def test_read_only_workspace_over_a_run_only_backend_uses_the_shell_fallback(tmp_path: Path) -> None:
     """The wrapper can read through the inner shell fallback without exposing command execution."""
     (tmp_path / 'data.txt').write_text('hello')
-    backend = RunOnlyWorkspaceBackend(LocalWorkspace(tmp_path))
+    backend = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
     workspace = Workspace(ReadOnlyWorkspace(Workspace(backend)))
 
     assert await workspace.read_text('data.txt') == 'hello'

@@ -11,7 +11,7 @@ performs file operations through the shell.
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.workspaces import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 agent = Agent('anthropic:claude-sonnet-5')
 
@@ -23,18 +23,20 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
 
 
 async def main() -> None:
-    workspace = LocalWorkspace(Path.cwd())
+    workspace = LocalWorkspaceBackend(Path.cwd())
     await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', workspace=workspace)
 ```
 
 ## Choosing a workspace
 
-[`LocalWorkspace`][pydantic_ai.workspaces.LocalWorkspace] runs commands on this machine and uses its
-filesystem. It isolates nothing. Use it for trusted, local work; run untrusted code in a container
-or VM through a provider workspace. The caller must give it an absolute root directory and owns
-that directory's creation and cleanup.
+[`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend] runs commands on this
+machine and uses its filesystem. It isolates nothing and is not a jail: its `working_dir` is only
+where commands start and what relative paths resolve against, so absolute paths and commands reach
+anywhere on the host that this process can. Use it for trusted, local work; run untrusted code in a
+container or VM through a provider workspace. `working_dir` must be absolute (a leading `~` is
+expanded), and the caller owns that directory's creation and cleanup.
 
-`LocalWorkspace` passes only `PATH`, `HOME`, `LANG`, and `TMPDIR` through to commands, plus any `env`
+`LocalWorkspaceBackend` passes only `PATH`, `HOME`, `LANG`, and `TMPDIR` through to commands, plus any `env`
 you supply. It caps captured command output at 10 MiB and raises
 [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] above that limit.
 
@@ -90,7 +92,7 @@ import logging
 from pathlib import Path
 
 from pydantic_ai.workspaces import (
-    LocalWorkspace,
+    LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
     WrapperWorkspace,
@@ -106,7 +108,7 @@ class LoggingWorkspace(WrapperWorkspace):
 
 
 async def main() -> None:
-    source = Workspace(LocalWorkspace(Path.cwd()))
+    source = Workspace(LocalWorkspaceBackend(Path.cwd()))
     await source.write_text('message.txt', 'hello')
     workspace = ReadOnlyWorkspace(LoggingWorkspace(source))
     assert await workspace.read_text('message.txt') == 'hello'
@@ -141,7 +143,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.workspaces import LocalWorkspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 
 
 @dataclass
@@ -151,7 +153,7 @@ class LocalWorkspaceCapability(AbstractCapability[None]):
     def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         if ref is not None:
             return None
-        return LocalWorkspace(self.root)
+        return LocalWorkspaceBackend(self.root)
 
 
 agent = Agent(
@@ -189,7 +191,7 @@ from pathlib import Path
 
 from pydantic_ai.workspaces import (
     CommandResult,
-    LocalWorkspace,
+    LocalWorkspaceBackend,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceRef,
@@ -199,15 +201,15 @@ from pydantic_ai.workspaces import (
 class HostWorkspaceBackend(WorkspaceBackend):
     def __init__(self, base_dir: Path, ref: WorkspaceRef):
         self._ref = ref
-        self._local = LocalWorkspace(base_dir / ref.id)
+        self._local = LocalWorkspaceBackend(base_dir / ref.id)
 
     @property
     def ref(self) -> WorkspaceRef:
         return self._ref
 
     @property
-    def workspace(self) -> Awaitable[Path]:
-        return self._local.root
+    def workspace(self) -> Awaitable[str]:
+        return self._local.working_dir()
 
     async def run(
         self,
@@ -221,7 +223,7 @@ class HostWorkspaceBackend(WorkspaceBackend):
         return await self._local.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
-        return str(await self.workspace)
+        return await self.workspace
 ```
 
 Reading `ref` does not run a command. Keep the concrete backend when you need provider-specific

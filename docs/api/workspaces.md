@@ -14,7 +14,7 @@
             - SupportsCommands
             - SupportsFilesystem
             - WrapperWorkspace
-            - LocalWorkspace
+            - LocalWorkspaceBackend
             - ReadOnlyWorkspace
             - UnavailableWorkspace
             - WorkspaceCommand

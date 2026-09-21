@@ -1,6 +1,6 @@
 """Workspace API, backend protocols, and implementations."""
 
-from .local import LocalWorkspace
+from .local import LocalWorkspaceBackend
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -23,7 +23,7 @@ __all__ = (
     'CommandResult',
     'FileEntry',
     'FileWindow',
-    'LocalWorkspace',
+    'LocalWorkspaceBackend',
     'ReadOnlyWorkspace',
     'Workspace',
     'WrapperWorkspace',

@@ -1,7 +1,7 @@
 """A local implementation of the [workspace backend protocol][pydantic_ai.workspaces.WorkspaceBackend].
 
-[`LocalWorkspace`][pydantic_ai.workspaces.LocalWorkspace] runs commands as plain host subprocesses —
-it **isolates nothing**.
+[`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend] runs commands as plain host
+subprocesses — it **isolates nothing**.
 """
 
 # anyio 4.15.0 is the floor because `Process.wait()` returns when the command exits even if a
@@ -33,7 +33,7 @@ from .protocol import (
     WorkspaceTimeoutError,
 )
 
-__all__ = ('LocalWorkspace',)
+__all__ = ('LocalWorkspaceBackend',)
 
 _MAX_CAPTURE_BYTES = 10 * 1024 * 1024
 """Ceiling on the combined stdout and stderr a single command may produce."""
@@ -61,59 +61,58 @@ async def _shielded(awaitable: Awaitable[T]) -> T:
     return (await gather(run()))[0]
 
 
-class LocalWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     """Run commands as subprocesses on this machine and use its filesystem.
 
-    This isolates nothing. Use it for trusted local work, tests, and development; run untrusted
-    code in a container or VM through a provider workspace. Commands inherit only `PATH`, `HOME`,
-    `LANG`, and `TMPDIR` when present, plus variables supplied through `env`.
+    This isolates nothing and is not a jail. `working_dir` is only where commands start and what
+    relative workspace paths resolve against: absolute paths, `..`, and commands reach anywhere on
+    the host that this process can. Use it for trusted local work, tests, and development; run
+    untrusted code in a container or VM through a provider workspace. Commands inherit only `PATH`,
+    `HOME`, `LANG`, and `TMPDIR` when present, plus variables supplied through `env`.
 
     It supports POSIX platforms only. A command that calls `setsid` can move its own processes
     outside the process group that this workspace kills on cancellation or timeout.
 
     Args:
-        root: The absolute working directory for commands and relative workspace paths. The caller
-            creates and removes it. It is canonicalized on first use so
+        working_dir: The default working directory for commands and the base for relative
+            workspace paths. It must be absolute; a leading `~` is expanded to the user's home
+            directory. It is not a confinement boundary. The caller creates and removes it. It is
+            canonicalized on first use so
             [`working_dir()`][pydantic_ai.workspaces.WorkspaceBackend.working_dir] reports the
             directory commands actually run in.
     """
 
-    def __init__(self, root: str | Path):
+    def __init__(self, working_dir: str | Path):
         if os.name != 'posix':
             raise NotImplementedError(
-                '`LocalWorkspace` only supports POSIX platforms at the moment: its timeout contract '
+                '`LocalWorkspaceBackend` only supports POSIX platforms at the moment: its timeout contract '
                 'kills the whole process group. On other platforms, attach a container- or VM-based '
                 'workspace instead.'
             )
-        root = Path(root)
-        if not root.is_absolute():
+        expanded = Path(working_dir).expanduser()
+        if not expanded.is_absolute():
             raise ValueError(
-                f'root must be an absolute path, got {str(root)!r}: a relative root would depend on '
-                "the host process's working directory at some later moment. Make the intent explicit "
-                "at the call site instead, e.g. `LocalWorkspace(Path.cwd() / 'work')`."
+                f'`working_dir` must be an absolute path or start with `~`, got {str(working_dir)!r}: a relative '
+                "path would depend on the host process's working directory at some later moment. Make the "
+                "intent explicit at the call site instead, e.g. `LocalWorkspaceBackend(Path.cwd() / 'work')`."
             )
-        self._root = root
-        self._resolved_root: Path | None = None
+        self._working_dir = expanded
+        self._canonical_working_dir: Path | None = None
 
     @property
     def ref(self) -> None:
         return None
 
-    @property
-    def root(self) -> Awaitable[Path]:
-        """The canonical directory commands run in, resolved on first use."""
-        return self._get_root()
-
-    async def _get_root(self) -> Path:
-        if self._resolved_root is None:
-            # Canonicalization keeps macOS `/var` symlinks and roots such as `link/..` aligned with
-            # the directory the kernel uses for the command's working directory.
+    async def _get_working_dir(self) -> Path:
+        if self._canonical_working_dir is None:
+            # Canonicalization keeps macOS `/var` symlinks and spellings such as `link/..` aligned
+            # with the directory the kernel uses for the command's working directory.
             # `resolve()` is idempotent, so concurrent first calls may safely compute it twice.
-            self._resolved_root = await run_in_executor(self._root.resolve)
-        return self._resolved_root
+            self._canonical_working_dir = await run_in_executor(self._working_dir.resolve)
+        return self._canonical_working_dir
 
     async def working_dir(self) -> str:
-        return str(await self.root)
+        return str(await self._get_working_dir())
 
     @staticmethod
     def _path(path: str) -> Path:
@@ -192,7 +191,7 @@ class LocalWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if cwd is not None and not Path(cwd).is_absolute():
             raise ValueError(
                 f'cwd must be an absolute path, got {cwd!r}: a relative cwd would resolve against '
-                "the host process's working directory, not the workspace root"
+                "the host process's working directory, not the workspace's"
             )
         merged_env = {key: os.environ[key] for key in ('PATH', 'HOME', 'LANG', 'TMPDIR') if key in os.environ}
         if env is not None:
@@ -209,7 +208,7 @@ class LocalWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             nonlocal process
             process = await anyio.open_process(
                 command,
-                cwd=cwd if cwd is not None else await self.root,
+                cwd=cwd if cwd is not None else await self._get_working_dir(),
                 env=merged_env,
                 stdin=DEVNULL,
                 stdout=PIPE,

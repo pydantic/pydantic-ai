@@ -1,4 +1,4 @@
-"""Tests for the shipped minimal `LocalWorkspace` implementation of the workspace protocol."""
+"""Tests for the shipped minimal `LocalWorkspaceBackend` implementation of the workspace protocol."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import (
-    LocalWorkspace,
+    LocalWorkspaceBackend,
     SupportsFilesystem,
     Workspace,
     WorkspaceBackend,
@@ -29,7 +29,7 @@ from pydantic_ai.workspaces import (
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspace tests drive POSIX shell commands'),
+    pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspaceBackend tests drive POSIX shell commands'),
 ]
 
 
@@ -83,32 +83,54 @@ async def _wait_for_pid_file(pid_file: Path) -> None:
 def test_non_posix_platforms_are_rejected_at_construction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(os, 'name', 'nt')
     with pytest.raises(NotImplementedError, match='only supports POSIX'):
-        LocalWorkspace(tmp_path)
+        LocalWorkspaceBackend(tmp_path)
 
 
 async def test_local_workspace_conforms_to_the_protocol(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     assert isinstance(workspace, WorkspaceBackend)
     assert isinstance(workspace, SupportsFilesystem)
     typed: WorkspaceBackend = workspace  # static conformance, checked because tests are type-checked
     assert typed.ref is None
 
 
-@pytest.mark.parametrize('operation', ['root', 'cwd', 'fs'])
+@pytest.mark.parametrize('operation', ['working_dir', 'cwd', 'fs'])
 async def test_relative_paths_are_rejected(tmp_path: Path, operation: str):
-    """A relative path would resolve against the host process's working directory, outside the
-    workspace root, so every entry point rejects it instead of silently escaping."""
+    """A relative path would resolve against the host process's working directory rather than the
+    workspace's, so every entry point rejects it instead of silently depending on ambient state."""
     with pytest.raises(ValueError, match='absolute'):
-        if operation == 'root':
-            LocalWorkspace('work')
+        if operation == 'working_dir':
+            LocalWorkspaceBackend('work')
         elif operation == 'cwd':
-            await LocalWorkspace(tmp_path).run(['pwd'], cwd='subdir')
+            await LocalWorkspaceBackend(tmp_path).run(['pwd'], cwd='subdir')
         else:
-            await LocalWorkspace(tmp_path).write_bytes('outside.txt', b'escape')
+            await LocalWorkspaceBackend(tmp_path).write_bytes('outside.txt', b'escape')
+
+
+@pytest.mark.parametrize(
+    ('working_dir', 'expected'), [('~', ''), ('~/project', 'project'), (Path('~/project'), 'project')]
+)
+async def test_working_dir_expands_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, working_dir: str | Path, expected: str
+):
+    """A leading `~` names the user's home directory, which is absolute once expanded."""
+    monkeypatch.setenv('HOME', str(tmp_path))
+    (tmp_path / 'project').mkdir()
+
+    workspace = LocalWorkspaceBackend(working_dir)
+
+    assert await workspace.working_dir() == str((tmp_path / expected).resolve())
+    result = await workspace.run(['pwd'])
+    assert result.stdout.rstrip('\n') == await workspace.working_dir()
+
+
+def test_relative_working_dir_error_mentions_home():
+    with pytest.raises(ValueError, match=r"`working_dir` must be an absolute path or start with `~`, got 'work/dir'"):
+        LocalWorkspaceBackend('work/dir')
 
 
 async def test_run_argv_and_shell(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     result = await workspace.run(['echo', 'hello'])
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'hello\n', '')
     shell_result = await workspace.run('echo foo | tr a-z A-Z', shell=True)
@@ -116,7 +138,7 @@ async def test_run_argv_and_shell(tmp_path: Path):
 
 
 async def test_shell_discipline(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     with pytest.raises(TypeError, match='requires shell=True'):
         await workspace.run('echo hello')
     with pytest.raises(TypeError, match='single command string'):
@@ -125,20 +147,20 @@ async def test_shell_discipline(tmp_path: Path):
 
 async def test_missing_binary_raises(tmp_path: Path):
     """A spawn failure propagates as-is: the argv path execs directly, without a shell."""
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     with pytest.raises(FileNotFoundError):
         await workspace.run([str(tmp_path / 'missing-binary')])
 
 
 async def test_nonzero_exit_is_a_result(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     result = await workspace.run('echo oops >&2; exit 3', shell=True)
     assert result.exit_code == 3
     assert result.stderr == 'oops\n'
 
 
 async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     timeout = 0.2
     with pytest.raises(WorkspaceTimeoutError, match='was killed') as exc_info:
@@ -154,7 +176,7 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
 
 
 async def test_output_over_safety_cap_kills_the_process_group(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     with pytest.raises(WorkspaceError, match=r'10 MiB.*redirect.*file.*read_file'):
         await workspace.run(
@@ -166,7 +188,7 @@ async def test_output_over_safety_cap_kills_the_process_group(tmp_path: Path):
 
 
 async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     child_pid_file = tmp_path / 'child-pid'
     command = (
@@ -188,7 +210,7 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(tmp
 
 
 async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     with pytest.raises(WorkspaceTimeoutError) as exc_info:
         await workspace.run('echo stdout; echo stderr >&2; sleep 30', shell=True, timeout=0.2)
 
@@ -198,7 +220,7 @@ async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
 
 
 async def test_stdin_is_devnull(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     result = await workspace.run(
         [
             sys.executable,
@@ -214,7 +236,7 @@ async def test_cancellation_kills_the_whole_process_group(tmp_path: Path):
     """The kill guarantee is not timeout-only: cancelling the awaiting task (an outer
     `asyncio.wait_for`, a durable runner aborting, a user breaking out of `iter()`) must
     also tear down the process group instead of leaking it."""
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid file'
     task = asyncio.create_task(workspace.run(_background_sleep_command(pid_file), shell=True))
     await _wait_for_pid_file(pid_file)
@@ -226,7 +248,7 @@ async def test_cancellation_kills_the_whole_process_group(tmp_path: Path):
 
 
 async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     release = asyncio.Event()
     real_open_process = anyio.open_process
@@ -250,7 +272,7 @@ async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path:
 
 
 async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     release = asyncio.Event()
     real_open_process = anyio.open_process
@@ -272,16 +294,15 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
             await task
     finally:
         release.set()
-        if not task.done():
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+        # Cancelling a finished task is a no-op, and `asyncio.wait` never re-raises its outcome.
+        task.cancel()
+        await asyncio.wait([task])
 
     await _assert_process_gone(int(pid_file.read_text()))
 
 
 async def test_failing_spawn_after_cancellation_raises_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -307,7 +328,7 @@ async def test_kill_tolerates_an_already_exited_group():
     `run()` (it's a race), so the teardown helper is pinned directly."""
     async with await anyio.open_process(['true'], start_new_session=True) as process:
         await process.wait()
-        LocalWorkspace._kill(process)  # pyright: ignore[reportPrivateUsage]
+        LocalWorkspaceBackend._kill(process)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_local_environment_contains_only_allowed_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -321,7 +342,7 @@ async def test_local_environment_contains_only_allowed_variables(tmp_path: Path,
         monkeypatch.setenv(key, value)
     monkeypatch.setenv('LOCAL_WORKSPACE_HOST_SECRET', 'do-not-pass')
     monkeypatch.setenv('LOCAL_WORKSPACE_EXPLICIT', 'host-value')
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     result = await workspace.run(
         ['/usr/bin/env'],
         env={'LOCAL_WORKSPACE_EXPLICIT': 'explicit-value'},
@@ -332,17 +353,17 @@ async def test_local_environment_contains_only_allowed_variables(tmp_path: Path,
 
 
 async def test_cwd_selects_the_working_directory(tmp_path: Path):
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     result = await workspace.run(['pwd'], cwd=str(tmp_path))
     assert result.stdout.rstrip('\n').endswith(tmp_path.name)
 
 
-async def test_symlinked_root_with_dotdot_keeps_one_environment(tmp_path: Path):
-    """A root spelled through `symlink/..` must not split `run()` and `fs` into two directories.
+async def test_symlinked_working_dir_with_dotdot_keeps_one_environment(tmp_path: Path):
+    """A working directory spelled through `symlink/..` must not split `run()` and `fs` into two directories.
 
     The kernel resolves the symlink *before* applying `..` (landing in the link target's
     parent), while lexical normalization deletes the `link` segment as text (landing in the
-    spelling's parent) — two different directories. Canonicalizing the root at construction is
+    spelling's parent) — two different directories. Canonicalizing the working directory is
     what keeps the protocol's one-environment contract: a file written by a command is visible
     to `fs` reads of the same relative path.
     """
@@ -352,7 +373,7 @@ async def test_symlinked_root_with_dotdot_keeps_one_environment(tmp_path: Path):
     repo.mkdir()
     (repo / 'link').symlink_to(data)
 
-    workspace = Workspace(LocalWorkspace(repo / 'link' / '..'))
+    workspace = Workspace(LocalWorkspaceBackend(repo / 'link' / '..'))
     working_dir = await workspace.working_dir()
     assert working_dir == str(tmp_path)  # where `chdir` actually lands, canonically spelled
 
@@ -364,7 +385,7 @@ async def test_symlinked_root_with_dotdot_keeps_one_environment(tmp_path: Path):
 async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The timeout contract promises a `WorkspaceTimeoutError` even when a hardened host denies the
     group kill: the denial rides along as the cause, and the direct child is still killed."""
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
 
     def deny_killpg(pgid: int, sig: int) -> None:
@@ -380,13 +401,13 @@ async def test_timeout_with_denied_group_kill_still_raises_timeout(tmp_path: Pat
 
 async def test_read_file_on_a_directory_raises(tmp_path: Path):
     (tmp_path / 'adir').mkdir()
-    workspace = Workspace(LocalWorkspace(tmp_path))
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
     with pytest.raises(IsADirectoryError):
         await workspace.read_file('adir', limit=5)
 
 
 async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
-    backend = LocalWorkspace(tmp_path)
+    backend = LocalWorkspaceBackend(tmp_path)
     workspace = Workspace(backend)
     nested = await workspace.resolve('a/b/notes.txt')
     await workspace.write_text('a/b/notes.txt', 'hello')  # the write contract creates parents
@@ -419,7 +440,7 @@ async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
 
 @pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
 async def test_filesystem_reports_missing_paths(tmp_path: Path, operation: str):
-    fs = LocalWorkspace(tmp_path)
+    fs = LocalWorkspaceBackend(tmp_path)
     with pytest.raises(FileNotFoundError):
         await getattr(fs, operation)(str(tmp_path / 'missing'))
 
@@ -438,7 +459,7 @@ async def test_windowed_read_runs_sed_inside_the_workspace(
     tmp_path: Path, content: str, offset: int, limit: int, expected: tuple[tuple[str, ...], bool, int | None]
 ):
     """The real `sed` slice: totals are known only when the window provably reached EOF."""
-    workspace = Workspace(LocalWorkspace(tmp_path))
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
     await workspace.write_text('notes.txt', content)
 
     window = await workspace.read_file('notes.txt', offset=offset, limit=limit)
@@ -449,7 +470,7 @@ async def test_windowed_read_runs_sed_inside_the_workspace(
 
 
 async def test_read_file_does_not_return_a_partial_overlong_line(tmp_path: Path):
-    workspace = Workspace(LocalWorkspace(tmp_path))
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
     await workspace.write_text('min.js', 'x' * 100)
 
     window = await workspace.read_file('min.js', max_bytes=20)
@@ -462,7 +483,7 @@ async def test_read_file_does_not_return_a_partial_overlong_line(tmp_path: Path)
 async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
     """A symlinked file reports its target's size (as `stat` does); a broken symlink
     doesn't fail the listing, it just has no size."""
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     (tmp_path / 'target.txt').write_text('12345')
     (tmp_path / 'link.txt').symlink_to(tmp_path / 'target.txt')
     (tmp_path / 'broken.txt').symlink_to(tmp_path / 'missing.txt')
@@ -488,7 +509,7 @@ async def test_agent_run_end_to_end(tmp_path: Path):
         outputs.append(result.stdout)
         return result.stdout
 
-    workspace = LocalWorkspace(tmp_path)
+    workspace = LocalWorkspaceBackend(tmp_path)
     result = await agent.run('compute 6*7 in the workspace', workspace=workspace)
 
     assert result.output == 'done'

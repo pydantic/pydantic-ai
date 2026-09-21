@@ -6,7 +6,7 @@ Attach a workspace to a run and use `ctx.workspace` in tools:
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.workspaces import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 agent = Agent('openai:gpt-5.2')
 
@@ -18,12 +18,13 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
 
 
 async def main() -> None:
-    workspace = LocalWorkspace(Path.cwd())
+    workspace = LocalWorkspaceBackend(Path.cwd())
     await agent.run('Inspect the project.', workspace=workspace)
 ```
 
-`LocalWorkspace` runs host subprocesses and provides no isolation. Use it only for trusted work.
-Its absolute root is required, and the caller owns that directory.
+`LocalWorkspaceBackend` runs host subprocesses and provides no isolation: `working_dir` is only the
+default directory and the base for relative paths, not a jail. Use it only for trusted work.
+`working_dir` must be absolute (a leading `~` is expanded), and the caller owns that directory.
 Without an attached workspace, operations raise `UserError`. `Workspace` offers the same run,
 file, and bounded-read methods for every backend; wrappers can override primitives and
 `ReadOnlyWorkspace` blocks commands and changes.

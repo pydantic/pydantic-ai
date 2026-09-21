@@ -429,7 +429,7 @@ _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
 
 _NO_WORKSPACE_REASON = (
-    "No workspace is attached to this run. Pass `workspace=LocalWorkspace('/absolute/path')` to the run method to "
+    "No workspace is attached to this run. Pass `workspace=LocalWorkspaceBackend('/absolute/path')` to the run method to "
     'use the local machine (unsafe: commands and file operations run with the full permissions of this process), '
     'attach a capability that supplies a workspace through its `get_workspace` hook, or pass a `WorkspaceRef` '
     'to connect to an existing environment. See https://ai.pydantic.dev/workspace/ for details.'
