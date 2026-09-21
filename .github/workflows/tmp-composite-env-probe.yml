@@ -17,6 +17,6 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: ./.github/actions/env-probe
+      - uses: ./.github/actions/probe-env
         env:
           STEP_LEVEL: step-value

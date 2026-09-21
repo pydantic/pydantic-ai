@@ -1,0 +1,17 @@
+name: env probe
+description: Probe how environment variables reach a composite action.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        echo "PROCESS step-level=[${STEP_LEVEL:-<unset>}]"
+        echo "PROCESS job-level=[${JOB_LEVEL:-<unset>}]"
+        echo "PROCESS CI=[${CI:-<unset>}]"
+    - shell: bash
+      env:
+        CTX_STEP: ${{ env.STEP_LEVEL }}
+        CTX_JOB: ${{ env.JOB_LEVEL }}
+      run: |
+        echo "CONTEXT step-level=[${CTX_STEP:-<unset>}]"
+        echo "CONTEXT job-level=[${CTX_JOB:-<unset>}]"
