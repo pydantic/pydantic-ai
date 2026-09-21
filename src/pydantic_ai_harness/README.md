@@ -160,6 +160,7 @@ How the agent thinks and divides the work.
 | [Subagents](pydantic_ai_harness/subagents/) | Harness | Delegate self-contained tasks to named child agents |
 | [Dynamic Workflow](pydantic_ai_harness/dynamic_workflow/) | Harness | The model orchestrates sub-agents from one Python script: fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |
 | [Advisor](pydantic_ai_harness/advisor/) | Harness | Let an executor consult a stronger model mid-run |
+| [Background Tools](pydantic_ai_harness/background_tools/) | Harness | Run selected tools concurrently; results arrive as follow-up messages |
 
 ### Context management
 

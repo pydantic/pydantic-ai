@@ -7,6 +7,7 @@ from ._warn import HarnessDeprecationWarning
 if TYPE_CHECKING:
     from .advisor import Advisor
     from .ask_user import AskUser
+    from .background_tools import BackgroundTools
     from .browser_use import BrowserUse
     from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
 __all__ = [
     'Advisor',
     'AskUser',
+    'BackgroundTools',
     'BrowserUse',
     'CapabilityCreation',
     'ClampOversizedMessages',
@@ -121,6 +123,7 @@ __all__ = [
 _CAPABILITY_EXPORTS = {
     'Advisor': 'advisor',
     'AskUser': 'ask_user',
+    'BackgroundTools': 'background_tools',
     'BrowserUse': 'browser_use',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',

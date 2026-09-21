@@ -143,6 +143,7 @@ How the agent thinks and divides the work.
 | [Subagents](subagents.md) | Harness | Delegate self-contained tasks to named child agents |
 | [Dynamic Workflow](dynamic-workflow.md) | Harness | The model orchestrates sub-agents from one Python script: fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |
 | [Advisor](advisor.md) | Harness | Let an executor consult a stronger model mid-run |
+| [Background Tools](background-tools.md) | Harness | Run selected tools concurrently; results arrive as follow-up messages |
 
 ### Context management
 

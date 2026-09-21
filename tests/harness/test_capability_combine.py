@@ -60,6 +60,7 @@ from pydantic_ai.models.test import TestModel
 import pydantic_ai_harness
 from pydantic_ai_harness import (
     Advisor,
+    BackgroundTools,
     Coder,
     Memory,
     Planning,
@@ -176,6 +177,10 @@ def _check_advisor(merged: Any) -> None:
     assert merged.max_tokens == 4096
 
 
+def _check_background_tools(merged: Any) -> None:
+    assert callable(merged.tools)
+
+
 def _check_sub_agents(merged: Any) -> None:
     # Rosters union: an agent either side could reach stays reachable through one delegate tool.
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
@@ -239,6 +244,11 @@ COMBINE_POLICY: dict[str, Policy] = {
             Advisor[Any]('anthropic:claude-fable-5', max_tokens=4096),
         ),
         _check_advisor,
+    ),
+    'BackgroundTools': Combines(
+        'one background scheduler per agent; selectors combine without wrapping a tool twice',
+        lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
+        _check_background_tools,
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),

@@ -6,6 +6,7 @@ from .config import PluginSettings
 _FACTORIES = (
     ('advisor', 'advisor:Advisor'),
     ('aws_lambda', 'aws_lambda:AWSLambdaDurability'),
+    ('background_tools', 'background_tools:BackgroundTools'),
     ('browser_use', 'browser_use:BrowserUse'),
     ('capability_creation', 'capability_creation:CapabilityCreation'),
     ('code_mode', 'code_mode:CodeMode'),
