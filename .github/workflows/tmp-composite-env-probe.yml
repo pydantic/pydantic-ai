@@ -1,0 +1,22 @@
+name: composite env probe
+
+on:
+  push:
+    branches:
+      - tmp/composite-env-probe
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      JOB_LEVEL: job-value
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/env-probe
+        env:
+          STEP_LEVEL: step-value
