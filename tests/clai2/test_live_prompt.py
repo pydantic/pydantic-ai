@@ -264,7 +264,7 @@ async def test_history_search_and_multiline_submission() -> None:
         assert await live.read() == 'history entry'
         pipe.send_text('\x12history\n\n')
         assert await live.read() == 'history entry'
-        pipe.send_text('first\x1b\rsecond\n')
+        pipe.send_text('first\x1b[13;2usecond\n')
         assert await live.read() == 'first\nsecond'
 
 
@@ -277,7 +277,7 @@ async def test_footer_warning_and_control_bytes_are_safe() -> None:
         assert r'\x1b[2J' in footer
 
 
-@pytest.mark.parametrize('sequence', ['\x1b[13;2u', '\x1b[27;2;13~', '\x1b\r'])
+@pytest.mark.parametrize('sequence', ['\x1b[13;2u', '\x1b[27;2;13~'])
 async def test_shift_enter_inserts_newline_and_plain_enter_submits(sequence: str) -> None:
     async with editor() as (live, pipe, _):
         pipe.send_text(f'first{sequence}second\r')

@@ -63,6 +63,9 @@ class Session(Generic[DepsT, OutputT]):
         self.on_stream_event = on_stream_event
         self._messages: list[ModelMessage] = list(message_history)
         self._running = False
+        self._accepting_steering = False
+        self._run_context: RunContext[DepsT] | None = None
+        self._pending_steering: list[Sequence[UserContent]] = []
         self.on_context_usage: Callable[[int], None] | None = None
 
     @property
@@ -145,12 +148,24 @@ class Session(Generic[DepsT, OutputT]):
         model = self.resolve_model(self.model)
         return await model if isinstance(model, Awaitable) else model
 
+    def steer(self, text: str, *, images: Sequence[BinaryContent] = ()) -> bool:
+        """Deliver input to the active run, or decline when no run is accepting input."""
+        if not self._accepting_steering:
+            return False
+        content: Sequence[UserContent] = [text, *images]
+        if self._run_context is None:
+            self._pending_steering.append(content)
+        else:
+            self._run_context.enqueue(*content, priority='asap')
+        return True
+
     async def prompt(self, text: str, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
         """Execute the complete native agent loop, including tool calls."""
         if self._running:
             raise RuntimeError('A conversation can only run one prompt at a time')
         content: str | Sequence[UserContent] = [text, *images] if images else text
         self._running = True
+        self._accepting_steering = True
         try:
             previous = self._messages
             run_id = str(uuid4())
@@ -180,10 +195,12 @@ class Session(Generic[DepsT, OutputT]):
                         usage_limits=self.usage_limits,
                         event_stream_handler=self._stream,
                     )
+                    self._accepting_steering = False
                     self._messages = result.all_messages()
                     await self._save_turn(outcome='completed')
                     return result
                 except get_cancelled_exc_class() as cancelled:
+                    self._accepting_steering = False
                     # Core captures partial responses and tool results during cleanup.
                     # If cancellation precedes graph startup, retain at least the prompt.
                     self._messages = messages or [*previous, ModelRequest(parts=[UserPromptPart(content)])]
@@ -196,15 +213,25 @@ class Session(Generic[DepsT, OutputT]):
                         logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
                     raise
                 except Exception:
+                    self._accepting_steering = False
                     if self.conversations is not None:
                         self._messages = messages or self._messages
                         self._mark_interrupted()
                         await self._save_turn(outcome='failed')
                     raise
         finally:
+            self._accepting_steering = False
+            self._run_context = None
+            self._pending_steering.clear()
             self._running = False
 
     async def _stream(self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]) -> None:
+        self._accepting_steering = True
+        self._run_context = ctx
+        for content in self._pending_steering:
+            ctx.enqueue(*content, priority='asap')
+        self._pending_steering.clear()
+
         async def observed() -> AsyncIterable[AgentStreamEvent]:
             async for event in events:
                 if self.on_context_usage is not None:
@@ -215,11 +242,17 @@ class Session(Generic[DepsT, OutputT]):
                 if self.on_stream_event is not None:
                     await self.on_stream_event(event)
                 yield event
+            self._accepting_steering = False
+            self._run_context = None
 
         # Preserve a supplied agent's handler instead of replacing its observers.
         handler = self.agent.event_stream_handler
-        if handler is not None:
-            await handler(ctx, observed())
-        else:
-            async for _ in observed():
-                pass
+        try:
+            if handler is not None:
+                await handler(ctx, observed())
+            else:
+                async for _ in observed():
+                    pass
+        finally:
+            self._accepting_steering = False
+            self._run_context = None

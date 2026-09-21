@@ -535,8 +535,11 @@ paste of existing image paths creates attachments as described in
 [Pasting images](#pasting-images).
 
 Up/down move through multiline drafts, then recall saved prompt history.
-Shift-Enter inserts a newline; Enter submits. Alt-Enter also works as a fallback
-for terminals that do not report Shift-Enter separately. CLAI requests modified
+Enter submits a prompt when idle and steers the current run when busy. Steering
+reaches the model at its next opportunity without cancelling in-flight tools.
+Alt+Enter (Option+Enter) queues a separate follow-up turn; slash commands always
+wait until the current turn ends. While running, the input box shows both submit shortcuts.
+Shift-Enter inserts a newline. CLAI requests modified
 key reporting while the editor is active and releases it for menus and on exit.
 Ctrl-R searches history; Enter accepts a search
 result without submitting it. Ctrl-D exits when the draft is empty. Ctrl-C at

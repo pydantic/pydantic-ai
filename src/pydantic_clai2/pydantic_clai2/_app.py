@@ -433,6 +433,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 images=self.images,
                 interrupts=self.interrupts,
                 toolbar=self.status.toolbar,
+                steer=self.steer,
                 transcript=self.transcript,
             )
             self.screen.editor = self.editor.suspended
@@ -443,6 +444,18 @@ class _Shell(Generic[DepsT, OutputT]):
                 self.screen.editor = None
                 self.editor = None
         return await self._read_loop()
+
+    def steer(self, text: str) -> bool:
+        """Resolve attachments and route input without printing over streamed output."""
+        try:
+            resolved, images = self.images.resolve(text)
+        except ValueError as exc:
+            self.images.notice = str(exc)
+            return True
+        if not self.session.steer(resolved, images=images):
+            return False
+        self.images.notice = f'Steering sent: {text} | Alt+Enter: queue'
+        return True
 
     async def _read_loop(self) -> SessionEndReason:
         while True:

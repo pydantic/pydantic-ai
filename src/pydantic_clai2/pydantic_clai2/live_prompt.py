@@ -41,6 +41,7 @@ class LivePrompt:
         images: ImageInput,
         interrupts: Interrupts,
         toolbar: Callable[[], list[tuple[str, str]]],
+        steer: Callable[[str], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
         transcript: TranscriptBuffer | None = None,
     ) -> None:
@@ -51,6 +52,7 @@ class LivePrompt:
         self.images = images
         self.interrupts = interrupts
         self.toolbar = toolbar
+        self.steer = steer
         self.clock = clock
         self.buffer = PromptBuffer(history=list(reversed(list(history.load_history_strings()))))
         self.output = PromptSurface(output=console.file, size=lambda: console.size, transcript=transcript)
@@ -130,7 +132,9 @@ class LivePrompt:
             self.complete(backwards=key == 'backtab')
         elif key == 'enter':
             self.accept()
-        elif key in ('shift-enter', 'alt-enter', 'ctrl-j'):
+        elif key == 'alt-enter':
+            self.accept(queue=True)
+        elif key in ('shift-enter', 'ctrl-j'):
             self.buffer.insert('\n')
         elif key in ('up', 'down') and self._completions:
             self.complete(backwards=key == 'up', accept_single=False)
@@ -142,8 +146,8 @@ class LivePrompt:
             self.refresh_completions()
         self.paint()
 
-    def accept(self) -> None:
-        """Accept a selected completion, or queue the current nonempty draft."""
+    def accept(self, *, queue: bool = False) -> None:
+        """Accept a completion, steer an active run, or queue the nonempty draft."""
         if self._selection >= 0:
             self.accept_completion()
             return
@@ -153,7 +157,8 @@ class LivePrompt:
             self.buffer.history.append(text)
             self.buffer.history_index = None
             self.buffer.replace('')
-            self.submit(text)
+            if queue or is_command_input(text) or self.steer is None or not self.steer(text):
+                self.submit(text)
 
     def complete(self, *, backwards: bool, accept_single: bool = True) -> None:
         """Cycle suggestions, accepting a sole candidate immediately."""
@@ -252,7 +257,7 @@ class LivePrompt:
         title = ''
         if self.interrupts.active:
             spinner = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[int(self.clock() * 10) % 10]
-            title = truncate(f' Working {spinner} ', width)
+            title = truncate(f' Working {spinner} | Enter: steer | Alt+Enter: queue ', width)
             title = title.replace(spinner, f'{theme.sgr(theme.ACCENT)}{spinner}{reset}{muted}')
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
         # The box has no side borders and no prompt marker: the draft and the
@@ -282,6 +287,8 @@ class LivePrompt:
                     for style, text in self.toolbar()
                 )
             )
+            if not notice and not self.interrupts.active:
+                footer += ' | Enter: submit | Alt+Enter: queue'
             if self.queued_messages:
                 footer += f' | queued: {len(self.queued_messages)}'
         rows.append(muted + truncate(footer, width) + reset)

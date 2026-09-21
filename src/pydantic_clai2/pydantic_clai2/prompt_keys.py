@@ -9,6 +9,8 @@ from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 
 _MODIFIED_KEYS = {
+    '\x1b[13;3u': 'alt-enter',
+    '\x1b[27;3;13~': 'alt-enter',
     '\x1b[13;2u': 'shift-enter',
     '\x1b[27;2;13~': 'shift-enter',
     '\x1b[27;3;127~': 'alt-backspace',
