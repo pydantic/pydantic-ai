@@ -61,7 +61,7 @@ def generate_placeholder_node_id(label: str) -> str:
 
 
 def replace_placeholder_id(node_id: NodeID) -> str:
-    """Returns whether a given NodeID is a placeholder node ID which should be replaced during graph building."""
+    """Return the simplified label for a placeholder NodeID, or the id unchanged if it isn't a placeholder."""
     return re.sub(rf'{_NODE_ID_PLACEHOLDER_PREFIX}:([^:]+):.*', r'\1', node_id)
 
 
