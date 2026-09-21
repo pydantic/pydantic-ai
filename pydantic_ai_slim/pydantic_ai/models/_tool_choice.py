@@ -150,7 +150,7 @@ def resolve_tool_choice(  # noqa: C901
             raise UserError(
                 f'`tool_choice` lists may only contain function tool names, but these names refer to output tools: '
                 f'{sorted(chosen_output_tools)}. Use `ToolOrOutput` with `function_tools` to allow specific function '
-                'tools alongside output tools.'
+                "tools alongside output tools, or `'none'` to disable function tools while retaining output tools."
             )
         _check_invalid_tools(chosen_set, known_function_tool_names, known_label='Known function tools')
         # A deferred declaration or a tool-addition definition is already on the wire and remains
