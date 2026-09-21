@@ -608,3 +608,11 @@ For more examples see
 [`pydantic_ai_examples.ag_ui`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/ag_ui),
 which includes a server for use with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo).
+
+The examples above serve AG-UI over SSE, where each run is its own request.
+[pydantic-ai-ws-agent](https://github.com/huynguyengl99/pydantic-ai-ws-agent) is a
+community example that carries the same protocol over a WebSocket instead, using
+[chanx](https://github.com/huynguyengl99/chanx). Because the connection is bidirectional
+and long-lived, one run streams to several browser tabs at once and any of them can
+approve a tool call; message history is kept on the server. The adapter it builds on is a
+copy-in [chanx-kit](https://github.com/huynguyengl99/chanx-kit) component.
