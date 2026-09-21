@@ -889,9 +889,6 @@ class _Ask:
     a question carries about its route is decided in one place instead of once per caller.
     """
 
-    tool: ToolDefinition | None
-    """The route being filled, or `None` when there is nothing to fill."""
-
     properties: dict[str, dict[str, Any]]
     questions: dict[str, Noul | Choice | Score]
 
@@ -903,12 +900,12 @@ class _Ask:
         route they belong to, which the first request's questions have no reason to.
         """
         properties = _fields(tool)
-        return cls(tool, properties, _questions(properties, tool, instructions, picked=picked))
+        return cls(properties, _questions(properties, tool, instructions, picked=picked))
 
     @classmethod
     def nothing(cls) -> _Ask:
         """No fields to fill: a turn that only picks a route still reports the same empty details."""
-        return cls(None, {}, {})
+        return cls({}, {})
 
     def answers(self, response: SystemOneResponse, boolean_threshold: float) -> tuple[dict[str, Any], dict[str, Any]]:
         return _answers(response.answers, self.properties, self.questions, boolean_threshold)
