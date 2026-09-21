@@ -111,10 +111,12 @@ def unsupported(field: str, because: str = '') -> str:
     return f'Output field {field!r} is not supported by this model{because}. {SUPPORTED_FIELDS}'
 
 
-def says_nothing(route: str) -> str:
+def says_nothing(route: str, *, alone: bool = False) -> str:
+    # With one output type left the agent's `instructions` can describe it, so the message offers that too.
     return (
         f'Jev weighs each route by what it is for, and {route!r} says nothing about itself. '
-        'Give the output type a docstring that says what filling it does.'
+        'Give the output type a docstring that says what filling it does'
+        + (', or the agent `instructions`.' if alone else '.')
     )
 
 
@@ -141,11 +143,10 @@ class Refused:
 
 
 REFUSED = [
-    # `None` is an option on a pick-one field and nothing else: as a route, or beside anything but a
-    # pick-one, the output type is refused.
-    Refused('model | None', Ticket | None, says_nothing('final_result_NoneType')),
-    Refused('union | None', Ticket | Escalation | None, says_nothing('final_result_NoneType')),
-    Refused('pick-one | None', Area | None, says_nothing('final_result_Literal')),
+    # `None` is a route, so what is left here is the route that cannot describe itself: a bare `Literal` has
+    # no docstring, and `None` no longer counts towards the union that would have ruled out `instructions`.
+    Refused('pick-one | None', Area | None, says_nothing('final_result_Literal', alone=True)),
+    # As a *field*, `None` is still one more option on a pick-one and nothing else.
     Refused('field: model | None', probe('inner', Ticket | None), unsupported('inner', NOT_OPTIONAL)),
     Refused(
         'field: list | None',
@@ -350,6 +351,19 @@ ACCEPTED = [
     Accepted('an output type beside an output function', [Ticket, escalate], Ticket(urgent=True)),
     Accepted('an output function picked as the route', [Ticket, escalate], 'escalated', picks='final_result_escalate'),
     Accepted('an output function Jev can fill', [summarise], 'summary for billing'),
+    # `None` is a route like any other: one more option on the route question, described as "None of these.",
+    # taken on the pick alone because there is nothing to fill.
+    Accepted('model | None, declined', Ticket | None, None, picks='final_result_NoneType'),
+    Accepted('model | None, filled', Ticket | None, Ticket(urgent=True), picks='final_result_Ticket'),
+    Accepted('union | None, declined', Ticket | Escalation | None, None, picks='final_result_NoneType'),
+    Accepted(
+        'union | None, filled',
+        Ticket | Escalation | None,
+        Escalation(security=True),
+        requests=2,
+        picks='final_result_Escalation',
+    ),
+    Accepted('output function | None', [escalate, None], None, picks='final_result_NoneType'),
 ]
 
 

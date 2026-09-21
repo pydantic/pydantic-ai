@@ -32,12 +32,14 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolOutput,
     ToolReturnPart,
     UseEnumMemberDocstrings,
     UserPromptPart,
     WebSearchTool,
     YesNo,
 )
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -2483,6 +2485,126 @@ async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None
     agent = Agent(mock_model(unreachable), output_type=[Ticket, WithOptional], instructions='Handle the ticket.')
     with pytest.raises(UserError, match="'final_result_WithOptional' says nothing about itself"):
         await agent.run('anything')
+
+
+async def test_none_is_a_route_the_library_describes_itself(allow_model_requests: None):
+    """`None` cannot carry a docstring, so the library says what it means, as it does for an optional field.
+
+    Pydantic AI wraps a bare `None` output type in an object with one `null` property. There is only one value
+    that property could take, so there is nothing to ask: the route is taken on the pick alone and the `None`
+    is written for Jev, which is why this costs one request and not two.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.2},
+            tool=_route(
+                'final_result_NoneType',
+                {'final_result_Ticket': 0.1, 'final_result_NoneType': 0.9},
+            ),
+        )
+
+    # `None` in an `output_type` list is not spelled out in the overloads, so the output type is named here;
+    # it runs on every model.
+    agent: Agent[None, Ticket | None] = Agent(mock_model(record), output_type=[Ticket, None])  # type: ignore[arg-type]
+    result = await agent.run('Nothing here needs handling.')
+
+    assert result.output is None
+    # One output type is left once `None` becomes a route, so its fields ride along with the route question
+    # and declining costs one request, not two.
+    assert len(seen) == 1
+    assert sorted(seen[0]['questions']) == snapshot(['tool', 'urgent'])
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_Ticket': 'Triage a support ticket.', 'final_result_NoneType': 'None of these.'}
+    )
+    # The `None` is written into the wrapper Pydantic AI put around it, not asked for and not left out.
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_NoneType', {'response': None}))
+
+
+async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_requests: None):
+    """`ToolOutput(type_=None, description=...)` is the user saying what declining means here, so it wins."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.1},
+            tool=_route('nothing', {'final_result_Ticket': 0.05, 'nothing': 0.95}),
+        )
+
+    agent = Agent(
+        mock_model(record),
+        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],  # type: ignore[arg-type]
+    )
+    result = await agent.run('Thanks, all sorted.')
+
+    assert result.output is None
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_Ticket': 'Triage a support ticket.', 'nothing': 'Nothing needs doing here.'}
+    )
+
+
+async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_model_requests: None):
+    """`None` is offered as a hand-off but weighed as a result, so the fallback ranks it with the output types.
+
+    A tool picked below the threshold falls back to the likeliest *result*. `None` is one, so ranking it with
+    the hand-offs instead would return a `Ticket` Jev thought a good deal less likely than nothing at all.
+    """
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.9},
+            tool={
+                'type': 'choice',
+                'choice': 'refund',
+                'confidence': 0.4,
+                'probabilities': {'final_result_Ticket': 0.1, 'final_result_NoneType': 0.5, 'refund': 0.4},
+            },
+        )
+
+    agent: Agent[None, Ticket | None] = Agent(
+        mock_model(record),
+        output_type=[Ticket, None],  # type: ignore[arg-type]
+        tools=[refund],
+    )
+    result = await agent.run('Refund me maybe.')
+
+    assert result.output is None
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_NoneType', {'response': None}))
+
+
+async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_requests: None):
+    """Every other route has returned this turn, so the `None` one is taken without a request.
+
+    A route with nothing to fill is called on the pick alone, and with only one left there is no pick to make
+    either. A `None` route carries the property it is wrapped in, so the guard has to recognise it rather than
+    ask whether the schema has properties, or it goes off to have its `null` filled and proposes the call.
+    """
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the only route left needs no question asked about it')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Sort this out.')]),
+        ModelResponse(parts=[ToolCallPart('refund', {'amount': 1.0}, 'c1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='refund', content='Refunded 1.0', tool_call_id='c1')]),
+        ModelResponse(parts=[ToolCallPart('final_result_approve', {}, 'c2')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='final_result_approve', content='approved', tool_call_id='c2')]),
+    ]
+    agent: Agent[None, str | None] = Agent(
+        mock_model(unreachable),
+        output_type=[approve, None],  # type: ignore[arg-type]
+        tools=[refund],
+    )
+    result: AgentRunResult[str | None] = await agent.run(None, message_history=history)
+
+    assert result.output is None
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_NoneType', {'response': None}))
 
 
 async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: None):
