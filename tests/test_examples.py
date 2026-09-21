@@ -1336,10 +1336,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
-    elif (
-        isinstance(m, UserPromptPart)
-        and m.content == 'Give the incident commander one concise status update.'
-    ):
+    elif isinstance(m, UserPromptPart) and m.content == 'Give the incident commander one concise status update.':
         return ModelResponse(parts=[TextPart('Checkout is degraded; rollback is in progress.')])
     elif (
         isinstance(m, UserPromptPart)
@@ -1379,9 +1376,7 @@ async def model_logic(  # noqa: C901
                     tool_name='final_result',
                     args={
                         'summary': 'The deployment increased API latency.',
-                        'action_items': [
-                            'Roll back the deployment and compare latency with the previous release.'
-                        ],
+                        'action_items': ['Roll back the deployment and compare latency with the previous release.'],
                     },
                     tool_call_id='incident_plan_retry',
                 )
