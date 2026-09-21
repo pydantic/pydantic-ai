@@ -1,5 +1,6 @@
 """Workspace API, backend protocols, and implementations."""
 
+from .composite import CompositeFilesystem, FilesystemMount
 from .local import LocalWorkspace
 from .protocol import (
     CommandResult,
@@ -21,8 +22,10 @@ from .workspace import FileWindow, Workspace, WrapperWorkspace
 
 __all__ = (
     'CommandResult',
+    'CompositeFilesystem',
     'FileEntry',
     'FileWindow',
+    'FilesystemMount',
     'LocalWorkspace',
     'ReadOnlyWorkspace',
     'Workspace',
