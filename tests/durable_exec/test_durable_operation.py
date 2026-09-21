@@ -1545,7 +1545,7 @@ async def test_run_resolved_dynamic_toolset_is_entered_once_per_run() -> None:
     """
     counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=False)
 
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     assert resolutions == snapshot(1)
 
 
@@ -1558,7 +1558,7 @@ async def test_per_run_step_dynamic_toolset_still_resolves_per_unit() -> None:
     """
     counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=True)
 
-    assert counts == snapshot({'initialize': 5, 'tools/list': 5, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 5, 'tools/list': 5, 'tools/call': 2})
     assert resolutions == snapshot(5)
 
 
@@ -1589,7 +1589,7 @@ async def test_dynamic_unit_resolves_its_own_toolset_when_the_run_context_cannot
 
     # Each call stands on its own: it built, entered and tore down its own toolset.
     assert resolutions == snapshot(2)
-    assert counts == snapshot({'initialize': 2, 'tools/list': 2, 'tools/call': 1})
+    assert counts == snapshot({'handshake': 2, 'tools/list': 2, 'tools/call': 1})
 
 
 async def test_run_held_toolset_closes_only_what_a_unit_entered() -> None:
@@ -1657,7 +1657,7 @@ async def test_parallel_tool_call_units_share_one_session() -> None:
 
     assert result.output == 'done'
     assert resolutions == snapshot(1)
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
 
 
 async def test_closing_the_wrapper_passes_on_how_it_was_exited() -> None:
@@ -1742,7 +1742,7 @@ async def test_static_mcp_toolset_holds_one_session_for_the_durable_run() -> Non
     """
     counts, _ = await _run_static_mcp_agent(lifecycle='enter-in-durable-unit')
 
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
 
 
 async def test_static_mcp_toolset_is_entered_per_unit_when_the_run_cannot_hold_a_session() -> None:
@@ -1755,7 +1755,7 @@ async def test_static_mcp_toolset_is_entered_per_unit_when_the_run_cannot_hold_a
     """
     counts, _ = await _run_static_mcp_agent(lifecycle='enter-outside-durable')
 
-    assert counts == snapshot({'initialize': 3, 'tools/list': 3, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 3, 'tools/list': 3, 'tools/call': 2})
 
 
 async def test_each_durable_run_holds_its_own_session() -> None:
@@ -1767,7 +1767,7 @@ async def test_each_durable_run_holds_its_own_session() -> None:
     """
     counts, _ = await _run_static_mcp_agent(lifecycle='enter-in-durable-unit', runs=2)
 
-    assert counts == snapshot({'initialize': 2, 'tools/list': 2, 'tools/call': 4})
+    assert counts == snapshot({'handshake': 2, 'tools/list': 2, 'tools/call': 4})
 
 
 async def test_static_mcp_toolset_is_entered_by_the_wrapper_outside_the_durable_context() -> None:
@@ -1782,7 +1782,7 @@ async def test_static_mcp_toolset_is_entered_by_the_wrapper_outside_the_durable_
         lifecycle='enter-in-durable-unit', in_durable_context=False, include_instructions=True
     )
 
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     assert instructions == snapshot(['Be a helpful assistant.'] * 3)
 
 
@@ -1797,5 +1797,5 @@ async def test_instruction_units_ride_the_session_the_run_holds() -> None:
     """
     counts, instructions = await _run_static_mcp_agent(lifecycle='enter-in-durable-unit', include_instructions=True)
 
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     assert instructions == snapshot(['Be a helpful assistant.'] * 3)

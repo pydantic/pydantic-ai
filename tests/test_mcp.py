@@ -2272,12 +2272,16 @@ class TestMCPToolsetBackgroundTasks:
 
     @pytest.fixture
     async def task_server(self) -> FastMCP[None]:
+        if MCP_SDK_V2 and TasksExtension is None:
+            # FastMCP 4 moved task execution into the optional `fastmcp-tasks` package, which only
+            # the `mcp-tasks` extra installs — and a server declaring task tools refuses to start
+            # without it. Install shapes that leave the extra out skip the integration; the FastMCP
+            # 3 ones still run it, because that generation serves task tools itself.
+            pytest.skip('fastmcp-tasks not installed')
+
         server: FastMCP[None] = FastMCP('task_server')
         if MCP_SDK_V2:
-            # The FastMCP 4 compatibility environment installs the task extra so this integration
-            # is exercised rather than skipped.
             assert TasksExtension is not None
-            # FastMCP 4 moved task execution into an optional extension package.
             getattr(server, 'add_extension')(TasksExtension())
 
         @server.tool(task=TaskConfig(mode='required'))
