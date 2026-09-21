@@ -30,7 +30,9 @@ layer and stop local playback on real [barge-in](turns.md#barge-in).
 ## The greeting never plays, or the model replies twice when the visitor speaks
 
 Speaker echo or microphone transients probably cancelled the greeting while the audio path opened.
-Keep the microphone closed until the greeting has played; see [Speaking first](turns.md#speaking-first).
+Mute microphone capture until the greeting has played, while continuing to send digital silence so
+server VAD can close any open speech segment; see [Muting the microphone](turns.md#muting-the-microphone)
+and [Speaking first](turns.md#speaking-first).
 To confirm the cause, iterate the event stream and look for a
 [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] on the
 first response and any

@@ -12,3 +12,5 @@ These pages put Pydantic AI side by side with the frameworks people ask us about
 - [vs Pi](vs-pi.md)
 - [vs Agno](vs-agno.md)
 - [vs CrewAI](vs-crewai.md)
+
+Coming from one of these? [Migrate to Pydantic AI](../framework-migration.md) covers the migration skills your coding agent can use to port an existing application.

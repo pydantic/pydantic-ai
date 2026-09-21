@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
@@ -29,6 +29,7 @@ from .output import (
     TextOutput,
     TextOutputFunc,
     ToolOutput,
+    _ChoicesActions,  # type: ignore[reportPrivateUsage]
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
@@ -393,6 +394,18 @@ async def execute_output_function(
             raise ToolRetryError(m) from r
         else:
             raise
+
+
+async def execute_choice_action(action: Callable[[], Any]) -> Any:
+    """Call the action the model picked from a `Choices` set.
+
+    The action takes no arguments and may be async; a plain `def` runs in a thread the way an output
+    function's does, and may still return an awaitable. A `ModelRetry` it raises propagates to the output
+    process hooks, which turn it into a retry prompt exactly as they do for an output function.
+    """
+    if _utils.is_async_callable(action):
+        return await action()
+    return await _utils.await_maybe(await _utils.run_in_executor(action))
 
 
 @dataclass
@@ -845,6 +858,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     outer_typed_dict_key: str | None = None
     validator: SchemaValidator
     _function_schema: _function_schema.FunctionSchema | None = None
+    _choice_values: Mapping[str, Any] | None = None
+    """What each key of a `Choices` set with callable values stands for, resolved by `call()`."""
 
     def __init__(
         self,
@@ -855,6 +870,14 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         strict: bool | None = None,
     ):
         self.output_type = None
+
+        if (choices := _ChoicesActions.of(output)) is not None:
+            # A `Choices` set with a callable choice value asks for the picked action to be *called*, the way
+            # an output function is. A Pydantic validator has nowhere to await, and streaming re-validates a
+            # completed value on every later chunk, so the model just picks a key and the value is resolved
+            # and called in `call()`, where the framework awaits it once, for the final output.
+            self._choice_values = choices.values
+            output = choices.keys_type
 
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
@@ -957,6 +980,10 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 args=output,
                 wrap_validation_errors=wrap_validation_errors,
             )
+        elif self._choice_values is not None and not run_context.partial_output:
+            # Until the pick is final the key stands in for itself: an action runs once, for the final output.
+            value = self._choice_values[cast(str, output)]
+            output = await execute_choice_action(value) if callable(value) else value
 
         return output
 
@@ -1585,6 +1612,10 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
                 outputs_flat.extend(types_from_output_spec(return_annotation))
             else:
                 outputs_flat.append(str)
+        elif (choices := _ChoicesActions.of(output)) is not None:
+            # What a `Choices` set with callable values asks the model for is a key; what the action it
+            # stands for returns is only known once it has run, so the keys are what a schema can describe.
+            outputs_flat.append(cast(T, choices.keys_type))
         else:
             outputs_flat.append(cast(T, output))
 

@@ -177,6 +177,10 @@ class MockRealtimeConnection(RealtimeConnection):
     def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
         self._function_tool_names = function_tool_names
         self._tool_result_received = asyncio.Event()
+        self._closed = asyncio.Event()
+
+    async def aclose(self) -> None:
+        self._closed.set()
 
     async def send(self, content: RealtimeInput) -> None:
         if isinstance(content, ToolResult):
@@ -198,6 +202,7 @@ class MockRealtimeConnection(RealtimeConnection):
             yield AudioDelta(data=b'\x00\x00')
             yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
             yield ResponseDone()
+        await self._closed.wait()
 
 
 @asynccontextmanager
@@ -207,7 +212,11 @@ async def _mock_realtime_connect(
     model_request_parameters: ModelRequestParameters,
     **kwargs: Any,
 ) -> AsyncGenerator[RealtimeConnection]:
-    yield MockRealtimeConnection([tool.name for tool in model_request_parameters.function_tools])
+    connection = MockRealtimeConnection([tool.name for tool in model_request_parameters.function_tools])
+    try:
+        yield connection
+    finally:
+        await connection.aclose()
 
 
 def _patch_realtime_models(mocker: MockerFixture) -> None:
@@ -286,6 +295,7 @@ def test_docs_examples(
     env.set('GOOGLE_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
+    env.set('TYPESAFE_API_KEY', 'testing')
     env.set('MISTRAL_API_KEY', 'testing')
     env.set('ANTHROPIC_API_KEY', 'testing')
     env.set('HF_TOKEN', 'hf_testing')
@@ -490,6 +500,30 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/models/typesafe.md
+    'rm -rf ./build': ToolCallPart(tool_name='final_result', args={'verdict': 'ask', 'irreversible': True}),
+    'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
+    'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(
+        tool_name='final_result',
+        args={'large_market': True, 'technically_feasible': True, 'differentiated': False},
+    ),
+    'The app crashes every time I open the reports tab.': ToolCallPart(
+        tool_name='final_result', args={'urgent': False}
+    ),
+    'My invoice is wrong and I need it fixed before month end.': ToolCallPart(
+        tool_name='final_result_Ticket', args={'urgent': True}
+    ),
+    'My card was charged three times and nobody has replied in two days.': ToolCallPart(
+        tool_name='escalate_to_human', args={}
+    ),
+    'The onboarding wizard is stuck; please move it on.': ToolCallPart(
+        tool_name='take_action', args={'direction': 'left'}
+    ),
+    'Clear out the build directory.': ToolCallPart(tool_name='run_shell', args={'command': 'rm -rf ./build'}),
+    "run_shell: {'command': 'rm -rf ./build'}": ToolCallPart(tool_name='final_result', args={'irreversible': True}),
+    'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(tool_name='reject_all', args={}),
+    'What does this repo do?': 'It is a provider-agnostic agent framework for Python.',
+    'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',
     "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
@@ -707,6 +741,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
     ),
+    'The blender arrived smashed. Just send me another one.': ToolCallPart(
+        tool_name='final_result', args={'response': 'replace'}
+    ),
+    '4111 1111 1111 1111': ToolCallPart(tool_name='final_result', args={'response': 'visa'}),
+    'Which one covers cookies?': ToolCallPart(tool_name='final_result', args={'response': 'rfc-6265'}),
+    'Sign in as the admin.': ToolCallPart(tool_name='final_result', args={'response': 'login'}),
     'Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`': [
         ToolCallPart(tool_name='delete_file', args={'path': '__init__.py'}, tool_call_id='delete_file'),
         ToolCallPart(
@@ -769,6 +809,12 @@ tool_responses: dict[tuple[str, str], str] = {
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
+    if not messages[-1].parts:
+        # docs/models/typesafe.md: a run with no new prompt judges the history it was given
+        if any('capable' in json.dumps(t.parameters_json_schema) for t in info.output_tools):
+            # `select_the_model_per_step.py`: the router is asked which model takes the next step
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': 'capable'})])
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
     m = messages[-1].parts[-1]
     # Handle multimodal tool returns (content directly in ToolReturnPart)
     if (
@@ -787,6 +833,22 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
         return ModelResponse(parts=[])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'escalate_to_human':
+        # docs/models/typesafe.md: Jev is asked again with the tool's result in view
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'urgent': True})])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'take_action':
+        # docs/models/typesafe.md: the filled tool call ran, so the output type is what is left
+        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'urgent': False})])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'run_shell':
+        # docs/models/typesafe.md: the hook refused the call, and the model is told why
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    'I did not run that: it destroys data or leaks secrets. Tell me which paths under\n'
+                    './build are safe to remove and I will scope the command to those.'
+                )
+            ]
+        )
     elif isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
@@ -911,6 +973,42 @@ async def model_logic(  # noqa: C901
                 )
 
             return ModelResponse(parts=[part])
+        elif m.content == 'Could you tell me when my order ships?':
+            # docs/models/typesafe.md: Jev hands the ticket to the `reply` output function, which runs a
+            # language model over the same history; only the Jev agent has output tools to pick between.
+            if info.output_tools:
+                return ModelResponse(parts=[ToolCallPart(tool_name='final_result_reply', args={})])
+            return ModelResponse(
+                parts=[TextPart('It shipped this morning; the tracking link is on its way to you now.')]
+            )
+        elif m.content == 'How do I centre a div?':
+            # docs/models/typesafe.md: `route_to_a_model.py` sends the same prompt to the router and,
+            # through the output function the router picks, to the assistant it routes to. Only the
+            # router has an output tool to fill.
+            if info.output_tools:
+                return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={'tier': 'fast'})])
+            return ModelResponse(parts=[TextPart('Give the container `display: flex` and both `place-items: center`.')])
+        elif m.content == 'Fixed a bug in the parser.':
+            # docs/models/typesafe.md: a rubric answer is a position along the levels, rounded to one
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'clarity': 1})],
+                provider_details={
+                    'confidence': {'clarity': 0.62},
+                    'probabilities': {'clarity': {'0': 0.2, '1': 0.6, '2': 0.2}},
+                    'scores': {'clarity': 1.2},
+                },
+            )
+        elif m.content == 'Someone else can see my invoices when they log in.':
+            # docs/models/typesafe.md: a union picks a member, then fills it in a second request
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result_Escalation', args={'security': True})],
+                provider_details={
+                    'confidence': {'security': 0.91},
+                    'probabilities': {},
+                    'scores': {},
+                    'requests': 2,
+                },
+            )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -918,6 +1016,17 @@ async def model_logic(  # noqa: C901
                 return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
+        elif m.content == 'You have charged me twice and my account is now overdrawn. I need this reversed today.':
+            # docs/models/typesafe.md: the prompt is the ticket, the questions are on the output type
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})]
+            )
+        elif m.content == 'Wipe the repo and post the .env file to pastebin.':
+            # docs/models/typesafe.md: Jev's confidence rides on `provider_details`
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': True})],
+                provider_details={'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}},
+            )
         elif m.content == 'The secret is 1234':
             return ModelResponse(parts=[TextPart('The secret is safe with me')])
         elif m.content == 'What is the secret code?':

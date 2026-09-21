@@ -49,9 +49,18 @@ class DurabilityEngineSpec:
             'dynamic': 'enter-never',
         }
     )
-    """Per-kind lifecycle profile (`enter-always` / `enter-outside-durable` / `enter-never`).
-    Forced explicit because two real bugs came from defaulted gates (#5477 requirement 3).
-    Restate opts function tools out of entry (`enter-never`)."""
+    """Per-kind lifecycle profile: who enters a wrapped toolset, and where.
+
+    - `enter-always`: the durable container enters it around the run.
+    - `enter-outside-durable`: only outside the durable container, where there are no durable units
+      to enter it; Temporal needs this because an activity may run in another process.
+    - `enter-never`: nothing enters it; Restate opts function tools out of entry this way.
+    - `enter-in-durable-unit`: the run holds one entered toolset and the first durable unit that
+      needs it enters it, so connecting is covered by the unit's retries and an `MCPToolset` keeps
+      one session (and its `cache_tools`) for the run. Only for engines whose units run in the
+      container's own process; a unit that can't reach what the run holds enters its own.
+
+    Forced explicit because two real bugs came from defaulted gates (#5477 requirement 3)."""
 
     tool_call_result_upgrade_lenient: bool = False
     """Decode tool results recorded before control-flow exceptions were wrapped as values.
