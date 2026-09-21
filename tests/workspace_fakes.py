@@ -4,13 +4,14 @@ import re
 import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 import anyio
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.workspaces import (
+    SupportsCommands,
     SupportsFilesystem,
     Workspace,
     WorkspaceBackend,
@@ -39,7 +40,7 @@ _SED_WINDOW = re.compile(r'^(\d+),(\d+)p;\2q$')
 _SED_REST = re.compile(r'^(\d+),\$p$')
 
 
-class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
+class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     """A lazy in-memory backend with the optional native filesystem."""
 
     def __init__(
@@ -168,8 +169,43 @@ class FakeWorkspace(WorkspaceBackend, SupportsFilesystem):
         self.cleanup_calls.append('release')
 
 
-class RecordingWorkspaceBackend(WorkspaceBackend):
-    """The three required backend members, with no `SupportsFilesystem`."""
+class FilesystemOnlyWorkspaceBackend(WorkspaceBackend, SupportsFilesystem):
+    """Expose a fake workspace's native filesystem without command execution."""
+
+    def __init__(self, inner: FakeWorkspace) -> None:
+        self.inner = inner
+
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        return self.inner.ref
+
+    async def working_dir(self) -> str:
+        return await self.inner.working_dir()
+
+    async def read_bytes(self, path: str) -> bytes:
+        return await self.inner.read_bytes(path)
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        await self.inner.write_bytes(path, data)
+
+    async def stat(self, path: str) -> FakeEntry:
+        return await self.inner.stat(path)
+
+    async def list_dir(self, path: str) -> Sequence[FakeEntry]:
+        return await self.inner.list_dir(path)
+
+    async def make_dir(self, path: str) -> None:
+        await self.inner.make_dir(path)
+
+    async def remove(self, path: str) -> None:
+        await self.inner.remove(path)
+
+    async def exists(self, path: str) -> bool:
+        return await self.inner.exists(path)
+
+
+class RecordingWorkspaceBackend(WorkspaceBackend, SupportsCommands):
+    """A command-only backend with no `SupportsFilesystem`."""
 
     def __init__(self, workspace_id: str, *, ref: WorkspaceRef | None = None) -> None:
         self._ref = ref or WorkspaceRef(provider='fake', id=workspace_id)
@@ -199,10 +235,14 @@ class RecordingWorkspaceBackend(WorkspaceBackend):
         self.cleanup_calls.append(f'close:{terminate}')
 
 
-class RunOnlyWorkspaceBackend(WorkspaceBackend):
+class _CommandWorkspaceBackend(WorkspaceBackend, SupportsCommands, Protocol):
+    pass
+
+
+class RunOnlyWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     """Hide an inner backend's optional methods to exercise the shell portability path."""
 
-    def __init__(self, inner: WorkspaceBackend) -> None:
+    def __init__(self, inner: _CommandWorkspaceBackend) -> None:
         self.inner = inner
         self.commands: list[WorkspaceCommand] = []
 

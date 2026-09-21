@@ -1,10 +1,11 @@
 # Workspaces
 
-A workspace gives an agent an environment where it can run commands and read and write files.
-Tools use it through [`ctx.workspace`][pydantic_ai.tools.RunContext.workspace]. Every workspace
-supports all of these operations. A backend only has to run commands; when it has no filesystem
-implementation of its own, [`Workspace`][pydantic_ai.workspaces.Workspace] performs file operations
-through the shell.
+A workspace gives an agent an environment where it can run commands, read and write files, or both.
+Tools use it through [`ctx.workspace`][pydantic_ai.tools.RunContext.workspace]. A backend implements
+[`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
+[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both. When command execution
+is available but native filesystem access is not, [`Workspace`][pydantic_ai.workspaces.Workspace]
+performs file operations through the shell.
 
 ```python
 from pathlib import Path
@@ -172,12 +173,13 @@ The same `workspace=` argument is available on the streaming, CLI, and web inter
 
 ## Writing a backend
 
-A [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] implements `ref`, `run`, and
-`working_dir`. [`Workspace`][pydantic_ai.workspaces.Workspace] adds path resolution, text helpers,
-and windowed reads. A backend that implements
-[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem] supplies file operations directly;
-otherwise `Workspace` uses shell commands. Commands and file operations must use the same
-environment.
+A [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] implements `ref` and `working_dir`,
+then adds [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
+[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both. `Workspace` adds path
+resolution, text helpers, and windowed reads. For a command-only backend it derives file operations
+through shell commands. A filesystem-only backend works without a shell; calling `run` on its
+facade raises `UserError`. When both capabilities are present, commands and file operations must
+use the same environment.
 
 This backend runs commands on the host under a directory selected from its reference:
 

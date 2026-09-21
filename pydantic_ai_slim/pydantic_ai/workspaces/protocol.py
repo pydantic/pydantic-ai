@@ -1,19 +1,20 @@
 """Structural backend protocols for execution environments attached to an agent run.
 
-A *workspace* is an environment — a subprocess jail, a container, a microVM, a remote worker —
-that an agent run can execute commands in and read/write files of. Backends implement the
-small [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] protocol (command execution and
-working-directory reporting); native filesystem access is the optional, flat
-`SupportsFilesystem` protocol, so a backend implements exactly the parts its platform supports.
+A *workspace* is an environment — a subprocess jail, a container, a microVM, a remote worker,
+or a virtual filesystem — that an agent can work in. Backends implement the small
+[`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] identity and working-directory
+protocol, plus [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
+[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both. This lets a backend
+expose exactly what its platform supports, including files without a shell.
 Tools and capabilities use the
 read-only [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace] object; identity and
 lifecycle are covered in the [workspace documentation](../workspace.md).
 
 Contracts every implementation must honor (the rest are on the relevant members):
 
-- **One environment.** `run` and native filesystem methods operate on the same filesystem: a file
-  written through either is visible to the other. Consumers (including
-  [`Workspace`][pydantic_ai.workspaces.Workspace]) rely on this to serve file operations
+- **One environment.** When a backend supports both commands and native filesystem methods, they
+  operate on the same filesystem: a file written through either is visible to the other. Consumers
+  (including [`Workspace`][pydantic_ai.workspaces.Workspace]) rely on this to serve file operations
   through whichever of the two paths is cheaper.
 - **Results are honest.** `exit_code` is the real process exit code; a non-zero exit is a
   normal result, not an exception. Infrastructure failures raise; they are never disguised as
@@ -43,6 +44,7 @@ __all__ = (
     'WorkspaceResult',
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
+    'SupportsCommands',
     'SupportsFilesystem',
 )
 
@@ -170,12 +172,52 @@ class FileEntry:
 
 
 @runtime_checkable
+class SupportsCommands(Protocol):
+    """Optional command execution implemented by a workspace backend.
+
+    Filesystem-only backends do not need to provide this protocol. The
+    [`Workspace`][pydantic_ai.workspaces.Workspace] facade raises `UserError` when `run` is called
+    without it and only derives filesystem operations through a shell when it is available.
+    """
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> WorkspaceResult:
+        """Execute a command and wait for it to complete.
+
+        When the awaiting task is cancelled, implementations must not knowingly leave the command
+        running in the workspace; a backend whose platform offers no way to stop a running command
+        must document that limitation.
+
+        Args:
+            command: An argv sequence, or a shell string with `shell=True`.
+            shell: Whether to interpret `command` with the workspace's shell.
+            cwd: Absolute working directory for the command; defaults to the workspace's
+                [`working_dir`][pydantic_ai.workspaces.WorkspaceBackend.working_dir].
+                Implementations must reject a relative path with `ValueError`: resolving it
+                against ambient state (such as a local backend's host process working
+                directory) would silently escape the workspace root.
+            env: Extra environment variables for the command.
+            timeout: Deadline in seconds, measured from this call. On expiry a
+                [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] is raised;
+                whether the command is terminated is backend-specific.
+        """
+        ...
+
+
+@runtime_checkable
 class SupportsFilesystem(Protocol):
     """Optional native file access implemented directly by a workspace backend.
 
     The methods are flat on the backend rather than hidden behind a separate `.fs` object.
     [`Workspace`][pydantic_ai.workspaces.Workspace] prefers these native methods and derives the same
-    operations from [`WorkspaceBackend.run`][pydantic_ai.workspaces.WorkspaceBackend.run] when they
+    operations from [`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run] when they
     are absent.
 
     All paths are absolute POSIX paths; use
@@ -218,7 +260,7 @@ class SupportsFilesystem(Protocol):
 
 @runtime_checkable
 class WorkspaceBackend(Protocol):
-    """Backend for an isolated execution environment attached to an agent run.
+    """Backend for an execution environment attached to an agent run.
 
     Structural protocol: any object with these members conforms — no registration or base
     class required. See the [module doc string][pydantic_ai.workspaces] for the contracts
@@ -239,43 +281,13 @@ class WorkspaceBackend(Protocol):
         """
         ...
 
-    async def run(
-        self,
-        command: WorkspaceCommand,
-        *,
-        shell: bool = False,
-        cwd: str | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> WorkspaceResult:
-        """Execute a command and wait for it to complete.
-
-        When the awaiting task is cancelled, implementations must not knowingly leave the command
-        running in the workspace; a backend whose platform offers no way to stop a running command
-        must document that limitation.
-
-        Args:
-            command: An argv sequence, or a shell string with `shell=True`.
-            shell: Whether to interpret `command` with the workspace's shell.
-            cwd: Absolute working directory for the command; defaults to the workspace's
-                [`working_dir`][pydantic_ai.workspaces.WorkspaceBackend.working_dir].
-                Implementations must reject a relative path with `ValueError`: resolving it
-                against ambient state (such as a local backend's host process working
-                directory) would silently escape the workspace root.
-            env: Extra environment variables for the command.
-            timeout: Deadline in seconds, measured from this call. On expiry a
-                [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] is raised;
-                whether the command is terminated is backend-specific.
-        """
-        ...
-
     async def working_dir(self) -> str:
         """The workspace's default working directory (absolute POSIX path).
 
         The path must be filesystem-canonical: symlinks resolved and no `.`/`..` segments.
         Only the backend can resolve paths inside its own environment, and consumers join
         model-supplied relative paths onto this value textually — a non-canonical spelling
-        (e.g. one containing `symlink/..`) makes `run` (which resolves paths like the kernel)
-        and filesystem operations (which use the spelling) disagree about the same relative path.
+        (e.g. one containing `symlink/..`) can make command and filesystem operations disagree
+        about the same relative path.
         """
         ...

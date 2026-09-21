@@ -4,6 +4,7 @@ from .local import LocalWorkspace
 from .protocol import (
     CommandResult,
     FileEntry,
+    SupportsCommands,
     SupportsFilesystem,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -34,6 +35,7 @@ __all__ = (
     'WorkspaceResult',
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
+    'SupportsCommands',
     'SupportsFilesystem',
     'UnavailableWorkspace',
 )

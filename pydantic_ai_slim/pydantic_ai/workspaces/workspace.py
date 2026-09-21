@@ -23,6 +23,7 @@ from pydantic_ai.exceptions import UserError
 
 from .protocol import (
     FileEntry,
+    SupportsCommands,
     SupportsFilesystem,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -148,7 +149,7 @@ class _ShellFilesystem(SupportsFilesystem):
     utility assumptions and the base64 transfer overhead used here to preserve arbitrary bytes.
     """
 
-    def __init__(self, backend: WorkspaceBackend):
+    def __init__(self, backend: SupportsCommands):
         self._backend = backend
 
     async def read_bytes(self, path: str) -> bytes:
@@ -281,8 +282,8 @@ class _ShellFilesystem(SupportsFilesystem):
 class Workspace(WorkspaceBackend):
     """Rich workspace interface exposed to tools and capabilities.
 
-    `Workspace` forwards the backend's required methods and adds filesystem access, path
-    resolution, and uniform text and windowed-file helpers. Use
+    `Workspace` forwards the backend's supported command and filesystem operations and adds path
+    resolution plus uniform text and windowed-file helpers. Use
     [`backend`][pydantic_ai.workspaces.Workspace.backend] to reach provider-specific
     functionality.
     """
@@ -308,8 +309,13 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if isinstance(backend, SupportsFilesystem):
             return backend
-        # Do not cache this adapter: the backend may provide native filesystem methods later.
-        return _ShellFilesystem(backend)
+        if isinstance(backend, SupportsCommands):
+            # Do not cache this adapter: the backend may provide native filesystem methods later.
+            return _ShellFilesystem(backend)
+        raise UserError(
+            'This workspace does not support filesystem operations. Attach a backend that implements '
+            '`SupportsFilesystem` or `SupportsCommands`.'
+        )
 
     async def run(
         self,
@@ -322,8 +328,8 @@ class Workspace(WorkspaceBackend):
     ) -> WorkspaceResult:
         """Execute a command and wait for it to complete.
 
-        Delegates to [`WorkspaceBackend.run`][pydantic_ai.workspaces.WorkspaceBackend.run]; arguments
-        and contracts are documented there.
+        Delegates to [`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run]. Raises
+        `UserError` when the backend is filesystem-only.
         """
         # Checked here as well as in the backend: a relative cwd has no workspace meaning, and the
         # wrapper is the seam every tool call goes through, so the error is the same whichever
@@ -332,7 +338,10 @@ class Workspace(WorkspaceBackend):
             raise ValueError(
                 f'cwd must be an absolute POSIX path, got {cwd!r}; resolve relative paths with `workspace.resolve()` first'
             )
-        return await self._backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        backend = self._backend
+        if not isinstance(backend, SupportsCommands):
+            raise UserError('This workspace does not support command execution.')
+        return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
         """The workspace's default working directory (absolute, filesystem-canonical POSIX path).
@@ -456,6 +465,8 @@ class Workspace(WorkspaceBackend):
         timed out), so the caller can fall back to the backend filesystem when available.
         `total_lines` is only reported when the slice provably reached EOF.
         """
+        if not isinstance(self._backend, SupportsCommands):
+            return None
         resolved_path = await self.resolve(path)
         is_binary = await self._sniff_is_binary(resolved_path)
         if is_binary is None:

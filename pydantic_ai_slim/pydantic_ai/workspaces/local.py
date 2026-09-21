@@ -25,6 +25,7 @@ from pydantic_ai._utils import gather, run_in_executor
 from .protocol import (
     CommandResult,
     FileEntry,
+    SupportsCommands,
     SupportsFilesystem,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -60,7 +61,7 @@ async def _shielded(awaitable: Awaitable[T]) -> T:
     return (await gather(run()))[0]
 
 
-class LocalWorkspace(WorkspaceBackend, SupportsFilesystem):
+class LocalWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     """Run commands as subprocesses on this machine and use its filesystem.
 
     This isolates nothing. Use it for trusted local work, tests, and development; run untrusted

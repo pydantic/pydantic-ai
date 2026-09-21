@@ -16,12 +16,12 @@ from typing_extensions import Never
 
 from pydantic_ai.exceptions import UserError
 
-from .protocol import WorkspaceBackend, WorkspaceCommand
+from .protocol import SupportsCommands, WorkspaceBackend, WorkspaceCommand
 
 __all__ = ('UnavailableWorkspace',)
 
 
-class UnavailableWorkspace(WorkspaceBackend):
+class UnavailableWorkspace(WorkspaceBackend, SupportsCommands):
     """A `WorkspaceBackend` whose execution operations raise `UserError` with a configured reason."""
 
     def __init__(self, reason: str):

@@ -35,6 +35,8 @@ from pydantic_ai.workspaces import (
     FileWindow,
     LocalWorkspace,
     ReadOnlyWorkspace,
+    SupportsCommands,
+    SupportsFilesystem,
     UnavailableWorkspace,
     Workspace,
     WorkspaceBackend,
@@ -50,6 +52,7 @@ from .workspace_fakes import (
     FakeEntry,
     FakeWorkspace,
     FakeWorkspaceResult,
+    FilesystemOnlyWorkspaceBackend,
     RunOnlyWorkspaceBackend,
     WorkspaceCapability,
 )
@@ -188,6 +191,23 @@ async def test_flat_file_operations_use_the_backend_filesystem() -> None:
 
     assert backend.files['/workspace/data.txt'] == b'updated'
     assert not await workspace.exists('new.txt')
+
+
+async def test_filesystem_only_backend_works_without_command_execution() -> None:
+    inner = FakeWorkspace('files-only', {'/workspace/data.txt': b'one\ntwo\nthree\n'})
+    backend = FilesystemOnlyWorkspaceBackend(inner)
+    workspace = Workspace(backend)
+
+    assert isinstance(backend, WorkspaceBackend)
+    assert isinstance(backend, SupportsFilesystem)
+    assert not isinstance(backend, SupportsCommands)
+    assert (await workspace.read_file('data.txt', offset=2, limit=1)).lines == ('two',)
+    await workspace.write_text('new.txt', 'content')
+    assert await workspace.read_text('new.txt') == 'content'
+    assert inner.commands == []
+
+    with pytest.raises(UserError, match='does not support command execution'):
+        await workspace.run(['true'])
 
 
 async def test_text_helpers_resolve_relative_paths() -> None:

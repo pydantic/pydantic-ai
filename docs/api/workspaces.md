@@ -11,6 +11,7 @@
             - WorkspaceRef
             - WorkspaceTimeoutError
             - WorkspaceUnavailableError
+            - SupportsCommands
             - SupportsFilesystem
             - WrapperWorkspace
             - LocalWorkspace
