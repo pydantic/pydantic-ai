@@ -304,7 +304,6 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         if forced_tool is not None and not forced_tool.parameters_json_schema.get('properties'):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool)
-        properties = _fields(output_tool) if output_tool else {}
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
@@ -325,12 +324,12 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                 'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
                 'it from this model.'
             )
-        questions = _questions(properties, output_tool, instructions) if output_tool else {}
-        tool_key = _tool_question(questions, output_tools, tools, instructions)
+        ask = _Ask.about(output_tool, instructions) if output_tool else _Ask.nothing()
+        tool_key = _tool_question(ask.questions, output_tools, tools, instructions)
 
-        response = await self._system_one(state, questions, settings)
+        response = await self._system_one(state, ask.questions, settings)
         response_usage = _request_usage(response)
-        args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
+        args, provider_details = ask.answers(response, boolean_threshold)
         parts: list[ModelResponsePart] = []
         if output_tool:
             parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
@@ -421,14 +420,13 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         and it is refused before any request. Offered beside others, it is a route like any other.
         """
         try:
-            properties = _fields(tool)
-            questions = _questions(properties, tool, instructions)
+            ask = _Ask.about(tool, instructions)
         except UserError:
             raise ToolCallProposed(self._model_name, tool.name, probability) from None
 
         try:
-            response = await self._system_one(state, questions, settings)
-            args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
+            response = await self._system_one(state, ask.questions, settings)
+            args, provider_details = ask.answers(response, boolean_threshold)
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
             # could silently choose another route, so a failure while filling is terminal and names that route.
@@ -674,7 +672,7 @@ def _tool_call(
 def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
     """Whether Jev could fill this route's fields, asked without sending anything."""
     try:
-        _questions(_fields(tool), tool, instructions)
+        _Ask.about(tool, instructions)
     except UserError:
         return False
     return True
@@ -805,6 +803,37 @@ def _ask(
         ask['question' if 'question' not in ask and 'field' not in ask else 'instructions'] = instructions
 
     return ask
+
+
+@dataclass(frozen=True)
+class _Ask:
+    """One route's fields as Jev questions, and how to read its answers back.
+
+    `_fields` and `_questions` are derived from the same route, and `_answers` needs both of them again to
+    make sense of what comes back, so the three travel together rather than being rebuilt side by side at
+    every call site. A turn that picks a route and then fills it builds one of these per request, and what
+    a question carries about its route is decided in one place instead of once per caller.
+    """
+
+    tool: ToolDefinition | None
+    """The route being filled, or `None` when there is nothing to fill."""
+
+    properties: dict[str, dict[str, Any]]
+    questions: dict[str, Noul | Choice | Score]
+
+    @classmethod
+    def about(cls, tool: ToolDefinition, instructions: str | None) -> _Ask:
+        """The questions this route's fields become, or a `UserError` if Jev cannot express one of them."""
+        properties = _fields(tool)
+        return cls(tool, properties, _questions(properties, tool, instructions))
+
+    @classmethod
+    def nothing(cls) -> _Ask:
+        """No fields to fill: a turn that only picks a route still reports the same empty details."""
+        return cls(None, {}, {})
+
+    def answers(self, response: SystemOneResponse, boolean_threshold: float) -> tuple[dict[str, Any], dict[str, Any]]:
+        return _answers(response.answers, self.properties, self.questions, boolean_threshold)
 
 
 def _questions(
