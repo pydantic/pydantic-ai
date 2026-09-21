@@ -13,8 +13,9 @@ pip/uv-add "pydantic-ai-harness[researcher]"
 
 ```python {test="skip"}
 from pydantic import BaseModel, HttpUrl
-from pydantic_ai import Agent
 from pydantic_ai_harness import Researcher
+
+from pydantic_ai import Agent
 
 
 class Evidence(BaseModel):
