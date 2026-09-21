@@ -804,6 +804,9 @@ navigation:
       - page: "Research a decision with sources"
         path: "cookbook/research-brief.md"
         slug: "cookbook/research-brief"
+      - page: "Test an agent without model requests"
+        path: "cookbook/testing.md"
+        slug: "cookbook/testing"
   - section: "Examples"
     slug: ""
     contents:
