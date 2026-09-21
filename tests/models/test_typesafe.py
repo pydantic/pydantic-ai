@@ -1446,6 +1446,142 @@ async def test_a_field_with_more_options_than_jev_picks_from_is_refused(
         await Agent(typesafe_model, output_type=Routed).run('anything')
 
 
+class Refunded(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back."""
+
+    yes = True
+    """Money was returned to the customer."""
+    no = False
+    """No refund was issued."""
+
+
+async def test_a_true_false_enum_says_what_each_answer_means(allow_model_requests: None):
+    """`True` and `False` are a yes/no's own two options, so an enum of them is that question with criteria."""
+    seen: list[dict[str, Any]] = []
+
+    class Settled(BaseModel):
+        """Review the transcript."""
+
+        refunded: Refunded = Field(description='Was a refund issued?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(refunded={'type': 'noul', 'noul': 0.9})
+
+    result = await Agent(mock_model(record), output_type=Settled).run('we sent the money back')
+
+    assert result.output == snapshot(Settled(refunded=Refunded.yes))
+    assert seen[0]['questions'] == snapshot(
+        {
+            'refunded': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'refunded',
+                    'question': 'Was a refund issued?',
+                    'goal': 'Review the transcript.',
+                },
+                'criteria': {
+                    'true': 'Money was returned to the customer.',
+                    'false': 'No refund was issued.',
+                },
+            }
+        }
+    )
+
+
+async def test_a_true_false_literal_is_the_same_question_with_nothing_said_about_its_answers(
+    allow_model_requests: None,
+):
+    """A `Literal` of the two has no docstrings to carry meanings, so it asks what a bare `bool` asks."""
+    seen: list[dict[str, Any]] = []
+
+    class Settled(BaseModel):
+        """Review the transcript."""
+
+        apologised: Literal[True, False] = Field(description='Did the agent apologise?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(apologised={'type': 'noul', 'noul': 0.9})
+
+    result = await Agent(mock_model(record), output_type=Settled).run('sorry about that')
+
+    assert result.output == snapshot(Settled(apologised=True))
+    assert seen[0]['questions']['apologised'] == snapshot(
+        {
+            'type': 'noul',
+            'instructions': {
+                'field': 'apologised',
+                'question': 'Did the agent apologise?',
+                'goal': 'Review the transcript.',
+            },
+        }
+    )
+
+
+async def test_a_true_false_enum_that_describes_its_answers_asks_something_on_its_own(allow_model_requests: None):
+    """What the two answers mean is a question in itself, as a pick-one's options are: no description needed."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    result = await Agent(mock_model(record), output_type=Refunded).run('we sent the money back')
+
+    assert result.output is Refunded.yes
+    assert seen[0]['questions']['response'] == snapshot(
+        {
+            'type': 'noul',
+            'instructions': 'Whether the money went back.',
+            'criteria': {
+                'true': 'Money was returned to the customer.',
+                'false': 'No refund was issued.',
+            },
+        }
+    )
+
+
+class Delivered(UseEnumMemberDocstrings, Enum):
+    arrived = True
+    """The parcel reached the customer."""
+    lost = False
+    """The parcel did not reach the customer."""
+
+
+async def test_meanings_alone_are_enough_for_a_yes_no_with_nothing_else_to_go_on(allow_model_requests: None):
+    """A bare `bool` with no question asks Jev nothing; two described answers are the question."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    result = await Agent(mock_model(record), output_type=Delivered).run('it turned up on Tuesday')
+
+    assert result.output is Delivered.arrived
+    # No class docstring, no field description and no agent instructions, so the criteria are all there is.
+    assert seen[0]['questions']['response'] == snapshot(
+        {
+            'type': 'noul',
+            'criteria': {
+                'true': 'The parcel reached the customer.',
+                'false': 'The parcel did not reach the customer.',
+            },
+        }
+    )
+
+
+async def test_a_true_false_literal_that_says_nothing_anywhere_is_refused(allow_model_requests: None):
+    """With neither meanings nor a description, the two options say no more than a bare `bool` with no question."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('no request should be made')
+
+    with pytest.raises(UserError, match='asks Jev nothing'):
+        await Agent(mock_model(unreachable), output_type=Literal[True, False]).run('anything')
+
+
 async def test_more_routes_than_jev_picks_from_are_refused(allow_model_requests: None, typesafe_model: TypeSafeModel):
     """The output type is one route beside the tools, so 255 tools is already one too many."""
     tools = [_named_tool(f'tool_{i:03d}') for i in range(255)]

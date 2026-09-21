@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Annotated, Any, Literal
 
 import httpx2
@@ -162,11 +162,6 @@ REFUSED = [
         unsupported('which', NOT_STRINGS),
     ),
     Refused(
-        'field: pick-one of booleans',
-        probe('which', Literal[True, False], description='Which?'),
-        unsupported('which', NOT_STRINGS),
-    ),
-    Refused(
         'field: pick-one of one option',
         probe('area', Literal['billing'], description='Which area?'),
         unsupported('area'),
@@ -214,6 +209,16 @@ class OptionalArea(BaseModel):
     """Triage the ticket."""
 
     area: Area | None = Field(description='Which area, if any?')
+
+
+class Refunded(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back."""
+
+    yes = True
+    """Money was returned to the customer."""
+
+    no = False
+    """No refund was issued."""
 
 
 class Clarity(UseEnumMemberDocstrings, IntEnum):
@@ -278,6 +283,16 @@ def scripted(picks: str | None) -> tuple[TypeSafeModel, list[dict[str, Any]]]:
     return mock_model(respond), sent
 
 
+# `True` and `False` are a yes/no's own two options, so either spelling of them is one.
+YesNo = probe('which', Literal[True, False], description='Which?')
+
+
+class Settled(BaseModel):
+    """Review the transcript."""
+
+    refunded: Refunded = Field(description='Was a refund issued?')
+
+
 @dataclass(frozen=True)
 class Accepted:
     """An output type Jev fills, what it answers, and what the shape costs in requests."""
@@ -296,6 +311,8 @@ ACCEPTED = [
     Accepted('a list of options', list[Area], ['billing', 'shipping', 'security']),
     Accepted('an optional pick-one field', OptionalArea, OptionalArea(area='billing')),
     Accepted('a rubric field', Graded, Graded(clarity=Clarity.partial)),
+    Accepted('field: yes/no from two options', YesNo, YesNo(which=True)),
+    Accepted('field: yes/no with each answer described', Settled, Settled(refunded=Refunded.yes)),
     # A union is a route set: one request picks the member, a second asks only that member's fields.
     Accepted(
         'a union of output types',

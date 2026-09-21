@@ -507,6 +507,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'large_market': True, 'technically_feasible': True, 'differentiated': False},
     ),
+    'We have sent the 40 pounds back to your card.': ToolCallPart(tool_name='final_result', args={'refunded': True}),
     'The app crashes every time I open the reports tab.': ToolCallPart(
         tool_name='final_result', args={'urgent': False}
     ),

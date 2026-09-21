@@ -57,6 +57,7 @@ try:
         JSONContent,
         Noul,
         NoulAnswer,
+        NoulCriteria,
         Score,
         ScoreAnswer,
         SystemOneResponse,
@@ -96,6 +97,14 @@ _UNSUPPORTED_FIELD_HINT = (
     'Use `bool`, a `Literal` or `Enum` of two or more strings, a `float` bounded with `ge=0` and `le=1`, a `list` of '
     'a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its schema, or a model '
     'of these.'
+)
+
+# A pick-one or a rubric still says what it is asking through its options; a yes/no may have nothing else,
+# and Jev rejects a question with neither instructions nor criteria.
+_ASKS_NOTHING = (
+    'Output field {name!r} asks Jev nothing. A question is not part of the text being judged: give the field '
+    'a description, or the agent `instructions`, and leave the prompt to the material the question is about. '
+    'A `system_prompt` will not do: Jev is told what was said, not what to ask.'
 )
 
 
@@ -834,6 +843,10 @@ def _questions(
             # `bool` is an `int` in Python but never a rubric level, and it is handled as a yes/no below.
             if options and all(isinstance(option, int) and not isinstance(option, bool) for option in options):
                 questions[name] = _score_question(name, cast('dict[int, str | None]', options), asked)
+            elif len(options) == 2 and all(isinstance(option, bool) for option in options):
+                # `True` and `False` are the two options a yes/no already has, so an `Enum` or `Literal` of
+                # exactly those is that same question, with somewhere to say what each answer means.
+                questions[name] = _noul_question(name, cast('dict[bool, str | None]', options), ask, asked)
             elif len(options) < 2 or not all(isinstance(option, str) for option in options):
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: its options are not two or more strings. '
@@ -850,14 +863,7 @@ def _questions(
             prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1
         ):
             if not ask:
-                # A pick-one or a rubric still says what it is asking through its options; a yes/no has
-                # nothing else, and Jev rejects a question with neither instructions nor criteria.
-                raise UserError(
-                    f'Output field {name!r} asks Jev nothing. A question is not part of the text being judged: '
-                    f'give the field a description, or the agent `instructions`, and leave the prompt to the '
-                    f'material the question is about. A `system_prompt` will not do: Jev is told what was said, '
-                    f'not what to ask.'
-                )
+                raise UserError(_ASKS_NOTHING.format(name=name))
             questions[name] = Noul(instructions=asked)
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
@@ -942,6 +948,25 @@ def _tool_question(
         )
     questions[key] = Choice(instructions='Which of these does this call for?', criteria=criteria)
     return key
+
+
+def _noul_question(
+    name: str, options: dict[bool, str | None], ask: dict[str, JSONContent], asked: JSONContent | None
+) -> Noul:
+    """A yes/no from an `Enum` or `Literal` of `True` and `False`, with what each answer means.
+
+    A bare `bool` asks the same question and says nothing about its answers, because a `bool` has nowhere to
+    write it down. Two described options do, and Jev takes them as the yes/no's criteria. Either description
+    may be missing; what is written is sent.
+    """
+    criteria: NoulCriteria = {}
+    if (yes := options[True]) is not None:
+        criteria['true'] = yes
+    if (no := options[False]) is not None:
+        criteria['false'] = no
+    if not criteria and not ask:
+        raise UserError(_ASKS_NOTHING.format(name=name))
+    return Noul(instructions=asked, criteria=criteria or None)
 
 
 def _score_question(name: str, options: dict[int, str | None], asked: JSONContent | None) -> Score:
