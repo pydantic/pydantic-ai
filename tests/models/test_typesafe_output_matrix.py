@@ -241,6 +241,12 @@ class OptionalArea(BaseModel):
     area: Area | None = Field(description='Which area, if any?')
 
 
+class DescribedNoneArea(BaseModel):
+    """Triage the ticket."""
+
+    area: Area | Annotated[None, Field(description='Nothing to route.')] = Field(description='Which area, if any?')
+
+
 class Clarity(UseEnumMemberDocstrings, IntEnum):
     """How clearly is the problem stated?"""
 
@@ -347,6 +353,15 @@ ACCEPTED = [
         picks='final_result_Escalation',
     ),
     Accepted('output function | None', [escalate, None], None, picks='final_result_None'),
+    # Writing what `None` means puts a `description` beside its `{'type': 'null'}`, which does not stop it
+    # being `None`: the route is still taken on the pick alone, and the field is still one more option.
+    Accepted(
+        'model | described None, declined',
+        [Ticket, Annotated[None, Field(description='Nothing needs doing.')]],
+        None,
+        picks='final_result_Annotated',
+    ),
+    Accepted('a described `None` option', DescribedNoneArea, DescribedNoneArea(area='billing')),
 ]
 
 
