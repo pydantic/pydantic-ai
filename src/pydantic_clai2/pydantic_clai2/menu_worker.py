@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from threading import Event
 from typing import TypeVar
 
+import anyio
 from termflow.tui.keys import read_key  # pyright: ignore[reportMissingTypeStubs]
 
 ResultT = TypeVar('ResultT')
@@ -29,7 +30,8 @@ async def run_worker(operation: Callable[[], ResultT]) -> ResultT:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
         stop.set()
-        await asyncio.shield(task)
+        with anyio.CancelScope(shield=True):
+            await asyncio.shield(task)
         raise
     finally:
         _STOP.reset(token)

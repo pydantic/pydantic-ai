@@ -995,13 +995,13 @@ plugin list. Use `/plugins list` to print it. Plugins are trusted code running a
 ## Questions from the model
 
 When the task is ambiguous, the model can call `ask_user_question` instead of
-guessing. Each question opens a full-screen menu: options as rows, the question
-and the highlighted option's description alongside, `question 2 of 3` in the
-title when there are several. Enter picks one; on multi-select questions Space
-toggles and Enter confirms (with nothing toggled, Enter picks the highlighted
-option); Esc or Ctrl-C declines, which the model is told so it can make a
-stated choice and carry on. Your picks are printed to the
-transcript afterwards.
+guessing. Questions appear inline, with the conversation still visible above a
+compact numbered picker. Use Up/Down and Enter, or press an option's number to
+select it. For multiple selections, Enter or a number toggles a choice; select
+`Done` to submit. At least one choice is required. Esc or Ctrl-C declines the
+whole request, which the model is told so it can make a stated choice and carry
+on. Several questions show progress in the title. The editor's draft is
+preserved, and your picks are printed to the transcript afterwards.
 
 The menu is the built-in `ask_user` plugin around the harness's
 [`AskUser`](../docs/ask-user.md) capability. The capability only knows an

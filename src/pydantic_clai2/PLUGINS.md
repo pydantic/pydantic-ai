@@ -232,13 +232,15 @@ changes its settings (`strategy`, `threshold`, `protected_tokens`,
 The second built-in, `ask_user` (`pydantic_clai2.ask_user_menu:activate`), gives
 the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
-question opens a full-screen menu on the alternate screen: the options are the
-rows, the right-hand panel shows the question and what the highlighted option
-means, the title says `question 2 of 3` when there are several. Enter picks;
-Space toggles on multi-select questions; Esc or Ctrl-C declines, which tells the
-model you declined and lets the run continue. Streaming output is flushed and the
-status row paused before the menu opens, and what you picked is printed to the
-transcript afterwards. `/plugins disable ask_user` takes the tool away.
+question appears inline above a compact numbered picker, keeping the conversation
+visible. Up/Down moves the highlight; Enter or an option's number selects it.
+For multi-select questions, Enter or a number toggles that choice; select `Done`
+to submit at least one choice. The title says `question 2 of 3` when there are
+several. Esc or Ctrl-C declines the whole request and lets the model continue.
+The picker uses `host.full_screen()` only to flush streaming output and suspend
+the editor's input reader. It does not switch to the alternate screen. The draft
+is restored on exit, and your picks are printed to the transcript afterwards.
+`/plugins disable ask_user` takes the tool away.
 
 The capability does not know it is in a terminal. It hands an `AskUserRequest`
 to an `Answerer` (one async callable returning an `AskUserResponse`) and waits.
@@ -544,8 +546,8 @@ never lands in the middle of a paragraph.
 
 ### Take the whole screen mid-run: `async with host.full_screen()`
 
-A full-screen widget opened from inside a tool call (the built-in `ask_user` menu
-is one) has to wait for streamed text to finish and the editor and status row to
+A widget opened from inside a tool call, including the inline `ask_user` picker,
+has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns: users can draft and queue messages,

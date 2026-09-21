@@ -127,7 +127,7 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.
-- A menu opened mid-run (the `ask_user` question menu) goes inside
+- A widget opened mid-run (including the inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers
   already run with the editor suspended. Do not start a second input reader
@@ -290,3 +290,8 @@ coordinates or cursor reports. Never send erase-scrollback (CSI 3 J). Keep edito
 height changes separate from physical resize, preserve the draft, and close the
 resize output spool on both normal handoff and failure. `SIGWINCH` only marks the
 resize and schedules a paint; the signal handler must not perform terminal IO.
+
+The `ask_user` picker is an inline exception to the full-screen menu convention.
+It borrows the released `PromptSurface` while the editor is suspended, retaining
+the shared transcript for resize replay. Keep its numbered choices and Enter
+toggles; do not reintroduce alternate-screen switching or Space-to-toggle.

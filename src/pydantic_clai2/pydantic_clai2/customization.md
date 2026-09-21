@@ -110,9 +110,10 @@ clai2 plugins add NAME module[:attr] [JSON] saves for the next startup.
 delete its source file yourself to remove it from disk.
 
 The second built-in is ask_user (pydantic_clai2.ask_user_menu:activate): the
-harness AskUser capability with a full-screen terminal menu as its answerer, so
+harness AskUser capability with an inline numbered picker as its answerer, so
 the model can ask the user multiple-choice questions mid-run through
-ask_user_question. /plugins disable ask_user removes the tool. To answer the
+ask_user_question. The conversation remains visible. Enter or a number selects;
+for multiple selections it toggles, then Done submits. /plugins disable ask_user removes the tool. To answer the
 questions somewhere other than the terminal, declare ask_user again with a
 module whose activate(host) calls host.add(AskUser(answerer=...)) with your own
 async answerer; see PLUGINS.md.

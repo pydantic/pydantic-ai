@@ -4,9 +4,10 @@ import asyncio
 import io
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from threading import Event
 
+import anyio
 import pytest
-from menu_script import Script
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -21,14 +22,15 @@ from pydantic_ai_harness.ask_user import (
     Question,
     QuestionOption,
 )
+from rich.cells import cell_len
 from rich.console import Console
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import Menu, MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from rich.text import Text
 
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.ask_user_menu import QuestionMenu, TerminalAnswerer, activate, build_question_menu, render_answer
-from pydantic_clai2.field_menu import TERMINAL, Runners
+from pydantic_clai2.ask_user_menu import QuestionMenu, TerminalAnswerer, activate, render_answer
+from pydantic_clai2.menu_worker import menu_key
 from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.prompt_surface import PromptSurface
 
 
 @pytest.fixture
@@ -49,11 +51,6 @@ TARGETS = Question(
 )
 
 
-def chosen(*labels: str) -> MenuResult:
-    items = [MenuItem(label, value=label) for label in labels]
-    return MenuResult(item=items[0], items=items)
-
-
 class ScreenLog:
     """A `FullScreen` that records when the terminal was taken and given back."""
 
@@ -69,28 +66,76 @@ class ScreenLog:
             self.events.append('released')
 
 
-def test_menu_parts_single_select() -> None:
+def test_single_select_and_number_shortcuts() -> None:
     menu = QuestionMenu(question=APPROACH, position=1, total=1)
     assert menu.title == 'Approach'
-    assert menu.hint == 'Enter select - Esc decline'
-    assert [item.label for item in menu.items()] == ['Refactor', 'Patch']
-    refactor, patch = menu.items()
-    assert menu.preview(refactor) == 'How should we do it?\n\nRewrite the module'
-    assert menu.preview(patch) == 'How should we do it?\n\n(no description)'
-    assert isinstance(menu.build(), Menu)
+    assert menu.choose('up') is None
+    assert menu.choose('enter') == ('Patch',)
+    assert menu.choose('1') == ('Refactor',)
+    assert menu.choose('down') is None
+    assert menu.choose('tab') is None
+    assert menu.choose('enter') == ('Refactor',)
 
 
-def test_menu_parts_multi_select_numbered() -> None:
+def test_multi_select_enter_toggles_and_done_submits() -> None:
     menu = QuestionMenu(question=TARGETS, position=2, total=3)
     assert menu.title == 'Targets (question 2 of 3)'
-    assert menu.hint == 'Space toggle - Enter confirm - Esc decline'
-    assert isinstance(build_question_menu(TARGETS, position=2, total=3), Menu)
+    assert menu.choose('3') is None  # Empty answers cannot be submitted.
+    assert menu.choose('1') is None
+    assert menu.choose('enter') is None
+    assert menu.selected == set()
+    assert menu.choose('2') is None
+    assert menu.choose('1') is None
+    assert menu.choose(' ') is None
+    assert menu.choose('9') is None
+    assert menu.choose('3') == ('api.py', 'db.py')
+
+
+def test_inline_frame_shows_context_selection_and_navigation() -> None:
+    menu = QuestionMenu(question=TARGETS, position=1, total=1)
+    menu.choose('1')
+    frame = '\n'.join(menu.frame(width=100, height=24))
+    assert 'Targets' in frame
+    assert '> 1. [x] api.py' in frame
+    assert '2. [ ] db.py' in frame
+    assert '3. Done' in frame
+    assert 'Space' not in frame
+    menu.choose('down')
+    frame = menu.frame(width=24, height=10)
+    assert any('db.py' in row for row in frame)
+    assert len(frame) <= 5
+    assert all(len(Text.from_ansi(row).plain) <= 24 for row in frame)
+
+
+@pytest.mark.parametrize(
+    'keys, expected',
+    [
+        (['', 'down', 'enter'], ('Patch',)),
+        (['escape'], None),
+        (['ctrl-c'], None),
+    ],
+)
+def test_inline_terminal_preserves_transcript(keys: list[str], expected: tuple[str, ...] | None) -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=80, height=24)
+    console.print('Previous conversation stays here')
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    assert menu.run(console=console, key_source=iter(keys).__next__) == expected
+    rendered = output.getvalue()
+    assert rendered.startswith('Previous conversation stays here')
+    assert 'How should we do it?' in rendered
+    assert 'Rewrite the module' in rendered
+    assert '\x1b[?1049' not in rendered
+    assert '\x1b[2J' not in rendered
+    assert '\x1b[3J' not in rendered
+    assert rendered.endswith('\x1b[?2026l')
+    assert '\x1b[?25h' in rendered
 
 
 async def test_answers_every_question_on_a_settled_screen() -> None:
-    script = Script(lists=[], choices=[chosen('Patch'), chosen('api.py', 'db.py')], texts=[])
+    answers = iter([('Patch',), ('api.py', 'db.py')])
     screen = ScreenLog()
-    answerer = TerminalAnswerer(full_screen=screen, runners=script.runners)
+    answerer = TerminalAnswerer(full_screen=screen, runner=lambda menu: next(answers))
     response = await answerer(AskUserRequest(questions=(APPROACH, TARGETS)))
     assert response == AskUserResponse(
         answers=(
@@ -98,7 +143,6 @@ async def test_answers_every_question_on_a_settled_screen() -> None:
             AskUserAnswer(header='Targets', selected=('api.py', 'db.py')),
         )
     )
-    assert script.opened == ['choice', 'choice']
     assert screen.events == ['taken', 'released']
 
 
@@ -107,18 +151,23 @@ async def test_parallel_requests_take_the_terminal_one_at_a_time() -> None:
     started = asyncio.Event()
     release = asyncio.Event()
 
-    def slow_choice(menu: Menu) -> MenuResult:
-        started.set()
+    def slow_choice(menu: QuestionMenu) -> tuple[str, ...]:
+        loop.call_soon_threadsafe(started.set)
         asyncio.run_coroutine_threadsafe(release.wait(), loop).result()
-        return chosen('Patch')
+        return ('Patch',)
 
     loop = asyncio.get_running_loop()
-    runners = Runners(run_list=slow_choice, run_choice=slow_choice, run_text=TERMINAL.run_text)
-    answerer = TerminalAnswerer(full_screen=screen, runners=runners)
+    answerer = TerminalAnswerer(full_screen=screen, runner=slow_choice)
     first = asyncio.create_task(answerer(AskUserRequest(questions=(APPROACH,))))
     await started.wait()
-    second = asyncio.create_task(answerer(AskUserRequest(questions=(APPROACH,))))
-    await asyncio.sleep(0.05)
+    second_started = asyncio.Event()
+
+    async def another() -> AskUserResponse:
+        second_started.set()
+        return await answerer(AskUserRequest(questions=(APPROACH,)))
+
+    second = asyncio.create_task(another())
+    await second_started.wait()
     assert screen.events == ['taken']
     release.set()
     assert (await first).answers == (AskUserAnswer(header='Approach', selected=('Patch',)),)
@@ -127,9 +176,9 @@ async def test_parallel_requests_take_the_terminal_one_at_a_time() -> None:
 
 
 async def test_escape_declines_the_whole_request() -> None:
-    script = Script(lists=[], choices=[chosen('Patch'), MenuResult(cancelled=True)], texts=[])
+    answers = iter([('Patch',), None])
     screen = ScreenLog()
-    answerer = TerminalAnswerer(full_screen=screen, runners=script.runners)
+    answerer = TerminalAnswerer(full_screen=screen, runner=lambda menu: next(answers))
     response = await answerer(AskUserRequest(questions=(APPROACH, TARGETS)))
     assert response == AskUserResponse(cancelled=True)
     assert screen.events == ['taken', 'released']
@@ -166,9 +215,9 @@ async def test_activate_registers_capability_and_renderer() -> None:
 
 async def test_declining_reaches_the_model_through_the_plugin() -> None:
     """The capability's declined result survives the round trip through the real tool call."""
-    script = Script(lists=[], choices=[MenuResult(cancelled=True)], texts=[])
+    answers = iter([None])
     capabilities: list[AbstractCapability[None]] = [
-        AskUser(answerer=TerminalAnswerer(full_screen=ScreenLog(), runners=script.runners))
+        AskUser(answerer=TerminalAnswerer(full_screen=ScreenLog(), runner=lambda menu: next(answers)))
     ]
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -182,3 +231,127 @@ async def test_declining_reaches_the_model_through_the_plugin() -> None:
     assert result.output == 'done'
     returns = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)]
     assert len(returns) == 1 and returns[0].content == DECLINED
+
+
+async def test_default_runner_reuses_editor_surface(monkeypatch: pytest.MonkeyPatch) -> None:
+    output = io.StringIO()
+    surface = PromptSurface(output=output, size=lambda: (80, 24))
+    surface.write('Earlier conversation\n')
+    console = Console(file=surface, width=80, height=24)
+    monkeypatch.setattr('sys.stdin', io.StringIO('2'))
+    response = await TerminalAnswerer(full_screen=ScreenLog(), console=console)(AskUserRequest(questions=(APPROACH,)))
+    assert response.answers == (AskUserAnswer(header='Approach', selected=('Patch',)),)
+    assert 'Earlier conversation' in output.getvalue()
+    assert 'How should we do it?' in '\n'.join(surface.transcript.frame(width=80, height=24).rows)
+    assert '\x1b[?1049' not in output.getvalue()
+
+
+def test_terminal_cleanup_on_input_failure() -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=80, height=24)
+
+    def fail() -> str:
+        raise OSError('input closed')
+
+    with pytest.raises(OSError, match='input closed'):
+        QuestionMenu(question=APPROACH, position=1, total=1).run(console=console, key_source=fail)
+    assert '\x1b[?25h' in output.getvalue()
+    assert '\x1b[r' in output.getvalue()
+
+
+async def test_cancellation_joins_question_reader_before_releasing_screen(monkeypatch: pytest.MonkeyPatch) -> None:
+    started = asyncio.Event()
+    stopping = asyncio.Event()
+    stopped = Event()
+    input_ready = Event()
+    allow_exit = Event()
+    loop = asyncio.get_running_loop()
+    screen = ScreenLog()
+
+    def read_key(*, timeout: float) -> str:
+        loop.call_soon_threadsafe(started.set)
+        assert input_ready.wait(10)
+        return ''
+
+    def run(menu: QuestionMenu) -> tuple[str, ...] | None:
+        try:
+            while menu_key() != 'ctrl-c':
+                pass
+        finally:
+            loop.call_soon_threadsafe(stopping.set)
+            assert allow_exit.wait(10)
+            assert screen.events == ['taken']
+            stopped.set()
+        return None
+
+    async def cancel(scope: anyio.CancelScope) -> None:
+        try:
+            await started.wait()
+            scope.cancel()
+            input_ready.set()
+            await stopping.wait()
+            assert screen.events == ['taken']
+        finally:
+            input_ready.set()
+            allow_exit.set()
+
+    monkeypatch.setattr('pydantic_clai2.menu_worker.read_key', read_key)
+    answerer = TerminalAnswerer(full_screen=screen, runner=run)
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            scope = anyio.CancelScope()
+            tasks.start_soon(cancel, scope)
+            with scope:
+                await answerer(AskUserRequest(questions=(APPROACH,)))
+            assert stopped.is_set()
+            assert screen.events == ['taken', 'released']
+
+
+def test_wrapped_descriptions_and_literal_markup() -> None:
+    question = Question(
+        header='[red]Literal',
+        question='Literal question',
+        options=(
+            QuestionOption(label='First', description='This description needs several lines to remain readable.'),
+            QuestionOption(label='[red]Second'),
+        ),
+    )
+    menu = QuestionMenu(question=question, position=1, total=1)
+    rows = menu.frame(width=30, height=30)
+    text = '\n'.join(Text.from_ansi(row).plain for row in rows)
+    assert 'remain readable.' in text
+    assert '[red]Literal' in text
+    assert '[red]Second' in text
+    assert all(len(Text.from_ansi(row).plain) <= 30 for row in rows)
+    menu.choose('down')
+    assert any('> 2.' in row for row in menu.frame(width=12, height=6))
+
+
+def test_option_description_preserves_explicit_line_breaks() -> None:
+    question = Question(
+        header='Steps',
+        question='Which sequence?',
+        options=(
+            QuestionOption(label='First', description='First step\n\nSecond step'),
+            QuestionOption(label='Other'),
+        ),
+    )
+    menu = QuestionMenu(question=question, position=1, total=1)
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=80, height=24)]
+    assert rows[1:4] == ['> 1. First - First step', '  ', '  Second step']
+
+
+def test_wide_characters_wrap_without_losing_choice_text() -> None:
+    label = '中文選項需要完整顯示'
+    description = '確認修復結果並保留所有文字 🎉🎉🎉'
+    question = Question(
+        header='Choices',
+        question='Which one?',
+        options=(QuestionOption(label=label, description=description), QuestionOption(label='Other')),
+    )
+    menu = QuestionMenu(question=question, position=1, total=1)
+    rows = [Text.from_ansi(row).plain for row in menu.frame(width=16, height=80)]
+    assert all(cell_len(row) <= 16 for row in rows)
+    choices = ''.join(row[2:].strip() for row in rows[1:-1])
+    assert label in choices
+    assert description.replace(' ', '') in choices.replace(' ', '')
