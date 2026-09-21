@@ -6,8 +6,11 @@ Run:  uv run pytest action/test_runner.py
 import sys
 from pathlib import Path
 
+import logfire
 import pytest
 from pytest import CaptureFixture, MonkeyPatch
+
+from pydantic_ai import Agent
 
 # `action/` isn't on `sys.path` by default. The runtime equivalent is the action running
 # `python3 runner.py`, which puts the script's own directory first.
@@ -15,13 +18,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import runner
 
-AGENT_MODULE = """
-from pydantic_ai import Agent
-
+# The agents the `module:variable` tests resolve. This module is importable under its own name, so
+# they double as the module a target names, and what they resolve to stays typed.
 agent = Agent(instructions='Be helpful.')
-with_model = Agent('test', instructions='Be helpful.')
+agent_with_model = Agent('test', instructions='Be helpful.')
 not_an_agent = 'nope'
-"""
 
 SPEC = """
 name: reviewer
@@ -37,9 +38,7 @@ def inputs(monkeypatch: MonkeyPatch, tmp_path: Path) -> Path:
     for name in (*names, 'LOGFIRE_TOKEN', 'OTEL_EXPORTER_OTLP_ENDPOINT'):
         monkeypatch.delenv(name, raising=False)
 
-    (tmp_path / 'my_agents.py').write_text(AGENT_MODULE)
     (tmp_path / 'reviewer.yml').write_text(SPEC)
-    monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -81,9 +80,7 @@ def test_empty_prompt_file(inputs: Path, monkeypatch: MonkeyPatch):
 
 
 def test_resolve_module_target(inputs: Path):
-    import my_agents  # pyright: ignore[reportMissingImports]
-
-    assert runner._resolve_agent('my_agents:agent') is my_agents.agent  # pyright: ignore[reportPrivateUsage]
+    assert runner._resolve_agent('test_runner:agent') is agent  # pyright: ignore[reportPrivateUsage]
 
 
 def test_resolve_spec_file(inputs: Path):
@@ -92,16 +89,16 @@ def test_resolve_spec_file(inputs: Path):
 
 def test_resolve_target_without_variable(inputs: Path):
     with pytest.raises(ValueError, match='expected a `module:variable` target'):
-        runner._resolve_agent('my_agents')  # pyright: ignore[reportPrivateUsage]
+        runner._resolve_agent('test_runner')  # pyright: ignore[reportPrivateUsage]
 
 
 def test_resolve_target_that_is_not_an_agent(inputs: Path):
     with pytest.raises(TypeError, match=r'resolved to a builtins\.str'):
-        runner._resolve_agent('my_agents:not_an_agent')  # pyright: ignore[reportPrivateUsage]
+        runner._resolve_agent('test_runner:not_an_agent')  # pyright: ignore[reportPrivateUsage]
 
 
 def test_run(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
-    monkeypatch.setenv('PAI_AGENT', 'my_agents:agent')
+    monkeypatch.setenv('PAI_AGENT', 'test_runner:agent')
     monkeypatch.setenv('PAI_MODEL', 'test')
     monkeypatch.setenv('PAI_PROMPT', 'Review the diff.')
     monkeypatch.setenv('GITHUB_OUTPUT', str(inputs / 'output'))
@@ -123,7 +120,7 @@ def test_run(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]
 
 def test_run_without_github_environment(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
     """Outside a workflow there is nowhere to publish to, and the run still prints what it said."""
-    monkeypatch.setenv('PAI_AGENT', 'my_agents:agent')
+    monkeypatch.setenv('PAI_AGENT', 'test_runner:agent')
     monkeypatch.setenv('PAI_MODEL', 'test')
     monkeypatch.setenv('PAI_PROMPT', 'Review the diff.')
 
@@ -133,7 +130,7 @@ def test_run_without_github_environment(inputs: Path, monkeypatch: MonkeyPatch, 
 
 def test_run_uses_the_agents_own_model(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
     """An agent that carries a model runs without the `model` input."""
-    monkeypatch.setenv('PAI_AGENT', 'my_agents:with_model')
+    monkeypatch.setenv('PAI_AGENT', 'test_runner:agent_with_model')
     monkeypatch.setenv('PAI_PROMPT', 'Review the diff.')
 
     assert runner.main() == 0
@@ -142,7 +139,7 @@ def test_run_uses_the_agents_own_model(inputs: Path, monkeypatch: MonkeyPatch, c
 
 def test_run_without_any_model(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
     """Neither the agent nor the input names a model, so the run fails with Pydantic AI's own error."""
-    monkeypatch.setenv('PAI_AGENT', 'my_agents:agent')
+    monkeypatch.setenv('PAI_AGENT', 'test_runner:agent')
     monkeypatch.setenv('PAI_PROMPT', 'Review the diff.')
 
     assert runner.main() == 1
@@ -157,7 +154,7 @@ def test_run_without_agent(inputs: Path, monkeypatch: MonkeyPatch, capsys: Captu
 
 
 def test_run_without_prompt(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
-    monkeypatch.setenv('PAI_AGENT', 'my_agents:agent')
+    monkeypatch.setenv('PAI_AGENT', 'test_runner:agent')
 
     assert runner.main() == 2
     assert 'error: set exactly one of `prompt` and `prompt-file`' in capsys.readouterr().err
@@ -172,7 +169,7 @@ def test_run_with_unimportable_agent(inputs: Path, monkeypatch: MonkeyPatch, cap
 
 
 def test_run_with_unwritable_github_output(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
-    monkeypatch.setenv('PAI_AGENT', 'my_agents:agent')
+    monkeypatch.setenv('PAI_AGENT', 'test_runner:agent')
     monkeypatch.setenv('PAI_MODEL', 'test')
     monkeypatch.setenv('PAI_PROMPT', 'Review the diff.')
     monkeypatch.setenv('GITHUB_OUTPUT', str(inputs / 'absent' / 'output'))
@@ -182,7 +179,7 @@ def test_run_with_unwritable_github_output(inputs: Path, monkeypatch: MonkeyPatc
 
 
 def test_run_with_unwritable_step_summary(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
-    monkeypatch.setenv('PAI_AGENT', 'my_agents:agent')
+    monkeypatch.setenv('PAI_AGENT', 'test_runner:agent')
     monkeypatch.setenv('PAI_MODEL', 'test')
     monkeypatch.setenv('PAI_PROMPT', 'Review the diff.')
     monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(inputs / 'absent' / 'summary'))
@@ -200,41 +197,46 @@ def test_multiline_output_is_published_whole(inputs: Path, monkeypatch: MonkeyPa
     assert lines[3] == lines[0].removeprefix('result<<')
 
 
-def test_tracing_is_configured_when_a_token_is_set(inputs: Path, monkeypatch: MonkeyPatch):
-    import logfire
+def _record_logfire(monkeypatch: MonkeyPatch) -> list[object]:
+    """Stand in for the two Logfire calls the runner makes, recording them in order."""
+    calls: list[object] = []
 
-    configured: list[object] = []
-    monkeypatch.setattr(logfire, 'configure', lambda **kwargs: configured.append(kwargs))
-    monkeypatch.setattr(logfire, 'instrument_pydantic_ai', lambda: configured.append('instrumented'))
+    def configure(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    def instrument_pydantic_ai() -> None:
+        calls.append('instrumented')
+
+    monkeypatch.setattr(logfire, 'configure', configure)
+    monkeypatch.setattr(logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
+    return calls
+
+
+def test_tracing_is_configured_when_a_token_is_set(inputs: Path, monkeypatch: MonkeyPatch):
+    calls = _record_logfire(monkeypatch)
     monkeypatch.setenv('LOGFIRE_TOKEN', 'pylf_v1_us_fake')
 
     runner._configure_observability()  # pyright: ignore[reportPrivateUsage]
 
-    assert configured == [{'send_to_logfire': 'if-token-present', 'console': False}, 'instrumented']
+    assert calls == [{'send_to_logfire': 'if-token-present', 'console': False}, 'instrumented']
 
 
 def test_tracing_is_configured_for_an_otlp_endpoint(inputs: Path, monkeypatch: MonkeyPatch):
-    import logfire
-
-    configured: list[object] = []
-    monkeypatch.setattr(logfire, 'configure', lambda **kwargs: configured.append(kwargs))
-    monkeypatch.setattr(logfire, 'instrument_pydantic_ai', lambda: configured.append('instrumented'))
+    calls = _record_logfire(monkeypatch)
     monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318')
 
     runner._configure_observability()  # pyright: ignore[reportPrivateUsage]
 
-    assert configured == [{'send_to_logfire': 'if-token-present', 'console': False}, 'instrumented']
+    assert calls == [{'send_to_logfire': 'if-token-present', 'console': False}, 'instrumented']
 
 
 def test_tracing_is_left_alone_without_a_destination(inputs: Path, monkeypatch: MonkeyPatch):
     """Nothing in the environment says where traces would go, so Logfire is not touched at all."""
-    import logfire
-
-    monkeypatch.delenv('LOGFIRE_TOKEN', raising=False)
-    monkeypatch.delenv('OTEL_EXPORTER_OTLP_ENDPOINT', raising=False)
-    monkeypatch.setattr(logfire, 'configure', lambda **kwargs: pytest.fail('configured Logfire'))
+    calls = _record_logfire(monkeypatch)
 
     runner._configure_observability()  # pyright: ignore[reportPrivateUsage]
+
+    assert calls == []
 
 
 def test_tracing_without_logfire_installed(inputs: Path, monkeypatch: MonkeyPatch, capsys: CaptureFixture[str]):
