@@ -49,7 +49,14 @@ across filesystems mounted at absolute paths. Each value implements `SupportsFil
 its own namespace rooted at `/`.
 
 ```python
-from pydantic_ai.workspaces import CompositeFilesystem, Workspace
+from typing import cast
+
+from pydantic_ai.workspaces import CompositeFilesystem, SupportsFilesystem, Workspace
+
+# Replace these placeholders with filesystem implementations such as S3 or GCS adapters.
+project_filesystem = cast(SupportsFilesystem, ...)
+data_filesystem = cast(SupportsFilesystem, ...)
+skills_filesystem = cast(SupportsFilesystem, ...)
 
 workspace = Workspace(
     CompositeFilesystem(
