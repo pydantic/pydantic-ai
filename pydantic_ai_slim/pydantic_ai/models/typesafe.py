@@ -710,16 +710,41 @@ def _route_args(tool: ToolDefinition) -> dict[str, Any]:
     return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
 
 
+def _wrapped(tool: ToolDefinition) -> dict[str, Any] | None:
+    """The single property Pydantic AI wraps an output type that is not object-like in, if this is one.
+
+    A `Literal`, an `Enum`, a `Choices` set and a bare `None` all reach a model as one property of an object,
+    because only an object can be a tool's arguments. What such a type says about itself is written on that
+    property, since there is no class for it to be a docstring on. `outer_typed_dict_key` is the wrapping,
+    named by whoever did it, so it is read rather than guessed back out of the schema's shape.
+    """
+    key = tool.outer_typed_dict_key
+    return _properties(tool.parameters_json_schema).get(key) if key else None
+
+
+def _purpose(tool: ToolDefinition) -> str | None:
+    """What a route says about itself, wherever it managed to say it.
+
+    An output type says this in its docstring, and `ToolOutput(description=...)` says it for a type that has
+    no docstring to write it in. A type that is not object-like has neither: `Choices(description=...)`
+    describes the set it wraps, which lands on the wrapped property rather than on the tool. It is the same
+    sentence either way, so the route question reads it from there too.
+    """
+    if described := _described(tool):
+        return described
+    wrapped = _wrapped(tool)
+    return wrapped.get('description') if wrapped else None
+
+
 def _route_description(tool: ToolDefinition) -> str | None:
     """What a route says about itself on the route question.
 
-    A `None` route has no docstring to take this from, so the library supplies one — unless the user named the
-    route themselves with `ToolOutput(type_=None, description=...)`, which is them saying what declining means
-    on this agent, and says more than the stock phrase does.
+    A `None` route can say nothing anywhere, so the library supplies the phrase — unless the user named the
+    route themselves, which says more about what declining means on this agent than the stock phrase does.
     """
     if _none_route(tool):
-        return _described(tool) or _NONE_OF_THESE
-    return tool.description
+        return _purpose(tool) or _NONE_OF_THESE
+    return _purpose(tool) or tool.description
 
 
 def _output_tools(
@@ -1031,7 +1056,7 @@ def _tool_question(
         key += '_'
     criteria: dict[str, str | None] = {}
     for output_tool in output_tools:
-        described = _described(output_tool)
+        described = _purpose(output_tool)
         if not (described or (instructions and len(output_tools) == 1)):
             # With one output type the agent's instructions can say what filling it is for. With several, only
             # each type's own docstring can tell them apart: one instruction cannot describe two different routes.

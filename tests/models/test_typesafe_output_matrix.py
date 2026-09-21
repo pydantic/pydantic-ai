@@ -336,9 +336,9 @@ ACCEPTED = [
     Accepted('an output function Jev can fill', [summarise], 'summary for billing'),
     # `None` is a route like any other: one more option on the route question, described as "None of these.",
     # taken on the pick alone because there is nothing to fill.
-    Accepted('model | None, declined', Ticket | None, None, picks='final_result_NoneType'),
+    Accepted('model | None, declined', Ticket | None, None, picks='final_result_None'),
     Accepted('model | None, filled', Ticket | None, Ticket(urgent=True), picks='final_result_Ticket'),
-    Accepted('union | None, declined', Ticket | Escalation | None, None, picks='final_result_NoneType'),
+    Accepted('union | None, declined', Ticket | Escalation | None, None, picks='final_result_None'),
     Accepted(
         'union | None, filled',
         Ticket | Escalation | None,
@@ -346,7 +346,7 @@ ACCEPTED = [
         requests=2,
         picks='final_result_Escalation',
     ),
-    Accepted('output function | None', [escalate, None], None, picks='final_result_NoneType'),
+    Accepted('output function | None', [escalate, None], None, picks='final_result_None'),
 ]
 
 
