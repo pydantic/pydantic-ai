@@ -1,0 +1,172 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '295'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: In one sentence, which animals appear and roughly when?
+        - fileData:
+            fileUri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+            mimeType: video/mp4
+          mediaProcessing: AGENTIC
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"thoughtSignature\": \"EssECsgECAISwwQBEU0yDxk3k5DKQvLMw4BSdrYSEKQ2VaJ6cITBWMlQHFnaHUXrHeH+K9F7z61SlSSul+TSTiNCC4HB/Hu8WgvkfU8khU1mIZlMTSdBEHA+yA3IQi1eI7RHCOkF3Tg3gPAdLXvQYWABXnfD8Q/5ibrBGgN/NGsjpTeyKxd0g6PvVvQ9rGOLY4VNquf/u4bKayDgdX7iYTpglnkAVt5rynH7OSrCBgU4Rbif9r5Coca1KVKTiCQ7Ym2ha11EcViXnG7tVzjKrGu25mdjiTdeE+hWJJU49xhTJJn9OhFbmOn1gnH+AN5sE8fpEUVPBx+1UhC8nMozuDk73m548YIYuWZZzx+2Nv0IWs3p4h4Gj7s7u/iUxXob7+WVJqK8iUaHbYxNIhiUoxnUQreYMaZXttIDOtBnZKlFCBDZ2zUcz+7769F4vCBRXyvIGwUjk0sK+hf7ro4QMx+/E9uw+OPVRFDw76TeCDYqbgnkrzRWksR20lhaPjQSrYMhxYPPI7v9drv6JDUWZXWyb9/6pOIkh0AMlxNo3TNSTYntlNoXp7VyWWDNNZ0S6YmrbLbFEJuhXj1a3azh3NQiCSGue2dazRgkEHULdsODB7pp1Um7GSlt0B1exzW6ig9pwiFZbQgSgxsb3EovRivw8flrryOHyLz+HQr/nxO2epqM9Nny7Wm55l78YHACeJpBFU/UZcrU9WimdCEJ1Dv8qT1mhQX9XzZEeQykpg6Ky3rXfVpdinw8t13qJwNX84KOC2A7MAkZ0k1Y9UY=\",\"toolCall\":
+        {\"id\": \"call_3627313\"}}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 12,\"candidatesTokenCount\":
+        45,\"totalTokenCount\": 91,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 12}],\"thoughtsTokenCount\":
+        34,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.7-flash\",\"responseId\": \"WL2aau7EH-apg8UPjfLO0Ac\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"thoughtSignature\": \"ErsCCrgCCAISswIBEU0yD8vjrUspeYO+79+GyMNBnLgfJMA9hMSrv65kDuQVV8sy/Z00DB94jl747Y2Cq350AQoLPhsAdxzMI75fcB57/PhWaNaIi7v+lqrdSaaJkZcvUXnn8rfe50pRgda45rrPNhMsl0KM0bTu4HAgM3fzalcW9LEUfRJHLt7w7Ax+lzBghv/P3h6x1I9E/wKmX/jYik3ek8TYj7yAfwmpqxaud/AoqQuL8SPUTaXiM+5RCg/Rpi4y/9f0KYFWmc2H3KxtHSUZgeUqwBDXqjUoP656V38eOkxIkR6eaRjF75XWgkNd9adSojB8/PYycJ8clxwZWirEmqbeASHP08uuriUXOUlCuE7yHp/aSXjixnMmmbuUicoYO+nR56CTSa/gPC0UpztIJ8S34aNrv/hWippF\",\"toolResponse\":
+        {\"id\": \"call_3627313\"}}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\": 12,\"totalTokenCount\":
+        12,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 12}],\"serviceTier\": \"standard\"},\"modelVersion\":
+        \"gemini-3.7-flash\",\"responseId\": \"WL2aau7EH-apg8UPjfLO0Ac\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
+        [{\"thoughtSignature\": \"EpUGCpIGCAISjQYBEU0yD9Oyzoxr0mF6V5LascHHPhalZ2JJclynfMqHUG7o89olaCDCe/W0yP+Gvu7H5uBpZ+gzhOJiGr7Msjr71vPfS4PpTHjzeUEfpYLcDhgb8EgAzdQa5SXOOFV6eDfsbhVBxCrUgjrqh1hOajIU/j3P83mkmTWA7fBiTv9BP/efZPX6eWhYio+fE/x/SXpplIjYr0zKemAkY2jll00CcwryYsc6cOCTeRTsrt5dxsPIEvPVYcqBkNkJjAPuuvRl2OtJdk5I4EnZ8LHCFhLCowOPwEoMiHUNOR/JKz4oZTkL5QsssbXcAtuMlRpUtCyCKuqb/u+4uA8rfEzIxR/cmCMSzpCyHRmuimR1EM5bwLSvhnyj4MTo86xf7VW6bdjeU4zGod4NMBD1mQwMvsQN1axZXAZT7CY0kzIMwppVuiLJe19/u5uABSu+92GAV17nWAdSfswq1YBVlCCTOCSHyKDpqfUPD5+F3f9v9zT27n5QluEvxBw/DZhsKYxb2vT3Q+wbkji49EIkhSVmCogYPQDxUf9yItM8CYqTaD+RLB7LNQqLJTaIxZkg2Z0fBCZ0QYkiUfczG5S9Lh+5YiDXpZtzUFRRzi3OR3djAsQuBRt6S+aYrmQkxXDnWoKFvYgabrnvUTJVeHUzGtITMl8fuIHVfgfxsFkyRjMTzrX4vXwBKY5udNKRRWBNvMz4HVv5cEPcpCCid12IbzHoF6UMqYUSii7HhUbrGH33H37pO7mnGU30L5HzVMHedrea3RuKq8jlS7A7pKlQOjVVQrU8rN0a7VoITqAYgU9Y5vzMcQuTiP9A4ENVK+4rxz9X+4HHU8UUQwQYQ3i79lN7Es36DieTibVrWfXjJws3BYSPRRgNH5uMmNiky7ufNxQCW2LN7Jq2UiJbTT/RTyh10ddIp51wokutnr04TNv188468acD7d9akPf/00ib+c7H2MQEXfL0WGVNEefFBCUNcECvq2uhjgDSHQ+T1eHDAfjF86pQUZozdK0t2TDgwvbxbsLrbU2R6TxxfeXOcLHm\",\"toolCall\":
+        {\"id\": \"call_3627373\"}}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 12,\"candidatesTokenCount\":
+        84,\"totalTokenCount\": 2134,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 12}],\"toolUsePromptTokenCount\":
+        1921,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 121},{\"modality\": \"IMAGE\",\"tokenCount\":
+        1800}],\"thoughtsTokenCount\": 117,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.7-flash\",\"responseId\":
+        \"WL2aau7EH-apg8UPjfLO0Ac\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"thoughtSignature\": \"ErYCCrMCCAISrgIBEU0yD5rP1C9FIax7WGkE9ZbPVoHHvEv2uF/5k+fItFjB7sEEm+2KILZMro1Iubt//nu7XJRlhNClCv5HodDO1Z1gwAfRpnJxuBAeG2RH3EouG4Z+ZQAlnhI7705humv96+g/vTFWw+9eGTXN65pH+do1QyasDzMxxQ3Y/WDvmhqZb9dmv7PCbio1bmdtxlKOCG94fbM88sHeHcbsh4UTL/24H3dMQqrPVGtDLCvjX7BnPNSY52hxVvMpBkVGaAXsIgwymHLmC0mMwT5R4FMU0F/OuZK2iJxnW5qi5ir7u7fEo/Z+ZZb6mMKKTvby+kaAH3ffalL4CfLpdMFzZjC2v6qZLZNntSWYGpazminioOed+mFjogvbbTxAoPd/7e7j/aec5uFNVML8iDtmOQ==\",\"toolResponse\":
+        {\"id\": \"call_3627373\"}}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\": 12,\"candidatesTokenCount\":
+        84,\"totalTokenCount\": 2134,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 12}],\"toolUsePromptTokenCount\":
+        1921,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 121},{\"modality\": \"IMAGE\",\"tokenCount\":
+        1800}],\"thoughtsTokenCount\": 117,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.7-flash\",\"responseId\":
+        \"WL2aau7EH-apg8UPjfLO0Ac\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"No animals appear
+        in this video, as it is a screen recording of a software development environment and code editor\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 12,\"candidatesTokenCount\": 84,\"totalTokenCount\": 2134,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 12}],\"toolUsePromptTokenCount\": 1921,\"toolUsePromptTokensDetails\": [{\"modality\":
+        \"IMAGE\",\"tokenCount\": 1800},{\"modality\": \"TEXT\",\"tokenCount\": 121}],\"thoughtsTokenCount\": 117,\"serviceTier\":
+        \"standard\"},\"modelVersion\": \"gemini-3.7-flash\",\"responseId\": \"WL2aau7EH-apg8UPjfLO0Ac\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \".\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        12,\"candidatesTokenCount\": 84,\"totalTokenCount\": 2134,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        12}],\"toolUsePromptTokenCount\": 1921,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 121},{\"modality\":
+        \"IMAGE\",\"tokenCount\": 1800}],\"thoughtsTokenCount\": 117,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.7-flash\",\"responseId\":
+        \"WL2aau7EH-apg8UPjfLO0Ac\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\",\"thoughtSignature\":
+        \"EoECCv4BARFNMg/NdIxvx1gs8HmQcgn0D+PMn2j/oE/y0pjoLotoyUx1ar6fjcR1eGjZivm0X2rVXqOLE9jVXw9ayQtufS8jmLQKWNEGtlYq96GYBNFKVFCg4BM72xGVs2G0Od3TOxwQKkQelgMatxyPEjK0zofaGhRf67SRXDMhF6BSshweM1aW65+UY0WQuV2AzKs62TiMHCDChHYrgrP2755DdiitSLtQOltq6ROmuuoncCIGH040lJqT6FCSNigtDataI9IbzxEajZbdwqKQJnnmKgugfkZeS7wSG/u2A7R5YSy1EhamgXVfIlpjKFfuLPft/GbcLyUsfa6CCiomC80=\"}],\"role\":
+        \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 129,\"candidatesTokenCount\":
+        106,\"totalTokenCount\": 4557,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 129}],\"toolUsePromptTokenCount\":
+        3969,\"toolUsePromptTokensDetails\": [{\"modality\": \"IMAGE\",\"tokenCount\": 3600},{\"modality\": \"TEXT\",\"tokenCount\":
+        369}],\"thoughtsTokenCount\": 353,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.7-flash\",\"responseId\":
+        \"WL2aau7EH-apg8UPjfLO0Ac\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=1648
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '896'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: In one sentence, which animals appear and roughly when?
+        - fileData:
+            fileUri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+            mimeType: video/mp4
+          mediaProcessing: AGENTIC
+        role: user
+      - parts:
+        - text: No animals appear in this video, as it is a screen recording of a software development environment and code
+            editor.
+          thoughtSignature: EoECCv4BARFNMg_NdIxvx1gs8HmQcgn0D-PMn2j_oE_y0pjoLotoyUx1ar6fjcR1eGjZivm0X2rVXqOLE9jVXw9ayQtufS8jmLQKWNEGtlYq96GYBNFKVFCg4BM72xGVs2G0Od3TOxwQKkQelgMatxyPEjK0zofaGhRf67SRXDMhF6BSshweM1aW65-UY0WQuV2AzKs62TiMHCDChHYrgrP2755DdiitSLtQOltq6ROmuuoncCIGH040lJqT6FCSNigtDataI9IbzxEajZbdwqKQJnnmKgugfkZeS7wSG_u2A7R5YSy1EhamgXVfIlpjKFfuLPft_GbcLyUsfa6CCiomC80=
+        role: model
+      - parts:
+        - text: Which animal appears first?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2234'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2824
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - thoughtSignature: EqQECqEECAISnAQBEU0yDxlWeQ4/KfiGctEYMjSCg1Wp/cWM9qelAC62+3SktAZ5oenWhN8JPZJ4WTmpETfllu3b2FjGcuMu9KN8cvPqcLhDtITiT7ph/liGxh7mZbA6t0FvUvUiRxCXaTLnNefD0GLHtKdgCdKgjKOM9/MLCBfbcWgqhLVsGcm5/lB0Ja3/kqfxAkeFmVIVx4EtyYOpy35aEOFEN2i9UFwcF2TsrxBLQJPAAnuaWgXOm+FcbkEWlBs5vzg662wX4wzPM8ad8b6SRZHOsegstWLtI8YTyWDwQP+nZxmPPEKHXTd60Aa12R+sfFw3fTfnEbPJaN1Ycr65HhM4rbFP00B32DkSHBlPRbTpWHdc2ku9eiFyftCfs6selYavTSM4M8/CjZnjxXd5XISFpUm3FQV2fvXWUNxFrU7NiqJBT7UzdCGo8r2ic9r0mq3z3m733amVngwDyIkYIlpXJ5XaMCTNht5nh1Non01ASd/uF9z1p4fBFBc4pU1cs0YRPLAuXSafjHi9AY6sC8NOizLrmJ6lo3ElTFQTeMcrud2llNL+N3AbVymZ4AB7J8N90Z3pit4L9JMZ1R8X5o7Qn5S2JOEgXlSa7butn3U3+Wgnq/dIPeOE8J91m+bDnZHPanPQvP5qfnPVunBNRC7RnKA1nZZOTLrDJcW3DctamdFR9vXAWpQrCN8K1y9BIdnzHRrrup5y+ueKq8+IZ9LH9Qk=
+            toolCall:
+              id: call_2189355
+          - thoughtSignature: ErsCCrgCCAISswIBEU0yD2y7NVIGurYeAiFL+N959IvNhlqW6BBCvZAUJ89N8FakUDqGYwzM8tn+Zbm+nt22dheC0vy+OaIHi2mlSoXH4GIbCdjGBex5LjCy4Uf3tajEgozUlpSJEfuU+ITz+HC2tZZOYgj/b0yFVqQICKzVbZ6dK4bQJrUiOTPLYt1GKqaRiSgYN5wPcFQybOaB0ArljA0UiVpH8H9UoIjlD2dgMYfQLWuInhs94T+30wQhBSSggQrWaEzy6NjoGI8Bwdko2jud8/Z3ta5YxTKd3zg5oQZYxo/h6+gIfubTiV7S4mZZV6l38DY+psyshhuWjrViar9DROWVOTv1GOY1BuPirNR1ZdWrC4s3cutWc6ONgO+TwzubBx3IxSGhNoC4NTLbkA4XbHZEENFeiMD9pWD4
+            toolResponse:
+              id: call_2189355
+          - text: There are no animals in this video.
+            thoughtSignature: EvcBCvQBARFNMg9lIuPT6fznDQ+cjp6mJzW4m9AGTiQ5L0PU3HH6JNYuVFZHqrUqpbsQk2769T9nFYbmqN4l9JRUBXvkx3JxfJABIprlJQNJ0hQH5MVxXOziXKXfhs6FWfDEPoLfOU+X6BR0lD5E6WOuhAYZTG/LycSc77QVPhtlraAcPXet7z9l8GIXUwgPT6N5cdCqMceNEhCxxp0ctAhDxN3MY1a/yh46hhGf6WUL7FKa5k06a35HBowxYcQpyCBn/EUwqs02tNV5ZOjFuJqNqli0EQ3f3VX6EzUlEJESNAdQTxfqqNZAvt/5AFbFCX3H8KOXvxmSbw==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3.7-flash
+      responseId: Xr2aasq7M-Xcg8UP2YLD-Ak
+      usageMetadata:
+        candidatesTokenCount: 53
+        promptTokenCount: 101
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 101
+        serviceTier: standard
+        thoughtsTokenCount: 68
+        toolUsePromptTokenCount: 1974
+        toolUsePromptTokensDetails:
+        - modality: IMAGE
+          tokenCount: 1800
+        - modality: TEXT
+          tokenCount: 174
+        totalTokenCount: 2196
+    status:
+      code: 200
+      message: OK
+version: 1

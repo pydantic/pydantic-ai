@@ -337,6 +337,29 @@ result = agent.run_sync(
 print(result.output)
 ```
 
+### Agentic video processing
+
+For [Gemini models that support agentic video processing](https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding), set `media_processing` on a video input:
+
+```py {title="agentic_video.py" test="skip"}
+from pydantic_ai import Agent, VideoUrl
+from pydantic_ai.models.google import GoogleModel
+
+agent = Agent(GoogleModel('gemini-3.7-flash'))
+result = agent.run_sync(
+    [
+        'Summarize the important moments with timestamps.',
+        VideoUrl(
+            url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            vendor_metadata={'media_processing': 'AGENTIC'},
+        ),
+    ]
+)
+print(result.output)
+```
+
+On the Gemini Developer API, each processing step appears in the response as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] named `media_processing`. Vertex AI returns only thought signatures for these steps, so nothing is added to the message history there. The steps are left out of later requests; the final response and its thought signature are kept.
+
 Files can be uploaded via the [Files API](https://ai.google.dev/gemini-api/docs/files) and passed as URLs:
 
 ```py {title="file_upload.py" test="skip"}

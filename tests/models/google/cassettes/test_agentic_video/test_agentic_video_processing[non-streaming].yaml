@@ -1,0 +1,158 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '295'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: In one sentence, which animals appear and roughly when?
+        - fileData:
+            fileUri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+            mimeType: video/mp4
+          mediaProcessing: AGENTIC
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2839'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3240
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - thoughtSignature: Er0ECroECAIStQQBEU0yD7Qf7r/cjeoKMzQrCUZhH80O/nlWsyKqMy5jkq+mH8eL2oK61/MhhIBWdmqn2DJis0IvJ8ivpFhIto2tjTg2XffMF9x3oqmWECqLxWTjeRXBsWRrSXgiiqUPzlT8MxPAgfL7lqzJcgmiqCk6bBGO2zgNH01/wPX5ZOa/7wuoBM8wiGq2Ow+1DPsbnZzgEiDXn1jhFkPVrt0JATmJtViVShhuHzF6XhWVbtq1drC78cGYNSJup4NFamPAivkUHmCQzNuV0mnKcs1KWM4T48ISwN3rboMiFL6S6JHBLMF2Cs5Fi/1nUuAYOtIXkw/YUfWFUWRc2Bh11aIb6IZJbFEwZ18m7T6y4VgQky+GeCUbOut3O/cfPfQ5M+g/A18NZ/i7+n4lVn49RmFlUt9aDvHp5uY46lPk+idlVu8TsGN1VGGlnG2WfZ2mYlZV2pKvX113lhJ4TzLR707YWlSZy0PgbnRYDOKSbFx/aOtVPUOc4N5Y2IMxVsf0zT6YVlf6gA9XO14Fe+hFc2Rhk+NfnJkh/f4OUXcu26uN35V6wIQRiRSIv+FqoPNTzthnZvGGz/s6+13IiIgSCWmy0nodLU+LCr8Sxs9Krvntj2utr1zSehbQ5L0oY9VeYCF94y2Ukj3AMEd/nSjjLnZuwbg+7E3s6QXVeMywcfO1u+syhZ95frFZ8QFOFkGYuOxQ5lnQsS3rbhr7epL54VS6ngBYmJOtiy5KkNg8738sUo9oJhQOHdDK
+            toolCall:
+              id: call_3095045
+          - thoughtSignature: ErsCCrgCCAISswIBEU0yD8RQ5ZWd0jMQ/g0ujttI4TGgao7oUtBbOEpNekvouk19Vx7K0ef9g//GMvcvmYdRtGkok1lV8o4nK/QQNicjf8vHT3guIzo1cClXIvSgphjOQ0Q2JLjsNlrA56uCt4GS7vkgJec793oktDMh61omgsLd1NRD+JuUY90M5ropjqbPlRl7Euy8vsGjhOv68n881cC/qN7auI0aFhoIc9RqJ9vtnb7qz9zDw1q6qJeh/WWBWPAdDt3inR895Be8C6DY9dtyZcrC0Pv2B/ExzOwNa7gsXqUnYTwWlxfPlihXLzBeqfJvqMdDt9/19rEYsUtRxl7lA6fPT0r8XzF+Jnw+NTprHVJJaWx2BnaTRZM4YqCfEcIitoVur/bKYcIjjqJACLgdzxS01vHxagdssAn1
+            toolResponse:
+              id: call_3095045
+          - text: No animals appear in this video, as it consists entirely of a screen recording of a code editor and AI assistant
+              session.
+            thoughtSignature: EuYECuMEARFNMg/00rmimUUeqSiPT+MGQWRoIkyPN12hZpyTCvjHmlqEhL6mPU3nuxE+KKIFCblDyquYPiS+1rezOervTToPNdi/BZ1z3uNyzPkufY1/521agKeR9+vuNgNd4cIwOMDHm0sqLKFlI+VnoPqzQW3UO7NMFjV5i1FL/YWOefnxsAVhS7us0Y9zh9rggj45W/RRzGtB6Lzi7h/IlPj6qkEAPmuAhykW40tAIKAv5TuBTPf30dc68b8p4FaiHfBY3ceaiSJc1vYIf8O7TkYK9ZquPhtTx54qqYUng6/xwwSNu/356uZygq5ma7baaHubzIS/0VSl8bKXZG6IlAbGFWT0JL4XVeHDoIChk9OShlbSUQ/Y/oS+QWA3bjXri13vqSzDSKDdDgdHGNNs0EUFCSbAVJDQUbWNir5SCtF53D33Jl/jpFhMZ3mq6YiSkH2EPEXLjm2lPjALB0G8H+J3x2VFvEtVFDP7jHaaXM27WYq6PP4rO4ovW4ySWJgnGu9v2dEfTVz8aYvaJ1enpLaYqAoXqVkFPa/R8pJDdWFs6KX/SLd9NQ5sASaY3FEv2emthNr/Z8nTyyC3tAR56MEHIg1fgenXayUBmWQXNG/EIhuJ7u5uwKEHammRNVBU11LIiP0wiL6GK3O+m+/P/VUTVk8W+8qdWaLOKO8j0ef20oTbhczDx3xljgfOO+bQS9TjvOaKredy8gv7pb781iEl0teHDUm87RqTEpyWghU3c1YyFN+FG6tX1rPTgWarN8bMKEtwrZ4PH/Cr/9ouPlk6/W76QlBycddBmQwMwWL8iwfZpk4=
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3.7-flash
+      responseId: Ur2aatilL6yvmNMP9sWEiAQ
+      usageMetadata:
+        candidatesTokenCount: 69
+        promptTokenCount: 47
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 47
+        serviceTier: standard
+        thoughtsTokenCount: 147
+        toolUsePromptTokenCount: 1922
+        toolUsePromptTokensDetails:
+        - modality: IMAGE
+          tokenCount: 1800
+        - modality: TEXT
+          tokenCount: 122
+        totalTokenCount: 2185
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1378'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: In one sentence, which animals appear and roughly when?
+        - fileData:
+            fileUri: https://www.youtube.com/watch?v=lCdaVNyHtjU
+            mimeType: video/mp4
+          mediaProcessing: AGENTIC
+        role: user
+      - parts:
+        - text: No animals appear in this video, as it consists entirely of a screen recording of a code editor and AI assistant
+            session.
+          thoughtSignature: EuYECuMEARFNMg_00rmimUUeqSiPT-MGQWRoIkyPN12hZpyTCvjHmlqEhL6mPU3nuxE-KKIFCblDyquYPiS-1rezOervTToPNdi_BZ1z3uNyzPkufY1_521agKeR9-vuNgNd4cIwOMDHm0sqLKFlI-VnoPqzQW3UO7NMFjV5i1FL_YWOefnxsAVhS7us0Y9zh9rggj45W_RRzGtB6Lzi7h_IlPj6qkEAPmuAhykW40tAIKAv5TuBTPf30dc68b8p4FaiHfBY3ceaiSJc1vYIf8O7TkYK9ZquPhtTx54qqYUng6_xwwSNu_356uZygq5ma7baaHubzIS_0VSl8bKXZG6IlAbGFWT0JL4XVeHDoIChk9OShlbSUQ_Y_oS-QWA3bjXri13vqSzDSKDdDgdHGNNs0EUFCSbAVJDQUbWNir5SCtF53D33Jl_jpFhMZ3mq6YiSkH2EPEXLjm2lPjALB0G8H-J3x2VFvEtVFDP7jHaaXM27WYq6PP4rO4ovW4ySWJgnGu9v2dEfTVz8aYvaJ1enpLaYqAoXqVkFPa_R8pJDdWFs6KX_SLd9NQ5sASaY3FEv2emthNr_Z8nTyyC3tAR56MEHIg1fgenXayUBmWQXNG_EIhuJ7u5uwKEHammRNVBU11LIiP0wiL6GK3O-m-_P_VUTVk8W-8qdWaLOKO8j0ef20oTbhczDx3xljgfOO-bQS9TjvOaKredy8gv7pb781iEl0teHDUm87RqTEpyWghU3c1YyFN-FG6tX1rPTgWarN8bMKEtwrZ4PH_Cr_9ouPlk6_W76QlBycddBmQwMwWL8iwfZpk4=
+        role: model
+      - parts:
+        - text: Which animal appears first?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '904'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1989
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: No animal appears first, as there are no animals shown anywhere in this video (it is entirely a screen recording
+              of computer code).
+            thoughtSignature: EoACCv0BARFNMg/tlOWeW2VRyJObaDfTFbP+mdBjY/IsQLVyM6jNeJ6rUEkpu1FyZDweLhMumR5I5rQBUI4EVbbaDoVhHw/yaOMOdkMy8GxWtjVxDeJQcK113F2kxDkuEW9k3B6RUICG+kCUDcsBeOwHVUHgNYA8fzaUUiVt+Nu9NL128wpthjgvEbpKRjNvZqbptIBzDKX1w5bVw0z9Wml1zQbwUkVq7/PGHIRe1ElpGMSlQxZYacloEoa0PLDit1AeSAMD+PA3ZPGDAbQgR/CntvBaHZPOg92R4Hyi3+7+E01lNSKlJRat/uTK53yJi3ri7pTuZbOq6cflBodRGAd3uQ==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3.7-flash
+      responseId: Vr2aav6fE63Rg8UPr-2qmQc
+      usageMetadata:
+        candidatesTokenCount: 26
+        promptTokenCount: 155
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 155
+        serviceTier: standard
+        thoughtsTokenCount: 30
+        totalTokenCount: 211
+    status:
+      code: 200
+      message: OK
+version: 1
