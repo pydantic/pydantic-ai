@@ -1583,7 +1583,7 @@ Refund = YesNo(yes='Money was returned to the customer.', no='No refund was issu
 class SettledByYesNo(BaseModel):
     """Review the transcript."""
 
-    refunded: Refund = Field(description='Was a refund issued?')
+    refunded: Refund = Field(description='Was a refund issued?')  # pyright: ignore[reportInvalidTypeForm]
 
 
 async def test_yes_no_describes_both_answers_and_gives_back_a_plain_bool(allow_model_requests: None):
@@ -1597,7 +1597,7 @@ async def test_yes_no_describes_both_answers_and_gives_back_a_plain_bool(allow_m
     result = await Agent(mock_model(record), output_type=SettledByYesNo).run('we sent the money back')
 
     # A real `bool`, not an enum member needing `.value`: `bool` cannot be subclassed, so `YesNo()` annotates.
-    assert result.output.refunded is True
+    assert result.output.refunded is True  # pyright: ignore[reportUnknownMemberType]
     assert seen[0]['questions']['refunded'] == snapshot(
         {
             'type': 'noul',
