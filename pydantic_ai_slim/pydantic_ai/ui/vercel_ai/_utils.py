@@ -177,15 +177,18 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 # See: https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui/ui-messages.ts#L75
 #
 # If the Vercel AI SDK introduces new data-carrying UIMessagePart variants,
-# the corresponding chunk type should be added here. Serialized dictionaries are
-# only rehydrated from metadata: tool content is model-facing output that may
-# legitimately contain a chunk-shaped mapping, and its existing meaning must not change.
+# the corresponding chunk type should be added here.
 MetadataChunk: TypeAlias = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
 DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 _METADATA_CHUNK_TA: TypeAdapter[MetadataChunk] = TypeAdapter(MetadataChunk)
 
 
 def _as_metadata_chunk(value: object, *, allow_dict: bool) -> MetadataChunk | None:
+    """Restore a supported chunk, rehydrating dictionaries only when they came from metadata.
+
+    Tool content is model-facing output that may legitimately contain a chunk-shaped
+    mapping, and its existing meaning must not change.
+    """
     if isinstance(value, DATA_CHUNK_TYPES):
         return value
     if allow_dict and is_str_dict(value):
@@ -200,8 +203,8 @@ def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[MetadataChunk]
     """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
     Used by both the streaming and dump paths. Serialized metadata dictionaries
-    are rehydrated after persistence, while dictionaries in tool content are not.
-    Only `DATA_CHUNK_TYPES` are yielded; protocol-control chunks are filtered out.
+    are rehydrated after persistence. Only `DATA_CHUNK_TYPES` are yielded;
+    protocol-control chunks are filtered out.
     """
     possible = tool_result.metadata or tool_result.content
     from_metadata = bool(tool_result.metadata)

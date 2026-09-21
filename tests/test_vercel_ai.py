@@ -21,11 +21,6 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.durable_exec._codec import JSON_CODEC
-from pydantic_ai.durable_exec._toolset import (
-    CallToolResult,
-    unwrap_tool_call_result,
-    wrap_tool_call_result,
-)
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
@@ -2427,13 +2422,7 @@ async def test_run_stream_tool_metadata_single_chunk(durable_round_trip: bool):
             metadata=DataChunk(type='data-custom', data={'key': 'value'}),
         )
         if durable_round_trip:
-
-            async def execute() -> ToolReturn:
-                return result
-
-            wrapped = await wrap_tool_call_result(execute())
-            payload = JSON_CODEC.dump(CallToolResult, wrapped)
-            result = cast(ToolReturn, unwrap_tool_call_result(JSON_CODEC.load(CallToolResult, payload)))
+            result = JSON_CODEC.load(ToolReturn, JSON_CODEC.dump(ToolReturn, result))
         return result
 
     request = SubmitMessage(
