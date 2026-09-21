@@ -305,7 +305,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         offered = [*hand_offs, *function_tools]
         tools = _tools_left(messages, offered)
         forced_tool = tools[0] if not output_tools and len(tools) == 1 and len(offered) > 1 else None
-        if forced_tool is not None and not forced_tool.parameters_json_schema.get('properties'):
+        if forced_tool is not None and (
+            _none_route(forced_tool) or not _properties(forced_tool.parameters_json_schema)
+        ):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool)
         properties = _fields(output_tool) if output_tool else {}
@@ -467,7 +469,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         """Call the one argumentless route left, without asking Jev."""
         details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
         return ModelResponse(
-            parts=[ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())],
+            parts=[ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(),
             model_name=self._model_name,
             provider_name=self._provider.name,
@@ -657,9 +659,17 @@ def _tool_call(
     if tool is None:
         raise UnexpectedModelBehavior(f'TypeSafe picked a tool it was not offered: {answer.choice!r}')
     if tool.name not in hand_offs and probability < threshold:
+        # A `None` route is a result to take, not something else to be done, so it is weighed here with the
+        # output types rather than below with the hand-offs, even though it is offered as one of those.
+        results = [*output_tools, *(candidate for candidate in tools if _none_route(candidate))]
         if likeliest_output := max(
-            output_tools, key=lambda candidate: answer.probabilities.get(candidate.name, 0.0), default=None
+            results, key=lambda candidate: answer.probabilities.get(candidate.name, 0.0), default=None
         ):
+            if _none_route(likeliest_output):
+                # Nothing to fill, so it is called on the fallback itself rather than asked about again.
+                return ToolCallPart(
+                    likeliest_output.name, _route_args(likeliest_output), _utils.generate_tool_call_id()
+                )
             return likeliest_output
         likeliest = max(
             (candidate for candidate in tools if candidate.name in hand_offs),
@@ -669,10 +679,10 @@ def _tool_call(
         if likeliest is not None:
             provider_details['tool']['taken'] = likeliest.name
             tool = likeliest
-    if tool.parameters_json_schema.get('properties'):
+    if not _none_route(tool) and tool.parameters_json_schema.get('properties'):
         return tool
     # Nothing to write, so the call is made on Jev's pick.
-    return ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())
+    return ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())
 
 
 def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
@@ -682,6 +692,36 @@ def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
     except UserError:
         return False
     return True
+
+
+_NONE_OF_THESE = 'None of these.'
+
+
+def _none_route(tool: ToolDefinition) -> bool:
+    """Whether this output tool is the `None` member of a union: a route that returns nothing.
+
+    Pydantic AI wraps a bare `None` output type in an object with one `null` property, so the route has a field
+    in its schema and yet only one value that field could ever take. There is nothing to ask about it: to Jev it
+    is one more option to pick, the same thing `_optional` makes of an `X | None` field one level down.
+    """
+    return tool.kind == 'output' and list(_properties(tool.parameters_json_schema).values()) == [{'type': 'null'}]
+
+
+def _route_args(tool: ToolDefinition) -> dict[str, Any]:
+    """The arguments to call a route with when Jev writes nothing: none, or the `None` a `None` route wraps."""
+    return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
+
+
+def _route_description(tool: ToolDefinition) -> str | None:
+    """What a route says about itself on the route question.
+
+    A `None` route has no docstring to take this from, so the library supplies one — unless the user named the
+    route themselves with `ToolOutput(type_=None, description=...)`, which is them saying what declining means
+    on this agent, and says more than the stock phrase does.
+    """
+    if _none_route(tool):
+        return _described(tool) or _NONE_OF_THESE
+    return tool.description
 
 
 def _output_tools(
@@ -697,7 +737,7 @@ def _output_tools(
     with_fields: list[ToolDefinition] = []
     hand_offs: list[ToolDefinition] = []
     for tool in model_request_parameters.output_tools:
-        (with_fields if _properties(tool.parameters_json_schema) else hand_offs).append(tool)
+        (hand_offs if _none_route(tool) or not _properties(tool.parameters_json_schema) else with_fields).append(tool)
     return with_fields, hand_offs
 
 
@@ -826,7 +866,7 @@ def _questions(
                     f'Output field {name!r} is not supported by this model: only a `Literal` or `Enum` of strings can '
                     f'be optional, since `None` is one more option to pick. {_UNSUPPORTED_FIELD_HINT}'
                 )
-            options = {**options, none_key: 'None of these.'}
+            options = {**options, none_key: _NONE_OF_THESE}
 
         # A single value needs no labelling, and TypeSafe's advice is to start with a string; the object
         # form earns its keys only once there is more than one thing in it.
@@ -947,7 +987,7 @@ def _tool_question(
                 'filling it does' + ('.' if len(output_tools) > 1 else ', or the agent `instructions`.')
             )
         criteria[output_tool.name] = described or instructions
-    criteria.update((tool.name, tool.description) for tool in tools)
+    criteria.update((tool.name, _route_description(tool)) for tool in tools)
     if len(criteria) > _MAX_CHOICE_OPTIONS:
         raise UserError(
             f'Jev picks from at most {_MAX_CHOICE_OPTIONS} options, and it is being offered {len(criteria)} routes: '
