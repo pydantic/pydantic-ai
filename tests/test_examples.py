@@ -129,7 +129,9 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             test_id = f'{path}:{ex.start_line}'
             prefix_settings = ex.prefix_settings()
             if path.parts[:2] == ('docs', 'cookbook') and prefix_settings.get('test', '').startswith('skip'):
-                raise AssertionError(f'Cookbook recipes must be executable: {path}:{ex.start_line}')
+                raise AssertionError(  # pragma: no cover
+                    f'Cookbook recipes must be executable: {path}:{ex.start_line}'
+                )
             if title := prefix_settings.get('title'):
                 if title.endswith('.py'):
                     code_examples[title] = ex

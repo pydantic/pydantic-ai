@@ -30,8 +30,7 @@ async def main() -> None:
     result = await agent.run('Give the incident commander one concise status update.')
     print(result.output)
     #> Checkout is degraded; rollback is in progress.
-    print(result.response.model_name)
-    #> claude-sonnet-4-6
+    # Record result.response.model_name to monitor which provider served the response.
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ description: Exercise agent tools and orchestration deterministically with TestM
 Use `TestModel` through `Agent.override()` to exercise the real agent and tools without changing production configuration or calling a provider.
 
 ```bash
-pip/uv-add pydantic-ai-slim pytest
+pip/uv-add "pydantic-ai-slim[openai]" pytest
 ```
 
 ```python {title="test_inventory_agent.py" call_name="test_inventory_agent"}
