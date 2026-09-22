@@ -33,6 +33,31 @@ print(result.output)
 
 The executor decides when to consult. Ask it explicitly in the user prompt or the agent's instructions when a consultation is required.
 
+## Structured answers
+
+Set `output_type` to the output specification you would pass to a Pydantic AI `Agent`, such as a Pydantic model, a scalar type, or `NativeOutput(...)`. It defaults to `str`. The advisor model must support the selected output mode.
+
+Provider-native advisor tools do not accept an output schema. A non-default `output_type` therefore selects local execution in `auto` mode; combining it with `mode='native'` raises `ValueError`.
+
+```python
+from pydantic import BaseModel
+from pydantic_ai import Agent
+from pydantic_ai_harness.advisor import Advisor
+
+
+class Decision(BaseModel):
+    proceed: bool
+    risk_score: float
+
+
+agent = Agent(
+    'openai:gpt-5.4',
+    capabilities=[Advisor('openai:gpt-5.4', output_type=Decision)],
+)
+```
+
+Successful consultations return the validated object as the tool result, not a string representation. The local advisor's instructions request the configured output format rather than prose, and the tool description tells the executor to expect a validated answer. Exceeding `max_uses` still returns the limit message instead of a structured answer.
+
 ## Provider adaptation
 
 `Advisor` exposes one logical tool through two execution paths:
@@ -62,6 +87,7 @@ Pydantic AI's resolved executor model profile makes the final support decision. 
 |---|---:|---|
 | `model` | required | Advisor model name or `Model` instance. |
 | `mode` | `'auto'` | Execution policy: `'auto'`, `'native'`, or `'local'`. |
+| `output_type` | `str` | Local advisor output specification. Non-default values require local execution. |
 | `max_uses` | `None` | Maximum consultations in one executor model request. Must be at least `1`. |
 | `max_tokens` | `None` | Maximum output tokens for each consultation. Must be at least `1024`. |
 | `caching` | `None` | Anthropic-native prompt-cache TTL: `'5m'` or `'1h'`. |
@@ -75,7 +101,7 @@ Use `mode='native'` when the consultation must stay inside the executor provider
 
 `forward_history` only affects the local execution path, whether selected explicitly or as the `auto` fallback. It does not alter native tool configuration or native-versus-local selection. When enabled, the local advisor receives the completed executor message history before the current response. The current response, including partial text and unresolved tool calls, is not forwarded, so the consultation prompt still needs to contain the complete current question.
 
-String model configurations can be loaded from YAML or JSON agent specs by passing `Advisor` in `custom_capability_types`. Runtime `Model` instances remain Python-only.
+String model configurations can be loaded from YAML or JSON agent specs by passing `Advisor` in `custom_capability_types`. Runtime `Model` instances and custom output specifications remain Python-only.
 
 ## Context passed to the advisor
 
