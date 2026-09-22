@@ -104,7 +104,7 @@ class LivePrompt:
         try:
             paths = pasted_paths(text) if text is not None else []
             if text is not None and not paths:
-                self.buffer.insert(text)
+                self.buffer.insert(text, paste=True)
             else:
                 self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
         except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
@@ -178,8 +178,7 @@ class LivePrompt:
         """Apply the selected Termflow completion to its original prefix."""
         item = self._completions[self._selection]
         start = max(0, self.buffer.cursor + item.start_position)
-        self.buffer.text = self.buffer.text[:start] + item.text + self.buffer.text[self.buffer.cursor :]
-        self.buffer.cursor = start + len(item.text)
+        self.buffer.replace_range(start, self.buffer.cursor, item.text)
         self.buffer.history_index = None
         self.dismiss_completions()
 

@@ -59,6 +59,25 @@ async def editor(*, output: io.StringIO | None = None) -> AsyncGenerator[tuple[L
         assert output.getvalue().endswith('\x1b[?25h\x1b[?2026l')
 
 
+async def test_long_paste_submission_and_history() -> None:
+    async with editor() as (live, pipe, _):
+        text = '\n'.join(f'line {index}' for index in range(5))
+        live.feed('paste', text)
+        frame = Text.from_ansi('\n'.join(live.frame())).plain
+        assert '[paste 5 lines]' in frame
+        assert 'line 4' not in frame
+        pipe.send_text('\n')
+        assert await live.read() == text
+        assert live.history.get_strings() == [text]
+        assert live.buffer.display() == ('', 0)
+        live.feed('up')
+        assert live.buffer.text == text
+        live.feed('ctrl-c')
+        with pytest.raises(KeyboardInterrupt):
+            await live.read()
+        assert live.buffer.display() == ('', 0)
+
+
 async def test_input_queue_and_controls() -> None:
     async with editor() as (live, pipe, _):
         pipe.send_text('  \nfirst\nsecond\n')
