@@ -149,6 +149,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     never wired together.
     """
 
+    include_usage: bool = False
+    """Whether `RUN_FINISHED` reports token usage per provider and model; see `AGUIAdapter.include_usage`."""
     _use_reasoning: bool = field(default=False, init=False)
     _use_lifecycle_1_0: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
@@ -237,7 +239,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         elif HAS_INTERRUPTS:
             # Omit `outcome` for SDKs that predate interrupts.
             extra['outcome'] = self._build_outcome()
-        if self._use_lifecycle_1_0 and (usage := self._build_usage()):
+        if self.include_usage and self._use_lifecycle_1_0 and (usage := self._build_usage()):
             extra['usage'] = usage
         yield RunFinishedEvent(
             thread_id=self.thread_id,

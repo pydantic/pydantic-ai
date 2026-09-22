@@ -505,7 +505,7 @@ Pydantic AI supports every `ag-ui-protocol` release from `0.1.10` on, and featur
 - `RUN_STARTED` declares the `protocolVersion`.
 - A cancelled run gets a `cancelled` outcome.
 - Unanswered frontend tool calls are listed in the success outcome's `pendingToolCallIds`.
-- `RUN_FINISHED` carries token `usage` per provider and model.
+- With [`include_usage`][pydantic_ai.ui.ag_ui.AGUIAdapter.include_usage], `RUN_FINISHED` carries token `usage` per provider and model. It is off by default because the entries name the provider and model your server uses.
 - A `file` input source loads as [`UploadedFile`][pydantic_ai.messages.UploadedFile] when its provider is one Pydantic AI knows; it still only reaches the model with [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files].
 
 That gate runs in both directions. On the way out, content an older protocol version can't express is downgraded or omitted — see [`AGUIAdapter.ag_ui_version`][pydantic_ai.ui.ag_ui.AGUIAdapter.ag_ui_version] for the negotiated thresholds. On the way in, a message `role` or input content `type` your installed `ag-ui-protocol` has no class for is skipped with a `UserWarning` naming the tag, and the rest of the request runs — so a frontend on a newer protocol version than your server keeps working, minus the content your install has no type for. For instance, a gateway that forwards image attachments as typed multimodal content (`ag-ui-protocol >= 0.1.15`) still delivers the accompanying text to an agent running on an older install. A shape the installed SDK retired, such as the `binary` input part on 1.0, is translated to its replacement instead of skipped; on a 1.0 install, `dump_messages` emits typed media for every negotiated version.

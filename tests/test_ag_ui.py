@@ -213,20 +213,6 @@ def run_started_protocol_version() -> dict[str, Any]:
     return {'protocolVersion': '1.0'} if _has_ag_ui('1.0.0') else {}
 
 
-def run_finished_usage(*, model: str, provider: str | None = None) -> dict[str, Any]:
-    """`RunFinishedEvent.usage` for a run with one model response, emitted from 1.0 on.
-
-    The counts are the test model's estimates; `test_run_finished_usage_aggregates_provider_model_pairs`
-    pins how real counts are reported.
-    """
-    if not _has_ag_ui('1.0.0'):
-        return {}
-    entry: dict[str, Any] = {'model': model, 'inputTokens': IsInt(), 'outputTokens': IsInt(), 'totalTokens': IsInt()}
-    if provider is not None:
-        entry['provider'] = provider
-    return {'usage': [entry]}
-
-
 def run_finished_outcome() -> dict[str, Any]:
     """`RunFinishedEvent.outcome` as it appears in an expected event when the adapter emits it.
 
@@ -240,7 +226,7 @@ def simple_result(*, negotiated: bool = False) -> Any:
     """Expected event sequence for `simple_stream`.
 
     Pass `negotiated=True` for callers that let the adapter negotiate the installed version, where
-    `RunFinishedEvent.outcome` is emitted from 0.1.19 on and `protocolVersion` and `usage` from 1.0 on.
+    `RunFinishedEvent.outcome` is emitted from 0.1.19 on and `protocolVersion` from 1.0 on.
     Callers that pin an older negotiated version (e.g. `ag_ui_version='0.1.10'`) suppress the fields,
     and so does the default.
     """
@@ -255,7 +241,6 @@ def simple_result(*, negotiated: bool = False) -> Any:
     }
     if negotiated:
         run_finished.update(run_finished_outcome())
-        run_finished.update(run_finished_usage(model='function::simple_stream'))
     return snapshot(
         [
             {
@@ -5849,7 +5834,6 @@ async def test_dispatch_request():
                     'threadId': thread_id,
                     'runId': run_id,
                     **run_finished_outcome(),
-                    **run_finished_usage(provider='test', model='test'),
                 },
                 'more_body': True,
             },
@@ -8301,9 +8285,10 @@ async def _collect_adapter_events(
     ag_ui_version: str = _INTERRUPTS_AG_UI_VERSION,
     deferred_tool_results: DeferredToolResults | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    include_usage: bool = False,
 ) -> list[dict[str, Any]]:
     """Drive `AGUIAdapter` directly so we can pin `ag_ui_version` to the interrupt-aware release."""
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version)
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version, include_usage=include_usage)
     events: list[dict[str, Any]] = []
     async for encoded in adapter.encode_stream(
         adapter.run_stream(deferred_tool_results=deferred_tool_results, on_complete=on_complete)
@@ -8334,7 +8319,7 @@ async def test_run_finished_cancelled_outcome() -> None:
         return 'completed before the cancellation took effect'
 
     events = await _collect_adapter_events(
-        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='1.0.0'
+        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='1.0.0', include_usage=True
     )
     run_finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
 
@@ -8345,8 +8330,8 @@ async def test_run_finished_cancelled_outcome() -> None:
 
 @requires_ag_ui('1.0.0')
 async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
-    """`RUN_FINISHED.usage` has one entry per `(provider, model)`, summed across responses, with every
-    zero count left absent rather than reported as zero.
+    """With `include_usage`, `RUN_FINISHED.usage` has one entry per `(provider, model)`, summed across
+    responses, with every zero count left absent rather than reported as zero.
 
     `on_complete` runs before `RUN_FINISHED` is built, so it is where the test sets each response's usage.
     """
@@ -8384,6 +8369,7 @@ async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
         create_input(UserMessage(id='m1', content='hi')),
         ag_ui_version='1.0.0',
         on_complete=set_usage,
+        include_usage=True,
     )
     run_finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
     assert run_finished['usage'] == snapshot(
@@ -8416,6 +8402,7 @@ async def test_run_finished_has_no_usage_when_responses_report_no_tokens() -> No
         create_input(UserMessage(id='m1', content='hi')),
         ag_ui_version='1.0.0',
         on_complete=clear_usage,
+        include_usage=True,
     )
     assert 'usage' not in next(event for event in events if event['type'] == 'RUN_FINISHED')
 
@@ -8440,6 +8427,7 @@ async def test_resumed_run_usage_excludes_history() -> None:
         create_input(*history, UserMessage(id='m2', content='again')),
         ag_ui_version='1.0.0',
         on_complete=set_usage,
+        include_usage=True,
     )
     usage = next(event for event in events if event['type'] == 'RUN_FINISHED')['usage']
     assert usage == snapshot(

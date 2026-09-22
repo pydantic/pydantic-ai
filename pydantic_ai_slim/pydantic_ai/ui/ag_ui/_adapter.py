@@ -249,8 +249,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
       An installed `ag-ui-protocol >= 1.0` uses typed content for every negotiated version.
     - `>= 1.0`: declares the SDK's protocol version on `RUN_STARTED`, reports a cancelled run with
       a `cancelled` outcome instead of a bare `RUN_FINISHED`, names unanswered frontend tool calls
-      in the success outcome's `pendingToolCallIds`, and reports token usage per provider and model
-      on `RUN_FINISHED`.
+      in the success outcome's `pendingToolCallIds`, and, with `include_usage`, reports token usage
+      per provider and model on `RUN_FINISHED`.
 
     `load_messages` accepts reasoning and multimodal content regardless of this setting. `build_run_input`
     skips unsupported inbound content and translates retired `binary` parts when possible.
@@ -272,6 +272,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files], which the shared
     `sanitize_messages` step enforces regardless of this flag. Multimodal tool-return files are
     unaffected — they ride inline in `ToolMessage.content`.
+    """
+
+    include_usage: bool = False
+    """Whether `RUN_FINISHED` reports the run's token usage per provider and model (`ag-ui-protocol >= 1.0`).
+
+    Defaults to `False` because each entry names the provider and model the server used, which is
+    server-side information a client has no need for by default.
     """
 
     @classmethod
@@ -308,7 +315,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Build an AG-UI event stream transformer."""
-        return AGUIEventStream(self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version)
+        return AGUIEventStream(
+            self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version, include_usage=self.include_usage
+        )
 
     @classmethod
     async def from_request(
@@ -323,6 +332,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+        include_usage: bool = False,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -336,6 +346,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
             allowed_content_types=allowed_content_types,
+            include_usage=include_usage,
             **kwargs,
         )
 
