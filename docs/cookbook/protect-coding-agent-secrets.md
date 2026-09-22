@@ -17,14 +17,31 @@ import os
 from pathlib import Path
 
 from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS, FileSystem, Shell
-from pydantic_ai_harness.guardrails import OutputGuardrail, ToolGuardrail
+from pydantic_ai_harness.guardrails import GuardrailResult, OutputGuardrail, ToolCallInfo, ToolGuardrail
 from pydantic_ai_harness.guardrails.detectors import for_text, for_tool_result_text, redact_secrets
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 DEFAULT_MODEL = os.environ.get('PYDANTIC_AI_MODEL', 'anthropic:claude-fable-5')
-_SECRET_PATHS = ['.env', '.env.*', '*.pem', '*.key', '**/secrets*']
+_SECRET_PATHS = [
+    '.env',
+    '.env.*',
+    '**/.env',
+    '**/.env.*',
+    '*.pem',
+    '**/*.pem',
+    '*.key',
+    '**/*.key',
+    'secrets*',
+    '**/secrets*',
+]
+
+
+def allow_only_env_listing(call: ToolCallInfo) -> GuardrailResult:
+    if call.name == 'run_command' and call.args.get('command') != 'env':
+        return GuardrailResult.block('Only an exact `env` command is allowed.')
+    return GuardrailResult.allow()
 
 
 def build_agent(model: Model | str = DEFAULT_MODEL, *, workspace: Path | None = None) -> Agent[object, str]:
@@ -50,7 +67,11 @@ def build_agent(model: Model | str = DEFAULT_MODEL, *, workspace: Path | None = 
                 env=minimal_env,
                 denied_env_patterns=LLM_API_KEY_ENV_PATTERNS,
             ),
-            ToolGuardrail(result_guard=for_tool_result_text(redact_secrets)),
+            ToolGuardrail(
+                guard=allow_only_env_listing,
+                result_guard=for_tool_result_text(redact_secrets),
+                hidden=['start_command', 'check_command', 'stop_command'],
+            ),
             OutputGuardrail(guard=for_text(redact_secrets)),
         ],
     )
@@ -67,7 +88,7 @@ if __name__ == '__main__':
     main()
 ```
 
-The filesystem denylist blocks known credential locations. The shell receives an explicit minimal environment instead of the host environment. Tool-result redaction limits what enters model context, while output redaction is a final defense before returning a non-streamed response. These layers reduce exposure; they do not replace process isolation for hostile code.
+The recursive filesystem denylist blocks known credential locations. The shell receives an explicit minimal environment instead of the host environment, the argument guard prevents `env` from launching another program, and unused background-process tools are hidden. Tool-result redaction limits what enters model context, while output redaction is a final defense before returning a non-streamed response. These layers reduce exposure; they do not replace process isolation for hostile code.
 
 ## Related
 
