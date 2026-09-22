@@ -1058,10 +1058,7 @@ _STALE_THINKING_BLOCK_PREFIX_CHANGE = pytest.mark.moves_cache_prefix(
 
 # Opus 5.5 answers a trivial prompt at its default `medium` effort without thinking, which would leave
 # no block to invalidate. Opus 5 runs at the same effort so it stays a like-for-like control for 5.5.
-_HISTORY_SETTINGS: dict[str, AnthropicModelSettings] = {
-    'claude-opus-5-5': AnthropicModelSettings(anthropic_effort='high'),
-    'claude-opus-5': AnthropicModelSettings(anthropic_effort='high'),
-}
+_HISTORY_EFFORT_MODELS = frozenset({'claude-opus-5-5', 'claude-opus-5'})
 
 
 async def stale_thinking_block_history(model: AnthropicModel) -> list[ModelMessage]:
@@ -1069,7 +1066,9 @@ async def stale_thinking_block_history(model: AnthropicModel) -> list[ModelMessa
     agent = Agent(
         model,
         instructions='You are a helpful assistant. Answer briefly.',
-        model_settings=_HISTORY_SETTINGS.get(model.model_name),
+        model_settings=AnthropicModelSettings(anthropic_effort='high')
+        if model.model_name in _HISTORY_EFFORT_MODELS
+        else None,
     )
     result = await agent.run('Think about it, then say what 17*23 is.')
     thought = message(result.all_messages(), ModelResponse, index=-1)
