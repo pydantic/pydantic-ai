@@ -588,10 +588,14 @@ paste of existing image paths creates attachments as described in
 [Pasting images](#pasting-images).
 
 Up/down move through multiline drafts, then recall saved prompt history.
-Enter submits a prompt when idle and steers the current run when busy. Steering
-reaches the model at its next opportunity without cancelling in-flight tools.
-Alt+Enter (Option+Enter) queues a separate follow-up turn; slash commands always
-wait until the current turn ends. While running, the input box shows both submit shortcuts.
+Enter submits a prompt when idle and queues a separate follow-up turn when busy.
+To steer instead, first queue the message with Enter, then press Alt+Enter
+(Option+Enter). This sends the oldest queued follow-up to the active run at its
+next opportunity without cancelling in-flight tools or changing your draft.
+Each Alt+Enter sends one message. If the run is no longer accepting steering,
+the message stays queued. Slash commands and exit signals are not steered or
+skipped over. With no queued message, Alt+Enter does nothing.
+While running, the input box shows both shortcuts.
 Shift-Enter inserts a newline. CLAI requests modified
 key reporting while the editor is active and releases it for menus and on exit.
 Ctrl-R searches history; Enter accepts a search

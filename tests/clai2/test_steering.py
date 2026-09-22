@@ -1,4 +1,4 @@
-"""Steering uses core delivery; only explicit follow-ups start another turn."""
+"""Messages queue first; explicit steering uses core delivery."""
 
 from collections.abc import AsyncIterable
 from io import StringIO
@@ -61,27 +61,37 @@ def anyio_backend() -> str:
 
 
 @pytest.mark.parametrize('sequence', ['\x1b\r', '\x1b[13;3u', '\x1b[27;3;13~'])
-async def test_enter_steers_alt_enter_queues(sequence: str) -> None:
+async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
     accepted: list[str] = []
+
+    delivered = anyio.Event()
 
     def steer(text: str) -> bool:
         accepted.append(text)
+        delivered.set()
         return True
 
     async with editor() as (live, pipe, _):
         live.steer = steer
         live.buffer.replace('change direction')
         live.feed('enter')
-        assert accepted == ['change direction']
-        assert live.queued_messages == ()
+        assert accepted == []
+        assert live.queued_messages == ('change direction',)
         assert live.buffer.text == ''
-        pipe.send_text(f'follow up{sequence}')
+        live.buffer.replace('follow up')
+        live.feed('enter')
+        live.buffer.replace('unfinished draft')
+        pipe.send_text(sequence)
+        await delivered.wait()
+        assert accepted == ['change direction']
+        assert live.queued_messages == ('follow up',)
+        assert live.buffer.text == 'unfinished draft'
         assert await live.read() == 'follow up'
         live.buffer.replace('/help')
         live.feed('enter')
         assert await live.read() == '/help'
         assert accepted == ['change direction']
-        assert 'Enter: submit | Alt+Enter: queue' in Text.from_ansi(live.frame()[-1]).plain
+        assert 'Enter: submit' in Text.from_ansi(live.frame()[-1]).plain
 
         def idle(text: str) -> bool:
             return False
@@ -90,6 +100,49 @@ async def test_enter_steers_alt_enter_queues(sequence: str) -> None:
         live.buffer.replace('idle prompt')
         live.feed('enter')
         assert await live.read() == 'idle prompt'
+
+
+@pytest.mark.parametrize('head', ['/help', KeyboardInterrupt(), EOFError(), 'follow up'])
+@pytest.mark.parametrize('available', [False, True])
+async def test_unavailable_steering_preserves_queue(head: str | KeyboardInterrupt | EOFError, available: bool) -> None:
+    attempted: list[str] = []
+
+    def idle(text: str) -> bool:
+        attempted.append(text)
+        return False
+
+    async with editor() as (live, _, _):
+        live.steer = idle if available else None
+        live.feed('alt-enter')
+        live.submit(head)
+        live.submit('second')
+        live.buffer.replace('draft')
+        live.feed('alt-enter')
+        assert attempted == (['follow up'] if available and head == 'follow up' else [])
+        assert live.buffer.text == 'draft'
+        if isinstance(head, str):
+            assert await live.read() == head
+        else:
+            with pytest.raises(type(head)):
+                await live.read()
+        assert await live.read() == 'second'
+
+
+async def test_steering_last_message_clears_queue_and_preserves_draft() -> None:
+    def steer(text: str) -> bool:
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        live.buffer.replace('queued')
+        live.feed('enter')
+        live.buffer.replace('draft')
+        live.feed('alt-enter')
+        assert live.queued_messages == ()
+        assert live.buffer.text == 'draft'
+        live.feed('alt-enter')
+        live.feed('enter')
+        assert await live.read() == 'draft'
 
 
 async def test_steering_reaches_running_agent_and_is_cleared() -> None:
@@ -184,16 +237,21 @@ async def test_shell_routes_steering_and_reports_expired_images(tmp_path: Path) 
         live.steer = shell.steer
         live.buffer.replace('idle')
         live.feed('enter')
+        live.feed('alt-enter')
+        assert live.queued_messages == ('idle',)
         assert await live.read() == 'idle'
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(shell.session.prompt, 'start')
             await started.wait()
             live.buffer.replace('new direction')
             live.feed('enter')
+            assert live.queued_messages == ('new direction',)
+            live.feed('alt-enter')
             assert shell.images.notice.startswith('Steering sent: new direction')
             assert live.queued_messages == ()
             release.set()
         live.buffer.replace('[image:12345678]')
         live.feed('enter')
+        live.feed('alt-enter')
         assert 'expired' in shell.images.notice
         assert live.queued_messages == ()

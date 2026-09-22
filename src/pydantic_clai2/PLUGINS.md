@@ -642,11 +642,14 @@ A widget opened from inside a tool call, including the inline `ask_user` picker,
 has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
-The editor remains active during agent turns. Enter steers the active run through
-core's `RunContext.enqueue(priority='asap')`, without starting another turn or
-cancelling tools. Alt+Enter queues a separate turn with its own `turn_start` and
-`turn_end` hooks. Slash commands always wait until the current turn ends.
-When idle, either submit key starts a turn. Shift-Enter inserts a newline.
+The editor remains active during agent turns. Enter queues a separate turn with
+its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the oldest
+queued follow-up to the active run through core's
+`RunContext.enqueue(priority='asap')`, without starting another turn, cancelling
+tools, or changing the draft. Each press sends one message. If the run is no
+longer accepting steering, the message stays queued. Slash commands and exit
+signals are not steered or skipped over. With no queued message, Alt+Enter does
+nothing. When idle, Enter starts a turn. Shift-Enter inserts a newline.
 Modified-key reporting is enabled only while the editor owns input.
 Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text

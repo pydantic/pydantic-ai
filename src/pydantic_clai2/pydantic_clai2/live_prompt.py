@@ -133,7 +133,7 @@ class LivePrompt:
         elif key == 'enter':
             self.accept()
         elif key == 'alt-enter':
-            self.accept(queue=True)
+            self.steer_queued()
         elif key in ('shift-enter', 'ctrl-j'):
             self.buffer.insert('\n')
         elif key in ('up', 'down') and self._completions:
@@ -146,8 +146,8 @@ class LivePrompt:
             self.refresh_completions()
         self.paint()
 
-    def accept(self, *, queue: bool = False) -> None:
-        """Accept a completion, steer an active run, or queue the nonempty draft."""
+    def accept(self) -> None:
+        """Accept a completion or queue the nonempty draft."""
         if self._selection >= 0:
             self.accept_completion()
             return
@@ -157,8 +157,18 @@ class LivePrompt:
             self.buffer.history.append(text)
             self.buffer.history_index = None
             self.buffer.replace('')
-            if queue or is_command_input(text) or self.steer is None or not self.steer(text):
-                self.submit(text)
+            self.submit(text)
+
+    def steer_queued(self) -> None:
+        """Promote the oldest follow-up without bypassing commands or control signals."""
+        if not self._submissions or self.steer is None:
+            return
+        text = self._submissions[0]
+        if not isinstance(text, str) or is_command_input(text) or not self.steer(text):
+            return
+        self._submissions.popleft()
+        if not self._submissions:
+            self._submitted.clear()
 
     def complete(self, *, backwards: bool, accept_single: bool = True) -> None:
         """Cycle suggestions, accepting a sole candidate immediately."""
@@ -256,7 +266,7 @@ class LivePrompt:
         title = ''
         if self.interrupts.active:
             spinner = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[int(self.clock() * 10) % 10]
-            title = truncate(f' Working {spinner} | Enter: steer | Alt+Enter: queue ', width)
+            title = truncate(f' Working {spinner} | Enter: queue | Alt+Enter: steer queued ', width)
             title = title.replace(spinner, f'{theme.sgr(theme.ACCENT)}{spinner}{reset}{muted}')
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
         # The box has no side borders and no prompt marker: the draft and the
@@ -287,7 +297,7 @@ class LivePrompt:
                 )
             )
             if not notice and not self.interrupts.active:
-                footer += ' | Enter: submit | Alt+Enter: queue'
+                footer += ' | Enter: submit'
             if self.queued_messages:
                 footer += f' | queued: {len(self.queued_messages)}'
         rows.append(muted + truncate(footer, width) + reset)
