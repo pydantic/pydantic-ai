@@ -6,22 +6,9 @@ from dataclasses import dataclass
 
 import pytest
 
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import (
-    CompositeFilesystem,
-    SupportsCommands,
-    SupportsFilesystem,
-    Workspace,
-    WorkspaceBackend,
-    WorkspaceFileEntry,
-)
+from pydantic_ai.workspaces import CompositeFilesystem, SupportsFilesystem, WorkspaceBackend, WorkspaceFileEntry
 
 pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @dataclass(frozen=True)
@@ -33,7 +20,7 @@ class _Entry:
 
 
 class _MemoryFilesystem(SupportsFilesystem):
-    """A filesystem whose public namespace is rooted at `/`, like an object store adapter."""
+    """A filesystem whose public namespace is rooted at `/`, like an object-store adapter."""
 
     def __init__(self, files: dict[str, bytes] | None = None) -> None:
         self.files = files or {}
@@ -103,32 +90,28 @@ class _MemoryFilesystem(SupportsFilesystem):
         return path in self.files or path in self.directories
 
 
-async def test_composite_is_a_filesystem_only_workspace() -> None:
+async def test_composite_selects_filesystems_and_rebases_paths() -> None:
     data = _MemoryFilesystem({'/input.csv': b'a,b\n1,2\n'})
     skills = _MemoryFilesystem({'/guide.md': b'# Guide\n'})
-    backend = CompositeFilesystem({'/data': data, '/skills': skills})
-    workspace = Workspace(backend)
+    filesystem = CompositeFilesystem({'/data': data, '/skills': skills})
 
-    assert isinstance(backend, WorkspaceBackend)
-    assert isinstance(backend, SupportsFilesystem)
-    assert not isinstance(backend, SupportsCommands)
-    assert await workspace.read_text('/data/input.csv') == 'a,b\n1,2\n'
-    assert await workspace.read_text('/skills/guide.md') == '# Guide\n'
+    assert isinstance(filesystem, SupportsFilesystem)
+    assert not isinstance(filesystem, WorkspaceBackend)
+    assert await filesystem.read_bytes('/data/input.csv') == b'a,b\n1,2\n'
+    assert await filesystem.read_bytes('/skills/guide.md') == b'# Guide\n'
     assert data.calls[-1] == ('read', '/input.csv')
     assert skills.calls[-1] == ('read', '/guide.md')
-    with pytest.raises(UserError, match='does not support command execution'):
-        await workspace.run(['cat', '/data/input.csv'])
 
 
 async def test_root_and_nested_mounts_use_longest_prefix_and_shadow_entries() -> None:
     root = _MemoryFilesystem({'/README.md': b'root', '/skills/old.md': b'old'})
     skills = _MemoryFilesystem({'/guide.md': b'new'})
-    workspace = Workspace(CompositeFilesystem({'/': root, '/skills': skills}))
+    filesystem = CompositeFilesystem({'/': root, '/skills': skills})
 
-    assert await workspace.read_text('/README.md') == 'root'
-    assert await workspace.read_text('/skills/guide.md') == 'new'
-    assert not await workspace.exists('/skills/old.md')
-    assert [(entry.name, entry.path) for entry in await workspace.list_dir('/')] == [
+    assert await filesystem.read_bytes('/README.md') == b'root'
+    assert await filesystem.read_bytes('/skills/guide.md') == b'new'
+    assert not await filesystem.exists('/skills/old.md')
+    assert [(entry.name, entry.path) for entry in await filesystem.list_dir('/')] == [
         ('README.md', '/README.md'),
         ('skills', '/skills'),
     ]
@@ -137,65 +120,98 @@ async def test_root_and_nested_mounts_use_longest_prefix_and_shadow_entries() ->
 async def test_nested_mount_routes_more_specific_paths() -> None:
     data = _MemoryFilesystem({'/current.txt': b'current'})
     archive = _MemoryFilesystem({'/old.txt': b'old'})
-    workspace = Workspace(CompositeFilesystem({'/data': data, '/data/archive': archive}))
+    filesystem = CompositeFilesystem({'/data': data, '/data/archive': archive})
 
-    assert await workspace.read_text('/data/current.txt') == 'current'
-    assert await workspace.read_text('/data/archive/old.txt') == 'old'
+    assert await filesystem.read_bytes('/data/current.txt') == b'current'
+    assert await filesystem.read_bytes('/data/archive/old.txt') == b'old'
     assert data.calls[-1] == ('read', '/current.txt')
     assert archive.calls[-1] == ('read', '/old.txt')
-    assert [(entry.name, entry.path) for entry in await workspace.list_dir('/data')] == [
+    assert [(entry.name, entry.path) for entry in await filesystem.list_dir('/data')] == [
         ('archive', '/data/archive'),
         ('current.txt', '/data/current.txt'),
     ]
 
 
-async def test_composite_routes_writes_and_rewrites_metadata_paths() -> None:
+async def test_composite_can_be_mounted_in_another_composite() -> None:
+    team = _MemoryFilesystem({'/review.md': b'team'})
+    skills = CompositeFilesystem({'/team': team})
+    filesystem = CompositeFilesystem({'/skills': skills})
+
+    assert await filesystem.read_bytes('/skills/team/review.md') == b'team'
+    assert team.calls[-1] == ('read', '/review.md')
+    assert [(entry.name, entry.path) for entry in await filesystem.list_dir('/')] == [('skills', '/skills')]
+    assert [(entry.name, entry.path) for entry in await filesystem.list_dir('/skills')] == [('team', '/skills/team')]
+
+
+async def test_composite_routes_mutations_and_rewrites_metadata_paths() -> None:
     data = _MemoryFilesystem()
-    workspace = Workspace(CompositeFilesystem({'/data': data}))
+    filesystem = CompositeFilesystem({'/data': data})
 
-    await workspace.write_text('/data/nested/output.txt', 'result')
+    await filesystem.make_dir('/data/nested')
+    await filesystem.write_bytes('/data/nested/output.txt', b'result')
 
+    assert ('make_dir', '/nested') in data.calls
     assert data.files['/nested/output.txt'] == b'result'
-    entry = await workspace.stat('/data/nested/output.txt')
+    entry = await filesystem.stat('/data/nested/output.txt')
     assert entry.name == 'output.txt'
     assert entry.path == '/data/nested/output.txt'
     assert entry.size == 6
 
+    await filesystem.remove('/data/nested/output.txt')
+    assert not await filesystem.exists('/data/nested/output.txt')
+
 
 async def test_composite_synthesizes_mounts_and_virtual_parents() -> None:
-    backend = CompositeFilesystem({'/team/data': _MemoryFilesystem(), '/team/skills': _MemoryFilesystem()})
-    workspace = Workspace(backend)
+    filesystem = CompositeFilesystem({'/team/data': _MemoryFilesystem(), '/team/skills': _MemoryFilesystem()})
 
-    assert [(entry.name, entry.path) for entry in await workspace.list_dir('/')] == [('team', '/team')]
-    assert [(entry.name, entry.path) for entry in await workspace.list_dir('/team')] == [
+    assert [(entry.name, entry.path) for entry in await filesystem.list_dir('/')] == [('team', '/team')]
+    assert [(entry.name, entry.path) for entry in await filesystem.list_dir('/team')] == [
         ('data', '/team/data'),
         ('skills', '/team/skills'),
     ]
-    assert (await workspace.stat('/team')).is_dir
-    assert (await workspace.stat('/team/data')).is_dir
-    assert await workspace.exists('/team/skills')
-    await workspace.make_dir('/team')
+    assert (await filesystem.stat('/team')).is_dir
+    assert (await filesystem.stat('/team/data')).is_dir
+    assert await filesystem.exists('/team/skills')
+    await filesystem.make_dir('/team')
+
+
+async def test_list_dir_synthesizes_a_mount_whose_child_root_is_missing() -> None:
+    data = _MemoryFilesystem()
+    data.directories.clear()
+    filesystem = CompositeFilesystem({'/data': data})
+
+    assert await filesystem.list_dir('/data') == ()
+    assert [(entry.name, entry.path) for entry in await filesystem.list_dir('/')] == [('data', '/data')]
 
 
 async def test_composite_rejects_operations_outside_mounts() -> None:
-    workspace = Workspace(CompositeFilesystem({'/data': _MemoryFilesystem()}))
+    filesystem = CompositeFilesystem({'/data': _MemoryFilesystem()})
 
-    assert not await workspace.exists('/other/file.txt')
+    assert not await filesystem.exists('/other/file.txt')
     with pytest.raises(FileNotFoundError, match=r'/other/file\.txt'):
-        await workspace.read_bytes('/other/file.txt')
+        await filesystem.read_bytes('/other/file.txt')
     with pytest.raises(IsADirectoryError, match='/data'):
-        await workspace.read_bytes('/data')
+        await filesystem.read_bytes('/data')
     with pytest.raises(PermissionError, match='Cannot remove composite mount'):
-        await workspace.remove('/data')
+        await filesystem.remove('/data')
     with pytest.raises(PermissionError, match='Cannot remove composite mount'):
-        await workspace.remove('/')
+        await filesystem.remove('/')
 
 
 async def test_composite_protects_ancestors_of_nested_mounts() -> None:
-    workspace = Workspace(CompositeFilesystem({'/data/archive': _MemoryFilesystem()}))
+    filesystem = CompositeFilesystem({'/data/archive': _MemoryFilesystem()})
 
     with pytest.raises(PermissionError, match='Cannot remove composite mount'):
-        await workspace.remove('/data')
+        await filesystem.remove('/data')
+
+
+async def test_composite_normalizes_operation_paths() -> None:
+    data = _MemoryFilesystem({'/input.txt': b'data'})
+    filesystem = CompositeFilesystem({'/data': data})
+
+    assert await filesystem.read_bytes('/data/./nested/../input.txt') == b'data'
+    with pytest.raises(ValueError, match='path must be absolute'):
+        await filesystem.read_bytes('data/input.txt')
 
 
 @pytest.mark.parametrize('mounts', [{}, {'data': _MemoryFilesystem()}, {'/data/../other': _MemoryFilesystem()}])
@@ -204,11 +220,9 @@ def test_composite_rejects_invalid_mount_tables(mounts: dict[str, SupportsFilesy
         CompositeFilesystem(mounts)
 
 
-def test_composite_exposes_an_immutable_mount_table() -> None:
+async def test_composite_copies_the_mount_table() -> None:
     mounts: dict[str, SupportsFilesystem] = {'/data': _MemoryFilesystem()}
-    composite = CompositeFilesystem(mounts)
-    mounts['/other'] = _MemoryFilesystem()
+    filesystem = CompositeFilesystem(mounts)
+    mounts['/other'] = _MemoryFilesystem({'/file.txt': b'other'})
 
-    assert tuple(composite.mounts) == ('/data',)
-    with pytest.raises(TypeError):
-        composite.mounts['/other'] = _MemoryFilesystem()  # type: ignore[index]
+    assert not await filesystem.exists('/other/file.txt')

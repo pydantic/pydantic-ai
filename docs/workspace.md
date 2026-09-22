@@ -44,49 +44,53 @@ as separate packages.
 
 ## Composing virtual filesystems
 
-[`CompositeFilesystem`][pydantic_ai.workspaces.CompositeFilesystem] routes one POSIX namespace
-across filesystems mounted at absolute paths. Each value implements `SupportsFilesystem` and sees
-its own namespace rooted at `/`.
+[`CompositeFilesystem`][pydantic_ai.workspaces.CompositeFilesystem] is a thin
+[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem] implementation that selects a
+filesystem by the longest matching mount prefix and delegates the operation. Each child sees its
+own namespace rooted at `/`, and may itself be another `CompositeFilesystem`.
+
+A composite is only a filesystem, not a workspace backend: the backend that owns the stores also
+owns the workspace identity and working directory. A filesystem-only backend can add those two
+members directly:
 
 ```python
-from typing import cast
+from pydantic_ai.workspaces import CompositeFilesystem, SupportsFilesystem, Workspace, WorkspaceRef
 
-from pydantic_ai.workspaces import CompositeFilesystem, SupportsFilesystem, Workspace
 
-# Replace these placeholders with filesystem implementations such as S3 or GCS adapters.
-project_filesystem = cast(SupportsFilesystem, ...)
-data_filesystem = cast(SupportsFilesystem, ...)
-skills_filesystem = cast(SupportsFilesystem, ...)
+class VirtualWorkspace(CompositeFilesystem):
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        return None
 
-workspace = Workspace(
-    CompositeFilesystem(
+    async def working_dir(self) -> str:
+        return '/'
+
+
+def build_workspace(
+    project_filesystem: SupportsFilesystem,
+    data_filesystem: SupportsFilesystem,
+    skills_filesystem: SupportsFilesystem,
+) -> Workspace:
+    backend = VirtualWorkspace(
         {
             '/': project_filesystem,
             '/data': data_filesystem,
             '/skills': skills_filesystem,
         }
     )
-)
+    return Workspace(backend)
 ```
 
 Here `/README.md` becomes `project_filesystem.read_bytes('/README.md')`, while
-`/skills/guide.md` becomes `skills_filesystem.read_bytes('/guide.md')`. Longest-prefix routing
-allows nested mounts; a mount shadows an entry with the same name in its parent filesystem.
-Directory listings merge ordinary entries with mounted children.
+`/skills/guide.md` becomes `skills_filesystem.read_bytes('/guide.md')`. A more-specific mount
+shadows an entry with the same name in its parent filesystem. Directory listings merge ordinary
+entries with mounted children, and mount points and their shared parents appear as directories.
+Operations outside the mount table fail when there is no `/` mount; mount points and their ancestors
+cannot be removed.
 
-The virtual root, mount points, and shared parents always appear as directories. Operations outside
-the mount table fail when there is no `/` mount, and mount points or their ancestors cannot be
-removed. Read-only behavior belongs to each mounted filesystem.
-
-A bare `CompositeFilesystem` has files but no command implementation. This does not mean that a
-command-capable workspace cannot use filesystem composition: a provider backend can use the same
-router for its native file methods. That provider must also mount every source at the same path in
-its command environment, using its FUSE, volume, or bind-mount support. It then exposes one backend
-to `Workspace`, implementing both `SupportsCommands` and `SupportsFilesystem`.
-
-`Workspace` deliberately does not accept an independent command backend and filesystem. Keeping one
-backend responsible for the complete environment prevents configurations where
-`read_file('/data/x')` succeeds but `cat /data/x` observes a different file.
+A command-capable provider may use the same router for its native filesystem methods, but the
+provider remains responsible for ensuring commands see those files at the same paths. Physical
+mounting and provider integration are outside `CompositeFilesystem`.
 
 ## Reading and writing files
 
