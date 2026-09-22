@@ -180,7 +180,7 @@ Unless the schema describes an option, Jev sees it by its name alone, so name `L
 
 An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
 
-A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
+A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them and at most ten, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 
 A level's description reaches the schema the [same way an option's meaning does](#where-the-wording-comes-from), which makes an `IntEnum` mixing in `UseEnumMemberDocstrings` the way to declare one. A bare `Literal[0, 1, 2]` or a plain `IntEnum` is a [`UserError`][pydantic_ai.exceptions.UserError]: the levels are there, but nothing says what they mean.
 
@@ -924,6 +924,41 @@ Each member is described by **its own docstring**, which is what Jev weighs the 
 
 The pick is reported in `provider_details['tool']`, with the probability of every member, and `provider_details['requests']` is `2`. The [tool threshold](#tools-jev-picks-and-calls-what-it-can) gates tools, not output types: picking an output type is Jev saying which result to fill, not proposing that something else be done, so a tool picked below the threshold falls back to the likeliest output type rather than being taken.
 
+### Declining with `None`
+
+`None` is a route like any other. Include it in the union and Jev is offered one more option, "None of these.", for the text that calls for nothing at all:
+
+```python {title="union_none.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+class Escalation(BaseModel):
+    """Hand the ticket to a human specialist."""
+
+    security: bool = Field(description='Does this involve a security risk?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation, None])
+
+result = agent.run_sync('Thanks, that fixed it. Nothing else needed.')
+print(result.output)
+#> None
+print(result.response.provider_details['tool']['choice'])
+#> final_result_None
+```
+
+`None` cannot carry a docstring, so the library describes it, the same way an [optional pick-one field](#what-each-mapping-does) gets its "None of these." option. There is nothing to fill either, so the route is taken on the pick alone: declining costs one request, never two.
+
+To say what declining means on your agent rather than take the stock phrase, name the route yourself with [`ToolOutput`][pydantic_ai.output.ToolOutput]: `ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')` puts that description on the route instead.
+
 ### A member Jev cannot fill
 
 A union member may use fields Jev cannot express, such as a `str`. It is still offered as a route, and picking it raises [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] — a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands it the whole step:
@@ -1018,7 +1053,7 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 Jev does not write text or read files, and it only fills tool arguments that map to the [typed questions](#what-jev-can-answer) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
-- The `output_type` must be made of the field types above, beside any output functions that take no arguments: no `str` without candidate extraction, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
+- The `output_type` must be made of the field types above: no `str` without candidate extraction, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-jev-picks-and-calls-what-it-can) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
 - At most 255 options in one question. A pick-one field counts its own options, and the route question counts every tool plus every output type, so 255 tools is already one too many once the output type is counted beside them.

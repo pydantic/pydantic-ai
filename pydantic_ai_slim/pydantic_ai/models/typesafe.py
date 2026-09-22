@@ -102,6 +102,10 @@ Jev picks one of the strings returned, or the no-match option, and never writes 
 # https://docs.typesafe.ai/model-jaggedness/jev-1.13
 _MAX_CHOICE_OPTIONS = 255
 
+# Jev scores against at most this many rubric levels; an 11th is a 400 from the API.
+# https://docs.typesafe.ai/primitives/score
+_MAX_SCORE_LEVELS = 10
+
 _UNSUPPORTED_FIELD_HINT = (
     'Use `bool`, a `Literal` or `Enum` of two or more strings, a `str` with a candidate extractor, a `float` bounded '
     'with `ge=0` and `le=1`, a `list` of a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description '
@@ -362,7 +366,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         offered = [*hand_offs, *function_tools]
         tools = _tools_left(messages, offered)
         forced_tool = tools[0] if not output_tools and len(tools) == 1 and len(offered) > 1 else None
-        if forced_tool is not None and not forced_tool.parameters_json_schema.get('properties'):
+        if forced_tool is not None and (
+            _none_route(forced_tool) or not _properties(forced_tool.parameters_json_schema)
+        ):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool)
         properties, required = _fields(output_tool) if output_tool else ({}, set[str]())
@@ -547,7 +553,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         """Call the one argumentless route left, without asking Jev."""
         details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
         return ModelResponse(
-            parts=[ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())],
+            parts=[ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(),
             model_name=self._model_name,
             provider_name=self._provider.name,
@@ -780,9 +786,17 @@ def _tool_call(
     if tool is None:
         raise UnexpectedModelBehavior(f'TypeSafe picked a tool it was not offered: {answer.choice!r}')
     if tool.name not in hand_offs and probability < threshold:
+        # A `None` route is a result to take, not something else to be done, so it is weighed here with the
+        # output types rather than below with the hand-offs, even though it is offered as one of those.
+        results = [*output_tools, *(candidate for candidate in tools if _none_route(candidate))]
         if likeliest_output := max(
-            output_tools, key=lambda candidate: answer.probabilities.get(candidate.name, 0.0), default=None
+            results, key=lambda candidate: answer.probabilities.get(candidate.name, 0.0), default=None
         ):
+            if _none_route(likeliest_output):
+                # Nothing to fill, so it is called on the fallback itself rather than asked about again.
+                return ToolCallPart(
+                    likeliest_output.name, _route_args(likeliest_output), _utils.generate_tool_call_id()
+                )
             return likeliest_output
         likeliest = max(
             (candidate for candidate in tools if candidate.name in hand_offs),
@@ -792,10 +806,10 @@ def _tool_call(
         if likeliest is not None:
             provider_details['tool']['taken'] = likeliest.name
             tool = likeliest
-    if tool.parameters_json_schema.get('properties'):
+    if not _none_route(tool) and tool.parameters_json_schema.get('properties'):
         return tool
     # Nothing to write, so the call is made on Jev's pick.
-    return ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())
+    return ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())
 
 
 def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
@@ -808,6 +822,61 @@ def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
     except UserError:
         return False
     return True
+
+
+_NONE_OF_THESE = 'None of these.'
+
+
+def _none_route(tool: ToolDefinition) -> bool:
+    """Whether this output tool is the `None` member of a union: a route that returns nothing.
+
+    Pydantic AI wraps a bare `None` output type in an object with one `null` property, so the route has a field
+    in its schema and yet only one value that field could ever take. There is nothing to ask about it: to Jev it
+    is one more option to pick, the same thing `_optional` makes of an `X | None` field one level down.
+    """
+    return tool.kind == 'output' and list(_properties(tool.parameters_json_schema).values()) == [{'type': 'null'}]
+
+
+def _route_args(tool: ToolDefinition) -> dict[str, Any]:
+    """The arguments to call a route with when Jev writes nothing: none, or the `None` a `None` route wraps."""
+    return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
+
+
+def _wrapped(tool: ToolDefinition) -> dict[str, Any] | None:
+    """The single property Pydantic AI wraps an output type that is not object-like in, if this is one.
+
+    A `Literal`, an `Enum`, a `Choices` set and a bare `None` all reach a model as one property of an object,
+    because only an object can be a tool's arguments. What such a type says about itself is written on that
+    property, since there is no class for it to be a docstring on. `outer_typed_dict_key` is the wrapping,
+    named by whoever did it, so it is read rather than guessed back out of the schema's shape.
+    """
+    key = tool.outer_typed_dict_key
+    return _properties(tool.parameters_json_schema).get(key) if key else None
+
+
+def _purpose(tool: ToolDefinition) -> str | None:
+    """What a route says about itself, wherever it managed to say it.
+
+    An output type says this in its docstring, and `ToolOutput(description=...)` says it for a type that has
+    no docstring to write it in. A type that is not object-like has neither: `Choices(description=...)`
+    describes the set it wraps, which lands on the wrapped property rather than on the tool. It is the same
+    sentence either way, so the route question reads it from there too.
+    """
+    if described := _described(tool):
+        return described
+    wrapped = _wrapped(tool)
+    return wrapped.get('description') if wrapped else None
+
+
+def _route_description(tool: ToolDefinition) -> str | None:
+    """What a route says about itself on the route question.
+
+    A `None` route can say nothing anywhere, so the library supplies the phrase — unless the user named the
+    route themselves, which says more about what declining means on this agent than the stock phrase does.
+    """
+    if _none_route(tool):
+        return _purpose(tool) or _NONE_OF_THESE
+    return _purpose(tool) or tool.description
 
 
 def _output_tools(
@@ -823,7 +892,7 @@ def _output_tools(
     with_fields: list[ToolDefinition] = []
     hand_offs: list[ToolDefinition] = []
     for tool in model_request_parameters.output_tools:
-        (with_fields if _properties(tool.parameters_json_schema) else hand_offs).append(tool)
+        (hand_offs if _none_route(tool) or not _properties(tool.parameters_json_schema) else with_fields).append(tool)
     return with_fields, hand_offs
 
 
@@ -860,7 +929,7 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set
             prop = {**prop, 'anyOf': [resolve(option) for option in prop['anyOf']]}
         return prop
 
-    def flatten(object_schema: dict[str, Any], prefix: str, inside_required: bool) -> None:
+    def flatten(object_schema: dict[str, Any], prefix: str, inside_required: bool, seen: frozenset[str]) -> None:
         required_here: set[str] = set(object_schema.get('required', []))
         for name, prop in object_schema.get('properties', {}).items():
             if '.' in name:
@@ -868,12 +937,22 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set
                     f'Output field {prefix + name!r} is not supported by this model: a dot in a field name is how '
                     'a nested field is named. Rename it.'
                 )
+            ref = prop.get('$ref')
             prop = resolve(prop)
             # A field of a field is only required when the field holding it is: an absent optional model
             # takes its default whole, fields and all.
             here = inside_required and name in required_here
             if prop.get('type') == 'object' and prop.get('properties'):
-                flatten(prop, f'{prefix}{name}.', here)
+                if ref is not None and ref in seen:
+                    # A model that contains itself with no way out is infinitely many questions, so there is no
+                    # depth at which to stop asking. An optional or list self-reference is refused on the field
+                    # itself before the walk gets here.
+                    raise UserError(
+                        f'Output field {prefix + name!r} is not supported by this model: a model that contains '
+                        'itself has no end to fill, and Jev asks a fixed set of questions. Give the field a type '
+                        'that does not contain itself.'
+                    )
+                flatten(prop, f'{prefix}{name}.', here, seen | {ref} if ref else seen)
             else:
                 fields[f'{prefix}{name}'] = prop
                 if here:
@@ -881,7 +960,7 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set
 
     fields: dict[str, dict[str, Any]] = {}
     required: set[str] = set()
-    flatten(_object_schema(schema), '', True)
+    flatten(_object_schema(schema), '', True, frozenset())
     return fields, required
 
 
@@ -1112,7 +1191,7 @@ def _questions(
                     f'a `str` with a candidate extractor, can be optional, since `None` is one more option to pick. '
                     f'{_UNSUPPORTED_FIELD_HINT}'
                 )
-            options = {**options, none_key: 'None of these.'}
+            options = {**options, none_key: _NONE_OF_THESE}
 
         # A single value needs no labelling, and TypeSafe's advice is to start with a string; the object
         # form earns its keys only once there is more than one thing in it.
@@ -1121,7 +1200,7 @@ def _questions(
         if prop.get('type') == 'array':
             # Several options at once is one yes/no per option, all in the same request, which TypeSafe call
             # fanning out: does this option apply, asked with the field's question and the option's description.
-            labels = _options(prop['items'])
+            labels = _options(prop['items']) if 'items' in prop else None
             if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: a list must be of two or more string '
@@ -1228,7 +1307,7 @@ def _tool_question(
         key += '_'
     criteria: dict[str, str | None] = {}
     for output_tool in output_tools:
-        described = _described(output_tool)
+        described = _purpose(output_tool)
         if not (described or (instructions and len(output_tools) == 1)):
             # With one output type the agent's instructions can say what filling it is for. With several, only
             # each type's own docstring can tell them apart: one instruction cannot describe two different routes.
@@ -1238,7 +1317,7 @@ def _tool_question(
                 'filling it does' + ('.' if len(output_tools) > 1 else ', or the agent `instructions`.')
             )
         criteria[output_tool.name] = described or instructions
-    criteria.update((tool.name, tool.description) for tool in tools)
+    criteria.update((tool.name, _route_description(tool)) for tool in tools)
     if len(criteria) > _MAX_CHOICE_OPTIONS:
         raise UserError(
             f'Jev picks from at most {_MAX_CHOICE_OPTIONS} options, and it is being offered {len(criteria)} routes: '
@@ -1260,6 +1339,11 @@ def _score_question(name: str, options: dict[int, str | None], asked: JSONConten
         raise UserError(
             f'Output field {name!r} is not supported by this model: a rubric must be the whole numbers from 0 '
             f'upwards, in order, and there must be at least two of them. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    if len(levels) > _MAX_SCORE_LEVELS:
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: Jev scores against at most '
+            f'{_MAX_SCORE_LEVELS} levels, and this rubric has {len(levels)}.'
         )
     criteria = [options[level] for level in levels]
     if not all(criteria):

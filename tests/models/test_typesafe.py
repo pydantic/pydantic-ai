@@ -16,6 +16,7 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     CachePoint,
+    Choices,
     CompactionPart,
     FilePart,
     ModelAPIError,
@@ -34,16 +35,19 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolOutput,
     ToolReturnPart,
     UseEnumMemberDocstrings,
     UserPromptPart,
     WebSearchTool,
 )
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -1880,6 +1884,38 @@ async def test_an_output_function_is_a_hand_off_jev_picks(
     )
 
 
+def route_to_team(team: Literal['billing', 'legal', 'technical'], urgent: bool) -> str:
+    """Hand the ticket to the specialist team that handles it."""
+    return f'routed to {team}, urgent={urgent}'
+
+
+@pytest.mark.vcr
+async def test_an_output_functions_arguments_are_filled_like_an_output_types_fields(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """An output function that takes arguments is a route Jev fills, not only one it hands off to."""
+    agent = Agent(typesafe_model, output_type=[Ticket, route_to_team])
+    result = await agent.run(
+        'I have contacted you four times about being double charged and I am about to call my lawyer.'
+    )
+    assert result.output == snapshot('routed to billing, urgent=True')
+    assert (result.response.provider_details or {})['tool']['choice'] == snapshot('final_result_route_to_team')
+    # The route is picked first, then its arguments go out as their own questions in a second request.
+    assert cast(dict[str, Any], request_capture.bodies('/v1/systemone')[-1]['questions']) == snapshot(
+        {
+            'team': {
+                'type': 'choice',
+                'criteria': {'billing': None, 'legal': None, 'technical': None},
+                'instructions': {'field': 'team', 'goal': 'Hand the ticket to the specialist team that handles it.'},
+            },
+            'urgent': {
+                'type': 'noul',
+                'instructions': {'field': 'urgent', 'goal': 'Hand the ticket to the specialist team that handles it.'},
+            },
+        }
+    )
+
+
 async def test_an_arg_less_tool_is_called_by_jev_itself(allow_model_requests: None):
     """A tool with no arguments has nothing for Jev to write, so Jev calls it and judges the result next request."""
     seen: list[dict[str, Any]] = []
@@ -2073,6 +2109,23 @@ async def test_a_field_with_more_options_than_jev_picks_from_is_refused(
 
     with pytest.raises(UserError, match='picks from at most 255 options, and this one has 256'):
         await Agent(typesafe_model, output_type=Routed).run('anything')
+
+
+async def test_a_rubric_with_more_levels_than_jev_scores_against_is_refused(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """Jev scores against at most 10 levels; an 11th is a 400, so it is refused before the request."""
+
+    class Rated(BaseModel):
+        """Rate the ticket."""
+
+        severity: Annotated[
+            Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            rubric(*((level, f'Level {level}.') for level in range(11))),
+        ] = Field(description='How severe is it?')
+
+    with pytest.raises(UserError, match='scores against at most 10 levels, and this rubric has 11'):
+        await Agent(typesafe_model, output_type=Rated).run('anything')
 
 
 async def test_more_routes_than_jev_picks_from_are_refused(allow_model_requests: None, typesafe_model: TypeSafeModel):
@@ -2924,6 +2977,254 @@ async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None
     agent = Agent(mock_model(unreachable), output_type=[Ticket, WithOptional], instructions='Handle the ticket.')
     with pytest.raises(UserError, match="'final_result_WithOptional' says nothing about itself"):
         await agent.run('anything')
+
+
+async def test_none_is_a_route_the_library_describes_itself(allow_model_requests: None):
+    """`None` cannot carry a docstring, so the library says what it means, as it does for an optional field.
+
+    Pydantic AI wraps a bare `None` output type in an object with one `null` property. There is only one value
+    that property could take, so there is nothing to ask: the route is taken on the pick alone and the `None`
+    is written for Jev, which is why this costs one request and not two.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.2},
+            tool=_route(
+                'final_result_None',
+                {'final_result_Ticket': 0.1, 'final_result_None': 0.9},
+            ),
+        )
+
+    # `None` in an `output_type` list is not spelled out in the overloads, so the output type is named here;
+    # it runs on every model.
+    agent: Agent[None, Ticket | None] = Agent(mock_model(record), output_type=[Ticket, None])  # type: ignore[arg-type]
+    result = await agent.run('Nothing here needs handling.')
+
+    assert result.output is None
+    # One output type is left once `None` becomes a route, so its fields ride along with the route question
+    # and declining costs one request, not two.
+    assert len(seen) == 1
+    assert sorted(seen[0]['questions']) == snapshot(['tool', 'urgent'])
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_Ticket': 'Triage a support ticket.', 'final_result_None': 'None of these.'}
+    )
+    # The `None` is written into the wrapper Pydantic AI put around it, not asked for and not left out.
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
+
+
+async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_requests: None):
+    """`ToolOutput(type_=None, description=...)` is the user saying what declining means here, so it wins."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.1},
+            tool=_route('nothing', {'final_result_Ticket': 0.05, 'nothing': 0.95}),
+        )
+
+    agent = Agent(
+        mock_model(record),
+        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],  # type: ignore[arg-type]
+    )
+    result = await agent.run('Thanks, all sorted.')
+
+    assert result.output is None
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_Ticket': 'Triage a support ticket.', 'nothing': 'Nothing needs doing here.'}
+    )
+
+
+async def test_a_choices_route_is_described_by_what_the_set_says_about_itself(allow_model_requests: None):
+    """A `Choices` set is not object-like, so what it is for is written on the property it is wrapped in.
+
+    `Choices(description=...)` describes the set, not the tool around it — `ToolOutput` is what describes the
+    tool — so the route question has to read it where it actually landed, or a described set looks to Jev like
+    a route that says nothing about itself.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(tool=_route('final_result_triage', {'final_result_triage': 0.9, 'final_result_Ticket': 0.1}))
+        # The set is the picked route's one field, so it is asked on its own in the second request.
+        return answers(response=_route('urgent', {'urgent': 0.8, 'normal': 0.2}))
+
+    triage = Choices(
+        {'urgent': 'Needs a reply within the hour.', 'normal': 'Can wait until Monday.'},
+        name='triage',
+        description='Triage the ticket.',
+    )
+    agent = Agent(mock_model(record), output_type=[triage, Ticket])
+    result = await agent.run('My card was charged twice again.')
+
+    assert result.output == snapshot('urgent')
+
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_triage': 'Triage the ticket.', 'final_result_Ticket': 'Triage a support ticket.'}
+    )
+
+
+async def test_a_route_that_says_nothing_anywhere_is_still_refused(allow_model_requests: None):
+    """A bare `Literal` has no docstring, no `ToolOutput` and no description on what it is wrapped in."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a route that describes itself nowhere must be refused before any request')
+
+    # A bare `Literal` beside another type is not spelled out in the overloads; it is refused at run time
+    # for a different reason, which is what this asserts.
+    agent: Agent[None, Any] = Agent(mock_model(unreachable), output_type=[Literal['urgent', 'normal'], Ticket])  # type: ignore[arg-type]
+    with pytest.raises(UserError, match="'final_result_Literal' says nothing about itself"):
+        await agent.run('anything')
+
+
+async def test_the_fill_repeats_the_state_and_carries_the_picked_routes_purpose(allow_model_requests: None):
+    """The two requests of a union are one question each, not a conversation.
+
+    Jev is not told what it picked: the route was decided here, and putting it back in front of a request that
+    only fills fields would be a second decision. What does travel is what the chosen route is *for*, as each
+    field question's `goal`, so the fields are answered for the route they belong to.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route('final_result_Escalation', {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8})
+            )
+        return answers(security={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation])
+    await agent.run('Someone else can see my invoices when they log in.')
+
+    assert seen[0]['state'] == seen[1]['state'] == snapshot('Someone else can see my invoices when they log in.')
+    assert 'tool' not in seen[1]['questions']
+    assert seen[1]['questions']['security']['instructions'] == snapshot(
+        {
+            'field': 'security',
+            'question': 'Does this involve a security or privacy risk?',
+            'goal': 'Hand the ticket to a human specialist.',
+        }
+    )
+
+
+async def test_a_proposed_tool_call_hands_the_whole_step_over_and_jev_judges_the_result(
+    allow_model_requests: None,
+):
+    """What the model behind Jev is handed, and what Jev sees once that model's tool call has run.
+
+    The step is handed over whole, so the model gets the prompt and the tools and decides for itself: none of
+    Jev's work reaches it, not the route it picked nor how sure it was. That request is paid for and its answer
+    thrown away, which is the cost of the hand-off and the reason to watch the rate.
+    """
+    seen: list[dict[str, Any]] = []
+    handed: list[tuple[list[str], list[str], list[str]]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        questions = seen[-1]['questions']
+        if 'tool' in questions:
+            # `refund` takes a `float`, which Jev cannot write, so picking it proposes the call.
+            return answers(
+                urgent={'type': 'noul', 'noul': 0.9},
+                tool=_route('refund', {'final_result': 0.05, 'refund': 0.95}),
+            )
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    def behind(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        handed.append(
+            (
+                [type(part).__name__ for message in messages for part in message.parts],
+                [tool.name for tool in info.function_tools],
+                [tool.name for tool in info.output_tools or []],
+            )
+        )
+        return ModelResponse(parts=[ToolCallPart('refund', {'amount': 40.0})])
+
+    agent = Agent(FallbackModel(mock_model(record), FunctionModel(behind)), output_type=Ticket, tools=[refund])
+    result = await agent.run('You charged me 40 dollars twice, please refund one.')
+
+    assert result.output == Ticket(urgent=True)
+    # The model behind Jev is handed the step as if Jev had never run: the prompt and the tools, nothing else.
+    assert handed == snapshot([(['UserPromptPart'], ['refund'], ['final_result'])])
+    # Jev is asked again with the call and its result in the state, and `refund` is no longer a route, so
+    # there is nothing left to choose between and no route question at all.
+    assert seen[1]['state'] == snapshot(
+        {
+            'history': [
+                {'user': 'You charged me 40 dollars twice, please refund one.'},
+                {'tool_call': {'name': 'refund', 'args': {'amount': 40.0}}},
+                {'tool_return': {'name': 'refund', 'content': 'Refunded 40.0'}},
+            ]
+        }
+    )
+    assert list(seen[1]['questions']) == snapshot(['urgent'])
+
+
+async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_model_requests: None):
+    """`None` is offered as a hand-off but weighed as a result, so the fallback ranks it with the output types.
+
+    A tool picked below the threshold falls back to the likeliest *result*. `None` is one, so ranking it with
+    the hand-offs instead would return a `Ticket` Jev thought a good deal less likely than nothing at all.
+    """
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.9},
+            tool={
+                'type': 'choice',
+                'choice': 'refund',
+                'confidence': 0.4,
+                'probabilities': {'final_result_Ticket': 0.1, 'final_result_None': 0.5, 'refund': 0.4},
+            },
+        )
+
+    agent: Agent[None, Ticket | None] = Agent(
+        mock_model(record),
+        output_type=[Ticket, None],  # type: ignore[arg-type]
+        tools=[refund],
+    )
+    result = await agent.run('Refund me maybe.')
+
+    assert result.output is None
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
+
+
+async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_requests: None):
+    """Every other route has returned this turn, so the `None` one is taken without a request.
+
+    A route with nothing to fill is called on the pick alone, and with only one left there is no pick to make
+    either. A `None` route carries the property it is wrapped in, so the guard has to recognise it rather than
+    ask whether the schema has properties, or it goes off to have its `null` filled and proposes the call.
+    """
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the only route left needs no question asked about it')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Sort this out.')]),
+        ModelResponse(parts=[ToolCallPart('refund', {'amount': 1.0}, 'c1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='refund', content='Refunded 1.0', tool_call_id='c1')]),
+        ModelResponse(parts=[ToolCallPart('final_result_approve', {}, 'c2')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='final_result_approve', content='approved', tool_call_id='c2')]),
+    ]
+    agent: Agent[None, str | None] = Agent(
+        mock_model(unreachable),
+        output_type=[approve, None],  # type: ignore[arg-type]
+        tools=[refund],
+    )
+    result: AgentRunResult[str | None] = await agent.run(None, message_history=history)
+
+    assert result.output is None
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
 
 
 async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: None):

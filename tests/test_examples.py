@@ -998,6 +998,25 @@ async def model_logic(  # noqa: C901
                     'scores': {'clarity': 1.2},
                 },
             )
+        elif m.content == 'Thanks, that fixed it. Nothing else needed.':
+            # docs/models/typesafe.md: `None` is a route, taken on the pick alone with nothing to fill
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result_None', args={'response': None})],
+                provider_details={
+                    'confidence': {},
+                    'probabilities': {},
+                    'scores': {},
+                    'tool': {
+                        'choice': 'final_result_None',
+                        'probabilities': {
+                            'final_result_Ticket': 0.03,
+                            'final_result_Escalation': 0.01,
+                            'final_result_None': 0.96,
+                        },
+                        'offered': ['final_result_None'],
+                    },
+                },
+            )
         elif m.content == 'Someone else can see my invoices when they log in.':
             # docs/models/typesafe.md: a union picks a member, then fills it in a second request
             return ModelResponse(
