@@ -11,6 +11,7 @@ import anyio
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.workspaces import (
+    ReadOnlyWorkspace,
     SupportsCommands,
     SupportsFilesystem,
     Workspace,
@@ -18,6 +19,7 @@ from pydantic_ai.workspaces import (
     WorkspaceCommand,
     WorkspaceRef,
     WorkspaceResult,
+    WorkspaceUnavailableError,
 )
 
 
@@ -308,3 +310,120 @@ class DecliningWorkspaceCapability(AbstractCapability[Any]):
     def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> None:
         self.calls += 1
         return None
+
+
+class InMemoryProvider:
+    """A fake remote provider: environments live here, so a backend built anywhere can reattach by ref.
+
+    A `WorkspaceRef` names an environment held by the provider, not a backend object, the way a real
+    provider's does; a backend with no ref creates an environment on first use and takes its ref.
+    """
+
+    def __init__(self, name: str = 'fake') -> None:
+        self.name = name
+        self.environments: dict[str, dict[str, bytes]] = {}
+        self.log: list[str] = []
+
+    def reset(self) -> None:
+        self.environments.clear()
+        self.log.clear()
+
+    def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+        return ProviderBackend(self, ref)
+
+    def capability(self, *, read_only: bool = False) -> ProviderWorkspaces:
+        return ProviderWorkspaces(self, read_only=read_only)
+
+
+class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+    def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
+        self._provider = provider
+        self._ref = ref
+        self.attached = False
+
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        return self._ref
+
+    async def _files(self) -> dict[str, bytes]:
+        await anyio.sleep(0)
+        provider = self._provider
+        if self._ref is None:
+            env_id = f'env-{len(provider.environments) + 1}'
+            provider.environments[env_id] = {}
+            provider.log.append(f'create:{env_id}')
+            self._ref = WorkspaceRef(provider=provider.name, id=env_id)
+        elif self._ref.id not in provider.environments:
+            raise WorkspaceUnavailableError(f'environment {self._ref.id!r} does not exist')
+        elif not self.attached:
+            provider.log.append(f'attach:{self._ref.id}')
+        self.attached = True
+        return provider.environments[self._ref.id]
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> FakeWorkspaceResult:
+        await self._files()
+        if isinstance(command, str) != shell:
+            raise TypeError('a shell string needs `shell=True`, an argv sequence needs `shell=False`')
+        if isinstance(command, str) or command[0] in ('head', 'sed'):
+            # No shell utilities: the facade's bounded read falls back to the filesystem.
+            return FakeWorkspaceResult(exit_code=127, stderr='not found')
+        return FakeWorkspaceResult(stdout=f'ran:{" ".join(command)}')
+
+    async def working_dir(self) -> str:
+        await self._files()
+        return '/remote'
+
+    async def read_bytes(self, path: str) -> bytes:
+        files = await self._files()
+        if path not in files:
+            raise FileNotFoundError(path)
+        return files[path]
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        (await self._files())[path] = data
+
+    async def stat(self, path: str) -> FakeEntry:
+        files = await self._files()
+        if path not in files:
+            raise FileNotFoundError(path)
+        return FakeEntry(name=path.rsplit('/', 1)[-1], path=path, size=len(files[path]))
+
+    async def list_dir(self, path: str) -> Sequence[FakeEntry]:
+        files = await self._files()
+        return [
+            FakeEntry(name=file.rsplit('/', 1)[-1], path=file, size=len(data)) for file, data in sorted(files.items())
+        ]
+
+    async def make_dir(self, path: str) -> None:
+        await self._files()
+
+    async def remove(self, path: str) -> None:
+        files = await self._files()
+        if path not in files:
+            raise FileNotFoundError(path)
+        del files[path]
+
+    async def exists(self, path: str) -> bool:
+        return path in await self._files()
+
+
+class ProviderWorkspaces(AbstractCapability[Any]):
+    """Supplies `InMemoryProvider` environments: a fresh one without a ref, the named one with."""
+
+    def __init__(self, provider: InMemoryProvider, *, read_only: bool = False) -> None:
+        self.provider = provider
+        self.read_only = read_only
+
+    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if ref is not None and ref.provider != self.provider.name:
+            return None
+        backend = self.provider.backend(ref)
+        return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend

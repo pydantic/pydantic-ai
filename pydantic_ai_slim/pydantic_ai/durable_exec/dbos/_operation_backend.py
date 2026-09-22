@@ -44,16 +44,21 @@ ResultT = TypeVar('ResultT')
 
 
 class DBOSOperationConfig(DurableOperationConfig[StepConfig]):
-    def __init__(self, *, model: StepConfig, event: StepConfig, tool: StepConfig) -> None:
+    def __init__(
+        self, *, model: StepConfig, event: StepConfig, tool: StepConfig, workspace: StepConfig | None = None
+    ) -> None:
         self._model = model
         self._event = event
         self._tool = tool
+        self._workspace = tool if workspace is None else workspace
 
     def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> StepConfig:
         if role == 'model':
             return self._model
         if role == 'event':
             return self._event
+        if role == 'workspace':
+            return self._workspace
         return self._tool
 
     def for_tool(

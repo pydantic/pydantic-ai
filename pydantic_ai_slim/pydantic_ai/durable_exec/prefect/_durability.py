@@ -61,6 +61,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         model_task_config: TaskConfig | None = None,
         mcp_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
+        workspace_task_config: TaskConfig | None = None,
     ):
         """Create a PrefectDurability capability.
 
@@ -93,6 +94,10 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 `@my_toolset.tool(metadata={'prefect': TaskConfig(...)})` (or `False` to skip
                 task wrapping), or via the
                 [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability.
+            workspace_task_config: Prefect task config for the
+                [workspace](https://pydantic.dev/docs/ai/workspace/#durable-execution) tasks, one
+                per `Workspace` method called from flow code. Tasks are attempted once unless
+                `retries` is set, so a command or write is never repeated by a retry.
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         # Model and event-handler tasks compose the same non-retryable condition as tool tasks.
@@ -102,6 +107,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         self._event_stream_handler_task_config = with_non_retryable_errors(
             default_task_config | (event_stream_handler_task_config or {})
         )
+        self._workspace_task_config = with_non_retryable_errors(default_task_config | (workspace_task_config or {}))
 
     # --- Behavioral hooks ---
 
@@ -126,6 +132,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 event=self._event_stream_handler_task_config,
                 capability=default_task_config,
                 tool=self._tool_task_config,
+                workspace=self._workspace_task_config,
                 resolve_tool=tool_config,
             ),
             event_sequence_key=f'pydantic_ai_event_sequence:{self.name}',

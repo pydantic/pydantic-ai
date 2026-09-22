@@ -2429,7 +2429,13 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == 'Echo: Hello DBOS'
 
 
-async def test_dbos_durability_forwards_local_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
+async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
+    """A live backend passed into a workflow has no durable steps behind it, so the run refuses it.
+
+    The same agent still takes the backend outside a workflow, where the capability is transparent.
+    The supported shape inside a workflow is a workspace capability attached at construction time;
+    see `test_dbos_workspace.py`.
+    """
     agent = Agent(
         TestModel(call_tools=['round_trip_workspace']),
         name='dbos_durability_workspace',
@@ -2442,11 +2448,11 @@ async def test_dbos_durability_forwards_local_workspace_workflow_input(dbos: DBO
     async def run_durable_agent(workspace: LocalWorkspaceBackend) -> AgentRunResult[str]:
         return await agent.run('Use the workspace.', workspace=workspace)
 
-    result = await run_durable_agent(LocalWorkspaceBackend(tmp_path))
+    with pytest.raises(UserError, match='no capability supplied workspaces when the agent was constructed'):
+        await run_durable_agent(LocalWorkspaceBackend(tmp_path))
 
+    result = await agent.run('Use the workspace.', workspace=LocalWorkspaceBackend(tmp_path))
     assert result.output == '{"round_trip_workspace":"workspace content"}'
-    await result.workspace.write_text('after.txt', 'after run')
-    assert await result.workspace.read_text('after.txt') == 'after run'
 
 
 async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS) -> None:
