@@ -37,7 +37,8 @@ if TYPE_CHECKING:
 else:
     try:
         from ag_ui.core import FileSource
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
+        # Only reachable on 0.1.15 to 0.1.19, which no CI lane installs.
 
         class FileSource:
             """Stub for SDKs without `FileSource`."""

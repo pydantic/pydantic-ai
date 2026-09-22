@@ -8386,7 +8386,7 @@ async def test_approval_interrupt_on_1_0_has_no_pending_tool_call_ids() -> None:
     agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:
+    def delete_file(path: str) -> str:  # pragma: no cover
         return f'deleted {path}'
 
     outcome = next(

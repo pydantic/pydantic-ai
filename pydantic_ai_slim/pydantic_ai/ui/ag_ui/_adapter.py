@@ -450,6 +450,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             match part:
                                 case TextInputContent(text=text):
                                     user_prompt_content.append(text)
+                                case _ if isinstance(part, BinaryInputContent):
+                                    # A guard, not a class pattern: AG-UI 1.0 retired the part from
+                                    # the content union, but an install below 1.0 still sends it.
+                                    user_prompt_content.append(_legacy_binary_to_content(part))
                                 case (
                                     ImageInputContent()
                                     | AudioInputContent()
@@ -463,13 +467,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                     if (converted := multimodal_input_to_content(part)) is not None:
                                         user_prompt_content.append(converted)
                                 case _:
-                                    # Not a class pattern: AG-UI 1.0 retired `BinaryInputContent` from
-                                    # the content union, so on the 1.0 stubs that pattern can never
-                                    # match — but an install below 1.0 still dispatches it here.
-                                    if isinstance(part, BinaryInputContent):
-                                        user_prompt_content.append(_legacy_binary_to_content(part))
-                                    else:
-                                        assert_never(part)
+                                    assert_never(part)
 
                         if user_prompt_content:
                             content_to_add = (
