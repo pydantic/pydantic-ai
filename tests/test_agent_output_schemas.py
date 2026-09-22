@@ -810,6 +810,16 @@ class Thread(BaseModel):
             id='nested_annotated',
         ),
         pytest.param(
+            [Annotated[Ticket, Field(title='UrgentTicket')], Escalation],
+            snapshot(
+                [
+                    ('final_result_UrgentTicket', 'Triage a ticket.'),
+                    ('final_result_Escalation', 'Escalation: The final response which ends this conversation'),
+                ]
+            ),
+            id='field_title',
+        ),
+        pytest.param(
             [Annotated[Thread, Field(description='A thread.')], Escalation],
             snapshot(
                 [
@@ -846,7 +856,8 @@ async def test_annotated_output_tool_name_and_description(output_type: Any, expe
 
 
 async def test_annotated_output_tool_schema_and_validation():
-    """An `Annotated` model is offered as the model's own schema, and its metadata still validates the output."""
+    """An `Annotated` model is offered as the model's own schema with the annotation's keywords added, and its
+    metadata still validates the output."""
 
     def require_urgent(ticket: Ticket) -> Ticket:
         if not ticket.urgent:
@@ -861,6 +872,7 @@ async def test_annotated_output_tool_schema_and_validation():
                     'required': ['urgent'],
                     'title': 'Ticket',
                     'type': 'object',
+                    'examples': [{'urgent': True}],
                 },
                 {
                     'properties': {'to': {'type': 'string'}},
@@ -874,7 +886,10 @@ async def test_annotated_output_tool_schema_and_validation():
         return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': retried})])
 
     # Type checkers read an `Annotated[...]` expression as the `Annotated` special form rather than a type.
-    output_type: Any = [Annotated[Ticket, AfterValidator(require_urgent)], Escalation]
+    output_type: Any = [
+        Annotated[Ticket, AfterValidator(require_urgent), Field(examples=[{'urgent': True}])],
+        Escalation,
+    ]
     agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=output_type)
     result = await agent.run('Triage this ticket.')
     assert result.output == Ticket(urgent=True)

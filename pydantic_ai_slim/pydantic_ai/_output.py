@@ -937,12 +937,16 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
             raw_json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            # `Annotated[Model, Field(description=...)]` renders as a `$ref` to the model with the description beside it,
-            # so keep that description when `check_object_json_schema` swaps the `$ref` for the model's own schema.
-            schema_description = raw_json_schema.get('description')
+            # `Annotated[Model, Field(...)]` renders as a `$ref` to the model with the annotation's own keywords (`title`,
+            # `description`, `examples`, ...) beside it, so keep them when `check_object_json_schema` swaps the `$ref`
+            # for the model's own schema.
+            annotation_keywords = (
+                {k: v for k, v in raw_json_schema.items() if k not in ('$ref', '$defs')}
+                if '$ref' in raw_json_schema
+                else {}
+            )
             json_schema = _utils.check_object_json_schema(raw_json_schema)
-            if schema_description is not None:
-                json_schema['description'] = schema_description
+            json_schema.update(annotation_keywords)
 
             if self.outer_typed_dict_key:
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
