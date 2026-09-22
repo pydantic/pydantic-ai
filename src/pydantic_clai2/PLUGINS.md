@@ -856,7 +856,9 @@ alter an already running request or revoke credentials at the provider.
 `/add_model` opens the provider catalog, connection setup, and per-model settings.
 `/add_model PROVIDER:NAME` adds a model directly. Adding a model also selects it
 for the next prompt. `/model` is a flat picker of added models, and `/model NAME`
-selects one without the menu. Its Tab suggestions contain only added models.
+selects one without the menu. Choose **Add a model...** in `/model` to browse
+providers and select a new model, including when the saved list is empty.
+Its Tab suggestions contain only added models.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
 

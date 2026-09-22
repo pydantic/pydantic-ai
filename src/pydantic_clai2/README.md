@@ -368,9 +368,11 @@ not change output-validation or HTTP transport retries.
 
 ## Models and their settings
 
-`/model` selects from models you have already added. Its flat, searchable picker
-and Tab completion use only that saved list. `/model NAME` switches directly to
-an added model. The currently configured model is kept in the list when upgrading.
+`/model` selects from models you have already added. Choose **Add a model...**
+to browse providers and select a new model without leaving the command. This
+option is available even when no models have been added. Tab completion uses
+only the saved list. `/model NAME` switches directly to an added model.
+The currently configured model is kept in the list when upgrading.
 
 `/add_model` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from

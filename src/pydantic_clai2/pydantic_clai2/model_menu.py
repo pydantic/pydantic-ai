@@ -294,11 +294,13 @@ def _run_provider(menu: ModelMenu, runners: Runners, messages: list[str]) -> boo
         return True
 
 
-async def open_add_model_menu(context: CommandContext, *, run: Callable[[ModelMenu], list[str]] | None = None) -> str:
+async def open_add_model_menu(
+    context: CommandContext, *, run: Callable[[ModelMenu], list[str]] | None = None, runners: Runners = TERMINAL
+) -> str:
     """Show the menu in a thread; the pick and any settings edits apply to the next prompt."""
 
     def flow(menu: ModelMenu) -> list[str]:
-        return run_model_flow(menu, connect_provider=True)
+        return run_model_flow(menu, runners, connect_provider=True)
 
     accumulated: list[str] = []
     while True:

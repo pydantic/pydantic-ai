@@ -18,7 +18,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.field_menu import FieldMenu
 from pydantic_clai2.model_catalog import catalog, genai_prices_models, runnable_providers
 from pydantic_clai2.model_menu import ModelMenu, ModelSettingsSource, open_add_model_menu, run_model_flow
-from pydantic_clai2.model_picker import build_model_picker, model_command, model_completions
+from pydantic_clai2.model_picker import ModelPickerAction, build_model_picker, model_command, model_completions
 from pydantic_clai2.model_settings import ModelSettingsForm, model_settings_from_json
 from pydantic_clai2.settings_store import SettingsStore
 
@@ -248,5 +248,36 @@ def test_empty_model_picker(tmp_path: Path) -> None:
     assert model_completions(context, []) == []
     widget = build_model_picker(context)
     assert widget.highlighted is not None
-    assert widget.highlighted.disabled
-    assert '/add_model' in widget.highlighted.label
+    assert not widget.highlighted.disabled
+    assert widget.highlighted.value is ModelPickerAction.ADD
+
+
+@pytest.mark.parametrize('initial_model', [None, 'test'])
+async def test_select_new_model_from_picker(tmp_path: Path, initial_model: str | None) -> None:
+    applied: list[str] = []
+    context = CommandContext(
+        settings=Settings(model=initial_model),
+        store=SettingsStore(tmp_path / 'config.db'),
+        clear_history=lambda: None,
+        apply_setting=lambda key, settings: applied.append(key),
+    )
+    assert context.store.models() == ([initial_model] if initial_model else [])
+    script = Script(
+        lists=[pick(ModelPickerAction.ADD), pick('anthropic'), pick('anthropic:claude-sonnet-4-5')],
+        choices=[],
+        texts=[],
+    )
+    assert await model_command(context, [], runners=script.runners) == 'Saved model. Applied.'
+    assert context.settings.model == 'anthropic:claude-sonnet-4-5'
+    assert SettingsStore(context.store.path).load().model == context.settings.model
+    assert context.settings.model in model_completions(context, [])
+    assert applied == ['model']
+
+
+async def test_cancel_adding_from_picker(tmp_path: Path) -> None:
+    context, applied = make_context(tmp_path)
+    original = context.settings.model
+    script = Script(lists=[pick(ModelPickerAction.ADD), MenuResult(cancelled=True)], choices=[], texts=[])
+    assert await model_command(context, [], runners=script.runners) == 'No changes.'
+    assert context.settings.model == original
+    assert applied == []
