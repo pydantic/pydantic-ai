@@ -63,7 +63,7 @@ from .._adapter import (
     compaction_payload,
     tool_availability_delta_from_payload,
 )
-from .._message_id import get_ui_message_id, set_ui_message_id
+from .._utils import get_ui_message_id, set_ui_message_id
 
 try:
     from ag_ui.core import (

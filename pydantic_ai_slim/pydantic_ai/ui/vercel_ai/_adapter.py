@@ -59,7 +59,7 @@ from .._adapter import (
     resolve_allow_uploaded_files,
     tool_availability_delta_from_payload,
 )
-from .._message_id import get_ui_message_id, set_ui_message_id
+from .._utils import get_ui_message_id, set_ui_message_id
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     COMPACTION_DATA_TYPE,
