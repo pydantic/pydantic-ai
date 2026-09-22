@@ -57,8 +57,11 @@ INTERRUPTS_VERSION = (0, 1, 19)
 [ag-ui-protocol#1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569).
 """
 
-LIFECYCLE_1_0_VERSION = (1, 0)
-"""AG-UI version that added `RUN_STARTED.protocolVersion`, the `cancelled` outcome, `pendingToolCallIds` and `usage`."""
+LIFECYCLE_1_0_VERSION = (1,)
+"""AG-UI version that added `RUN_STARTED.protocolVersion`, the `cancelled` outcome, `pendingToolCallIds` and `usage`.
+
+One component, so `'1'`, `'1.0'` and `'1.0.0'` all qualify.
+"""
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
@@ -105,7 +108,7 @@ class UploadedFileActivityContent(TypedDict, total=False):
 
 def media_part_type(mime_type: str) -> str:
     """The AG-UI media part type (`image`, `audio`, `video` or `document`) for a MIME type."""
-    prefix = mime_type.split('/', 1)[0]
+    prefix = mime_type.split('/', 1)[0].lower()
     return prefix if prefix in ('image', 'audio', 'video') else 'document'
 
 

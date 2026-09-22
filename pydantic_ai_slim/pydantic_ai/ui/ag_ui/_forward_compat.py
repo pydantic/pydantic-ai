@@ -72,7 +72,8 @@ def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] |
     """The typed media part for a retired `binary` part, or `None` when it has no MIME type or payload.
 
     `url` wins over `data`, as it did in the legacy loader. A base64 data URI in `url` is how 0.x
-    clients inlined bytes, so it becomes a data source; the part's declared MIME type is kept.
+    clients inlined bytes, so it becomes a data source, and its own media type wins over the declared
+    one, as `BinaryContent.from_data_uri` did.
     """
     mime_type = item.get('mimeType', item.get('mime_type'))
     if not isinstance(mime_type, str):
@@ -80,7 +81,8 @@ def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] |
     url = item.get('url')
     data = item.get('data')
     if isinstance(url, str) and url.startswith('data:') and ';base64,' in url:
-        url, data = None, url.split(';base64,', 1)[1]
+        uri_mime_type, data = url.removeprefix('data:').split(';base64,', 1)
+        mime_type, url = uri_mime_type or mime_type, None
     if isinstance(url, str) and url:
         source: dict[str, JsonValue] = {'type': 'url', 'value': url, 'mimeType': mime_type}
     elif isinstance(data, str) and data:

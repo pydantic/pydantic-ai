@@ -8396,15 +8396,20 @@ async def test_approval_interrupt_on_1_0_has_no_pending_tool_call_ids() -> None:
 @requires_ag_ui('1.0.0')
 async def test_retired_binary_part_is_translated_on_1_0() -> None:
     """A retired `binary` part becomes the typed media part without a warning: `url` wins over `data`, a
-    base64 data URI becomes a data source, `mime_type` is accepted alongside `mimeType`, and `filename`
-    lands in `metadata`."""
+    base64 data URI becomes a data source whose own media type wins, `mime_type` is accepted alongside
+    `mimeType`, and `filename` lands in `metadata`."""
     cases = [
-        ({'url': 'https://example.com/image.png'}, ('url', 'https://example.com/image.png')),
-        ({'data': 'aGVsbG8=', 'url': 'https://example.com/image.png'}, ('url', 'https://example.com/image.png')),
-        ({'url': 'data:image/png;base64,aGVsbG8='}, ('data', 'aGVsbG8=')),
-        ({'data': 'aGVsbG8='}, ('data', 'aGVsbG8=')),
+        ({'url': 'https://example.com/image.png'}, ('image', 'url', 'https://example.com/image.png', 'image/png')),
+        (
+            {'data': 'aGVsbG8=', 'url': 'https://example.com/image.png'},
+            ('image', 'url', 'https://example.com/image.png', 'image/png'),
+        ),
+        ({'url': 'data:image/png;base64,aGVsbG8='}, ('image', 'data', 'aGVsbG8=', 'image/png')),
+        ({'url': 'data:application/pdf;base64,aGVsbG8='}, ('document', 'data', 'aGVsbG8=', 'application/pdf')),
+        ({'url': 'data:;base64,aGVsbG8='}, ('image', 'data', 'aGVsbG8=', 'image/png')),
+        ({'data': 'aGVsbG8='}, ('image', 'data', 'aGVsbG8=', 'image/png')),
     ]
-    for payload, expected_source in cases:
+    for payload, expected in cases:
         part = {'type': 'binary', 'mimeType': 'image/png', **payload}
         with warnings.catch_warnings(record=True) as caught:
             run_input = AGUIAdapter.build_run_input(
@@ -8413,8 +8418,9 @@ async def test_retired_binary_part_is_translated_on_1_0() -> None:
         assert not caught
         content = run_input.messages[0].content
         assert isinstance(content, list)
-        assert isinstance(content[0], ImageInputContent)
-        assert (content[0].source.type, content[0].source.value) == expected_source
+        media = content[0]
+        assert isinstance(media, ImageInputContent | DocumentInputContent)
+        assert (media.type, media.source.type, media.source.value, media.source.mime_type) == expected
 
     run_input = AGUIAdapter.build_run_input(
         build_run_input_body(
