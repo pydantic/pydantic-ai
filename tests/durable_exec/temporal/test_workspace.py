@@ -25,6 +25,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -43,11 +44,19 @@ try:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._workspace import DurableWorkspace, EnsureArguments, RunArguments
+    from pydantic_ai.durable_exec._workspace import (
+        DurableWorkspace,
+        EnsureArguments,
+        ReadBytesArguments,
+        RunArguments,
+        WorkspaceOperationParams,
+        WriteBytesArguments,
+    )
     from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
     from pydantic_ai.durable_exec.temporal._operation_backend import TemporalBoundOperation
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
@@ -448,6 +457,63 @@ async def test_binary_content_and_expected_errors_cross_the_activity_boundary(cl
         }
     )
     assert _ENVIRONMENTS['env-1']['/remote/blob.bin'] == _BINARY
+
+
+# --- Oversized file content gets an actionable Temporal error ---------------------------------
+
+PayloadOperation = Literal['read_bytes', 'write_bytes']
+
+
+@pytest.mark.parametrize('operation', ['read_bytes', 'write_bytes'])
+async def test_workspace_content_payload_size_error_names_operation_and_remedy(
+    monkeypatch: pytest.MonkeyPatch, operation: PayloadOperation
+) -> None:
+    agent = Agent(TestModel(), name='payload', capabilities=[RemoteWorkspaces(), TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    bound = durability._bound_workspace_operations[operation]  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(bound, TemporalBoundOperation)
+
+    async def fail_with_payload_size_error(**kwargs: Any) -> None:
+        cause = ApplicationError(
+            '[TMPRL1103] Attempted to upload payloads with size that exceeded the error limit.',
+            type='PayloadsTooLarge',
+        )
+        error = ActivityError(
+            'activity failed',
+            scheduled_event_id=1,
+            started_event_id=2,
+            identity='test',
+            activity_type=f'workspace__{operation}',
+            activity_id='test',
+            retry_state=None,
+        )
+        error.__cause__ = cause
+        raise error
+
+    monkeypatch.setattr(
+        'pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', fail_with_payload_size_error
+    )
+    arguments = (
+        ReadBytesArguments(path='/remote/blob.bin')
+        if operation == 'read_bytes'
+        else WriteBytesArguments(path='/remote/blob.bin', data=b'content')
+    )
+    params = WorkspaceOperationParams(
+        run_context=RunContext(deps=None, model=TestModel(), usage=RunUsage()),
+        ref=WorkspaceRef(provider='remote', id='environment'),
+        arguments=arguments,
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        await bound(params)
+
+    message = str(exc_info.value)
+    assert message.startswith(
+        f'The `{operation}` workspace operation moved file content through an activity payload '
+        'that exceeded the Temporal server blob-size limit.'
+    )
+    assert 'Read a bounded window with `read_file`, or move the transfer into a tool' in message
 
 
 # --- An uncaught workspace error fails the workflow instead of hanging it ----------------------
