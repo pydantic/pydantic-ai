@@ -103,7 +103,7 @@ async def test_composite_selects_filesystems_and_rebases_paths() -> None:
     assert skills.calls[-1] == ('read', '/guide.md')
 
 
-async def test_root_and_nested_mounts_use_longest_prefix_and_shadow_entries() -> None:
+async def test_root_and_nested_routes_use_longest_prefix_and_shadow_entries() -> None:
     root = _MemoryFilesystem({'/README.md': b'root', '/skills/old.md': b'old'})
     skills = _MemoryFilesystem({'/guide.md': b'new'})
     filesystem = CompositeFilesystem({'/': root, '/skills': skills})
@@ -117,7 +117,7 @@ async def test_root_and_nested_mounts_use_longest_prefix_and_shadow_entries() ->
     ]
 
 
-async def test_nested_mount_routes_more_specific_paths() -> None:
+async def test_nested_route_selects_more_specific_paths() -> None:
     data = _MemoryFilesystem({'/current.txt': b'current'})
     archive = _MemoryFilesystem({'/old.txt': b'old'})
     filesystem = CompositeFilesystem({'/data': data, '/data/archive': archive})
@@ -132,7 +132,7 @@ async def test_nested_mount_routes_more_specific_paths() -> None:
     ]
 
 
-async def test_composite_can_be_mounted_in_another_composite() -> None:
+async def test_composite_can_be_routed_in_another_composite() -> None:
     team = _MemoryFilesystem({'/review.md': b'team'})
     skills = CompositeFilesystem({'/team': team})
     filesystem = CompositeFilesystem({'/skills': skills})
@@ -161,7 +161,7 @@ async def test_composite_routes_mutations_and_rewrites_metadata_paths() -> None:
     assert not await filesystem.exists('/data/nested/output.txt')
 
 
-async def test_composite_synthesizes_mounts_and_virtual_parents() -> None:
+async def test_composite_synthesizes_routes_and_virtual_parents() -> None:
     filesystem = CompositeFilesystem({'/team/data': _MemoryFilesystem(), '/team/skills': _MemoryFilesystem()})
 
     assert [(entry.name, entry.path) for entry in await filesystem.list_dir('/')] == [('team', '/team')]
@@ -175,7 +175,7 @@ async def test_composite_synthesizes_mounts_and_virtual_parents() -> None:
     await filesystem.make_dir('/team')
 
 
-async def test_list_dir_synthesizes_a_mount_whose_child_root_is_missing() -> None:
+async def test_list_dir_synthesizes_a_route_whose_child_root_is_missing() -> None:
     data = _MemoryFilesystem()
     data.directories.clear()
     filesystem = CompositeFilesystem({'/data': data})
@@ -184,7 +184,7 @@ async def test_list_dir_synthesizes_a_mount_whose_child_root_is_missing() -> Non
     assert [(entry.name, entry.path) for entry in await filesystem.list_dir('/')] == [('data', '/data')]
 
 
-async def test_composite_rejects_operations_outside_mounts() -> None:
+async def test_composite_rejects_operations_outside_routes() -> None:
     filesystem = CompositeFilesystem({'/data': _MemoryFilesystem()})
 
     assert not await filesystem.exists('/other/file.txt')
@@ -192,16 +192,16 @@ async def test_composite_rejects_operations_outside_mounts() -> None:
         await filesystem.read_bytes('/other/file.txt')
     with pytest.raises(IsADirectoryError, match='/data'):
         await filesystem.read_bytes('/data')
-    with pytest.raises(PermissionError, match='Cannot remove composite mount'):
+    with pytest.raises(PermissionError, match='Cannot remove composite route'):
         await filesystem.remove('/data')
-    with pytest.raises(PermissionError, match='Cannot remove composite mount'):
+    with pytest.raises(PermissionError, match='Cannot remove composite route'):
         await filesystem.remove('/')
 
 
-async def test_composite_protects_ancestors_of_nested_mounts() -> None:
+async def test_composite_protects_ancestors_of_nested_routes() -> None:
     filesystem = CompositeFilesystem({'/data/archive': _MemoryFilesystem()})
 
-    with pytest.raises(PermissionError, match='Cannot remove composite mount'):
+    with pytest.raises(PermissionError, match='Cannot remove composite route'):
         await filesystem.remove('/data')
 
 
@@ -214,15 +214,15 @@ async def test_composite_normalizes_operation_paths() -> None:
         await filesystem.read_bytes('data/input.txt')
 
 
-@pytest.mark.parametrize('mounts', [{}, {'data': _MemoryFilesystem()}, {'/data/../other': _MemoryFilesystem()}])
-def test_composite_rejects_invalid_mount_tables(mounts: dict[str, SupportsFilesystem]) -> None:
+@pytest.mark.parametrize('filesystems', [{}, {'data': _MemoryFilesystem()}, {'/data/../other': _MemoryFilesystem()}])
+def test_composite_rejects_invalid_routes(filesystems: dict[str, SupportsFilesystem]) -> None:
     with pytest.raises(ValueError):
-        CompositeFilesystem(mounts)
+        CompositeFilesystem(filesystems)
 
 
-async def test_composite_copies_the_mount_table() -> None:
-    mounts: dict[str, SupportsFilesystem] = {'/data': _MemoryFilesystem()}
-    filesystem = CompositeFilesystem(mounts)
-    mounts['/other'] = _MemoryFilesystem({'/file.txt': b'other'})
+async def test_composite_copies_the_filesystem_mapping() -> None:
+    filesystems: dict[str, SupportsFilesystem] = {'/data': _MemoryFilesystem()}
+    filesystem = CompositeFilesystem(filesystems)
+    filesystems['/other'] = _MemoryFilesystem({'/file.txt': b'other'})
 
     assert not await filesystem.exists('/other/file.txt')

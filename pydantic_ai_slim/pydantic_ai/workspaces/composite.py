@@ -11,26 +11,27 @@ __all__ = ('CompositeFilesystem',)
 
 
 class CompositeFilesystem(SupportsFilesystem):
-    """Select a filesystem by longest matching mount prefix and delegate to it.
+    """Select a filesystem by longest matching path prefix and delegate to it.
 
-    Each child filesystem has its own namespace rooted at `/`: for example, a child mounted at
+    Each child filesystem has its own namespace rooted at `/`: for example, a child routed at
     `/skills` receives `/guide.md` when the composite receives `/skills/guide.md`. A child may be
     another `CompositeFilesystem`.
 
-    Mount points and their ancestors appear as directories, including in directory listings. A
-    more-specific mount shadows an entry with the same name in a parent filesystem.
+    Route roots and their ancestors appear as directories, including in directory listings. A
+    more-specific route shadows an entry with the same name in a parent filesystem. These logical
+    routes do not make child filesystems visible to commands in a workspace.
     """
 
-    def __init__(self, mounts: Mapping[str, SupportsFilesystem]) -> None:
-        if not mounts:
-            raise ValueError('CompositeFilesystem requires at least one mount.')
+    def __init__(self, filesystems: Mapping[str, SupportsFilesystem]) -> None:
+        if not filesystems:
+            raise ValueError('CompositeFilesystem requires at least one filesystem.')
 
-        for path in mounts:
+        for path in filesystems:
             if _normalize(path) != path:
-                raise ValueError(f'mount path must be a canonical absolute POSIX path, got {path!r}.')
+                raise ValueError(f'filesystem path must be a canonical absolute POSIX path, got {path!r}.')
 
-        # More-specific mounts must be considered before their parents.
-        self._mounts = tuple(sorted(mounts.items(), key=lambda item: len(item[0]), reverse=True))
+        # More-specific routes must be considered before their parents.
+        self._filesystems = tuple(sorted(filesystems.items(), key=lambda item: len(item[0]), reverse=True))
 
     async def read_bytes(self, path: str) -> bytes:
         path = _normalize(path)
@@ -69,8 +70,8 @@ class CompositeFilesystem(SupportsFilesystem):
                 rebased = _rebase_entry(mount_path, entry)
                 entries_by_name[rebased.name] = rebased
 
-        # A mounted child shadows an entry with the same name in the selected parent filesystem.
-        for name in self._mount_children(path):
+        # A routed child shadows an entry with the same name in the selected parent filesystem.
+        for name in self._route_children(path):
             entries_by_name[name] = _directory_entry(posixpath.join(path, name))
 
         return tuple(entries_by_name[name] for name in sorted(entries_by_name))
@@ -85,7 +86,7 @@ class CompositeFilesystem(SupportsFilesystem):
     async def remove(self, path: str) -> None:
         path = _normalize(path)
         if self._is_mount_directory(path):
-            raise PermissionError(f'Cannot remove composite mount or virtual directory {path!r}.')
+            raise PermissionError(f'Cannot remove composite route or virtual directory {path!r}.')
         _, filesystem, source_path = self._select(path)
         await filesystem.remove(source_path)
 
@@ -101,22 +102,22 @@ class CompositeFilesystem(SupportsFilesystem):
 
     def _select(self, path: str) -> tuple[str, SupportsFilesystem, str]:
         """Select the filesystem for `path` and rebase `path` into its root."""
-        for mount_path, filesystem in self._mounts:
-            prefix = mount_path.rstrip('/')
+        for route_path, filesystem in self._filesystems:
+            prefix = route_path.rstrip('/')
             if path == prefix or path.startswith(prefix + '/'):
-                return mount_path, filesystem, path[len(prefix) :] or '/'
+                return route_path, filesystem, path[len(prefix) :] or '/'
         raise FileNotFoundError(path)
 
     def _is_mount_directory(self, path: str) -> bool:
         prefix = path.rstrip('/')
-        return any(mount == path or mount.startswith(prefix + '/') for mount, _ in self._mounts)
+        return any(route == path or route.startswith(prefix + '/') for route, _ in self._filesystems)
 
-    def _mount_children(self, path: str) -> set[str]:
+    def _route_children(self, path: str) -> set[str]:
         prefix = path.rstrip('/') + '/'
         return {
-            mount_path[len(prefix) :].split('/', 1)[0]
-            for mount_path, _ in self._mounts
-            if mount_path != path and mount_path.startswith(prefix)
+            route_path[len(prefix) :].split('/', 1)[0]
+            for route_path, _ in self._filesystems
+            if route_path != path and route_path.startswith(prefix)
         }
 
 
