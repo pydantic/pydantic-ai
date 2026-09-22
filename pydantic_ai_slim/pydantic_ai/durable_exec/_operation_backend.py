@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Generic, Literal, Protocol, TypeVar, cast
 
 from ._operation import (
@@ -20,6 +22,30 @@ ConfigT = TypeVar('ConfigT')
 ParamsT_bound = TypeVar('ParamsT_bound')
 WireT_bound = TypeVar('WireT_bound')
 ResultT_bound = TypeVar('ResultT_bound')
+
+_IN_DURABLE_UNIT: ContextVar[bool] = ContextVar('pydantic_ai.durable_exec.in_durable_unit', default=False)
+
+
+def in_durable_unit() -> bool:
+    """Whether the current task is executing the body of a durable unit.
+
+    Set by `CallableOperationBackend` around every operation handler, for engines whose units run in
+    the container's own process: there, the engine's own "inside the container" check stays true
+    inside a unit (Prefect's `FlowRunContext` is still set inside a task), and code that must not
+    nest one unit in another -- a `DurableWorkspace` call from a tool -- needs the finer answer.
+    Registered engines whose units run elsewhere (Temporal) never see the container's objects inside
+    a unit, and DBOS's own check already distinguishes a step, so neither needs this.
+    """
+    return _IN_DURABLE_UNIT.get()
+
+
+@contextmanager
+def durable_unit_scope() -> Generator[None]:
+    token = _IN_DURABLE_UNIT.set(True)
+    try:
+        yield
+    finally:
+        _IN_DURABLE_UNIT.reset(token)
 
 
 class BoundDurableOperation(Generic[ParamsT_bound, WireT_bound, ResultT_bound], Protocol):
@@ -106,7 +132,8 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
             cache_key = operation.cache_identity.project(params)
 
             async def body() -> object:
-                return operation.result_codec.dump(await operation.handler(params))
+                with durable_unit_scope():
+                    return operation.result_codec.dump(await operation.handler(params))
 
             payload = await self.execute(
                 operation_id=operation.operation_id,
@@ -178,9 +205,18 @@ class RoleBasedOperationConfig(Generic[ConfigT]):
         event: ConfigT,
         capability: ConfigT,
         tool: ConfigT,
+        workspace: ConfigT | None = None,
         resolve_tool: Callable[[DurableOperationId, object | None, str], ConfigT | Literal[False]] | None = None,
     ) -> None:
-        self._configs = {'model': model, 'event': event, 'capability': capability, 'tool': tool}
+        # Workspace units fall back to the capability config: an engine written before the
+        # `'workspace'` role existed keeps resolving every role it is asked for.
+        self._configs = {
+            'model': model,
+            'event': event,
+            'capability': capability,
+            'tool': tool,
+            'workspace': capability if workspace is None else workspace,
+        }
         self._resolve_tool = resolve_tool
 
     def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> ConfigT:

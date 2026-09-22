@@ -194,6 +194,40 @@ class DynamicToolsetCallToolParams:
     tool_def: ToolDefinition | None = None
 
 
+WorkspaceMethod: TypeAlias = Literal[
+    'run',
+    'read_bytes',
+    'write_bytes',
+    'stat',
+    'list_dir',
+    'make_dir',
+    'remove',
+    'exists',
+    'read_text',
+    'write_text',
+    'read_file',
+]
+"""The [`Workspace`][pydantic_ai.workspaces.Workspace] methods that run as durable units.
+
+Each becomes one unit per call under a durability capability. `working_dir` and `resolve` are not
+listed: the `ensure` unit journals the canonical working directory at run start, and a
+durable workspace answers both from it.
+"""
+
+
+@dataclass(frozen=True)
+class WorkspaceOperationId:
+    """Identifies one workspace operation for engine naming and configuration.
+
+    `method` is the [`Workspace`][pydantic_ai.workspaces.Workspace] method the unit runs, or
+    `'ensure'` for the unit that provisions the environment at run start. There is no capability
+    id: the workspace is composed over the whole capability tree, so no supplier needs naming. See
+    the [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
+    """
+
+    method: WorkspaceMethod | Literal['ensure']
+
+
 DurableOperationId: TypeAlias = (
     ModelRequestId
     | ModelCompactMessagesId
@@ -204,6 +238,7 @@ DurableOperationId: TypeAlias = (
     | ToolsetGetInstructionsId
     | ToolsetValidateToolArgumentsId
     | ToolsetCallToolId
+    | WorkspaceOperationId
 )
 """The extensible union of operation identifiers passed to engine configuration.
 
@@ -243,8 +278,11 @@ class ResultCodec(Generic[ResultT], Protocol):
     def load(self, payload: object) -> ResultT: ...
 
 
-OperationConfigRole: TypeAlias = Literal['model', 'event', 'tool', 'capability']
-"""The coarse configuration bucket for an operation; its ID carries the fine-grained identity."""
+OperationConfigRole: TypeAlias = Literal['model', 'event', 'tool', 'capability', 'workspace']
+"""The coarse configuration bucket for an operation; its ID carries the fine-grained identity.
+
+`'workspace'` covers the units a `DurableWorkspace` dispatches; engines that take no workspace
+configuration resolve it like `'capability'`."""
 
 
 class DurableOperationConfig(Generic[ConfigT_co], Protocol):

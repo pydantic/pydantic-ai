@@ -86,6 +86,15 @@ class DurabilityEngineSpec:
     tool_config_key: str | None = None
     """Tool metadata key containing engine-specific durable configuration, if supported."""
 
+    workspace_rebuilt_in_unit: bool = False
+    """Whether a durable unit rebuilds `ctx.workspace` from the worker's construction-time capabilities.
+
+    True for an engine whose units may run in another process (Temporal): the unit gets the
+    serialized `WorkspaceRef` and asks the construction-time capability tree for the workspace,
+    without re-running `for_run`, so the container rejects a per-run selection that tree would not
+    reproduce. False for engines whose units run in the container's process and use the run's live
+    workspace directly."""
+
     def __post_init__(self) -> None:
         errors: list[str] = []
         if not self.durable_unit_noun:

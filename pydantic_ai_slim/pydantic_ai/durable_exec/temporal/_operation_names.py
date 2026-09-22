@@ -11,6 +11,7 @@ from .._operation import (
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
+    WorkspaceOperationId,
 )
 from .._operation_names import (
     DurableInvocationName,
@@ -53,6 +54,8 @@ class TemporalOperationNamer(DurableOperationNamer):
             case ToolsetCallToolId(toolset_kind=kind, toolset_id=toolset_id):
                 prefix = 'toolset' if kind == 'function' else _toolset_prefix(kind)
                 return f'{self._prefix}__{prefix}__{toolset_id}__call_tool'
+            case WorkspaceOperationId(method=method):
+                return f'{self._prefix}__workspace__{method}'
         assert_never(operation_id)
 
     def invocation_name(self, operation_id: DurableOperationId, *, label: str | None) -> DurableInvocationName:

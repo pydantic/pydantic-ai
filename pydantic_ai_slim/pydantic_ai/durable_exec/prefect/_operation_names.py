@@ -11,6 +11,7 @@ from .._operation import (
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
+    WorkspaceOperationId,
 )
 from .._operation_names import DurableInvocationName, DurableOperationNamer
 
@@ -48,6 +49,8 @@ class PrefectOperationNamer(DurableOperationNamer):
                 return 'Call MCP Tool'
             case ToolsetCallToolId():
                 return 'Call Tool'
+            case WorkspaceOperationId(method=method):
+                return f'Workspace: {method}'
         assert_never(operation_id)
 
     def invocation_name(self, operation_id: DurableOperationId, *, label: str | None) -> DurableInvocationName:
