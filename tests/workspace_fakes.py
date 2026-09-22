@@ -43,7 +43,12 @@ _SED_REST = re.compile(r'^(\d+),\$p$')
 
 
 class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
-    """A lazy in-memory backend with the optional native filesystem."""
+    """A lazy in-memory backend with the optional native filesystem.
+
+    Without a ref, the first operation counts as creating the environment and sets the ref; with
+    one, it counts as attaching. The environment is the object itself, so attaching always
+    succeeds; `InMemoryProvider` below is the fake for a ref that can be gone.
+    """
 
     def __init__(
         self, name: str, files: dict[str, bytes] | None = None, *, ref: WorkspaceRef | None = None, sed: bool = True
@@ -207,15 +212,19 @@ class FilesystemOnlyWorkspaceBackend(WorkspaceBackend, SupportsFilesystem):
 
 
 class RecordingWorkspaceBackend(WorkspaceBackend, SupportsCommands):
-    """A command-only backend with no `SupportsFilesystem`."""
+    """A command-only backend with no `SupportsFilesystem`, bound to an existing environment.
 
-    def __init__(self, workspace_id: str, *, ref: WorkspaceRef | None = None) -> None:
-        self._ref = ref or WorkspaceRef(provider='fake', id=workspace_id)
+    It takes the ref it is bound to rather than deriving one from a name: a ref names an
+    environment that exists, so a backend never invents one ahead of creating anything.
+    """
+
+    def __init__(self, ref: WorkspaceRef) -> None:
+        self._ref = ref
         self.commands: list[str | Sequence[str]] = []
         self.cleanup_calls: list[str] = []
 
     @property
-    def ref(self) -> WorkspaceRef | None:
+    def ref(self) -> WorkspaceRef:
         return self._ref
 
     async def run(
@@ -270,7 +279,7 @@ class RunOnlyWorkspaceBackend(WorkspaceBackend, SupportsCommands):
 
 def ref_workspace(ref: WorkspaceRef, supplier: AbstractCapability[Any] | None = None) -> Workspace:
     del supplier
-    return Workspace(RecordingWorkspaceBackend(ref.id, ref=ref))
+    return Workspace(RecordingWorkspaceBackend(ref))
 
 
 class ConnectOnlyWorkspaceCapability(AbstractCapability[Any]):
@@ -286,7 +295,7 @@ class ConnectOnlyWorkspaceCapability(AbstractCapability[Any]):
         if ref is None:
             return None
         self.ids.append(ref.id)
-        backend = RecordingWorkspaceBackend(ref.id, ref=ref)
+        backend = RecordingWorkspaceBackend(ref)
         self.backends.append(backend)
         return backend
 
