@@ -299,19 +299,13 @@ def _disk_hash(chunks: Iterable[bytes]) -> str:
     return digest.hexdigest()[:12]
 
 
-def _read_canonical_text(path: Path) -> str:
-    """Read a text file as the canonical hash view, without newline translation.
-
-    `Path.open` is used because `Path.read_text` only accepts `newline` on
-    Python 3.13+, while `open` has had it since 3.10. Keep `errors` strict,
-    matching `read_text`'s default, so invalid UTF-8 surfaces the same way
-    it did before the `newline` handling was made explicit.
-    """
-    with path.open(encoding='utf-8', newline='') as f:
-        return f.read()
-
-
-def _announced_state(resolved: Path, path: str, *, expected_hash: str | None) -> tuple[str | None, str | None]:
+def _announced_state(
+    resolved: Path,
+    path: str,
+    *,
+    expected_hash: str | None,
+    open_read: Callable[[Path], BinaryIO],
+) -> tuple[str | None, str | None]:
     """The text a listener is shown a write replacing, and the hash the write is then guarded with.
 
     A stale `expected_hash` for a file that exists is rejected here first, so
@@ -330,9 +324,7 @@ def _announced_state(resolved: Path, path: str, *, expected_hash: str | None) ->
     if not resolved.is_file():
         return '', _ABSENT_HASH
     try:
-        # Opened like `_open_for_write`, so a special file swapped onto the
-        # path after the `is_file` check cannot stall this read.
-        with os.fdopen(os.open(resolved, os.O_RDONLY | _SPECIAL_FILE_FLAGS), 'rb') as source:
+        with open_read(resolved) as source:
             head = source.read(_DIFF_SOURCE_BYTES + 1)
             current_hash = _disk_hash(itertools.chain([head], _chunks(source)))
     except OSError:
@@ -400,31 +392,19 @@ def _open_for_write(resolved: Path, path: str, *, read_back: bool, create: bool)
         raise
 
 
-def _write_content(resolved: Path, path: str, content: str, *, expected_hash: str | None, create: bool) -> None:
-    """Replace the file's content, checking that an existing file hashes to `expected_hash` under the open descriptor.
+def _write_content(source: BinaryIO, path: str, content: str, *, expected_hash: str | None, created: bool) -> None:
+    """Check the existing stream's hash before truncating and writing UTF-8 bytes.
 
-    Checking under the descriptor is what guards the write: the file cannot
-    change between the check and the write the way it can while a change is
-    announced. The bytes are hashed as `read_file` hashes them, so a file that
-    is not valid UTF-8 is compared instead of failing to decode.
+    This uses the same stream for checking and writing, but does not lock out
+    concurrent writers. Invalid UTF-8 is hashed as `read_file` hashes it.
     """
-    descriptor, created = _open_for_write(resolved, path, read_back=expected_hash is not None, create=create)
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
+    with source:
+        if expected_hash is not None and not created:
+            _check_expected_hash(path, _disk_hash(_chunks(source)), expected_hash)
 
-        binary_file = os.fdopen(descriptor, 'rb+' if expected_hash is not None else 'wb')
-        descriptor = -1
-        with binary_file:
-            if expected_hash is not None and not created:
-                _check_expected_hash(path, _disk_hash(_chunks(binary_file)), expected_hash)
-
-            binary_file.seek(0)
-            binary_file.truncate(0)
-            binary_file.write(content.encode('utf-8'))
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
+        source.seek(0)
+        source.truncate(0)
+        source.write(content.encode('utf-8'))
 
 
 def _replacements(
@@ -524,6 +504,34 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         for name in FILE_SYSTEM_TOOL_NAMES:
             if name in self._tools:
                 self.add_function(registrations[name], name=name)
+
+    def open_read(self, resolved: Path) -> BinaryIO:
+        """Open an authorized path for a write's pre-change snapshot or an edit's source.
+
+        The caller closes the binary stream. Override alongside `open_write`
+        for storage without local file descriptors.
+        """
+        return os.fdopen(os.open(resolved, os.O_RDONLY | _SPECIAL_FILE_FLAGS), 'rb')
+
+    def open_write(self, resolved: Path, *, read_back: bool, create: bool) -> tuple[BinaryIO, bool]:
+        """Open an authorized regular file without truncating it, returning `(stream, created)`.
+
+        The caller closes the seekable binary stream and checks the hash before
+        truncation. `read_back` requires read access from position zero. With
+        `create=False`, a missing file must raise `FileNotFoundError`; otherwise
+        creation must be exclusive so `created` describes this open, not a prior
+        existence check. Overrides own their backend's file-type and race checks.
+        """
+        path = self._relative_to_root(resolved)
+        descriptor, created = _open_for_write(resolved, path, read_back=read_back, create=create)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ModelRetry(f'Path {path!r} exists and is not a regular file.')
+            source = os.fdopen(descriptor, 'rb+' if read_back else 'wb')
+        except BaseException:
+            os.close(descriptor)
+            raise
+        return source, created
 
     def _matches(self, path: str, pattern: str) -> bool:
         """Glob-match a relative path, treating a leading `**/` as 'any directory, including the root'.
@@ -783,12 +791,13 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # and the descriptor check of `expected_hash` is the whole contract.
         guard = expected_hash
         if ctx is not None:
-            old, guard = _announced_state(resolved, path, expected_hash=expected_hash)
+            old, guard = _announced_state(resolved, path, expected_hash=expected_hash, open_read=self.open_read)
             change = Change.propose(**self._event_location(resolved), operation='write', old=old, new=content)
             if (refusal := await self._request(ctx, change, path=path, resolved=resolved)) is not None:
                 return refusal
 
-        _write_content(resolved, path, content, expected_hash=guard, create=True)
+        source, created = self.open_write(resolved, read_back=guard is not None, create=True)
+        _write_content(source, path, content, expected_hash=guard, created=created)
 
         new_hash = _content_hash(content)
         lines = len(content.splitlines())
@@ -888,15 +897,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         resolved = self._safe_resolve(path, write=True)
         if not resolved.is_file():
             raise FileNotFoundError(f'File not found: {path}')
-        with resolved.open('rb') as f:
-            if _is_binary(f.read(8192)):
+        with self.open_read(resolved) as source:
+            head = source.read(8192)
+            if _is_binary(head):
                 raise ValueError(f'{path} is a binary file; edit_file only edits text files.')
-
-        # Reading and writing with `newline=''` disables universal-newline
-        # translation, so the text is the canonical bytes-on-disk view that
-        # `read_file` hashes, and the replacement preserves `\r\n` exactly
-        # instead of writing `\r\r\n` through a translating writer on Windows.
-        text = _read_canonical_text(resolved)
+            # Decode without universal-newline translation to preserve CRLF and hashes.
+            text = (head + source.read()).decode('utf-8')
         current_hash = _content_hash(text)
 
         if expected_hash is not None:
@@ -909,7 +915,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # A listener may take a while (a human approving the diff, say). The
         # edit was computed from `text`, so the write checks that the file
         # still holds it, and reports a file deleted in the meantime as missing.
-        _write_content(resolved, path, new_content, expected_hash=current_hash, create=False)
+        source, created = self.open_write(resolved, read_back=True, create=False)
+        _write_content(source, path, new_content, expected_hash=current_hash, created=created)
         new_hash = _content_hash(new_content)
         if ctx is not None:
             await ctx.emit(change.edited(content_hash=new_hash))

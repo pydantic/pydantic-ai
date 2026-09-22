@@ -226,6 +226,32 @@ applies the same rule to absolute symlink targets.
   FIFO at the final component cannot stall the tool even if it is swapped into
   place during the write.
 
+### Custom file streams
+
+`FileSystem` uses local `pathlib.Path` paths; passing a remote `UPath` as
+`root_dir` is not supported. For a custom `FileSystemToolset`, override
+`open_read(resolved)` and `open_write(resolved, *, read_back, create)` to
+replace descriptor-based I/O used by write snapshots, `write_file`, and
+`edit_file`. Return the subclass from a custom `FileSystem.get_toolset()`
+implementation and register that capability with `Agent(capabilities=[...])`
+so filesystem events retain their capability ownership.
+
+`open_read` returns a binary stream for the pre-change snapshot and edit source. `open_write`
+returns `(stream, created)`: a seekable, non-truncated binary stream and
+whether this open exclusively created the file. When `read_back=True`, the
+stream must be readable from position zero. When `create=False`, a missing
+file must raise `FileNotFoundError`. The tool closes both streams, compares
+content hashes before truncating, and writes UTF-8 bytes without newline
+translation. A stream need not implement `fileno()`.
+
+Overrides must provide their backend's file-type checks and creation/race
+semantics. These methods do not implement remote path resolution,
+containment, directory operations, or discovery; a remote adapter must also
+supply those behaviors. The local implementation retains descriptor checks
+and POSIX non-blocking/no-follow flags. Hash checking is optimistic, not a
+lock against concurrent writers. Tool spans and filesystem events are
+unchanged; the opening methods add no telemetry.
+
 ## Pattern filtering
 
 Three independent glob lists control access. Patterns are matched with
