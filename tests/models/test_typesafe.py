@@ -1571,6 +1571,52 @@ class Refunded(UseEnumMemberDocstrings, Enum):
     """No refund was issued."""
 
 
+class OnlyYesDescribed(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back."""
+
+    yes = True
+    """Money was returned to the customer."""
+    no = False
+
+
+class OnlyNoDescribed(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back."""
+
+    yes = True
+    no = False
+    """No refund was issued."""
+
+
+@pytest.mark.parametrize(
+    'member,criteria',
+    [
+        pytest.param(OnlyYesDescribed, {'true': 'Money was returned to the customer.'}, id='only yes'),
+        pytest.param(OnlyNoDescribed, {'false': 'No refund was issued.'}, id='only no'),
+    ],
+)
+async def test_a_true_false_enum_sends_the_meaning_that_was_written(
+    allow_model_requests: None, member: type[Enum], criteria: dict[str, str]
+):
+    """Describing one answer and not the other is a partial rubric, not a broken one: what is written is sent.
+
+    A pair that describes neither is a plain yes/no and never reaches the criteria at all.
+    """
+    seen: list[dict[str, Any]] = []
+
+    class Settled(BaseModel):
+        """Review the transcript."""
+
+        refunded: member = Field(description='Was a refund issued?')  # type: ignore[valid-type]
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(refunded={'type': 'noul', 'noul': 0.9})
+
+    await Agent(mock_model(record), output_type=Settled).run('we sent the money back')
+
+    assert seen[0]['questions']['refunded']['criteria'] == criteria
+
+
 async def test_a_true_false_enum_says_what_each_answer_means(allow_model_requests: None):
     """`True` and `False` are a yes/no's own two options, so an enum of them is that question with criteria."""
     seen: list[dict[str, Any]] = []

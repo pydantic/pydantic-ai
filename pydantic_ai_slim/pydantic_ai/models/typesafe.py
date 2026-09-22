@@ -1066,7 +1066,7 @@ def _questions(
             elif len(options) == 2 and all(isinstance(option, bool) for option in options):
                 # `True` and `False` are the two options a yes/no already has, so an `Enum` or `Literal` of
                 # exactly those is that same question, with somewhere to say what each answer means.
-                questions[name] = _noul_question(name, cast('dict[bool, str | None]', options), ask, asked)
+                questions[name] = _noul_question(cast('dict[bool, str | None]', options), asked)
             elif len(options) < 2 or not all(isinstance(option, str) for option in options):
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: its options are not two or more strings. '
@@ -1190,23 +1190,20 @@ def _tool_question(
     return key
 
 
-def _noul_question(
-    name: str, options: dict[bool, str | None], ask: dict[str, JSONContent], asked: JSONContent | None
-) -> Noul:
+def _noul_question(options: dict[bool, str | None], asked: JSONContent | None) -> Noul:
     """A yes/no from an `Enum` or `Literal` of `True` and `False`, with what each answer means.
 
     A bare `bool` asks the same question and says nothing about its answers, because a `bool` has nowhere to
-    write it down. Two described options do, and Jev takes them as the yes/no's criteria. Either description
-    may be missing; what is written is sent.
+    write it down. Two described options do, and Jev takes them as the yes/no's criteria. Only one of the two
+    need be described; what is written is sent, and a pair that describes neither never gets here — it is
+    collapsed to a plain yes/no by `_questions`, which is also what raises when there is nothing to ask.
     """
     criteria: NoulCriteria = {}
     if (yes := options[True]) is not None:
         criteria['true'] = yes
     if (no := options[False]) is not None:
         criteria['false'] = no
-    if not criteria and not ask:
-        raise UserError(_ASKS_NOTHING.format(name=name))
-    return Noul(instructions=asked, criteria=criteria or None)
+    return Noul(instructions=asked, criteria=criteria)
 
 
 def _score_question(name: str, options: dict[int, str | None], asked: JSONContent | None) -> Score:
