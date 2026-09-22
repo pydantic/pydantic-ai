@@ -447,7 +447,7 @@ class EmailOk(BaseModel):
 
 feedback_agent = Agent[object, EmailRequiresWrite | EmailOk](
     'openai:gpt-5.2',
-    output_type=EmailRequiresWrite | EmailOk,  # type: ignore
+    output_type=EmailRequiresWrite | EmailOk,
     instructions=(
         'Review the email and provide feedback, email must reference the users specific interests.'
     ),
