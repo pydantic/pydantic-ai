@@ -278,7 +278,7 @@ environment.
 Subclass [`WorkspaceBackendSuite`][pydantic_ai.workspaces.testing.WorkspaceBackendSuite] in your
 pytest suite and provide its `backend` fixture:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 import pytest
 from pydantic_ai.workspaces.testing import WorkspaceBackendSuite
 
