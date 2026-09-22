@@ -909,7 +909,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             self.output_type = cast(type[Any], output)
             json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
-            if _utils.is_model_like(output):
+            unwrapped_output = _utils.unwrap_annotated(output)
+            if _utils.is_model_like(unwrapped_output):
                 json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
             else:
                 self.outer_typed_dict_key = 'response'
@@ -932,9 +933,13 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
-            json_schema = _utils.check_object_json_schema(
-                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            )
+            raw_json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+            # If output type is Annotated[..., Field(description=...)], it puts overridden description in raw_json_schema['description']
+            # Preserve it before check_object_json_schema replaces the schema with the referenced model schema.
+            schema_description = raw_json_schema.get('description')
+            json_schema = _utils.check_object_json_schema(raw_json_schema)
+            if schema_description is not None:
+                json_schema['description'] = schema_description
 
             if self.outer_typed_dict_key:
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
