@@ -22,6 +22,7 @@ import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
+from dirty_equals import IsStr
 from genai_prices import UpdatePrices
 from genai_prices.data_snapshot import get_snapshot
 from pytest_examples import CodeExample, EvalExample, find_examples
@@ -88,10 +89,12 @@ code_examples: dict[str, CodeExample] = {}
 
 
 @pytest.fixture(autouse=True)
-def blockbuster_enabled(example: CodeExample) -> bool:
+def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
     """Skip the detector for pytest-examples' synchronous output-file reader."""
-    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
-        return False
+    if 'example' in request.fixturenames:
+        example: CodeExample = request.getfixturevalue('example')
+        if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+            return False
     return True
 
 
@@ -251,6 +254,19 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
         pytest.skip(reason)  # pragma: lax no cover
 
 
+_TYPECHECK_TIMEOUT = 600
+"""Seconds allowed for type-checking the examples, including any wait for another xdist worker doing it."""
+
+
+def _typecheck_enabled() -> bool:
+    """Whether to type-check the examples: pyright is installed and `TYPECHECK_EXAMPLES` isn't `false`.
+
+    Pyright comes with the default `lint` dependency group. CI sets `TYPECHECK_EXAMPLES=false` in all
+    but one Python version's jobs, so the check runs once per test run rather than across the matrix.
+    """
+    return os.getenv('TYPECHECK_EXAMPLES') != 'false' and find_spec('pyright') is not None
+
+
 def _typecheck_skipped(prefix_settings: dict[str, str]) -> bool:
     """Type checking runs wherever linting does, unless the fence also says `typecheck="skip"`."""
     return prefix_settings.get('lint', '').startswith('skip') or prefix_settings.get('typecheck', '').startswith('skip')
@@ -289,6 +305,9 @@ def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict
             {'root': str(example_dir), 'extraPaths': [str(root_dir / 'tests' / 'example_modules')]}
         )
 
+    # `COVERAGE_*` is dropped so `[tool.coverage.run] patch = ["subprocess"]` leaves pyright alone.
+    env = {k: v for k, v in os.environ.items() if not k.startswith('COVERAGE_')}
+    env['PYRIGHT_PYTHON_IGNORE_WARNINGS'] = '1'
     processes: list[subprocess.Popen[str]] = []
     for python_version, version_environments in environments.items():
         project_dir = work_dir / f'py{python_version}'
@@ -306,26 +325,33 @@ def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                env={**os.environ, 'PYRIGHT_PYTHON_IGNORE_WARNINGS': '1'},
+                env=env,
             )
         )
 
+    deadline = time.monotonic() + _TYPECHECK_TIMEOUT
     errors: dict[str, list[str]] = {}
-    for process in processes:
-        stdout, stderr = process.communicate(timeout=600)
-        if process.returncode not in (0, 1):  # pragma: no cover
-            raise RuntimeError(f'pyright exited with code {process.returncode}:\n{stderr or stdout}')
-        for diagnostic in json.loads(stdout)['generalDiagnostics']:
-            example = files.get(Path(diagnostic['file']).resolve())
-            if example is None or diagnostic['severity'] != 'error':
-                continue
-            start = diagnostic['range']['start']
-            line = example.start_line + start['line'] + 1
-            column = example.indent + start['character'] + 1
-            rule = f' [{rule}]' if (rule := diagnostic.get('rule')) else ''
-            errors.setdefault(_example_key(example), []).append(
-                f'{example.path}:{line}:{column}: {diagnostic["message"]}{rule}'
-            )
+    try:
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=max(deadline - time.monotonic(), 0))
+            if process.returncode not in (0, 1):  # pragma: no cover
+                raise RuntimeError(f'pyright exited with code {process.returncode}:\n{stderr or stdout}')
+            for diagnostic in json.loads(stdout)['generalDiagnostics']:
+                example = files.get(Path(diagnostic['file']).resolve())
+                if example is None or diagnostic['severity'] != 'error':
+                    continue
+                start = diagnostic['range']['start']
+                line = example.start_line + start['line'] + 1
+                column = example.indent + start['character'] + 1
+                rule = f' [{rule}]' if (rule := diagnostic.get('rule')) else ''
+                errors.setdefault(_example_key(example), []).append(
+                    f'{example.path}:{line}:{column}: {diagnostic["message"]}{rule}'
+                )
+    finally:
+        for process in processes:
+            if process.poll() is None:  # pragma: no cover
+                process.kill()
+                process.wait()
     return errors
 
 
@@ -340,17 +366,13 @@ def _check_types(example: CodeExample, examples_type_errors: dict[str, list[str]
 def examples_type_errors(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
 ) -> dict[str, list[str]] | None:
-    """The pyright errors of the selected examples, or `None` when pyright isn't installed.
-
-    Pyright comes with the `lint` dependency group, which `make install` installs. CI installs it only in
-    the docs-only job and the Python 3.14 all-extras jobs, so the check runs once per test run rather
-    than across the whole matrix.
+    """The pyright errors of the selected examples, or `None` when type checking is off (see `_typecheck_enabled`).
 
     One pyright run covers every selected example, in `standard` mode. Under xdist, the first worker
     to get here runs it and the others wait for its result.
     """
-    if find_spec('pyright') is None:
-        return None  # pragma: lax no cover
+    if not _typecheck_enabled():
+        return None
 
     examples: list[CodeExample] = []
     for item in request.session.items:
@@ -374,7 +396,8 @@ def examples_type_errors(
     try:
         os.close(os.open(shared_dir / 'docs-examples-pyright.lock', os.O_CREAT | os.O_EXCL))
     except FileExistsError:
-        deadline = time.monotonic() + 900
+        # Allow for the other worker's writing and pyright's startup on top of its own deadline.
+        deadline = time.monotonic() + _TYPECHECK_TIMEOUT + 60
         while not result_file.exists():
             if time.monotonic() > deadline:  # pragma: no cover
                 raise TimeoutError('Timed out waiting for another xdist worker to type-check the examples')
@@ -392,6 +415,20 @@ def examples_type_errors(
     if failure := result.get('failure'):  # pragma: no cover
         raise RuntimeError(f'Type-checking the examples failed: {failure}')
     return result['errors']
+
+
+@pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
+def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
+    """A type error is reported at its line and column in the Markdown or docstring the example came from."""
+    example = CodeExample.create("x: int = 'a'\n", path=Path('docs/example.md'), start_line=10, indent=4)
+
+    errors = _typecheck_examples([example], tmp_path)
+
+    assert errors == {
+        'docs/example.md:10': [IsStr(regex=r'docs/example\.md:11:14: .* \[reportAssignmentType\]', regex_flags=re.S)]
+    }
+    with pytest.raises(pytest.fail.Exception, match='pyright failed:'):
+        _check_types(example, errors)
 
 
 @pytest.mark.parametrize('example', list(find_filter_examples()))
