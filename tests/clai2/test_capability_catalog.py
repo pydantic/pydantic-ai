@@ -50,6 +50,7 @@ def test_catalog_covers_public_harness_capabilities() -> None:
         'persistence',
         'logfire',
         'notifications',
+        'mcp',
     }
 
 

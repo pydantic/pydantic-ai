@@ -8,6 +8,49 @@ Everything a plugin can do goes through one object, the `PluginHost`. There is n
 global registry to import and no magic file to name. You get a `host`, you tell it
 what you want, you're done.
 
+## Connect MCP servers
+
+The enabled built-in `mcp` plugin provides `/mcp`. CLAI includes the MCP client;
+there is no extra client package to install. Local server programs and their
+runtimes still need to be installed separately. No servers are configured by
+default, and loading the plugin does not start programs or contact endpoints.
+
+Only configure servers you trust. Stdio servers run programs with your user
+permissions. HTTP servers receive tool arguments and can return untrusted content.
+Plugin settings are stored as plain JSON, not in the credential store. Prefer
+inherited environment variables for local credentials; do not paste secrets into
+slash commands, project files, or saved `headers`/`env` settings.
+
+Configure a local server using an executable and an argument list, not a shell command:
+
+```text
+/plugins add mcp pydantic_clai2.mcp '{"servers":{"local":{"transport":"stdio","command":"python","args":["/absolute/path/to/server.py"]}}}'
+/mcp
+/mcp tools local
+```
+
+For Streamable HTTP, use `{"servers":{"remote":{"transport":"http","url":"https://example.com/mcp"}}}`
+as the JSON argument instead. Replace the example endpoint with your server.
+Stdio settings also accept `cwd` and `env`; HTTP settings accept `headers`.
+HTTP redirects are rejected; configure the final MCP endpoint URL.
+Each server accepts `enabled: false` to keep its configuration without using it.
+Names start with a letter and contain only letters and digits. Underscores are
+reserved for the separator so server/tool name pairs cannot produce the same name.
+The model sees tools prefixed by server name, for example `local_search`.
+
+`/mcp` and `/mcp list` show names, transports, and enabled state, not connection
+health or credentials. `/mcp tools NAME` connects to one enabled server, lists
+its prefixed tool names, then closes that connection. Connection errors are
+reported by the shell. During agent runs, core's `MCPToolset` owns connection
+startup, tool execution, and cleanup. The plugin adds no telemetry beyond core's
+tool spans. It does not enable MCP sampling or native provider-side MCP.
+
+`/plugins disable mcp` removes both the tools and command; `/plugins enable mcp`
+restores them. To replace saved configuration, `/plugins remove mcp` first, then
+run `/plugins add` again. Removing the saved override restores the empty built-in.
+Repository declarations in `.clai/settings.json` stay disabled until explicitly
+approved through `/plugins enable mcp`, like other project plugins.
+
 ## On-demand authoring help
 
 The default CLAI agent exposes `read_clai_customization_guide`. When you ask for
