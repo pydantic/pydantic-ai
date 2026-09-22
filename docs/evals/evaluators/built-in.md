@@ -405,11 +405,12 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from pydantic_ai import UseEnumMemberDocstrings
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Classifier
 
 
-class Tone(str, Enum):
+class Tone(UseEnumMemberDocstrings, str, Enum):
     polite = 'polite'
     curt = 'curt'
     """Correct but gives the customer nothing extra."""
@@ -429,7 +430,7 @@ dataset = Dataset(
     evaluators=[
         # A yes/no question is an assertion
         Classifier('Is the reply polite?', model='typesafe:jev-latest'),
-        # A choice is a label; the docstring under a member describes that option
+        # A choice is a label; with `UseEnumMemberDocstrings`, a member's docstring describes that option
         Classifier('How does the reply treat the customer?', output_type=Tone, model='typesafe:jev-latest'),
         # A model is one evaluation per field, each field's description being its question
         Classifier(
