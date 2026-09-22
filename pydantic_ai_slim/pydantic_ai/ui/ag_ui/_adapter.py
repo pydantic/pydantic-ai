@@ -984,20 +984,21 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             warn_tool_kind_not_persisted(ag_ui_version)
 
         for msg in messages:
+            dumped_before = len(result)
             if isinstance(msg, ModelRequest):
-                dumped = cls._dump_request_parts(
+                request_messages = cls._dump_request_parts(
                     msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
                 )
+                result.extend(request_messages)
             elif isinstance(msg, ModelResponse):
-                dumped = cls._dump_response_parts(
-                    msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
+                result.extend(
+                    cls._dump_response_parts(msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data)
                 )
             else:
                 assert_never(msg)
             # The id `load_messages` kept belongs to the last AG-UI message merged into `msg`, so it goes
             # back on the last AG-UI message dumped from it; any others keep generated ids.
-            if dumped and (ui_message_id := get_ui_message_id(msg)) is not None:
-                dumped[-1].id = ui_message_id
-            result.extend(dumped)
+            if len(result) > dumped_before and (ui_message_id := get_ui_message_id(msg)) is not None:
+                result[-1].id = ui_message_id
 
         return result
