@@ -112,8 +112,9 @@ def workspace_with_data(
 Construction performs no I/O. File operations under `/data` route directly to `data`, with `/data`
 removed from the path passed to it. Before the first command, `Workspace` calls
 `data.ensure_mounted(...)`; the backend still creates or attaches lazily through the operations the
-filesystem performs there. A successful mount is reused by that `Workspace` instance. A rebuilt
-workspace calls `ensure_mounted` again, so implementations must detect an existing healthy mount.
+filesystem performs there. `Workspace` calls `ensure_mounted` before every command so a resumed
+environment or failed mount daemon cannot expose an ordinary directory in place of the mount.
+Implementations must check first and return quickly while their mount is healthy.
 
 Mounting is strict: if any filesystem cannot be mounted, the command does not run and the next
 command retries. This prevents a write intended for a mount path from silently landing in an

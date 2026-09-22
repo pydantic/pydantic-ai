@@ -316,7 +316,6 @@ class Workspace(WorkspaceBackend):
         if self._mounts and not isinstance(backend, SupportsCommands):
             raise UserError('Workspace mounts require a backend that supports command execution.')
         self._mount_target = Workspace(backend) if self._mounts else None
-        self._mounted: set[str] = set()
         self._mount_lock = anyio.Lock()
 
     @property
@@ -379,15 +378,7 @@ class Workspace(WorkspaceBackend):
         assert self._mount_target is not None
         async with self._mount_lock:
             for path, filesystem in self._mounts.items():
-                if path in self._mounted:
-                    continue
-                try:
-                    await filesystem.ensure_mounted(self._mount_target, path)
-                except WorkspaceError:
-                    raise
-                except Exception as error:
-                    raise WorkspaceError(f'Could not mount filesystem at {path!r}.') from error
-                self._mounted.add(path)
+                await filesystem.ensure_mounted(self._mount_target, path)
 
     async def working_dir(self) -> str:
         """The workspace's default working directory (absolute, filesystem-canonical POSIX path).

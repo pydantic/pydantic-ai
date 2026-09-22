@@ -194,7 +194,7 @@ async def test_flat_file_operations_use_the_backend_filesystem() -> None:
     assert not await workspace.exists('new.txt')
 
 
-async def test_mountable_filesystem_is_routed_to_file_tools_and_mounted_once_before_commands() -> None:
+async def test_mountable_filesystem_is_routed_to_file_tools_and_checked_before_each_command() -> None:
     backend = FakeWorkspace('mounted')
 
     class MountedFilesystem(FakeWorkspace):
@@ -216,8 +216,16 @@ async def test_mountable_filesystem_is_routed_to_file_tools_and_mounted_once_bef
     await workspace.run(['first-command'])
     await workspace.run(['second-command'])
 
-    assert [(target.backend, path) for target, path in filesystem.mounts] == [(backend, '/data')]
-    assert backend.commands == [['mount-filesystem', '/data'], ['first-command'], ['second-command']]
+    assert [(target.backend, path) for target, path in filesystem.mounts] == [
+        (backend, '/data'),
+        (backend, '/data'),
+    ]
+    assert backend.commands == [
+        ['mount-filesystem', '/data'],
+        ['first-command'],
+        ['mount-filesystem', '/data'],
+        ['second-command'],
+    ]
 
 
 def test_workspace_mounts_require_mountable_filesystems_and_canonical_non_nested_paths() -> None:
@@ -297,7 +305,7 @@ async def test_mount_failure_is_strict_and_retried_before_the_next_command() -> 
     await workspace.run(['second-command'])
     await workspace.run(['third-command'])
 
-    assert filesystem.attempts == 2
+    assert filesystem.attempts == 3
     assert backend.commands == [['second-command'], ['third-command']]
 
 

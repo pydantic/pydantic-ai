@@ -275,9 +275,10 @@ class MountableFilesystem(SupportsFilesystem, Protocol):
         """Make this filesystem visible to commands at `path` in `target`, or raise.
 
         `target` is the existing command environment without the workspace's configured mounts,
-        so commands run here do not recursively trigger mounting. Implementations must be safe to
-        call after reconnecting to an environment where the filesystem may already be mounted,
-        and must not leave an ordinary directory at `path` after raising.
+        so commands run here do not recursively trigger mounting. This method is called before
+        every command: implementations must check first and return quickly while their mount is
+        healthy, including after reconnecting to an existing environment. They must not leave an
+        ordinary directory at `path` after raising.
         """
         ...
 
