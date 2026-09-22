@@ -34,7 +34,10 @@ import anyio
 
 from pydantic_ai import Agent
 from pydantic_ai.models.github_copilot import GitHubCopilotModel
-from pydantic_ai.providers.github_copilot import GitHubCopilotOAuthFlow, GitHubCopilotProvider
+from pydantic_ai.providers.github_copilot import (
+    GitHubCopilotOAuthFlow,
+    GitHubCopilotProvider,
+)
 
 
 async def main() -> None:
