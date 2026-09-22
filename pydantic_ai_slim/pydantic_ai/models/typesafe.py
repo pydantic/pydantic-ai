@@ -706,6 +706,16 @@ def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
 _NONE_OF_THESE = 'None of these.'
 
 
+def _null(schema: dict[str, Any]) -> bool:
+    """Whether a schema is `None`, whatever else the user wrote about it.
+
+    Pydantic renders a bare `None` as `{'type': 'null'}`, but `Annotated[None, Field(description=...)]` — how a
+    user says what returning nothing means — renders the description beside it. The type is what makes it `None`;
+    the rest is the user's own words, and a route or a field is no less `None` for having some.
+    """
+    return schema.get('type') == 'null'
+
+
 def _none_route(tool: ToolDefinition) -> bool:
     """Whether this output tool is the `None` member of a union: a route that returns nothing.
 
@@ -713,7 +723,8 @@ def _none_route(tool: ToolDefinition) -> bool:
     in its schema and yet only one value that field could ever take. There is nothing to ask about it: to Jev it
     is one more option to pick, the same thing `_optional` makes of an `X | None` field one level down.
     """
-    return tool.kind == 'output' and list(_properties(tool.parameters_json_schema).values()) == [{'type': 'null'}]
+    properties = list(_properties(tool.parameters_json_schema).values())
+    return tool.kind == 'output' and len(properties) == 1 and _null(properties[0])
 
 
 def _route_args(tool: ToolDefinition) -> dict[str, Any]:
@@ -721,16 +732,41 @@ def _route_args(tool: ToolDefinition) -> dict[str, Any]:
     return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
 
 
+def _wrapped(tool: ToolDefinition) -> dict[str, Any] | None:
+    """The single property Pydantic AI wraps an output type that is not object-like in, if this is one.
+
+    A `Literal`, an `Enum`, a `Choices` set and a bare `None` all reach a model as one property of an object,
+    because only an object can be a tool's arguments. What such a type says about itself is written on that
+    property, since there is no class for it to be a docstring on. `outer_typed_dict_key` is the wrapping,
+    named by whoever did it, so it is read rather than guessed back out of the schema's shape.
+    """
+    key = tool.outer_typed_dict_key
+    return _properties(tool.parameters_json_schema).get(key) if key else None
+
+
+def _purpose(tool: ToolDefinition) -> str | None:
+    """What a route says about itself, wherever it managed to say it.
+
+    An output type says this in its docstring, and `ToolOutput(description=...)` says it for a type that has
+    no docstring to write it in. A type that is not object-like has neither: `Choices(description=...)`
+    describes the set it wraps, which lands on the wrapped property rather than on the tool. It is the same
+    sentence either way, so the route question reads it from there too.
+    """
+    if described := _described(tool):
+        return described
+    wrapped = _wrapped(tool)
+    return wrapped.get('description') if wrapped else None
+
+
 def _route_description(tool: ToolDefinition) -> str | None:
     """What a route says about itself on the route question.
 
-    A `None` route has no docstring to take this from, so the library supplies one — unless the user named the
-    route themselves with `ToolOutput(type_=None, description=...)`, which is them saying what declining means
-    on this agent, and says more than the stock phrase does.
+    A `None` route can say nothing anywhere, so the library supplies the phrase — unless the user named the
+    route themselves, which says more about what declining means on this agent than the stock phrase does.
     """
     if _none_route(tool):
-        return _described(tool) or _NONE_OF_THESE
-    return tool.description
+        return _purpose(tool) or _NONE_OF_THESE
+    return _purpose(tool) or tool.description
 
 
 def _output_tools(
@@ -817,9 +853,12 @@ def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     Measured on labelled tickets, an explicit option is as accurate as an `other` member the user wrote and more
     accurate than reading `None` off low confidence, which is what the field's confidence is for.
     """
-    if 'anyOf' not in prop or len(prop['anyOf']) != 2 or {'type': 'null'} not in prop['anyOf']:
+    options = prop.get('anyOf')
+    # Exactly one of the two has to be `None`, and the other one has to be something: a union of nothing but
+    # `None`s has no `X` to ask about, and is refused as the unsupported field it is rather than crashing here.
+    if not options or len(options) != 2 or sum(_null(option) for option in options) != 1:
         return prop, None
-    inner = next(option for option in prop['anyOf'] if option != {'type': 'null'})
+    inner = next(option for option in options if not _null(option))
     prop = {**inner, **{k: v for k, v in prop.items() if k not in ('anyOf', 'default')}}
     key = 'none'
     while key in (_options(prop) or {}):
@@ -983,7 +1022,7 @@ def _tool_question(
         key += '_'
     criteria: dict[str, str | None] = {}
     for output_tool in output_tools:
-        described = _described(output_tool)
+        described = _purpose(output_tool)
         if not (described or (instructions and len(output_tools) == 1)):
             # With one output type the agent's instructions can say what filling it is for. With several, only
             # each type's own docstring can tell them apart: one instruction cannot describe two different routes.

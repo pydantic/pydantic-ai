@@ -844,6 +844,20 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         raise NotImplementedError()
 
 
+def _output_type_name(output: Any) -> str | None:
+    """What to call an output type where its name is shown to the model.
+
+    `NoneType` is Python's name for the type of `None`; `None` is what the user wrote. A model offered
+    `final_result_NoneType` has to know a Python implementation detail to read it as "no answer", so the
+    route is named for the value instead. Both spellings arrive here: `int | None` resolves to the type,
+    while `ToolOutput(None)` and a bare `None` in a list of output types are unwrapped to the value, which
+    has no `__name__` at all and would otherwise leave its route named `final_result_`.
+    """
+    if output is NoneType or output is None:
+        return 'None'
+    return getattr(output, '__name__', None)
+
+
 @dataclass(kw_only=True)
 class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
     object_def: OutputObjectDefinition
@@ -937,7 +951,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         super().__init__(
             object_def=OutputObjectDefinition(
-                name=name or getattr(output, '__name__', None),
+                name=name or _output_type_name(output),
                 description=description,
                 json_schema=json_schema,
                 strict=strict,

@@ -896,7 +896,7 @@ result = agent.run_sync('Thanks, that fixed it. Nothing else needed.')
 print(result.output)
 #> None
 print(result.response.provider_details['tool']['choice'])
-#> final_result_NoneType
+#> final_result_None
 ```
 
 `None` cannot carry a docstring, so the library describes it, the same way an [optional pick-one field](#what-each-mapping-does) gets its "None of these." option. There is nothing to fill either, so the route is taken on the pick alone: declining costs one request, never two.
@@ -997,7 +997,7 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 Jev does not write text or read files, and it only fills tool arguments that map to the [typed questions](#what-jev-can-answer) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
-- The `output_type` must be made of the field types above, beside any output functions that take no arguments: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
+- The `output_type` must be made of the field types above: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-jev-picks-and-calls-what-it-can) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
 - At most 255 options in one question. A pick-one field counts its own options, and the route question counts every tool plus every output type, so 255 tools is already one too many once the output type is counted beside them.

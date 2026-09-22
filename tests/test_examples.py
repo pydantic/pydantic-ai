@@ -1002,19 +1002,19 @@ async def model_logic(  # noqa: C901
         elif m.content == 'Thanks, that fixed it. Nothing else needed.':
             # docs/models/typesafe.md: `None` is a route, taken on the pick alone with nothing to fill
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result_NoneType', args={'response': None})],
+                parts=[ToolCallPart(tool_name='final_result_None', args={'response': None})],
                 provider_details={
                     'confidence': {},
                     'probabilities': {},
                     'scores': {},
                     'tool': {
-                        'choice': 'final_result_NoneType',
+                        'choice': 'final_result_None',
                         'probabilities': {
                             'final_result_Ticket': 0.03,
                             'final_result_Escalation': 0.01,
-                            'final_result_NoneType': 0.96,
+                            'final_result_None': 0.96,
                         },
-                        'offered': ['final_result_NoneType'],
+                        'offered': ['final_result_None'],
                     },
                 },
             )
