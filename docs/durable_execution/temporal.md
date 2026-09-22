@@ -648,12 +648,12 @@ from pydantic_ai.toolsets import FunctionToolset
 toolset = FunctionToolset(id='research')
 
 
-@toolset.tool(metadata={'temporal': ActivityConfig(start_to_close_timeout=timedelta(minutes=5))})  # (1)!
+@toolset.tool_plain(metadata={'temporal': ActivityConfig(start_to_close_timeout=timedelta(minutes=5))})  # (1)!
 async def fetch_paper(arxiv_id: str) -> str:
     ...
 
 
-@toolset.tool(metadata={'temporal': False})  # (2)!
+@toolset.tool_plain(metadata={'temporal': False})  # (2)!
 async def now() -> str:
     ...
 

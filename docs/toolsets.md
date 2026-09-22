@@ -717,7 +717,7 @@ from deferred_toolset_agent import PersonalizedGreeting, agent
 
 def run_agent(
     messages: list[ModelMessage] = [],
-    frontend_tools: list[ToolDefinition] = {},
+    frontend_tools: list[ToolDefinition] = [],
     deferred_tool_results: DeferredToolResults | None = None,
 ) -> tuple[PersonalizedGreeting | DeferredToolRequests, list[ModelMessage]]:
     deferred_toolset = ExternalToolset(frontend_tools)

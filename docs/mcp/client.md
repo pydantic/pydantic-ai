@@ -268,7 +268,7 @@ async def process_tool_call(
     tool_args: dict[str, Any],
 ) -> ToolResult:
     """A tool call processor that passes along the deps."""
-    return await call_tool(name, tool_args, {'deps': ctx.deps})
+    return await call_tool(name, tool_args, metadata={'deps': ctx.deps})
 
 
 toolset = MCPToolset(
@@ -728,25 +728,32 @@ This server demonstrates elicitation by requesting structured booking details fr
 
 ```python {title="client_example.py" requires="restaurant_server.py" test="skip"}
 import asyncio
+from typing import Any
 
+from fastmcp.client.elicitation import ElicitResult
 from fastmcp.client.transports import StdioTransport
-from mcp.types import ElicitRequestParams, ElicitResult
+from mcp.types import ElicitRequestFormParams, ElicitRequestParams
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 
-async def handle_elicitation(context, params: ElicitRequestParams) -> ElicitResult:
+async def handle_elicitation(
+    message: str,
+    response_type: type | None,
+    params: ElicitRequestParams,
+    context: object,
+) -> ElicitResult[dict[str, Any]]:
     """Handle elicitation requests from MCP server."""
-    print(f'\n{params.message}')
+    print(f'\n{message}')
 
-    if not params.requestedSchema:
+    if not isinstance(params, ElicitRequestFormParams) or not params.requestedSchema:
         response = input('Response: ')
         return ElicitResult(action='accept', content={'response': response})
 
     # Collect data for each field
     properties = params.requestedSchema['properties']
-    data = {}
+    data: dict[str, Any] = {}
 
     for field, info in properties.items():
         description = info.get('description', field)

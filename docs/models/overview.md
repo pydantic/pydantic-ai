@@ -380,8 +380,8 @@ contains all the exceptions encountered during the `run` execution.
     in Python 3.11+, we use the [`exceptiongroup`](https://github.com/agronholm/exceptiongroup) backport
     package for earlier Python versions:
 
-    ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
-    from exceptiongroup import catch
+    ```python {title="fallback_model_failure.py" test="skip"}
+    from exceptiongroup import BaseExceptionGroup, catch
 
     from pydantic_ai import Agent, ModelAPIError
     from pydantic_ai.models.anthropic import AnthropicModel

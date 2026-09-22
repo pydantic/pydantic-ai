@@ -249,7 +249,7 @@ As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestM
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 
-agent = Agent('test')
+agent = Agent('test', deps_type=int)
 
 
 async def only_if_42(
@@ -281,8 +281,6 @@ For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.to
 ```python {title="customize_name.py"}
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
 from pydantic_ai.models.test import TestModel
 
@@ -292,7 +290,7 @@ def greet(name: str) -> str:
 
 
 async def prepare_greet(
-    ctx: RunContext[Literal['human', 'machine']], tool_def: ToolDefinition
+    ctx: RunContext[str], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
     d = f'Name of the {ctx.deps} to greet.'
     tool_def.parameters_json_schema['properties']['name']['description'] = d
@@ -301,7 +299,7 @@ async def prepare_greet(
 
 greet_tool = Tool(greet, prepare=prepare_greet)
 test_model = TestModel()
-agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machine'])
+agent = Agent(test_model, tools=[greet_tool], deps_type=str)
 
 result = agent.run_sync('testing...', deps='human')
 print(result.output)

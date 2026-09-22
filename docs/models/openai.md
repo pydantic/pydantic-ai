@@ -268,7 +268,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModel
 model_settings = OpenAIResponsesModelSettings(
     openai_native_tools=[
         ComputerToolParam(
-            type='computer_use',
+            type='computer',
         )
     ],
 )
