@@ -42,6 +42,17 @@ def test_get_callable_name():
 
     assert get_callable_name(MyClass) == 'MyClass'
 
+    class NamedCallable:
+        __name__ = 'named_callable'
+
+        def __call__(self):
+            pass
+
+        def __str__(self):
+            raise RuntimeError('__str__ should not be called for a named callable')
+
+    assert get_callable_name(NamedCallable()) == 'named_callable'
+
     # Test with object without __name__ attribute
     obj = object()
     name = get_callable_name(obj)
