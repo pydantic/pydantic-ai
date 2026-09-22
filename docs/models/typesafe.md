@@ -182,21 +182,23 @@ The bound on a number field is the units it is asked in, not a second question: 
 
 An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
 
-A yes/no is a `bool`, which says what is being asked but nothing about what a yes or a no would mean. That is the one place Jev is asked to judge without being told what it is judging against: a `Choice` carries a description per option and a `Score` one per level, while a `Noul` has only the question unless the two answers are spelled out. [`DescribedBool()`][pydantic_ai.output.DescribedBool] spells them out, and the field stays a plain `bool`:
+A yes/no is a `bool`, which says what is being asked but nothing about what a yes or a no would mean. That is the one place Jev is asked to judge without being told what it is judging against: a `Choice` carries a description per option and a `Score` one per level, while a `Noul` has only the question unless the two answers are spelled out. [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells them out as `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime:
 
 ```python {title="describe_what_yes_and_no_mean.py"}
+from typing import Annotated
+
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent, DescribedBool
+from pydantic_ai import Agent, BoolCriteria
 
 
 class Settled(BaseModel):
     """Review the transcript."""
 
-    refunded: DescribedBool(
-        true='Money was returned to the customer.',
-        false='No refund was issued.',
-    ) = Field(description='Was a refund issued?')
+    refunded: Annotated[
+        bool,
+        BoolCriteria(true='Money was returned to the customer.', false='No refund was issued.'),
+    ] = Field(description='Was a refund issued?')
 
 
 agent = Agent('typesafe:jev-latest', output_type=Settled)
@@ -239,7 +241,7 @@ print(result.output.refunded)
 #> Refunded.yes
 ```
 
-`DescribedBool()` returns an annotated `bool` rather than a subclass, because `bool` cannot be subclassed; as an annotation it carries the same caveat as [`Choices()`](../output.md#choices), so in a module with `from __future__ import annotations` it has to be reachable by name where the annotation is evaluated. A `Literal[True, False]` has nowhere to write the two meanings at all, and asks exactly what a bare `bool` asks.
+A `Literal[True, False]` has nowhere to write the two meanings at all, and asks exactly what a bare `bool` asks.
 
 A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them and at most ten, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 

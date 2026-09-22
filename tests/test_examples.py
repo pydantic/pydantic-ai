@@ -742,6 +742,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
     ),
+    'The kettle leaks everywhere. I just want my money back.': ToolCallPart(
+        tool_name='final_result', args={'intent': 'refund', 'summary': 'Leaking kettle, customer wants a refund.'}
+    ),
     'The blender arrived smashed. Just send me another one.': ToolCallPart(
         tool_name='final_result', args={'response': 'replace'}
     ),

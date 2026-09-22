@@ -13,10 +13,10 @@ from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BoolCriteria,
     CachePoint,
     Choices,
     CompactionPart,
-    DescribedBool,
     FilePart,
     ModelAPIError,
     ModelHTTPError,
@@ -1734,29 +1734,26 @@ async def test_meanings_alone_are_enough_for_a_yes_no_with_nothing_else_to_go_on
     )
 
 
-# `DescribedBool()` returns an annotation, so under `from __future__ import annotations` it has to be reachable by
-# name where the annotation is evaluated — the same caveat `Choices()` carries.
-Refund = DescribedBool(true='Money was returned to the customer.', false='No refund was issued.')
-
-
-class SettledByDescribedBool(BaseModel):
+class SettledByBoolCriteria(BaseModel):
     """Review the transcript."""
 
-    refunded: Refund = Field(description='Was a refund issued?')  # pyright: ignore[reportInvalidTypeForm]
+    refunded: Annotated[
+        bool, BoolCriteria(true='Money was returned to the customer.', false='No refund was issued.')
+    ] = Field(description='Was a refund issued?')
 
 
-async def test_a_described_bool_describes_both_answers_and_gives_back_a_plain_bool(allow_model_requests: None):
-    """`DescribedBool()` puts the two meanings in the schema without an `Enum`, so the value stays a `bool`."""
+async def test_bool_criteria_describe_both_answers_and_give_back_a_plain_bool(allow_model_requests: None):
+    """`BoolCriteria` puts the two meanings in the schema without an `Enum`, so the value stays a `bool`."""
     seen: list[dict[str, Any]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         return answers(refunded={'type': 'noul', 'noul': 0.9})
 
-    result = await Agent(mock_model(record), output_type=SettledByDescribedBool).run('we sent the money back')
+    result = await Agent(mock_model(record), output_type=SettledByBoolCriteria).run('we sent the money back')
 
-    # A real `bool`, not an enum member needing `.value`: `bool` cannot be subclassed, so `DescribedBool()` annotates.
-    assert result.output.refunded is True  # pyright: ignore[reportUnknownMemberType]
+    # A real `bool`, not an enum member needing `.value`: `BoolCriteria` is a marker, not a type.
+    assert result.output.refunded is True
     assert seen[0]['questions']['refunded'] == snapshot(
         {
             'type': 'noul',
@@ -1771,6 +1768,18 @@ async def test_a_described_bool_describes_both_answers_and_gives_back_a_plain_bo
             },
         }
     )
+
+
+async def test_bool_criteria_on_anything_but_a_bool_is_refused(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """The two meanings are a `bool`'s two answers, so on any other type they describe nothing."""
+
+    class Misplaced(BaseModel):
+        refunded: Annotated[str, BoolCriteria(true='Yes.', false='No.')]
+
+    with pytest.raises(UserError, match='`BoolCriteria` says what each answer of a `bool` means'):
+        await Agent(typesafe_model, output_type=Misplaced).run('anything')
 
 
 async def test_a_true_false_literal_that_says_nothing_anywhere_is_refused(allow_model_requests: None):
@@ -1982,6 +1991,11 @@ async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
     [
         pytest.param('list[str]', 'a list must be of two or more string options', id='list of text'),
         pytest.param('bool | None', 'only a `Literal` or `Enum` of strings can be optional', id='optional yes/no'),
+        pytest.param(
+            "Annotated[bool, BoolCriteria(true='Yes.', false='No.')] | None",
+            'only a `Literal` or `Enum` of strings can be optional',
+            id='optional described yes/no',
+        ),
         pytest.param('Customer | None', 'is not supported by this model', id='optional model'),
     ],
 )

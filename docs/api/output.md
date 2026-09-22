@@ -12,6 +12,6 @@
             - StructuredDict
             - Choice
             - Choices
-            - DescribedBool
+            - BoolCriteria
             - DeferredToolRequests
             - OutputObjectDefinition

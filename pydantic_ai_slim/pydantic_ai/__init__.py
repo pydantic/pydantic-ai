@@ -155,9 +155,9 @@ from .native_tools import (
     XSearchTool,
 )
 from .output import (
+    BoolCriteria,
     Choice,
     Choices,
-    DescribedBool,
     NativeOutput,
     PromptedOutput,
     StructuredDict,
@@ -395,7 +395,7 @@ __all__ = (
     'StructuredDict',
     'Choice',
     'Choices',
-    'DescribedBool',
+    'BoolCriteria',
     # template
     'TemplateStr',
     # format_prompt
