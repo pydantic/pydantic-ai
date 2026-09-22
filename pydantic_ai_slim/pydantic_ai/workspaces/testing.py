@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import posixpath
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TypeVar
 
@@ -85,7 +85,7 @@ class WorkspaceBackendSuite:
     pytestmark = pytest.mark.anyio
 
     @pytest.fixture
-    def backend(self) -> WorkspaceBackend:
+    def backend(self) -> WorkspaceBackend | AsyncIterator[WorkspaceBackend]:
         raise NotImplementedError('provide a `backend` fixture')
 
     @pytest.fixture
@@ -173,14 +173,13 @@ class WorkspaceBackendSuite:
     async def test_timeout_raises_workspace_timeout_error(self, backend: WorkspaceBackend) -> None:
         rule = (
             'On expiry a [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] is raised; '
-            '`stdout` and `stderr` carry any captured output available when the error is raised.'
+            '`timeout` is the deadline that was enforced.'
         )
         commands = _commands(backend)
-        error = await _caught(lambda: commands.run(['sh', '-c', 'sleep 30'], timeout=0.2))
+        timeout = 0.2
+        error = await _caught(lambda: commands.run(['sh', '-c', 'sleep 30'], timeout=timeout))
         assert isinstance(error, WorkspaceTimeoutError), _failure(rule, f'timeout raised {type(error).__name__}')
-        assert isinstance(error.stdout, str) and isinstance(error.stderr, str), _failure(
-            rule, 'timeout output was not text'
-        )
+        assert error.timeout == timeout, _failure(rule, f'timeout carried {error.timeout!r}, expected {timeout!r}')
 
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
         rule = 'Extra environment variables for the command.'
