@@ -139,7 +139,7 @@ def _generate_message_id(
     3. For any message with run_id set, use '{run_id}-{message_index}'.
     4. Fallback: UUID5 from 'timestamp-kind-role-message_index'.
     """
-    if ui_message_id := get_ui_message_id(msg):
+    if (ui_message_id := get_ui_message_id(msg)) is not None:
         return ui_message_id
     if isinstance(msg, ModelResponse) and msg.provider_response_id:
         return f'{msg.provider_response_id}-{message_index}'

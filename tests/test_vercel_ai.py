@@ -6839,6 +6839,10 @@ async def test_adapter_load_dump_preserves_ui_message_id():
     [custom] = VercelAIAdapter.dump_messages([loaded], generate_message_id=lambda msg, role, index: f'custom-{index}')
     assert custom.id == 'custom-0'
 
+    empty_id = UIMessage(id='', role='user', parts=[TextUIPart(text='Hello')])
+    [dumped_empty_id] = VercelAIAdapter.dump_messages(VercelAIAdapter.load_messages([empty_id]))
+    assert dumped_empty_id.id == ''
+
 
 async def test_adapter_load_dump_ui_message_id_on_merged_and_split_messages():
     """A `UIMessage.id` is kept per `ModelMessage`, so it follows how messages merge and split.
