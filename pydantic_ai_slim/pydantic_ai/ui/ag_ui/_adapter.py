@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import uuid
 import warnings
-from base64 import b64decode
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
@@ -13,7 +12,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
-    cast,
 )
 
 from pydantic import ValidationError
@@ -85,8 +83,9 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
+    from ._binary_0_14 import BinaryInputContent, legacy_binary_input, legacy_binary_to_content
     from ._event_stream import AGUIEventStream
-    from ._forward_compat import HAS_BINARY_INPUT_CONTENT, BinaryInputContent, adapt_unsupported_items
+    from ._forward_compat import HAS_BINARY_INPUT_PART, adapt_unsupported_items
     from ._interrupt import (
         HAS_INTERRUPTS,
         ResumeEntry,
@@ -104,7 +103,6 @@ try:
         TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
         dump_tool_return_content,
-        media_part_type,
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_outcome,
@@ -193,34 +191,6 @@ def _new_message_id() -> str:
     return str(uuid.uuid4())
 
 
-def _legacy_binary_to_content(part: BinaryInputContent) -> UserContent:
-    """Convert a legacy `binary` input part to Pydantic AI content."""
-    if part.url:
-        try:
-            return BinaryContent.from_data_uri(part.url)
-        except ValueError:
-            media_type_constructors = {
-                'image': ImageUrl,
-                'video': VideoUrl,
-                'audio': AudioUrl,
-                'document': DocumentUrl,
-            }
-            return media_type_constructors[media_part_type(part.mime_type)](url=part.url, media_type=part.mime_type)
-    elif part.data:
-        return BinaryContent(data=b64decode(part.data), media_type=part.mime_type)
-    else:  # pragma: no cover
-        raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
-
-
-def _legacy_binary_input(*, mime_type: str, url: str | None = None, data: str | None = None) -> InputContent:
-    """Build the retired `binary` shape for peers before typed multimodal content.
-
-    Only called when `HAS_BINARY_INPUT_CONTENT`; the cast is for 1.0, where `BinaryInputContent` is a
-    deprecated class outside the `InputContent` union.
-    """
-    return cast(InputContent, BinaryInputContent(type='binary', mime_type=mime_type, url=url, data=data))
-
-
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
@@ -240,13 +210,13 @@ def _user_content_to_input(
             from ._multimodal import media_url_to_multimodal
 
             return media_url_to_multimodal(item)
-        return _legacy_binary_input(url=item.url, mime_type=item.media_type or '')
+        return legacy_binary_input(url=item.url, mime_type=item.media_type or '')
     elif isinstance(item, BinaryContent):
         if use_multimodal:
             from ._multimodal import binary_to_multimodal
 
             return binary_to_multimodal(item)
-        return _legacy_binary_input(data=item.base64, mime_type=item.media_type)
+        return legacy_binary_input(data=item.base64, mime_type=item.media_type)
     elif isinstance(item, UploadedFile):
         # UploadedFile holds an opaque provider file_id (e.g. 'file-abc123'), not a URL or
         # binary data, so it can't be mapped to AG-UI input content. Skipped like CachePoint.
@@ -294,8 +264,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ([`FilePart`][pydantic_ai.messages.FilePart]), and `dump_messages` does not write 1.0's
     `file` source for uploaded-file references ([`UploadedFile`][pydantic_ai.messages.UploadedFile]),
     so when this is `True` they are serialized as sidecar activity messages on `dump_messages` and
-    reconstructed on
-    `load_messages`. A frontend only completes the round-trip if it echoes these activity
+    reconstructed on `load_messages`. A frontend only completes the round-trip if it echoes these activity
     messages back on the next request.
 
     This is a representation setting, not a security one: honoring a reconstructed inbound
@@ -454,7 +423,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 case _ if isinstance(part, BinaryInputContent):
                                     # A guard, not a class pattern: AG-UI 1.0 retired the part from
                                     # the content union, but an install below 1.0 still sends it.
-                                    user_prompt_content.append(_legacy_binary_to_content(part))
+                                    user_prompt_content.append(legacy_binary_to_content(part))
                                 case (
                                     ImageInputContent()
                                     | AudioInputContent()
@@ -687,7 +656,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         # Unlike the legacy `THINKING_*` events, which are leaf models we can vendor, `binary` is a
         # member of the SDK's `UserMessage.content` union: an install that dropped it cannot build the
         # message, so the install's typed media wins over the negotiated version.
-        use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION or not HAS_BINARY_INPUT_CONTENT
+        use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION or not HAS_BINARY_INPUT_PART
         # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) landed in 0.1.11 — see
         # `tool_kind_encrypted_value`.
         use_encrypted_value = parse_ag_ui_version(ag_ui_version) >= ENCRYPTED_VALUE_VERSION

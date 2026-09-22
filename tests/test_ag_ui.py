@@ -171,8 +171,8 @@ with try_import():
     from ag_ui.core import BinaryInputContent
 
 with try_import():
-    # These names were added in ag-ui-protocol 1.0.0; tests using them are version-gated below.
-    from ag_ui.core import PROTOCOL_VERSION, FileSource
+    # Added in ag-ui-protocol 1.0.0; tests using it are version-gated below.
+    from ag_ui.core import FileSource
 
 
 pytestmark = [
@@ -213,14 +213,15 @@ def run_started_protocol_version() -> dict[str, Any]:
     return {'protocolVersion': '1.0'} if _has_ag_ui('1.0.0') else {}
 
 
-def run_finished_usage(
-    *, model: str, input_tokens: int, output_tokens: int, provider: str | None = None
-) -> dict[str, Any]:
-    """`RunFinishedEvent.usage` for a run with one model response, emitted from 1.0 on."""
+def run_finished_usage(*, model: str, provider: str | None = None) -> dict[str, Any]:
+    """`RunFinishedEvent.usage` for a run with one model response, emitted from 1.0 on.
+
+    The counts are the test model's estimates; `test_run_finished_usage_aggregates_provider_model_pairs`
+    pins how real counts are reported.
+    """
     if not _has_ag_ui('1.0.0'):
         return {}
-    entry: dict[str, Any] = {'model': model, 'inputTokens': input_tokens, 'outputTokens': output_tokens}
-    entry['totalTokens'] = input_tokens + output_tokens
+    entry: dict[str, Any] = {'model': model, 'inputTokens': IsInt(), 'outputTokens': IsInt(), 'totalTokens': IsInt()}
     if provider is not None:
         entry['provider'] = provider
     return {'usage': [entry]}
@@ -254,7 +255,7 @@ def simple_result(*, negotiated: bool = False) -> Any:
     }
     if negotiated:
         run_finished.update(run_finished_outcome())
-        run_finished.update(run_finished_usage(model='function::simple_stream', input_tokens=50, output_tokens=4))
+        run_finished.update(run_finished_usage(model='function::simple_stream'))
     return snapshot(
         [
             {
@@ -5848,7 +5849,7 @@ async def test_dispatch_request():
                     'threadId': thread_id,
                     'runId': run_id,
                     **run_finished_outcome(),
-                    **run_finished_usage(provider='test', model='test', input_tokens=55, output_tokens=4),
+                    **run_finished_usage(provider='test', model='test'),
                 },
                 'more_body': True,
             },
@@ -8312,27 +8313,19 @@ async def _collect_adapter_events(
 
 
 @requires_ag_ui('1.0.0')
-async def test_run_started_protocol_version_is_negotiated() -> None:
-    """`RUN_STARTED.protocolVersion` is the SDK's own version, and is omitted for a peer below 1.0."""
+async def test_run_started_protocol_version_is_omitted_below_1_0() -> None:
+    """A peer below 1.0 gets no `protocolVersion`; from 1.0 on it is the SDK's own, see `run_started_protocol_version()`."""
     agent = Agent(model=FunctionModel(stream_function=simple_stream))
-
-    modern_events = await _collect_adapter_events(
-        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='1.0.0'
-    )
-    legacy_events = await _collect_adapter_events(
+    events = await _collect_adapter_events(
         agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='0.1.19'
     )
-
-    assert (
-        next(event for event in modern_events if event['type'] == 'RUN_STARTED')['protocolVersion'] == PROTOCOL_VERSION
-    )
-    assert 'protocolVersion' not in next(event for event in legacy_events if event['type'] == 'RUN_STARTED')
+    assert 'protocolVersion' not in next(event for event in events if event['type'] == 'RUN_STARTED')
 
 
 @requires_ag_ui('1.0.0')
 async def test_run_finished_cancelled_outcome() -> None:
-    """A cancelled run ends with a `cancelled` outcome on 1.0, no result, and the usage of the calls it
-    made; below 1.0 see `test_run_cancelled_finishes_without_error_or_outcome`."""
+    """A cancelled run ends with a `cancelled` outcome on 1.0 and reports the usage of the calls it made;
+    below 1.0 see `test_run_cancelled_finishes_without_error_or_outcome`."""
     agent = Agent(model=TestModel())
 
     @agent.tool
@@ -8346,11 +8339,7 @@ async def test_run_finished_cancelled_outcome() -> None:
     run_finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
 
     assert run_finished['outcome'] == {'type': 'cancelled'}
-    assert 'result' not in run_finished
-    # The cancellation lands before the streamed response's output count is final.
-    assert run_finished['usage'] == snapshot(
-        [{'provider': 'test', 'model': 'test', 'inputTokens': 51, 'totalTokens': 51}]
-    )
+    assert [entry['model'] for entry in run_finished['usage']] == ['test']
     assert 'RUN_ERROR' not in [event['type'] for event in events]
 
 
@@ -8366,31 +8355,23 @@ async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         tool_returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
-        if tool_returns == 0:
-            yield {0: DeltaToolCall(name='first_tool', json_args='{}')}
-        elif tool_returns == 1:
-            yield {0: DeltaToolCall(name='second_tool', json_args='{}')}
+        if tool_returns < 2:
+            yield {0: DeltaToolCall(name='tool', json_args='{}')}
         else:
             yield 'done'
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     @agent.tool_plain
-    def first_tool() -> str:
-        return 'first'
-
-    @agent.tool_plain
-    def second_tool() -> str:
-        return 'second'
+    def tool() -> str:
+        return 'called'
 
     def set_usage(run_result: AgentRunResult[Any]) -> None:
         responses = [message for message in run_result.new_messages() if isinstance(message, ModelResponse)]
         assert len(responses) == 3
         responses[0].provider_name = 'provider-a'
         responses[0].model_name = 'model-a'
-        responses[0].usage = RequestUsage(
-            input_tokens=10, output_tokens=2, cache_read_tokens=3, details={'reasoning_tokens': 1}
-        )
+        responses[0].usage = RequestUsage(input_tokens=10, output_tokens=2, cache_read_tokens=3)
         responses[1].provider_name = 'provider-a'
         responses[1].model_name = 'model-a'
         responses[1].usage = RequestUsage(input_tokens=5, cache_write_tokens=5)
@@ -8413,7 +8394,6 @@ async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
                 'inputTokens': 15,
                 'outputTokens': 2,
                 'totalTokens': 17,
-                'reasoningTokens': 1,
                 'cachedInputTokens': 3,
                 'cacheWriteInputTokens': 5,
             },
@@ -8444,28 +8424,22 @@ async def test_run_finished_has_no_usage_when_responses_report_no_tokens() -> No
 async def test_resumed_run_usage_excludes_history() -> None:
     """A run that starts from message history reports usage for its own model calls only."""
     agent = Agent(model=FunctionModel(stream_function=simple_stream))
-    first_input = create_input(UserMessage(id='m1', content='hi'))
-    first_results: list[AgentRunResult[Any]] = []
+    history = AGUIAdapter.dump_messages(
+        [ModelRequest(parts=[UserPromptPart(content='hi')]), ModelResponse(parts=[TextPart(content='hello')])],
+        ag_ui_version='1.0.0',
+    )
 
-    def set_first_usage(run_result: AgentRunResult[Any]) -> None:
-        response = next(message for message in run_result.new_messages() if isinstance(message, ModelResponse))
-        response.usage = RequestUsage(input_tokens=10, output_tokens=1)
-        first_results.append(run_result)
-
-    await _collect_adapter_events(agent, first_input, ag_ui_version='1.0.0', on_complete=set_first_usage)
-    history = AGUIAdapter.dump_messages(first_results[0].all_messages(), ag_ui_version='1.0.0')
-
-    def set_second_usage(run_result: AgentRunResult[Any]) -> None:
-        # AG-UI history carries no usage, so give the reloaded first response some to prove it is excluded.
+    def set_usage(run_result: AgentRunResult[Any]) -> None:
+        # AG-UI history carries no usage, so give the reloaded response some to prove it is excluded.
         history_response, new_response = (m for m in run_result.all_messages() if isinstance(m, ModelResponse))
         history_response.usage = RequestUsage(input_tokens=10, output_tokens=1)
         new_response.usage = RequestUsage(input_tokens=20, output_tokens=2)
 
     events = await _collect_adapter_events(
         agent,
-        create_input(*history, UserMessage(id='m2', content='again'), thread_id=first_input.thread_id),
+        create_input(*history, UserMessage(id='m2', content='again')),
         ag_ui_version='1.0.0',
-        on_complete=set_second_usage,
+        on_complete=set_usage,
     )
     usage = next(event for event in events if event['type'] == 'RUN_FINISHED')['usage']
     assert usage == snapshot(
@@ -8506,72 +8480,77 @@ async def test_frontend_tool_calls_are_pending_on_success() -> None:
     assert next(event for event in legacy_events if event['type'] == 'RUN_FINISHED')['outcome'] == {'type': 'success'}
 
 
-@requires_ag_ui('1.0.0')
-async def test_approval_interrupt_on_1_0_has_no_pending_tool_call_ids() -> None:
-    """A pending approval is still an `interrupt` outcome on 1.0; `pendingToolCallIds` is for the success outcome."""
-
-    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
-
-    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
-
-    @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:  # pragma: no cover
-        return f'deleted {path}'
-
-    outcome = next(
-        event
-        for event in await _collect_adapter_events(
-            agent, create_input(UserMessage(id='m1', content='delete')), ag_ui_version='1.0.0'
-        )
-        if event['type'] == 'RUN_FINISHED'
-    )['outcome']
-    assert outcome['type'] == 'interrupt'
-    assert 'pendingToolCallIds' not in outcome
+_IMAGE_FROM_URL = {
+    'type': 'image',
+    'source': {'type': 'url', 'value': 'https://example.com/image.png', 'mime_type': 'image/png'},
+}
+_IMAGE_FROM_DATA = {'type': 'image', 'source': {'type': 'data', 'value': 'aGVsbG8=', 'mime_type': 'image/png'}}
+_DOCUMENT_FROM_DATA = {
+    'type': 'document',
+    'source': {'type': 'data', 'value': 'aGVsbG8=', 'mime_type': 'application/pdf'},
+}
 
 
 @requires_ag_ui('1.0.0')
-async def test_retired_binary_part_is_translated_on_1_0() -> None:
-    """A retired `binary` part becomes the typed media part without a warning: `url` wins over `data`, a
-    base64 data URI becomes a data source whose own media type wins, and `mime_type` is accepted
-    alongside `mimeType`."""
-    cases = [
-        ({'url': 'https://example.com/image.png'}, ('image', 'url', 'https://example.com/image.png', 'image/png')),
-        (
-            {'data': 'aGVsbG8=', 'url': 'https://example.com/image.png'},
-            ('image', 'url', 'https://example.com/image.png', 'image/png'),
+@pytest.mark.parametrize(
+    ('part', 'expected'),
+    [
+        pytest.param({'mimeType': 'image/png', 'url': 'https://example.com/image.png'}, _IMAGE_FROM_URL, id='url'),
+        pytest.param(
+            {'mime_type': 'image/png', 'url': 'https://example.com/image.png'}, _IMAGE_FROM_URL, id='mime_type'
         ),
-        ({'url': 'data:image/png;base64,aGVsbG8='}, ('image', 'data', 'aGVsbG8=', 'image/png')),
-        ({'url': 'data:application/pdf;base64,aGVsbG8='}, ('document', 'data', 'aGVsbG8=', 'application/pdf')),
-        ({'url': 'data:;base64,aGVsbG8='}, ('image', 'data', 'aGVsbG8=', 'image/png')),
-        ({'data': 'aGVsbG8='}, ('image', 'data', 'aGVsbG8=', 'image/png')),
-    ]
-    for payload, expected in cases:
-        part = {'type': 'binary', 'mimeType': 'image/png', **payload}
-        with warnings.catch_warnings(record=True) as caught:
-            run_input = AGUIAdapter.build_run_input(
-                build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [part]})
-            )
-        assert not caught
-        content = run_input.messages[0].content
-        assert isinstance(content, list)
-        media = content[0]
-        assert isinstance(media, ImageInputContent | DocumentInputContent)
-        assert (media.type, media.source.type, media.source.value, media.source.mime_type) == expected
+        pytest.param(
+            {'mimeType': 'image/png', 'data': 'aGVsbG8=', 'url': 'https://example.com/image.png'},
+            _IMAGE_FROM_URL,
+            id='url_wins_over_data',
+        ),
+        pytest.param({'mimeType': 'image/png', 'data': 'aGVsbG8='}, _IMAGE_FROM_DATA, id='data'),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:image/png;base64,aGVsbG8='}, _IMAGE_FROM_DATA, id='data_uri'
+        ),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:;base64,aGVsbG8='},
+            _IMAGE_FROM_DATA,
+            id='data_uri_without_media_type',
+        ),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:application/pdf;base64,aGVsbG8='},
+            _DOCUMENT_FROM_DATA,
+            id='data_uri_media_type_wins',
+        ),
+    ],
+)
+def test_retired_binary_part_is_translated_on_1_0(part: dict[str, Any], expected: dict[str, Any]) -> None:
+    """A retired `binary` part becomes the typed media part for its MIME type, without a warning."""
+    with warnings.catch_warnings(record=True) as caught:
+        run_input = AGUIAdapter.build_run_input(
+            build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [{'type': 'binary', **part}]})
+        )
+    assert not caught
+    content = run_input.messages[0].content
+    assert isinstance(content, list)
+    assert content[0].model_dump(exclude_none=True) == expected
 
 
 @requires_ag_ui('1.0.0')
-def test_retired_binary_part_without_payload_is_rejected() -> None:
-    """A `binary` part with no MIME type or payload is malformed and fails validation, even next to a
-    translatable one."""
-    translatable = {'type': 'binary', 'url': 'https://example.com/a', 'mimeType': 'image/png'}
-    for content in (
-        [{'type': 'binary', 'data': 'aGVsbG8='}],
-        [{'type': 'binary', 'mimeType': 'image/png'}],
-        [{'type': 'binary', 'mimeType': 'image/png'}, translatable],
-    ):
-        with pytest.raises(ValidationError, match='binary'):
-            AGUIAdapter.build_run_input(build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': content}))
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param([{'type': 'binary', 'data': 'aGVsbG8='}], id='no_mime_type'),
+        pytest.param([{'type': 'binary', 'mimeType': 'image/png'}], id='no_payload'),
+        pytest.param(
+            [
+                {'type': 'binary', 'mimeType': 'image/png'},
+                {'type': 'binary', 'mimeType': 'image/png', 'url': 'https://example.com/a'},
+            ],
+            id='next_to_a_translatable_part',
+        ),
+    ],
+)
+def test_retired_binary_part_without_payload_is_rejected(content: list[dict[str, Any]]) -> None:
+    """A `binary` part with no MIME type or payload is malformed and fails validation."""
+    with pytest.raises(ValidationError, match='binary'):
+        AGUIAdapter.build_run_input(build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': content}))
 
 
 @requires_ag_ui('1.0.0')

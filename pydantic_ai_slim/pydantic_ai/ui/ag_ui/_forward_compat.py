@@ -24,7 +24,7 @@ class, which 1.0 keeps importable for one release only.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, get_args
+from typing import get_args
 
 from ag_ui.core import InputContent, Message
 from pydantic import BaseModel, JsonValue
@@ -32,19 +32,7 @@ from pydantic import BaseModel, JsonValue
 from ..._utils import get_union_args
 from ._utils import media_part_type
 
-if TYPE_CHECKING:
-    from ag_ui.core import BinaryInputContent
-else:
-    try:
-        from ag_ui.core import BinaryInputContent
-    except ImportError:  # pragma: lax no cover
-        # 1.0 keeps the retired class importable for one release; after that no part can match it.
-
-        class BinaryInputContent:
-            """Stub for SDKs without the retired `binary` input part."""
-
-
-__all__ = ['HAS_BINARY_INPUT_CONTENT', 'BinaryInputContent', 'adapt_unsupported_items']
+__all__ = ['HAS_BINARY_INPUT_PART', 'adapt_unsupported_items']
 
 
 def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
@@ -66,8 +54,8 @@ def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
 _KNOWN_MESSAGE_ROLES = _known_tags(Message, 'role')
 _KNOWN_INPUT_CONTENT_TYPES = _known_tags(InputContent, 'type')
 
-HAS_BINARY_INPUT_CONTENT = 'binary' in _KNOWN_INPUT_CONTENT_TYPES
-"""Whether the installed SDK still includes the retired `binary` input part."""
+HAS_BINARY_INPUT_PART = 'binary' in _KNOWN_INPUT_CONTENT_TYPES
+"""Whether the installed SDK still accepts the retired `binary` input part."""
 
 
 def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozenset[str]) -> str | None:

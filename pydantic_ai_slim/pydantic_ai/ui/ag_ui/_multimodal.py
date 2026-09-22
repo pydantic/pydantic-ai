@@ -30,7 +30,7 @@ from ...messages import (
     UploadedFileProviderName,
     VideoUrl,
 )
-from ._utils import media_part_type
+from ._utils import MediaPartType, media_part_type
 
 if TYPE_CHECKING:
     from ag_ui.core import FileSource
@@ -90,7 +90,7 @@ def media_url_to_multimodal(
     return _URL_TYPE_MAP[type(item)](source=source, metadata=dump_metadata(item))
 
 
-_MEDIA_TYPE_TO_CONTENT: dict[str, type] = {
+_MEDIA_TYPE_TO_CONTENT: dict[MediaPartType, type[AGUIContentTypes]] = {
     'image': ImageInputContent,
     'audio': AudioInputContent,
     'video': VideoInputContent,

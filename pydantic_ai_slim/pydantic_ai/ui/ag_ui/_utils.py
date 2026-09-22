@@ -6,7 +6,7 @@ import importlib.metadata
 import json
 import re
 import warnings
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
 from typing_extensions import Required, TypedDict
 
@@ -106,10 +106,16 @@ class UploadedFileActivityContent(TypedDict, total=False):
     vendor_metadata: dict[str, Any]
 
 
-def media_part_type(mime_type: str) -> str:
-    """The AG-UI media part type (`image`, `audio`, `video` or `document`) for a MIME type."""
+MediaPartType = Literal['image', 'audio', 'video', 'document']
+"""The AG-UI media part types."""
+
+
+def media_part_type(mime_type: str) -> MediaPartType:
+    """The AG-UI media part type for a MIME type."""
     prefix = mime_type.split('/', 1)[0].lower()
-    return prefix if prefix in ('image', 'audio', 'video') else 'document'
+    if prefix in ('image', 'audio', 'video'):
+        return cast(MediaPartType, prefix)
+    return 'document'
 
 
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')

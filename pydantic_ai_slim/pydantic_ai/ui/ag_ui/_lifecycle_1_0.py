@@ -58,7 +58,6 @@ def token_usage_from_messages(messages: Sequence[ModelMessage]) -> list[TokenUsa
                 input_tokens=usage.input_tokens or None,
                 output_tokens=usage.output_tokens or None,
                 total_tokens=usage.total_tokens,
-                reasoning_tokens=usage.details.get('reasoning_tokens') or None,
                 cached_input_tokens=usage.cache_read_tokens or None,
                 cache_write_input_tokens=usage.cache_write_tokens or None,
             )
