@@ -2443,7 +2443,6 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
             ),
         )
 
-    # It runs on every model.
     agent = Agent(mock_model(record), output_type=[Ticket, None])
     result = await agent.run('Nothing here needs handling.')
 
