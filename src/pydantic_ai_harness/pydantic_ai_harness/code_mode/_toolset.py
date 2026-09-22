@@ -11,13 +11,16 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from itertools import islice
-from typing import Annotated, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import Field, TypeAdapter
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     InstructionPart,
     ToolCallPart,
     ToolReturn,
@@ -54,6 +57,9 @@ except ImportError as _import_error:  # pragma: no cover
         'pydantic-monty is required for CodeMode. Install it with: pip install "pydantic-ai-harness[code-mode]"'
     ) from _import_error
 from pydantic_ai_harness._monty_exec import MontyExecutor, PrintCapture, is_sandbox_panic
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
 
 # A raw OS callback. Return `pydantic_monty.NOT_HANDLED` to defer the call to the
 # sandbox's default, which leaves it unavailable.
@@ -99,6 +105,14 @@ def _in_temporal_workflow(ctx: RunContext[object]) -> bool:
         any(base.__module__.startswith('pydantic_ai.durable_exec.temporal') for base in type(capability).__mro__)
         and isinstance(capability, _TemporalDurability)
         and capability.in_durable_context
+        for capability in ctx.capabilities.values()
+    )
+
+
+def in_durable_execution(ctx: RunContext[object]) -> bool:
+    """Whether a durable executor is active, where streamed execution tiers must stay disabled."""
+    return any(
+        isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
         for capability in ctx.capabilities.values()
     )
 
@@ -527,7 +541,7 @@ def _sanitize_tool_name(name: str) -> str:
     return sanitized or '_'
 
 
-def _global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
+def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
     """Whether the run-scoped execution mode forces sandbox tool calls to run sequentially.
 
     pydantic-ai v1's `get_parallel_execution_mode` took the pending calls list
@@ -566,6 +580,60 @@ class _RunCodeTool(ToolsetTool[AgentDepsT]):
     """The wrapped toolset's tools, keyed by original name."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class NestedCallOutcome:
+    """How one sandbox-dispatched tool call settled, before it is recorded against a `run_code` call.
+
+    Exactly one of `error` or `content` is meaningful. Settling instead of raising lets a call that
+    ran ahead of its snippet (speculation) hold a failure until the snippet asks for it.
+    """
+
+    content: Any = None
+    """The plain tool return value, with a `ToolReturn` already unwrapped."""
+
+    metadata: Any = None
+    """`ToolReturn.metadata` when the tool returned a `ToolReturn`."""
+
+    error: Exception | None = None
+    """The exception the sandbox sees at the call site."""
+
+    denied_message: str | None = None
+    """Set when a handler denied the call, so the history records `outcome='denied'`."""
+
+
+async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: ToolCallPart) -> NestedCallOutcome:
+    """Run one tool call dispatched from inside the sandbox through the nested `ToolManager`."""
+    try:
+        result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
+    except (CallDeferred, ApprovalRequired) as e:
+        # No handler resolved the deferral. The sandbox can't round-trip to the caller, so the
+        # error propagates through Monty -> MontyRuntimeError -> ModelRetry.
+        error = UserError(
+            f'Tool {call_part.tool_name!r} raised {type(e).__name__} inside code mode, '
+            'but no `HandleDeferredToolCalls` capability resolved it. Add a handler '
+            'capability on the agent so deferred and approval-required calls can '
+            'be resolved inline.'
+        )
+        error.__cause__ = e
+        return NestedCallOutcome(error=error)
+    except Exception as e:
+        return NestedCallOutcome(error=e)
+
+    if isinstance(result, ToolDenied):
+        # Surfacing `ToolDenied` to the user's script would let it masquerade as a string tool
+        # result, and the script cannot introspect the marker class inside Monty.
+        return NestedCallOutcome(
+            error=RuntimeError(f'Tool {call_part.tool_name!r} call denied: {result.message}'),
+            denied_message=result.message,
+        )
+
+    metadata: Any = None
+    if isinstance(result, ToolReturn):
+        metadata = result.metadata
+        result = result.return_value
+    return NestedCallOutcome(content=result, metadata=metadata)
+
+
 @dataclass
 class RunCodeExecution:
     """Mutable state for one model-visible `run_code` call.
@@ -592,6 +660,27 @@ class RunCodeExecution:
             )
         self.call_count += 1
         return f'{self.parent_tool_call_id}__{self.call_count}'
+
+    def finish(self, call_part: ToolCallPart, outcome: NestedCallOutcome) -> Any:
+        """Record a nested call's outcome in history, then hand the sandbox its value or its error."""
+        tool_call_id = call_part.tool_call_id
+        if outcome.denied_message is not None:
+            self.nested_returns[tool_call_id] = ToolReturnPart(
+                tool_name=call_part.tool_name,
+                content=outcome.denied_message,
+                tool_call_id=tool_call_id,
+                outcome='denied',
+            )
+        if outcome.error is not None:
+            raise outcome.error
+        self.nested_returns[tool_call_id] = ToolReturnPart(
+            tool_name=call_part.tool_name,
+            content=outcome.content,
+            tool_call_id=tool_call_id,
+            metadata=outcome.metadata,
+        )
+        # Serialize to JSON-compatible form so Monty receives only plain data.
+        return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))
 
     def build_tool_return(self, result: Any) -> ToolReturn[Any]:
         """Build the single public result for the logical `run_code` call."""
@@ -681,6 +770,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     so Tool Search discoveries don't bust the tool-definitions cache prefix.
     """
 
+    capability: AbstractCapability[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
+    """The run's `CodeMode` instance, when this toolset was built by one.
+
+    `run_code` is attributed to it the way a capability's own toolset tools are, so capability
+    events emitted from inside the sandbox dispatch carry the right owner.
+    """
+
+    speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
+    """Per-run claim store for calls launched while `run_code` arguments stream.
+
+    `CodeMode` creates one per run when `speculate` is set. The stream watcher launches calls
+    into it and the dispatch path below claims them; `for_run_step` copies share it by reference.
+    """
+
     # Shared by `for_run_step` copies so they use the same REPL session and the original entered
     # instance can close it. `for_run` leaves this unset, giving concurrent runs isolated state.
     _run_state: _MontyRunState | None = field(default=None, init=False, repr=False, compare=False)
@@ -727,9 +830,27 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert run_state is not None
         self._run_state = None
         try:
+            if self.speculation is not None:
+                await self.speculation.close()
             return await self.wrapped.__aexit__(*args)
         finally:
             run_state.close()
+
+    @classmethod
+    def from_run_context(cls, ctx: RunContext[AgentDepsT]) -> Self | None:
+        """Return the active step's toolset of this class, or `None` when the run does not use one."""
+        tool_manager = ctx.tool_manager
+        if tool_manager is None or tool_manager.tools is None:
+            return None  # pragma: no cover - the agent installs its tool manager before streaming
+        tool = tool_manager.tools.get(_RUN_CODE_TOOL_NAME)
+        if tool is None:
+            return None  # pragma: no cover - `CodeMode` always contributes `run_code`
+        return tool.toolset if isinstance(tool.toolset, cls) else None
+
+    async def observe_stream_event(self, event: AgentStreamEvent, ctx: RunContext[AgentDepsT]) -> None:
+        """Feed one model stream event to the streamed execution tiers this toolset runs."""
+        if self.speculation is not None:
+            await self.speculation.observe(event, ctx)
 
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
@@ -785,6 +906,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
 
+        if self.speculation is not None:
+            self.speculation.stash_step(
+                wrapped=self.wrapped,
+                wrapped_tools=wrapped_tools,
+                sanitized_to_original=sanitized_to_original,
+                callable_defs=callable_defs,
+            )
+
         # `dynamic_catalog` keeps the catalog out of `run_code.description` (cache-stable
         # tool-defs block) and surfaces it via `get_instructions` instead. Stash it for the
         # `get_instructions` call later this step; empty string means "nothing to surface".
@@ -827,6 +956,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 parameters_json_schema=_RUN_CODE_JSON_SCHEMA,
                 metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
                 sequential=True,
+                capability_id=self._capability_id(ctx),
             ),
             max_retries=self.max_retries,
             args_validator=_RUN_CODE_ARGS_VALIDATOR,
@@ -856,11 +986,34 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         execution = RunCodeExecution(parent_tool_call_id=ctx.tool_call_id or 'pyd_ai_code_mode')
         result = await self._execute_code(code, ctx, run_code_tool, execution)
-        return execution.build_tool_return(result)
+        return await self._complete(ctx, execution, result)
+
+    async def _complete(self, ctx: RunContext[AgentDepsT], execution: RunCodeExecution, result: Any) -> ToolReturn[Any]:
+        """Build the public result for a `run_code` call that ran to completion.
+
+        Speculative launches the snippet never claimed are evicted only here, on success: a
+        snippet that failed into a retry keeps them, so the retry can adopt them under its fresh
+        tool call id. What speculation bought goes on the return's history-only metadata, where
+        traces and UIs can read it without spending the model's tokens on it every turn.
+        """
+        tool_return = execution.build_tool_return(result)
+        if self.speculation is not None:
+            summary = await self.speculation.evict_part(ctx, execution.parent_tool_call_id)
+            if summary is not None:
+                metadata: dict[str, Any] | None = tool_return.metadata
+                assert metadata is not None, '`build_tool_return` always attaches metadata'
+                metadata['speculation'] = summary
+        return tool_return
 
     @staticmethod
     def _as_run_code_tool(tool: ToolsetTool[AgentDepsT]) -> _RunCodeTool[AgentDepsT] | None:
         return tool if isinstance(tool, _RunCodeTool) else None
+
+    def _capability_id(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        """The id `capability` is registered under this run, so `run_code` is attributed to it."""
+        if self.capability is None:
+            return None
+        return next((run_id for run_id, cap in ctx.capabilities.items() if cap is self.capability), None)
 
     async def _execute_code(  # noqa: C901
         self,
@@ -897,8 +1050,15 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         #   Checked with empty calls to isolate the context var from per-tool flags.
         # - sequential_tools: per-tool `sequential` flags on ToolDefinition.
         #   These tools are rendered as `def` (sync) and resolved inline.
-        global_sequential = _global_mode_is_sequential(tool_manager.get_parallel_execution_mode)
+        global_sequential = global_mode_is_sequential(tool_manager.get_parallel_execution_mode)
         sequential_tools = {name for name, td in callable_defs.items() if td.sequential}
+
+        speculation = self.speculation
+        if speculation is not None and not in_durable_execution(ctx):
+            # The code is complete here, so every literal eligible call not already in flight
+            # launches now; the snippet's sequential awaits then collect from tasks that are all
+            # already running instead of blocking one another.
+            await speculation.prelaunch_for_execution(ctx, execution, code)
 
         def dispatch_tool_call(sandbox_name: str, kwargs: dict[str, Any]) -> Coroutine[Any, Any, Any]:
             """Reserve nested-call budget, then build the coroutine that runs the call.
@@ -912,65 +1072,24 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             """
             original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
             tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
-            return run_tool_call(original_name, tool_call_id, kwargs)
+            call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
+            if speculation is not None:
+                claimed = speculation.claim(execution.parent_tool_call_id, sandbox_name, kwargs)
+                if claimed is not None:
+                    return speculation.adopt(ctx, execution, claimed, call_part)
+            return run_tool_call(sandbox_name, call_part)
 
-        async def run_tool_call(original_name: str, tool_call_id: str, kwargs: dict[str, Any]) -> Any:
+        async def run_tool_call(sandbox_name: str, call_part: ToolCallPart) -> Any:
             """Run a single tool call dispatched from inside the sandbox.
 
-            Returns the serialized tool result on success. On failure, the
-            exception propagates -- the execution loop passes it back into
-            Monty via `ExternalException` so the sandbox sees it at the
-            `await` site.
+            Returns the serialized tool result on success. On failure, the exception propagates:
+            the execution loop passes it back into Monty via `ExternalException` so the sandbox
+            sees it at the `await` site.
             """
-            call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
-            execution.nested_calls[tool_call_id] = call_part
-
-            try:
-                result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
-            except (CallDeferred, ApprovalRequired) as e:
-                # No handler resolved the deferral. The sandbox can't round-trip to the
-                # caller, so we convert it to a UserError that propagates through
-                # Monty → MontyRuntimeError → ModelRetry.
-                raise UserError(
-                    f'Tool {original_name!r} raised {type(e).__name__} inside code mode, '
-                    'but no `HandleDeferredToolCalls` capability resolved it. Add a handler '
-                    'capability on the agent so deferred and approval-required calls can '
-                    'be resolved inline.'
-                ) from e
-
-            if isinstance(result, ToolDenied):
-                # Handler denied the call. Record the denial with outcome='denied' so
-                # message history reflects it, then raise inside the sandbox: surfacing
-                # `ToolDenied` to the user's script would let it masquerade as a string
-                # tool result, and the script has no way to introspect the marker class
-                # since `ToolDenied` isn't exposed inside Monty.
-                execution.nested_returns[tool_call_id] = ToolReturnPart(
-                    tool_name=original_name,
-                    content=result.message,
-                    tool_call_id=tool_call_id,
-                    outcome='denied',
-                )
-                raise RuntimeError(f'Tool {original_name!r} call denied: {result.message}')
-
-            # Unwrap ToolReturn to get the plain value for the sandbox,
-            # preserving the full ToolReturn metadata on the return part.
-            return_metadata: Any = None
-            if isinstance(result, ToolReturn):
-                return_metadata = result.metadata
-                result = result.return_value
-
-            execution.nested_returns[tool_call_id] = ToolReturnPart(
-                tool_name=original_name,
-                content=result,
-                tool_call_id=tool_call_id,
-                metadata=return_metadata,
-            )
-
-            # Serialize to JSON-compatible form so Monty receives only plain data.
-            # `ToolReturnContent` ends in `Any`, so every tool result is legal here, but its
-            # `Mapping[str, Any]` member still warns on a dict with non-str keys. Those keys
-            # are stringified below, so the warning has nothing left to report.
-            return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(result, warnings=False))
+            execution.nested_calls[call_part.tool_call_id] = call_part
+            if speculation is not None and speculation.eligible(sandbox_name):
+                await speculation.report_miss(ctx, execution, sandbox_name, call_part)
+            return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
 
         # Type-check only the first executed snippet. Monty's checker can reject valid later
         # snippets that reuse imports or pass a runtime-validated dict to a TypedDict parameter.

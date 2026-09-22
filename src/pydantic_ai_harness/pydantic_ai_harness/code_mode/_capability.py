@@ -10,16 +10,23 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import AbstractToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities._tool_search import ToolSearch as _ToolSearch
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, NativeToolSearchReturnPart, SystemPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from typing_extensions import TypedDict
 
-from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset, in_durable_execution
+from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
+from pydantic_ai_harness.code_mode._speculation import (
+    MAX_SPECULATIONS_PER_PART,
+    SpeculationCoordinator,
+    SpeculationStats,
+)
 from pydantic_ai_harness.code_mode._toolset import (
     CodeModeMount,
     CodeModeOS,
     CodeModeResourceLimits,
     CodeModeToolset,
+    in_durable_execution,
 )
 
 if TYPE_CHECKING:
@@ -125,6 +132,20 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     See the Code Mode guide for the execution and `restart` semantics.
     """
 
+    speculate: Sequence[str] | Literal['declared'] | None = None
+    """Launch side-effect-free sandbox calls while the `run_code` arguments are still streaming.
+
+    Calls to eligible functions whose arguments are all keyword literals start as soon as their
+    text has streamed; when the completed snippet dispatches the same call, the in-flight result
+    is adopted instead of starting cold. Pass the names of tools that are safe to run early, or
+    `'declared'` to trust what the tools declare about themselves (`Tool(metadata={'read_only':
+    True})` or the MCP `readOnlyHint` annotation). At most `max_tool_calls` (and never more than
+    32) calls start early per `run_code` call, and they do not reserve from `max_tool_calls`:
+    unclaimed launches are extra bounded work alongside the dispatches the snippet makes.
+    Composes with `eager`. Inactive under durable execution and when the run's parallel
+    execution mode is sequential. See the Code Mode guide for the mechanics.
+    """
+
     dynamic_catalog: bool = False
     """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows.
 
@@ -155,17 +176,41 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     keeps the system prompt shorter and is the better choice.
     """
 
+    speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)
+    """Aggregate launch/adopt/evict counters across this instance's runs, when `speculate` is set."""
+
+    _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False)
+
     _announced_tools: set[str] = field(default_factory=set[str], init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.speculate, str) and self.speculate != 'declared':
+            raise UserError(
+                f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
+                'To allowlist one tool, pass a one-element list.'
+            )
 
     def get_ordering(self) -> CapabilityOrdering:
         """CodeMode wraps around ToolSearch so that search_tools stays native."""
         return CapabilityOrdering(position='outermost', wraps=[_ToolSearch])
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> CodeMode[AgentDepsT]:
-        """Return a fresh instance so concurrent runs don't share `_announced_tools`."""
-        if not self.dynamic_catalog:
+        """Return a fresh instance so concurrent runs don't share `_announced_tools` or speculation state."""
+        if not self.dynamic_catalog and self.speculate is None:
             return self
-        return replace(self)
+        clone = replace(self)
+        # `replace` re-runs `__init__`, resetting `init=False` fields: `_announced_tools` starts
+        # fresh (intended), and the stats object is rebound so callers holding this instance
+        # observe counters accumulated by its per-run clones.
+        clone.speculation_stats = self.speculation_stats
+        if self.speculate is not None:
+            allowlist = 'declared' if isinstance(self.speculate, str) else frozenset(self.speculate)
+            clone._speculation = SpeculationCoordinator(
+                allowlist=allowlist,
+                stats=self.speculation_stats,
+                launch_cap=min(MAX_SPECULATIONS_PER_PART, self.max_tool_calls),
+            )
+        return clone
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, splitting it into native + sandboxed subsets if needed."""
@@ -179,6 +224,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
+                capability=self,
+                speculation=self._speculation,
             )
         return CodeModeToolset(
             wrapped=toolset,
@@ -189,16 +236,18 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
+            capability=self,
+            speculation=self._speculation,
         )
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
-        """Report the stream hook only when eager execution is enabled.
+        """Report the stream hook only when a streamed execution tier is enabled.
 
         The base class detects a class-level override, which would put every `CodeMode` user in
         streaming mode; gating on the instance keeps plain `CodeMode` runs non-streaming.
         """
-        return self.eager
+        return self.eager or self.speculate is not None
 
     async def wrap_run_event_stream(
         self,
@@ -206,14 +255,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Feed streamed `run_code` argument deltas to the eager statement pump.
+        """Feed streamed `run_code` argument deltas to the eager pump and the speculation launcher.
 
-        Wrapped events pass through unmodified; the watcher acts purely by side effect,
-        enqueueing closed statements for execution in the live REPL. Inactive under durable
-        execution, where overlapping non-deterministic work with the stream has no place in
-        a replayed workflow.
+        Wrapped events pass through unmodified; the watchers act by side effect, enqueueing
+        closed statements for the live REPL and launching eligible calls. Inactive under durable
+        execution, where overlapping non-deterministic work with the stream has no place in a
+        replayed workflow.
         """
-        toolset = None if in_durable_execution(ctx) else EagerCodeModeToolset.from_run_context(ctx)
+        toolset = None if in_durable_execution(ctx) else CodeModeToolset.from_run_context(ctx)
         async for event in stream:
             yield event
             if toolset is not None:

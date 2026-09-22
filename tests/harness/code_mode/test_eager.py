@@ -867,7 +867,7 @@ class TestEagerCodeMode:
         """Discarding an in-flight call waits for the cancelled pump only within the budget.
         A nested tool that swallows the cancellation is abandoned, the statements queued
         behind it never run, and the tool is allowed to finish in the background."""
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._eager.PUMP_CANCEL_TIMEOUT_SECONDS', 0.25)
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._eager.CANCEL_TIMEOUT_SECONDS', 0.25)
         started = asyncio.Event()
         done = asyncio.Event()
         calls: list[str] = []

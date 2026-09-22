@@ -9,31 +9,19 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Generic
 
 from pydantic_ai import AbstractToolset, RunContext
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, PartDeltaEvent, PartStartEvent, ToolCallPart, ToolCallPartDelta
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
-from ._streaming import MAX_SCAN_CHARS, closed_statements, decode_partial_args
+from ._streaming import (
+    CANCEL_TIMEOUT_SECONDS,
+    MAX_SCAN_CHARS,
+    MAX_SCAN_WORK_CHARS,
+    closed_statements,
+    decode_partial_args,
+)
 from ._toolset import CodeModeToolset, RunCodeExecution
-
-MAX_SCAN_WORK_CHARS = 1 << 20
-"""Cumulative characters a streamed call may hand to host parsers."""
-
-PUMP_CANCEL_TIMEOUT_SECONDS = 5.0
-"""How long to wait for a cancelled pump to release a non-cooperative nested tool before
-abandoning it. Abandoning is safe: the pump's feed aborts with the cancellation, and the
-executor cancels the in-flight nested calls, so an abandoned pump starts no further
-tool calls."""
-
-
-def in_durable_execution(ctx: RunContext[object]) -> bool:
-    """Whether a durable executor is active, where eager streaming must stay disabled."""
-    return any(
-        isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
-        for capability in ctx.capabilities.values()
-    )
 
 
 @dataclass(kw_only=True)
@@ -282,7 +270,7 @@ class EagerCoordinator(Generic[AgentDepsT]):
         pump.cancel()
         # A nested tool that swallows the cancellation can hold the pump past the budget;
         # waiting without a deadline would let one such tool hang run teardown.
-        await asyncio.wait({pump}, timeout=PUMP_CANCEL_TIMEOUT_SECONDS)
+        await asyncio.wait({pump}, timeout=CANCEL_TIMEOUT_SECONDS)
 
     async def close(self) -> None:
         """Cancel all background work owned by this run."""
@@ -302,17 +290,6 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
 
     execution: EagerCoordinator[AgentDepsT] = field(default_factory=EagerCoordinator, init=False, repr=False)
 
-    @classmethod
-    def from_run_context(cls, ctx: RunContext[AgentDepsT]) -> EagerCodeModeToolset[AgentDepsT] | None:
-        """Return the active step's eager toolset, or `None` when this run does not use one."""
-        tool_manager = ctx.tool_manager
-        if tool_manager is None or tool_manager.tools is None:
-            return None  # pragma: no cover - the agent installs its tool manager before streaming
-        tool = tool_manager.tools.get('run_code')
-        if tool is None:
-            return None  # pragma: no cover - eager `CodeMode` always contributes `run_code`
-        return tool.toolset if isinstance(tool.toolset, cls) else None
-
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         new_self = await super().for_run_step(ctx)
         if new_self is not self:
@@ -329,6 +306,9 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
         return result
 
     async def observe_stream_event(self, event: AgentStreamEvent, ctx: RunContext[AgentDepsT]) -> None:
+        # Speculation first: a call launches the moment its text completes, so a statement the
+        # pump feeds right after can claim it.
+        await super().observe_stream_event(event, ctx)
         await self.execution.observe(event, ctx, self)
 
     async def call_tool(
@@ -367,7 +347,7 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
         tail = '\n'.join(lines[call.fed_line_count :])
         async with self.execution.feed_lock:
             result = await self._execute_code(tail, ctx, run_code_tool, call.execution)
-        return call.execution.build_tool_return(result)
+        return await self._complete(ctx, call.execution, result)
 
     async def feed_fragment(
         self,
