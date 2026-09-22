@@ -374,6 +374,12 @@ else:
     assert_type(Agent(output_type=[Foo, None]), Agent[object, Foo | None])
     assert_type(Agent(output_type=[str, Foo, None]), Agent[object, str | Foo | None])
     assert_type(Agent(output_type=[ToolOutput(Foo), None]), Agent[object, Foo | None])
+    assert_type(ToolOutput(None, name='nothing'), ToolOutput[None])
+    assert_type(Agent(output_type=[Foo, ToolOutput(None, name='nothing')]), Agent[object, Foo | None])
+    assert_type(
+        Agent(output_type=[ToolOutput(Foo), ToolOutput(type_=None, name='nothing', description='Nothing to do.')]),
+        Agent[object, Foo | None],
+    )
     assert_type(Agent(output_type=NativeOutput([Foo, None])), Agent[object, Foo | None])
     assert_type(Agent(output_type=PromptedOutput([Foo, None])), Agent[object, Foo | None])
     assert_type(Agent(output_type=[[Foo, None], Bar]), Agent[object, Foo | None | Bar])

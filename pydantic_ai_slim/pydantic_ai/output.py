@@ -67,12 +67,12 @@ See [output docs](../output.md) for more information.
 
 
 class _NoneOutput(Protocol[T_co]):
-    """The type of a bare `None` in a sequence of output types, as seen by a type checker.
+    """The type of a bare `None` output type, as seen by a type checker.
 
-    `None` in `output_type=[Foo, None]` is a value, not a type, so `type[T]` cannot match it and would not add
-    `None` to the output type if it did. Matching `None` structurally binds `T` to `None` through `__class__`,
-    while `__bool__` returning `Literal[False]` keeps other values out (a class annotating its own `__bool__` that way
-    would also match). A list of only `None` still type-checks, though it is refused at run time.
+    `None` in `output_type=[Foo, None]` or `ToolOutput(None)` is a value, not a type, so `type[T]` cannot match it
+    and would not add `None` to the output type if it did. Matching `None` structurally binds `T` to `None` through
+    `__class__`, while `__bool__` returning `Literal[False]` keeps other values out (a class annotating its own
+    `__bool__` that way would also match). A list of only `None` still type-checks, though it is refused at run time.
     """
 
     @property
@@ -152,7 +152,7 @@ class ToolOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        type_: OutputTypeOrFunction[OutputDataT],
+        type_: OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT],
         *,
         name: str | None = None,
         description: str | None = None,
@@ -162,7 +162,8 @@ class ToolOutput(Generic[OutputDataT]):
     ):
         if max_retries is not None and max_retries < 0:
             raise exceptions.UserError(f'max_retries must be >= 0, got {max_retries}')
-        self.output = type_
+        # A bare `None` is kept as is: the output schema treats it as the `None` output type.
+        self.output = cast(OutputTypeOrFunction[OutputDataT], type_)
         self.name = name
         self.description = description
         self.max_retries = max_retries
