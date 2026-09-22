@@ -21,6 +21,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 
 from pydantic_ai_harness._output import truncate_tail
+from pydantic_ai_harness.shell._limits import file_limit_status, limited_command, validate_file_limit
 from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT, CommandMode, run_persistent_command
 from pydantic_ai_harness.shell._policy import is_interactive_command, recoverable
 
@@ -78,6 +79,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         max_output_chars: int,
         persist_cwd: bool,
         allow_interactive: bool,
+        max_file_bytes: int | None = None,
         env: Mapping[str, str] | None = None,
         denied_env_patterns: Sequence[str] = (),
         tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES,
@@ -92,6 +94,12 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._denied_operators = list(denied_operators)
         self._default_timeout = default_timeout
         self._max_output_chars = max_output_chars
+        validate_file_limit(max_file_bytes, persistent=PERSISTENT_TOOL_NAME in tools)
+        if max_file_bytes is not None and persist_cwd:
+            raise ValueError(
+                'max_file_bytes is not supported with persist_cwd; cwd capture writes a file in the child.'
+            )
+        self._max_file_bytes = max_file_bytes
         self._persist_cwd = persist_cwd
         self._allow_interactive = allow_interactive
         self._env = dict(env) if env is not None else None
@@ -140,6 +148,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             denied_operators=self._denied_operators,
             default_timeout=self._default_timeout,
             max_output_chars=self._max_output_chars,
+            max_file_bytes=self._max_file_bytes,
             persist_cwd=self._persist_cwd,
             allow_interactive=self._allow_interactive,
             env=self._env,
@@ -350,7 +359,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         actual_command, cwd_file = self._build_cwd_capture(command)
         try:
             proc = await anyio.open_process(
-                actual_command,
+                limited_command(actual_command, self._max_file_bytes),
                 cwd=self._cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -404,6 +413,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
 
             if exit_code != 0:
                 output = f'{output}\n[exit code: {exit_code}]'
+                output += file_limit_status(exit_code, self._max_file_bytes)
             return output
         finally:
             if cwd_file is not None:
@@ -465,7 +475,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
 
         try:
             proc = await anyio.open_process(
-                command,
+                limited_command(command, self._max_file_bytes),
                 cwd=self._cwd,
                 stdout=stdout_file,
                 stderr=stderr_file,
@@ -541,7 +551,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             output_sections.append(f'[stderr]\n{stderr}')
         parts = ['\n'.join(output_sections) if output_sections else '(no output yet)', f'[status: {status}]']
         if bg.finished and bg.exit_code is not None:
-            parts.append(f'[exit code: {bg.exit_code}]')
+            parts.append(f'[exit code: {bg.exit_code}]' + file_limit_status(bg.exit_code, self._max_file_bytes))
         return '\n'.join(parts)
 
     async def stop_command(self, command_id: str) -> str:
@@ -577,5 +587,5 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             output_sections.append(f'[stderr]\n{stderr}')
         parts = ['\n'.join(output_sections) if output_sections else '(no output)', '[stopped]']
         if bg.exit_code is not None:
-            parts.append(f'[exit code: {bg.exit_code}]')
+            parts.append(f'[exit code: {bg.exit_code}]' + file_limit_status(bg.exit_code, self._max_file_bytes))
         return '\n'.join(parts)

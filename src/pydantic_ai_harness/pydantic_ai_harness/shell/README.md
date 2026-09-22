@@ -83,6 +83,34 @@ size limit, and an invalid character in an application-supplied `env`.
 > the allowlist can. For untrusted work, run the agent inside OS-level isolation
 > such as [`ModalSandbox`](https://pydantic.dev/docs/ai/harness/modal-sandbox/) or a container.
 
+## Limit files written by commands
+
+Set `Shell(max_file_bytes=10_000_000)` to bound the size of each regular file
+written by `run_command` and `start_command`, including redirected output and
+background stdout/stderr logs. `None` (the default) adds no limit. This is
+separate from `max_output_chars`, which bounds the returned tool result.
+
+The positive integer is applied as POSIX `RLIMIT_FSIZE` in a child launcher
+before executing the shell. Descendants inherit it; the harness parent's limits
+are unchanged. A lower inherited hard limit takes precedence. Unsupported
+platforms, `persist_cwd=True`, and `tools=['shell']` (the persistent tool) raise
+`ValueError` when the toolset is constructed rather than ignoring the setting.
+Working-directory persistence uses a child-written capture file, which would
+also be subject to the limit.
+
+A process killed by the file-size signal gets a diagnosed tool result; other
+nonzero exits include the configured limit as context because programs can
+catch the write error and choose their own exit code. The agent can reduce its
+output and retry. Background failures appear in `check_command` or
+`stop_command`. Commands that handle the error and exit successfully cannot be
+diagnosed from their exit status. Results still obey `max_output_chars`.
+
+This is a per-file bound, not a disk quota or a sandbox: it does not remove
+partial files, shrink existing files, or prevent creating many smaller files.
+Use filesystem quotas or OS isolation for aggregate disk protection and
+untrusted commands. No additional telemetry spans are emitted; the existing
+tool-call result carries the failure and limit context.
+
 ## Environment control
 
 By default a spawned command inherits the agent process's full environment. In a

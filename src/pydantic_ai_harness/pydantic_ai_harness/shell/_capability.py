@@ -77,6 +77,13 @@ class Shell(AbstractCapability[AgentDepsT]):
     max_output_chars: int = 50_000
     """Maximum characters of output returned to the model. Must be positive."""
 
+    max_file_bytes: int | None = field(default=None, kw_only=True)
+    """Optional POSIX per-file size limit for run-scoped children, not total disk usage.
+
+    Must be positive. Unsupported platforms, `persist_cwd`, and the persistent
+    `shell` tool are rejected. The parent is unchanged; a lower inherited hard limit still applies.
+    """
+
     persist_cwd: bool = False
     """If True, track cd commands and adjust the working directory for subsequent calls."""
 
@@ -130,6 +137,7 @@ class Shell(AbstractCapability[AgentDepsT]):
             denied_operators=self.denied_operators,
             default_timeout=self.default_timeout,
             max_output_chars=self.max_output_chars,
+            max_file_bytes=self.max_file_bytes,
             persist_cwd=self.persist_cwd,
             allow_interactive=self.allow_interactive,
             env=self.env,
