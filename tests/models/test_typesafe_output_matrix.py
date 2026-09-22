@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 import httpx2
 import pytest
@@ -176,6 +176,17 @@ REFUSED = [
         probe('areas', list[Area] | None, description='Which?'),
         unsupported('areas', NOT_OPTIONAL),
     ),
+    # `None` beside `None` is a union with nothing to ask about, so there is no `X` for the extra option to
+    # stand beside. It is refused as an unsupported field, not as an optional one.
+    Refused(
+        'field: None | None',
+        probe(
+            'nothing',
+            Union[Annotated[None, Field(description='one')], Annotated[None, Field(description='the other')]],  # noqa: UP007
+            description='Which?',
+        ),
+        unsupported('nothing'),
+    ),
     # A route is weighed by what it says about itself, and a `Literal` has nowhere to write that down.
     Refused('union with a pick-one', [Ticket, Area], says_nothing('final_result_Literal')),
     # A union of structured types is a route set; the same union as a *field* is not a question.
@@ -258,6 +269,7 @@ def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
 # on purpose: `None` as a route was on it, and was worth closing. Anything joining it is worth the same look.
 GAPS = [
     'field: IntEnum of codes',
+    'field: None | None',
     'field: bounded int',
     'field: list with a size limit',
     'field: list | None',
@@ -322,6 +334,12 @@ class OptionalArea(BaseModel):
     """Triage the ticket."""
 
     area: Area | None = Field(description='Which area, if any?')
+
+
+class DescribedNoneArea(BaseModel):
+    """Triage the ticket."""
+
+    area: Area | Annotated[None, Field(description='Nothing to route.')] = Field(description='Which area, if any?')
 
 
 class Clarity(UseEnumMemberDocstrings, IntEnum):
@@ -443,6 +461,15 @@ ACCEPTED = [
     Accepted(
         'field: mapping keyed by an Enum', EnumKeyed, EnumKeyed(applies={Areas.billing: True, Areas.shipping: True})
     ),
+    # Writing what `None` means puts a `description` beside its `{'type': 'null'}`, which does not stop it
+    # being `None`: the route is still taken on the pick alone, and the field is still one more option.
+    Accepted(
+        'model | described None, declined',
+        [Ticket, Annotated[None, Field(description='Nothing needs doing.')]],
+        None,
+        picks='final_result_Annotated',
+    ),
+    Accepted('a described `None` option', DescribedNoneArea, DescribedNoneArea(area='billing')),
 ]
 
 
