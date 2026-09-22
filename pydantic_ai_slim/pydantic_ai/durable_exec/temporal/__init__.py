@@ -26,6 +26,7 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 from ..._event_registry import set_replay_isolation_guard
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
+from ...workspaces import WorkspaceError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._event_stream import (
@@ -157,6 +158,9 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'google.auth',
             # Used by fastmcp via py-key-value-aio
             'beartype',
+            # Pydantic imports it lazily while building the schema of a dataclass whose fields carry
+            # `Field` metadata, which the workflow does for the workspace activities' result types.
+            'annotated_types',
             # Imported inside `logfire._internal.json_encoder` when running `logfire.info` inside an activity with attributes to serialize
             'attrs',
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
@@ -190,11 +194,21 @@ class PydanticAIPlugin(SimplePlugin):
             # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
             # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
             # would otherwise turn it into a `UserError`; without it those would hang the same way.
+            # `WorkspaceError` and the builtin file errors a workspace raises are re-raised in
+            # workflow code by `DurableWorkspace` after crossing an activity boundary as data; a
+            # hook that lets one escape must fail the workflow the same way, not hang it.
             workflow_failure_exception_types=[
                 UserError,
                 PydanticUserError,
                 AgentRunError,
                 UnsupportedEventLoopError,
+                WorkspaceError,
+                FileNotFoundError,
+                NotADirectoryError,
+                IsADirectoryError,
+                PermissionError,
+                FileExistsError,
+                UnicodeDecodeError,
             ],
         )
 

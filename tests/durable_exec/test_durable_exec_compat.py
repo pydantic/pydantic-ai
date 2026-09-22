@@ -472,6 +472,19 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
     }
     assert names == TEMPORAL_ACTIVITY_NAMES
 
+    with_workspace = Agent(
+        TestModel(),
+        name='compat',
+        capabilities=[CompatWorkspaceSupplier(), TemporalDurability()],
+    )
+    workspace_durability = TemporalDurability.from_agent(with_workspace)
+    assert workspace_durability is not None
+    workspace_names = {
+        ActivityDefinition.must_from_callable(item).name  # pyright: ignore[reportUnknownMemberType]
+        for item in workspace_durability.temporal_activities
+    }
+    assert workspace_names - TEMPORAL_ACTIVITY_NAMES == TEMPORAL_WORKSPACE_NAMES
+
 
 @pytest.mark.parametrize(
     ('value', 'expected'),

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
 
 from pydantic import ConfigDict, with_config
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from pydantic_ai import messages as _messages
 from pydantic_ai.durable_exec._capability_operation import (
@@ -22,6 +23,7 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
+from pydantic_ai.durable_exec._workspace import WorkspaceArguments, WorkspaceOperationParams
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -29,6 +31,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._operation_backend import TemporalParameterTransport
 from ._toolset import CallToolParams, GetToolsParams
@@ -52,7 +55,11 @@ __all__ = (
     '_ModelRequestTransport',
     '_RequestParams',
     '_StreamedActivityPayload',
+    '_WorkspaceOperationTransport',
+    '_WorkspaceOperationWire',
 )
+
+ArgumentsT = TypeVar('ArgumentsT')
 
 
 class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, tuple[CallToolParams, Any]]):
@@ -381,3 +388,41 @@ class _EventStreamHandlerTransport(
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         return _SemanticEventStreamHandlerParams(params.event, run_context=ctx)
+
+
+@pydantic_dataclass(frozen=True, kw_only=True, config=ConfigDict(ser_json_bytes='base64', val_json_bytes='base64'))
+class _WorkspaceOperationWire(Generic[ArgumentsT]):
+    """Serializable arguments of a workspace activity; parametrized per method so the converter validates them."""
+
+    arguments: ArgumentsT
+    ref: WorkspaceRef | None
+    serialized_run_context: Any
+
+
+class _WorkspaceOperationTransport(
+    TemporalParameterTransport[WorkspaceOperationParams[Any], tuple[_WorkspaceOperationWire[Any], Any]]
+):
+    def __init__(self, durability: TemporalDurability[Any], *, arguments_type: type[Any], result_type: object) -> None:
+        self._durability = durability
+        self.wire_type = _WorkspaceOperationWire[arguments_type]
+        self.result_type = result_type
+
+    def dump(self, params: WorkspaceOperationParams[Any]) -> tuple[_WorkspaceOperationWire[Any], Any]:
+        ctx = params.run_context
+        return (
+            _WorkspaceOperationWire[Any](
+                arguments=params.arguments,
+                ref=params.ref,
+                serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
+            ),
+            ctx.deps,
+        )
+
+    def load(
+        self, payload: tuple[_WorkspaceOperationWire[Any], Any], *, runtime: object
+    ) -> WorkspaceOperationParams[Any]:
+        wire, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(wire.serialized_run_context, deps)
+        return WorkspaceOperationParams(
+            run_context=ctx, ref=wire.ref, arguments=cast(WorkspaceArguments[Any], wire.arguments)
+        )
