@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -36,6 +36,8 @@ from pydantic_ai.durable_exec import (
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
+    WorkspaceMethod,
+    WorkspaceOperationId,
 )
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityOperationResult,
@@ -64,6 +66,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+
+from ..workspace_fakes import FakeWorkspace
 
 
 def test_public_engine_builder_exports() -> None:
@@ -92,6 +97,8 @@ def test_public_engine_builder_exports() -> None:
         'RoleBasedOperationConfig',
         'ToolsetKind',
         'ToolsetValidateToolArgumentsId',
+        'WorkspaceMethod',
+        'WorkspaceOperationId',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
@@ -116,6 +123,26 @@ JOURNAL_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
 }
+
+WORKSPACE_METHODS: tuple[WorkspaceMethod | Literal['ensure'], ...] = (
+    'ensure',
+    'run',
+    'read_bytes',
+    'write_bytes',
+    'stat',
+    'list_dir',
+    'make_dir',
+    'remove',
+    'exists',
+    'read_text',
+    'write_text',
+    'read_file',
+)
+"""Bound only for an agent with a construction-time workspace supplier; the sets above stay as they are without one."""
+
+JOURNAL_WORKSPACE_NAMES = {f'compat__workspace__{method}' for method in WORKSPACE_METHODS}
+PREFECT_WORKSPACE_NAMES = {f'Workspace: {method}' for method in WORKSPACE_METHODS}
+TEMPORAL_WORKSPACE_NAMES = {f'agent__compat__workspace__{method}' for method in WORKSPACE_METHODS}
 
 PREFECT_OPERATION_NAMES = {
     'Model Request: test',
@@ -190,6 +217,17 @@ def _operation_ids() -> list[DurableOperationId]:
         ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
         CapabilityOperationId('compat', operation='operation'),
     ]
+
+
+def _workspace_operation_ids() -> list[DurableOperationId]:
+    return [WorkspaceOperationId(method) for method in WORKSPACE_METHODS]
+
+
+class CompatWorkspaceSupplier(AbstractCapability[Any]):
+    id = 'compat_workspace'
+
+    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+        return FakeWorkspace('compat', ref=ref)
 
 
 def _operation_label(operation_id: DurableOperationId) -> str | None:
@@ -297,6 +335,24 @@ def test_default_journal_operation_name_matrix() -> None:
         for operation_id in _operation_ids()
     }
     assert names == JOURNAL_OPERATION_NAMES
+    workspace_names = {namer.operation_name(operation_id) for operation_id in _workspace_operation_ids()}
+    assert workspace_names == JOURNAL_WORKSPACE_NAMES
+
+
+def test_journal_workspace_units_bind_only_with_a_supplier() -> None:
+    def bound_workspace_names(*capabilities: AbstractCapability[Any]) -> set[str]:
+        durability = JournalDurability()
+        agent = Agent(TestModel(), name='compat', capabilities=[*capabilities, durability])
+        bound = JournalDurability.from_agent(agent)
+        assert bound is not None
+        namer = JournalOperationNamer('compat')
+        return {
+            namer.operation_name(WorkspaceOperationId(method))
+            for method in bound._bound_workspace_operations  # pyright: ignore[reportPrivateUsage]
+        }
+
+    assert bound_workspace_names(CompatCapability()) == set()
+    assert bound_workspace_names(CompatCapability(), CompatWorkspaceSupplier()) == JOURNAL_WORKSPACE_NAMES
 
 
 def test_prefect_operation_name_matrix() -> None:
@@ -309,6 +365,8 @@ def test_prefect_operation_name_matrix() -> None:
         for operation_id in _operation_ids()
     }
     assert names == PREFECT_OPERATION_NAMES
+    workspace_names = {namer.operation_name(operation_id) for operation_id in _workspace_operation_ids()}
+    assert workspace_names == PREFECT_WORKSPACE_NAMES
 
 
 def test_prefect_operation_name_assembly_completeness() -> None:
@@ -359,6 +417,18 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
     assert backend is not None
     registered_names = {cast(Any, registration).dbos_function_name for registration in backend.registrations()}
     assert registered_names == DBOS_OPERATION_NAMES
+
+    with_workspace = Agent(
+        TestModel(),
+        name='compat',
+        capabilities=[CompatWorkspaceSupplier(), DBOSDurability()],
+    )
+    workspace_durability = DBOSDurability.from_agent(with_workspace)
+    assert workspace_durability is not None
+    workspace_backend = workspace_durability._operation_backend  # pyright: ignore[reportPrivateUsage]
+    assert workspace_backend is not None
+    workspace_names = {cast(Any, registration).dbos_function_name for registration in workspace_backend.registrations()}
+    assert workspace_names - DBOS_OPERATION_NAMES == JOURNAL_WORKSPACE_NAMES
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
