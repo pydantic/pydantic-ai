@@ -2,8 +2,9 @@
 
 [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] wraps any
 [`Workspace`][pydantic_ai.workspaces.Workspace] facade: file reads pass through unchanged,
-while command execution and file mutation raise `UserError`. Commands are blocked along with
-writes because they execute against the same filesystem (the one-environment contract): a
+while command execution and file mutation raise
+[`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError]. Commands are blocked
+along with writes because they execute against the same filesystem (the one-environment contract): a
 workspace that refused `write_bytes` but ran `rm` would not be read-only.
 """
 
@@ -13,9 +14,7 @@ from collections.abc import Mapping
 
 from typing_extensions import Never
 
-from pydantic_ai.exceptions import UserError
-
-from .protocol import WorkspaceCommand
+from .protocol import WorkspaceCommand, WorkspaceReadOnlyError
 from .workspace import WrapperWorkspace
 
 __all__ = ('ReadOnlyWorkspace',)
@@ -32,7 +31,7 @@ class ReadOnlyWorkspace(WrapperWorkspace):
 
     Reads (`working_dir`, `read_bytes`, `stat`, `list_dir`, `exists`) forward to the wrapped
     backend, using its native filesystem methods or the shell fallback; `run` and file mutations raise
-    [`UserError`][pydantic_ai.exceptions.UserError] explaining the restriction. `ref`
+    [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError] explaining the restriction. `ref`
     is the wrapped backend's own: a
     [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] names the environment, never the policy,
     so whoever supplies the workspace re-applies the wrapper on every (re)connection.
@@ -49,13 +48,13 @@ class ReadOnlyWorkspace(WrapperWorkspace):
         return True
 
     async def write_bytes(self, path: str, data: bytes) -> Never:
-        raise UserError(_READ_ONLY_REASON)
+        raise WorkspaceReadOnlyError(_READ_ONLY_REASON)
 
     async def make_dir(self, path: str) -> Never:
-        raise UserError(_READ_ONLY_REASON)
+        raise WorkspaceReadOnlyError(_READ_ONLY_REASON)
 
     async def remove(self, path: str) -> Never:
-        raise UserError(_READ_ONLY_REASON)
+        raise WorkspaceReadOnlyError(_READ_ONLY_REASON)
 
     async def run(
         self,
@@ -66,4 +65,4 @@ class ReadOnlyWorkspace(WrapperWorkspace):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> Never:
-        raise UserError(_READ_ONLY_REASON)
+        raise WorkspaceReadOnlyError(_READ_ONLY_REASON)

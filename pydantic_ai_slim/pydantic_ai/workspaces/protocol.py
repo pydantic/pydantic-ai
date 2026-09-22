@@ -42,6 +42,7 @@ __all__ = (
     'WorkspaceFileEntry',
     'WorkspaceRef',
     'WorkspaceResult',
+    'WorkspaceReadOnlyError',
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
     'SupportsCommands',
@@ -92,6 +93,15 @@ class WorkspaceTimeoutError(WorkspaceError, TimeoutError):
         """Captured standard error, when available."""
         self.timeout = timeout
         """The deadline that was enforced, in seconds."""
+
+
+class WorkspaceReadOnlyError(WorkspaceError, PermissionError):
+    """A mutation was refused because the workspace is read-only.
+
+    Raised by [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] and by any wrapper
+    that enforces the same policy. Tool providers catch it with the other `WorkspaceError`s and
+    report the refusal to the model rather than ending the run.
+    """
 
 
 class WorkspaceResult(Protocol):

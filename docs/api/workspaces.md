@@ -8,6 +8,7 @@
             - FileWindow
             - WorkspaceBackend
             - WorkspaceError
+            - WorkspaceReadOnlyError
             - WorkspaceRef
             - WorkspaceTimeoutError
             - WorkspaceUnavailableError

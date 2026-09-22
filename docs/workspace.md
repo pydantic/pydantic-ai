@@ -113,8 +113,10 @@ you need the exact, uncapped contents.
 ## Wrapping a workspace
 
 [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] allows reads and directory listings.
-It refuses commands and file changes. [`Workspace.read_only`][pydantic_ai.workspaces.Workspace.read_only]
-reports this policy, including through outer wrappers, so tool providers can omit mutation tools.
+It refuses commands and file changes with
+[`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError].
+[`Workspace.read_only`][pydantic_ai.workspaces.Workspace.read_only] reports this policy, including
+through outer wrappers, so tool providers can omit mutation tools.
 [`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace] is a base class for adding behavior
 around workspace operations. Helpers such as `read_text` and `read_file` use an overridden
 `read_bytes` method.
@@ -270,6 +272,8 @@ environment.
 
 - A non-zero command exit is a normal result reported on `exit_code`.
 - A missing file raises `FileNotFoundError`.
+- A mutation refused by a read-only workspace raises
+  [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError].
 - An unavailable environment raises
   [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 - A command that exceeds its deadline raises

@@ -41,6 +41,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WrapperWorkspace,
@@ -990,7 +991,7 @@ async def test_explicit_workspace_facade_wins_over_historical_ref_without_mutati
     assert result.workspace is explicit
     assert historical.metadata == {'keep': True}
     assert historical.workspace_ref == WorkspaceRef(provider='fake', id='old')
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await result.workspace.run(['true'])
 
 
@@ -1154,7 +1155,7 @@ async def test_wrapper_composes_workspace_policy_over_combined_capability() -> N
     async def probe(ctx: RunContext[Any]) -> None:
         await ctx.workspace.write_text('blocked.txt', 'nope')
 
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await agent.run('go')
     assert provider.refs == [None]
 

@@ -6,8 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import UserError
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef, WrapperWorkspace
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceError,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+    WrapperWorkspace,
+)
 
 from .workspace_fakes import FakeWorkspace, RunOnlyWorkspaceBackend
 
@@ -22,6 +29,8 @@ async def test_read_only_probe_tracks_policy_through_stacked_wrappers() -> None:
     assert workspace.read_only is False
     assert read_only.read_only is True
     assert outer.read_only is True
+    assert issubclass(WorkspaceReadOnlyError, WorkspaceError)
+    assert issubclass(WorkspaceReadOnlyError, PermissionError)
 
 
 async def test_read_only_workspace_forwards_reads_and_refuses_run_and_writes() -> None:
@@ -32,9 +41,9 @@ async def test_read_only_workspace_forwards_reads_and_refuses_run_and_writes() -
     assert await workspace.read_text('data.txt') == 'original'
     assert workspace.ref == ref
 
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.run(['rm', 'data.txt'])
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.write_text('data.txt', 'changed')
 
     assert backend.files['/workspace/data.txt'] == b'original'
@@ -49,9 +58,9 @@ async def test_read_only_workspace_forwards_every_read_and_refuses_every_write()
     assert await workspace.exists('data.txt') is True
     assert await workspace.working_dir() == '/workspace'
 
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.make_dir('new-dir')
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.remove('data.txt')
 
     assert backend.files == {'/workspace/data.txt': b'original'}
@@ -65,7 +74,7 @@ async def test_read_only_workspace_over_a_run_only_backend_uses_the_shell_fallba
 
     assert await workspace.read_text('data.txt') == 'hello'
     assert any(isinstance(command, str) and command.startswith('base64 <') for command in backend.commands)
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.run(['ls'])
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await workspace.write_text('data.txt', 'changed')
