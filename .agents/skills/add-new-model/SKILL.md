@@ -78,6 +78,18 @@ Until then, for that id: `ModelResponse.cost()` raises `LookupError`, `RunContex
 is `None`, and a `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end
 instead. Open the genai-prices PR alongside the model add and link the two.
 
+Check the current catalogs of other providers that host the new model before scoping that PR.
+For example, OpenRouter may publish `openai/<id>` and a `YYYYMMDD` canonical slug on release day
+even when OpenAI's own model list exposes only the base id. Add a separate genai-prices entry
+for each confirmed host with its own published rates; do not infer Bedrock or Azure availability
+from an older sibling model.
+
+For OpenAI, compare the new price entry's `match` with adjacent model families. Their entries
+usually match both the base id and a strictly date-suffixed snapshot (`-YYYY-MM-DD`), so a later
+snapshot gets the same price and context data. Test both forms, including the canonical model id;
+this match rule does not add a speculative id to Pydantic AI's model-name literals. Its profile
+prefix should resolve the same capabilities for either form.
+
 ## Step 4 — SDK pin check
 
 Snapshot/enumeration tests in this repo often tie `KnownModelName` to a literal set defined in the provider SDK. **The provider SDK frequently lags the model release by days.**
