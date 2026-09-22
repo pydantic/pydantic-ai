@@ -1272,7 +1272,7 @@ agent = Agent(model)
 
 ### The Grid AI
 
-[The Grid AI](https://thegrid.ai) is a spot market for inference. Model names are market instruments — a task type (`text`, `code`, `agent`) paired with a quality tier (`standard`, `prime`, `max`) — rather than fixed models, so the model that serves a request differs from the instrument requested.
+[The Grid AI](https://thegrid.ai) is a spot market for inference. Model names are market instruments, a task type (`text`, `code`, `agent`) paired with a quality tier (`standard`, `prime`, `max`), rather than fixed models, so the model that serves a request differs from the instrument requested.
 
 The Grid AI doesn't have a dedicated provider class, so you can use it with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]. Pass an `AsyncOpenAI` client rather than a `base_url`: The Grid AI answers inference requests with a [`307` redirect](https://thegrid.ai/docs/api-reference/request-routing-and-redirects) to its routing layer, and the OpenAI SDK's own HTTP client follows redirects, while the default client Pydantic AI builds does not.
 
