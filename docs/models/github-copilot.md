@@ -26,6 +26,8 @@ Copilot authenticates with a bearer token. An OAuth user token — what `gh auth
 
 ## Device login
 
+Use [`GitHubCopilotOAuthFlow`][pydantic_ai.providers.github_copilot.GitHubCopilotOAuthFlow] to obtain a token through GitHub's device flow:
+
 ```python {test="skip"}
 import os
 import sys
@@ -72,6 +74,8 @@ Your application owns browser opening and credential storage. [`GitHubCopilotCre
     Some OAuth applications issue expiring access tokens. The result preserves `refresh_token`, `expires_in`, and `refresh_token_expires_in` when GitHub supplies them; durations are seconds from issuance. Persist the issuance time with these values if you save the credentials. `GitHubCopilotProvider(api_key=...)` does not renew tokens. Your application must refresh them through GitHub's documented flow or ask the user to sign in again.
 
 ## Environment variable
+
+If you already have a token, set `GITHUB_COPILOT_API_KEY` before starting your application:
 
 ```bash
 export GITHUB_COPILOT_API_KEY='your-copilot-token'
