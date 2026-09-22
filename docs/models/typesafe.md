@@ -152,15 +152,16 @@ Each field of the output type is a question, and all of them go out in a single 
 
 | Field type | Question | Answer |
 |---|---|---|
-| `bool` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
+| `bool`, or `Literal[True, False]` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
-| `float` with `ge=0` and `le=1` | the probability of yes | Jev's probability, unrounded |
+| `float` with `ge=0` and an upper bound | the probability of yes | Jev's probability, unrounded, in the field's own units |
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
+| `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer |
 | `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or `None` |
 | a nested model of these | its fields, asked as `outer.inner` | the model |
 
-A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict`, and a union of models as a field. That is about the fields of a type Jev is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-jev-picks-and-calls-what-it-can) Jev cannot fill is not an error — it is still offered as a route, and picking it hands the step to the model behind Jev.
+A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type Jev is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-jev-picks-and-calls-what-it-can) Jev cannot fill is not an error — it is still offered as a route, and picking it hands the step to the model behind Jev.
 
 ### Where the wording comes from
 
@@ -176,6 +177,8 @@ A bare `bool`, `Literal` or `float` as the `output_type` is a single question wi
 Unless the schema describes an option, Jev sees it by its name alone, so name `Literal` and `Enum` options for what they mean. A `Literal` has nowhere to write a meaning per option; where the difference between two options needs explaining, use an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] and put a docstring under each member, which is what puts a description on each option in the schema.
 
 ### What each mapping does
+
+The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as Jev gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones Jev said yes to.
 
 An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
 

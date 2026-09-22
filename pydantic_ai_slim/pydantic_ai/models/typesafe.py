@@ -541,6 +541,24 @@ def _threshold(settings: TypeSafeModelSettings, name: str, default: float) -> fl
     return threshold
 
 
+def _fanned_in(
+    name: str, options: Mapping[Any, Any], answers: Mapping[str, object], boolean_threshold: float
+) -> tuple[dict[str, tuple[bool, float]], dict[str, float]]:
+    """Read back the yes/no per option that `_fan_out` asked, as verdicts and as the raw probabilities.
+
+    A list and a mapping ask the same questions and differ only in how the verdicts are shaped afterwards.
+    """
+    labelled: dict[str, float] = {}
+    for option in options:
+        answer = answers.get(f'{name}.{option}')
+        if not isinstance(answer, NoulAnswer):
+            raise UnexpectedModelBehavior(
+                f'Unexpected answer from TypeSafe for output field {name!r}, option {option!r}: {answer!r}'
+            )
+        labelled[option] = answer.noul
+    return {option: _verdict(p, boolean_threshold) for option, p in labelled.items()}, labelled
+
+
 def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
     """Whether Jev's probability of yes clears the bar, and how far from the bar it landed.
 
@@ -572,27 +590,27 @@ def _answers(
     scores: dict[str, float] = {}
     for name, prop in properties.items():
         prop, none_key = _optional(prop)
+        if keys := _mapping_options(prop):
+            # A mapping keeps every option with the answer it got, unlike a list.
+            verdicts, labelled = _fanned_in(name, keys, answers, boolean_threshold)
+            _set(args, name, {key: chosen for key, (chosen, _) in verdicts.items()})
+            confidence[name] = min(sureness for _, sureness in verdicts.values())
+            probabilities[name] = labelled
+            continue
         if prop.get('type') == 'array':
-            # One yes/no went out per option; the answer is the options that came back yes, in their order.
-            labelled: dict[str, float] = {}
-            for option in _options(prop['items']) or {}:
-                answer = answers.get(f'{name}.{option}')
-                if not isinstance(answer, NoulAnswer):
-                    raise UnexpectedModelBehavior(
-                        f'Unexpected answer from TypeSafe for output field {name!r}, option {option!r}: {answer!r}'
-                    )
-                labelled[option] = answer.noul
-            verdicts = {option: _verdict(p, boolean_threshold) for option, p in labelled.items()}
+            # A list is the options that came back yes, in their order.
+            verdicts, labelled = _fanned_in(name, _options(prop['items']) or {}, answers, boolean_threshold)
             _set(args, name, [option for option, (chosen, _) in verdicts.items() if chosen])
             confidence[name] = min(sureness for _, sureness in verdicts.values())
             probabilities[name] = labelled
             continue
         answer = answers.get(name)
         if isinstance(questions[name], Noul) and isinstance(answer, NoulAnswer):
-            if prop.get('type') == 'number':
+            if (bound := _bounded(prop)) is not None:
                 # The probability is the answer, so there is no separate confidence to report: a field
-                # that asks for the number would otherwise get it back twice under two names.
-                _set(args, name, answer.noul)
+                # that asks for the number would otherwise get it back twice under two names. The bound is
+                # the units it is asked in, so the same answer comes back as 0.42 or as 42.
+                _set(args, name, answer.noul * bound)
             else:
                 chosen, sureness = _verdict(answer.noul, boolean_threshold)
                 _set(args, name, chosen)
@@ -800,6 +818,9 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
             prop = {**prop, 'items': resolve(prop['items'])}
         if 'anyOf' in prop:
             prop = {**prop, 'anyOf': [resolve(option) for option in prop['anyOf']]}
+        if 'propertyNames' in prop:
+            # How an `Enum`-keyed mapping names its keys, as a `$ref` to the enum's own schema.
+            prop = {**prop, 'propertyNames': resolve(prop['propertyNames'])}
         return prop
 
     def flatten(properties: dict[str, Any], prefix: str, seen: frozenset[str]) -> dict[str, dict[str, Any]]:
@@ -857,6 +878,76 @@ def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     return prop, key
 
 
+def _list_options(name: str, prop: dict[str, Any]) -> dict[Any, str | None]:
+    """The options a `list` field fans out over, or a `UserError` saying why it is not a list of them."""
+    labels = _options(prop['items']) if 'items' in prop else None
+    if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: a list must be of two or more string '
+            f'options. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    if 'maxItems' in prop or 'minItems' in prop:
+        # Every option is asked about and every yes is kept, so how many come back is Jev's answer rather than
+        # something that can be held to a limit -- the same reason a mapping carrying one is refused. Checked
+        # after the shape, so a `tuple`, which carries both intrinsically, is still told it is not a list.
+        raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
+    return labels
+
+
+def _fan_out(name: str, ask: dict[str, JSONContent], labels: dict[Any, str | None]) -> dict[str, Noul]:
+    """One yes/no per option, asked with the field's question and that option's description.
+
+    Both a list of options and a mapping keyed by them ask this; what differs is how the answers are read back.
+    """
+    questions: dict[str, Noul] = {}
+    for label, meaning in labels.items():
+        option = f'{label}: {meaning}' if meaning else label
+        questions[f'{name}.{label}'] = Noul(instructions={**ask, 'option': option})
+    return questions
+
+
+def _bounded(prop: dict[str, Any]) -> float | None:
+    """The upper bound of a number field that asks for a probability, or `None` if it is not one.
+
+    A probability is what Jev answers, so a number field has to be bounded to be one. The bound itself is only
+    a scale: `ge=0, le=1` is the probability as it comes back, and `ge=0, le=100` the same answer as a
+    percentage. What the field asks is unchanged; only the units it is written in differ.
+    """
+    if prop.get('type') != 'number' or prop.get('minimum') != 0:
+        return None
+    if 'multipleOf' in prop:
+        # Jev answers anywhere between the bounds, so a field that only accepts steps along them is not a
+        # probability in different units; it is a set of levels, which is what a rubric is for.
+        return None
+    maximum = prop.get('maximum')
+    return maximum if isinstance(maximum, (int, float)) and not isinstance(maximum, bool) and maximum > 0 else None
+
+
+def _mapping_options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
+    """The options a `dict[Literal, bool]` field is keyed by, or `None` if the field is not one.
+
+    A mapping keyed by options and valued by yes/no is a fan-out like a list of those options. A mapping of
+    anything else -- `dict[str, str]`, `dict[str, int]` -- has no options to fan out over and is not one.
+    """
+    if prop.get('type') != 'object' or prop.get('properties'):
+        return None
+    if 'maxProperties' in prop or 'minProperties' in prop:
+        # Every option is asked about and every answer is kept, so there is no way to return fewer or more
+        # keys than the mapping declares, and a limit on how many there may be could only be broken.
+        return None
+    # A plain yes/no per key and nothing else. Anything narrower -- a `const`, an `enum`, a `Literal[True]` --
+    # would forbid an answer Jev is free to give, and `True` rather than a schema is how `dict[str, Any]` says
+    # its values are unconstrained. Matching the whole schema rather than one key of it refuses both, and
+    # whatever else is put there next.
+    if prop.get('additionalProperties') != {'type': 'boolean'}:
+        return None
+    names = prop.get('propertyNames')
+    if not isinstance(names, dict):
+        # `propertyNames: true` says the keys are unconstrained, so there are no options to fan out over.
+        return None
+    return _options(cast('dict[str, Any]', names))
+
+
 def _options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
     """The options of a pick-one schema, each with its description, or `None` when the schema is not one."""
     if 'enum' in prop:
@@ -899,6 +990,10 @@ def _questions(
         ask = _ask(name, prop, output_tool, instructions)
         prop, none_key = _optional(prop)
         options = _options(prop)
+        if options and all(isinstance(option, bool) for option in options):
+            # `Literal[True, False]` spells out the two values a `bool` already has. There is nothing to pick
+            # between that a yes/no does not ask, and the schema says `boolean` too, so it is one.
+            options = None
         if none_key is not None:
             if options is None or not all(isinstance(option, str) for option in options):
                 raise UserError(
@@ -914,15 +1009,7 @@ def _questions(
         if prop.get('type') == 'array':
             # Several options at once is one yes/no per option, all in the same request, which TypeSafe call
             # fanning out: does this option apply, asked with the field's question and the option's description.
-            labels = _options(prop['items']) if 'items' in prop else None
-            if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
-                raise UserError(
-                    f'Output field {name!r} is not supported by this model: a list must be of two or more string '
-                    f'options. {_UNSUPPORTED_FIELD_HINT}'
-                )
-            for label, meaning in labels.items():
-                option = f'{label}: {meaning}' if meaning else label
-                questions[f'{name}.{label}'] = Noul(instructions={**ask, 'option': option})
+            questions.update(_fan_out(name, ask, _list_options(name, prop)))
         elif options is not None:
             # `bool` is an `int` in Python but never a rubric level, and it is handled as a yes/no below.
             if options and all(isinstance(option, int) and not isinstance(option, bool) for option in options):
@@ -939,9 +1026,17 @@ def _questions(
                 )
             else:
                 questions[name] = Choice(instructions=asked, criteria=cast('dict[str, str | None]', options))
-        elif prop.get('type') == 'boolean' or (
-            prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1
-        ):
+        elif keys := _mapping_options(prop):
+            # A mapping from options to yes/no asks the same thing per option a list of them does; what
+            # differs is the answer, which keeps every option rather than only the ones that came back yes.
+            if len(keys) < 2:
+                # A key of a JSON object is a string by construction, so only how many there are is in doubt.
+                raise UserError(
+                    f'Output field {name!r} is not supported by this model: a mapping must be keyed by two or '
+                    f'more options. {_UNSUPPORTED_FIELD_HINT}'
+                )
+            questions.update(_fan_out(name, ask, keys))
+        elif prop.get('type') == 'boolean' or _bounded(prop) is not None:
             if not ask:
                 # A pick-one or a rubric still says what it is asking through its options; a yes/no has
                 # nothing else, and Jev rejects a question with neither instructions nor criteria.
