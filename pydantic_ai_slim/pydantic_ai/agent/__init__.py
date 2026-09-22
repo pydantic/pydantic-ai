@@ -1728,11 +1728,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # supplied by a capability is selected from the final per-run capability tree below, so a
         # capability that replaces itself in `for_run` cannot leave behind the bootstrap backend.
         run_workspace = initial_ctx.workspace
+        explicit_workspace = False
         if workspace is not None and workspace != 'new' and not isinstance(workspace, WorkspaceRef):
             # An explicit backend, or an existing `Workspace` passed straight through from a
             # parent run or a previous result.
             run_workspace = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
             initial_ctx.workspace = run_workspace
+            explicit_workspace = True
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
         # can see it on `RunContext.metadata`. Metadata factories receive the
@@ -1787,6 +1789,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             # Without an explicit request, no answer leaves the placeholder in place; this includes
             # a run with no workspace and no historical ref.
+        # The wrap hook sees the composed per-run tree on the context, so a durability capability can
+        # rebuild the selection through it; `build_run_context` sets the same value later.
+        initial_ctx.root_capability = run_capability
+        run_workspace = run_capability._wrap_workspace(  # pyright: ignore[reportPrivateUsage]
+            initial_ctx, run_workspace, explicit=explicit_workspace
+        )
         initial_ctx.workspace = run_workspace
 
         # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the

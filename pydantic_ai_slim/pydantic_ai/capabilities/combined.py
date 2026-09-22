@@ -28,7 +28,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
@@ -449,6 +449,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if (workspace := capability.get_workspace(ctx, ref=ref)) is not None:
                 return workspace
         return None
+
+    def _wrap_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+        # Middleware order, like `get_wrapper_toolset`: the last capability wraps first, so its
+        # wrapper sits innermost, directly around the selected workspace.
+        for capability in reversed(self.capabilities):
+            workspace = capability._wrap_workspace(ctx, workspace, explicit=explicit)
+        return workspace
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset

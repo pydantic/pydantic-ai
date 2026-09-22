@@ -1159,6 +1159,56 @@ async def test_wrapper_composes_workspace_policy_over_combined_capability() -> N
     assert provider.refs == [None]
 
 
+class _Tagged(WrapperWorkspace):
+    def __init__(self, wrapped: Workspace, tag: str) -> None:
+        super().__init__(wrapped)
+        self.tag = tag
+
+
+class _WrapHook(AbstractCapability[Any]):
+    """Records what the private wrap hook sees and tags the workspace it returns."""
+
+    def __init__(self, tag: str) -> None:
+        self.tag = tag
+        self.seen: list[tuple[type[Workspace], bool, bool]] = []
+
+    def _wrap_workspace(self, ctx: RunContext[Any], workspace: Workspace, *, explicit: bool) -> Workspace:
+        self.seen.append((type(workspace), explicit, ctx.root_capability is not None))
+        return _Tagged(workspace, self.tag)
+
+
+async def test_wrap_workspace_hook_wraps_innermost_last_and_reports_explicit_workspaces() -> None:
+    """The private hook composes like middleware and sees the composed per-run tree on the context.
+
+    Not reachable through a public API: nothing first-party overrides it besides the durability
+    capabilities, whose engine suites cover the observable behavior. This pins the plumbing they
+    build on: the last capability wraps first (innermost), a wrapper capability forwards, the
+    result is what tools and `result.workspace` see, and `explicit` tells a caller-supplied
+    workspace from a capability-selected one.
+    """
+    first, last = _WrapHook('first'), _WrapHook('last')
+    provider = WorkspaceCapability()
+    agent = Agent(TestModel(), capabilities=[first, WrapperCapability(last), provider])
+
+    result = await agent.run('go')
+
+    outer = result.workspace
+    assert isinstance(outer, _Tagged) and outer.tag == 'first'
+    inner = outer.wrapped
+    assert isinstance(inner, _Tagged) and inner.tag == 'last'
+    assert inner.wrapped.backend is provider.backend
+    assert first.seen == [(_Tagged, False, True)]
+    assert last.seen == [(Workspace, False, True)]
+
+    explicit = Workspace(FakeWorkspace('explicit'))
+    second = await agent.run('again', workspace=explicit)
+    second_inner = second.workspace
+    assert isinstance(second_inner, _Tagged)
+    second_inner = second_inner.wrapped
+    assert isinstance(second_inner, _Tagged) and second_inner.wrapped is explicit
+    assert last.seen[-1] == (Workspace, True, True)
+
+
 async def test_workspace_ref_forwards_backend_identity() -> None:
     backend = FakeWorkspace('ref')
     workspace = Workspace(backend)
