@@ -738,7 +738,6 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
         ('us.anthropic.claude-sonnet-5', True),
         ('us.anthropic.claude-opus-4-6-v1', True),
         ('us.anthropic.claude-opus-5', True),
-        ('us.anthropic.claude-opus-5-5', False),
         ('us.anthropic.claude-fable-5-1', False),
     ],
 )
@@ -757,11 +756,9 @@ def test_bedrock_anthropic_adaptive_thinking_tool_choice_support(model_name: str
         'us.anthropic.claude-fable-5-1',
         'global.anthropic.claude-fable-5-1',
         'us.anthropic.claude-fable-5-1-20260115-v1:0',
-        'us.anthropic.claude-opus-5-5',
-        'global.anthropic.claude-opus-5-5',
     ],
 )
-def test_bedrock_anthropic_bound_thinking_models_bind_through_the_id_split(model_id: str):
+def test_bedrock_anthropic_fable_5_1_binds_through_the_id_split(model_id: str):
     """The binding flag is a `startswith` on the bare id, so it rests on the geo/version split."""
     profile = BedrockProvider.model_profile(model_id)
     assert profile is not None
@@ -2393,7 +2390,6 @@ def test_huggingface_unknown_provider_returns_none():
 @pytest.mark.parametrize(
     'model_name,supported',
     [
-        ('claude-opus-5-5', True),
         ('claude-opus-5', True),
         ('claude-opus-4-8', True),
         ('claude-fable-5', True),

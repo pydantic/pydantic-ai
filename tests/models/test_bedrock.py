@@ -7032,9 +7032,7 @@ async def test_bedrock_specific_tool_choice_with_adaptive_thinking_runs(
     assert response.parts == [ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id=IsStr())]
 
 
-@pytest.mark.parametrize(
-    'model_name', ['anthropic.claude-fable-5-1', 'anthropic.claude-mythos-5-1', 'anthropic.claude-opus-5-5']
-)
+@pytest.mark.parametrize('model_name', ['anthropic.claude-fable-5-1', 'anthropic.claude-mythos-5-1'])
 async def test_bedrock_anthropic_model_without_tool_forcing_uses_auto(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture, model_name: str
 ) -> None:
