@@ -4440,6 +4440,8 @@ def test_manage_system_prompt_visible_in_vercel_adapter_signatures():
     assert from_request_parameters['manage_system_prompt'].default == 'server'
     assert 'manage_system_prompt' in dispatch_request_parameters
     assert dispatch_request_parameters['manage_system_prompt'].default == 'server'
+    assert from_request_parameters['strip_workspace_refs'].default is True
+    assert dispatch_request_parameters['strip_workspace_refs'].default is True
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')

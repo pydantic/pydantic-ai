@@ -4,20 +4,21 @@
 subprocesses — it **isolates nothing**.
 """
 
-# anyio 4.15.0 is the floor because `Process.wait()` returns when the command exits even if a
-# background child still holds a pipe open (https://github.com/agronholm/anyio/issues/1174), and
-# `Process.aclose()` releases the pipe descriptors that child inherited.
-
 from __future__ import annotations as _annotations
 
+import asyncio
 import os
+import re
 import shutil
 import signal
 from collections.abc import Awaitable, Mapping, Sequence
+from importlib.metadata import version
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
+from typing import cast
 
 import anyio
+import sniffio
 from typing_extensions import TypeVar
 
 from pydantic_ai._utils import gather, run_in_executor
@@ -43,6 +44,20 @@ _OUTPUT_DRAIN_GRACE = 2.0
 """How long to keep reading a command's pipes after the direct child has exited."""
 
 T = TypeVar('T')
+
+_ANYIO_VERSION_RE = re.compile(r'(\d+)\.(\d+)')
+_match = _ANYIO_VERSION_RE.match(version('anyio'))
+_PROCESS_WAIT_WAITS_FOR_PIPES = _match is not None and tuple(map(int, _match.groups())) < (4, 15)
+"""Whether `anyio.abc.Process.wait()` on the asyncio backend also waits for the output pipes to close.
+
+Before anyio 4.15.0 it delegated to asyncio's `Process.wait()`, which only returns once every
+redirected pipe has disconnected (https://github.com/agronholm/anyio/issues/1174), so a command
+that left a background child holding stdout open (`sleep 30 & echo done`) would hang `run()`
+until that child exited, and `Process.aclose()` would hang the same way. On those versions
+`_wait_for_exit` polls `returncode`, which asyncio sets the moment the child exits, and `_close`
+releases the inherited pipe descriptors itself before `aclose()`.
+"""
+_EXIT_POLL_INTERVAL = 0.005
 
 
 async def _shielded(awaitable: Awaitable[T]) -> T:
@@ -241,7 +256,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             exit_code = await self._wait_and_collect_output(
                 running_process, stdout_buffer, stderr_buffer, absolute_deadline
             )
-            await running_process.aclose()
+            await self._close(running_process)
         except BaseException as error:
             denial = await self._terminate(running_process)
             if isinstance(error, TimeoutError):
@@ -301,7 +316,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             async with anyio.create_task_group() as tg:
                 tg.start_soon(collect, stdout_pipe, stdout_buffer, stderr_buffer)
                 tg.start_soon(collect, stderr_pipe, stderr_buffer, stdout_buffer)
-                exit_code = await process.wait()
+                exit_code = await self._wait_for_exit(process)
                 # The command has exited; keep reading for a short grace period in case a background
                 # child still holds a pipe open. The deadline above still bounds the grace period.
                 tg.cancel_scope.deadline = anyio.current_time() + _OUTPUT_DRAIN_GRACE
@@ -314,6 +329,37 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise TimeoutError
         return exit_code
 
+    @staticmethod
+    def _uses_pipe_bound_wait() -> bool:
+        # Trio's `wait()` and `aclose()` never waited on the pipes; only asyncio (and uvloop) did.
+        return _PROCESS_WAIT_WAITS_FOR_PIPES and sniffio.current_async_library() == 'asyncio'
+
+    async def _wait_for_exit(self, process: anyio.abc.Process) -> int:
+        """Return the exit code as soon as the command itself exits, whatever its children do with the pipes."""
+        if not self._uses_pipe_bound_wait():
+            return await process.wait()
+        while (exit_code := process.returncode) is None:
+            await anyio.sleep(_EXIT_POLL_INTERVAL)
+        return exit_code
+
+    async def _close(self, process: anyio.abc.Process) -> None:
+        """Release the process's pipes and reap it, without waiting for the pipes to close."""
+        if self._uses_pipe_bound_wait():
+            # asyncio's `Process.wait()` (which old `aclose()` ends with) returns only once every
+            # pipe has disconnected, so close our ends of the output pipes first, the way anyio
+            # 4.15's `aclose()` does. The transport is reachable only through asyncio's private
+            # `Process._transport`; this branch is dead on anyio >= 4.15.
+            transport = cast(
+                asyncio.SubprocessTransport,
+                process._process._transport,  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            )
+            for fd in (1, 2):
+                # Both pipes exist: `run` always spawns with `stdout=PIPE, stderr=PIPE`.
+                pipe = transport.get_pipe_transport(fd)
+                assert pipe is not None
+                pipe.close()
+        await process.aclose()
+
     async def _terminate(self, process: anyio.abc.Process) -> PermissionError | None:
         async def terminate() -> PermissionError | None:
             denial: PermissionError | None = None
@@ -322,7 +368,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             except PermissionError as error:
                 denial = error
             finally:
-                await process.aclose()
+                await self._close(process)
             return denial
 
         return await _shielded(terminate())

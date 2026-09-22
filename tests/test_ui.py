@@ -1799,6 +1799,7 @@ def _make_dummy_adapter(
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
     allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
     allow_uploaded_files: bool = False,
+    strip_workspace_refs: bool = True,
 ) -> DummyUIAdapter[None, str]:
     agent = Agent(model=TestModel())
     return DummyUIAdapter(
@@ -1807,6 +1808,7 @@ def _make_dummy_adapter(
         allowed_file_url_schemes=allowed_file_url_schemes,
         allowed_file_url_force_download=allowed_file_url_force_download,
         allow_uploaded_files=allow_uploaded_files,
+        strip_workspace_refs=strip_workspace_refs,
     )
 
 
@@ -2153,6 +2155,27 @@ def test_sanitize_messages_keeps_uploaded_files_when_allow_uploaded_files():
 
     user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot(['Look at this:', uploaded_file])
+
+
+@pytest.mark.parametrize('strip_workspace_refs', [True, False])
+def test_adapter_strip_workspace_refs(strip_workspace_refs: bool):
+    """The adapter resets client-submitted `workspace_ref`s unless `strip_workspace_refs=False`."""
+    ref = WorkspaceRef(provider='modal', id='env')
+    adapter = _make_dummy_adapter(
+        [ModelResponse(parts=[TextPart(content='done')], workspace_ref=ref)],
+        strip_workspace_refs=strip_workspace_refs,
+    )
+
+    response = message(adapter.sanitize_messages(adapter.messages), ModelResponse)
+    assert response.workspace_ref == (None if strip_workspace_refs else ref)
+
+
+def test_strip_workspace_refs_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert from_request_parameters['strip_workspace_refs'].default is True
+    assert dispatch_request_parameters['strip_workspace_refs'].default is True
 
 
 def test_resolve_allow_uploaded_files_maps_deprecated_preserve_file_data():

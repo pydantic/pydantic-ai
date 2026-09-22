@@ -26,6 +26,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceRef,
     WorkspaceTimeoutError,
+    local as local_module,
 )
 
 pytestmark = [
@@ -204,7 +205,18 @@ async def test_output_over_safety_cap_kills_the_process_group(tmp_path: Path):
     await _assert_process_gone(int(pid_file.read_text()))
 
 
-async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(tmp_path: Path):
+@pytest.mark.parametrize('force_pipe_bound_wait', [False, True], ids=['installed_anyio', 'anyio_before_4_15'])
+async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, force_pipe_bound_wait: bool
+):
+    """`run()` returns when the command exits even though a background child still holds stdout.
+
+    Before anyio 4.15.0, `Process.wait()` on asyncio also waited for the pipes to close (anyio#1174),
+    so `LocalWorkspaceBackend` has a fallback for those versions. Forcing its version gate on runs
+    that fallback on whatever anyio is installed; the other case is the installed version's own path.
+    """
+    if force_pipe_bound_wait:
+        monkeypatch.setattr(local_module, '_PROCESS_WAIT_WAITS_FOR_PIPES', True)
     workspace = LocalWorkspaceBackend(tmp_path)
     pid_file = tmp_path / 'pid'
     child_pid_file = tmp_path / 'child-pid'
