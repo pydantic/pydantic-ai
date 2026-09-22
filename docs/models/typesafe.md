@@ -152,15 +152,16 @@ Each field of the output type is a question, and all of them go out in a single 
 
 | Field type | Question | Answer |
 |---|---|---|
-| `bool` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
+| `bool`, or `Literal[True, False]` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
-| `float` with `ge=0` and `le=1` | the probability of yes | Jev's probability, unrounded |
+| `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | Jev's probability, unrounded, in the field's own units |
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
+| `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer |
 | `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or `None` |
 | a nested model of these | its fields, asked as `outer.inner` | the model |
 
-A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict`, and a union of models as a field. That is about the fields of a type Jev is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-jev-picks-and-calls-what-it-can) Jev cannot fill is not an error — it is still offered as a route, and picking it hands the step to the model behind Jev.
+A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type Jev is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-jev-picks-and-calls-what-it-can) Jev cannot fill is not an error — it is still offered as a route, and picking it hands the step to the model behind Jev.
 
 ### Where the wording comes from
 
@@ -176,6 +177,8 @@ A bare `bool`, `Literal` or `float` as the `output_type` is a single question wi
 Unless the schema describes an option, Jev sees it by its name alone, so name `Literal` and `Enum` options for what they mean. A `Literal` has nowhere to write a meaning per option; where the difference between two options needs explaining, use an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] and put a docstring under each member, which is what puts a description on each option in the schema.
 
 ### What each mapping does
+
+The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as Jev gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones Jev said yes to.
 
 An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
 
@@ -283,7 +286,11 @@ A nested model is its fields, asked as `outer.inner` and put back in place; the 
 
 Fields are what Jev fills. When there is more than one *thing* the text could call for, Jev is asked one more question: which of these does this call for. The options are the output type (or each member of a [union](#a-union-of-output-types)) and every [tool](#tools-jev-picks-and-calls-what-it-can) on offer, each described by its docstring.
 
-The route Jev picks is the one that runs, and how much it costs to fill depends on which route it is. A single output type's fields ride along in the *same* request as the route question, so its answers are already in hand when the pick comes back. Every other route is picked first and filled after: a chosen tool's arguments, or a chosen [union](#a-union-of-output-types) member's fields, go out in a second request carrying only that route's questions. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone, with no second request at all. That is the whole mechanism behind the patterns below: an output function is a candidate Jev can choose, and choosing it *is* calling it.
+The route Jev picks is the one that runs, and how much it costs to fill depends on which route it is. A single output type's fields ride along in the *same* request as the route question, so its answers are already in hand when the pick comes back. Every other route is picked first and filled after: a chosen tool's arguments, or a chosen [union](#a-union-of-output-types) member's fields, go out in a second request carrying only that route's questions. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone, with no second request at all.
+
+The second request is about the same text as the first, which on its own would leave nothing in it saying a route had been picked. So each of its questions names the chosen route alongside the field's own question and whatever the route's docstring said about it: a union member by the name you gave the type, a tool by the name you gave the function. What you already said in the text is unchanged between the two requests; only the questions differ.
+
+Jev answers the questions in one request independently and in parallel, which is what makes asking several at once cost little more than asking one. It also means a field cannot depend on another field's answer: two arguments of the same tool are decided separately, and neither sees the other. Where one judgement genuinely follows from another, they belong in different steps, not in two fields of the same call. That is the whole mechanism behind the patterns below: an output function is a candidate Jev can choose, and choosing it *is* calling it.
 
 ## Confidence and thresholds
 
@@ -812,6 +819,8 @@ result = agent.run_sync('The onboarding wizard is stuck; please move it on.')
 print(result.output)
 #> urgent=False
 ```
+
+An `Args:` entry describes the *argument*, not its options: a `Literal` argument's options go out named and nothing more, the same as [a `Literal` output field](#where-the-wording-comes-from). Where the difference between two of them needs explaining, make the argument an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] with a docstring under each member, or a [`Choices`][pydantic_ai.output.Choices] set built from a mapping of option to meaning — either puts a description on each option in the schema, which is what Jev weighs them by. `Choices` built from a bare sequence of names describes nothing, and leaves Jev weighing the names alone like a `Literal` does.
 
 The response sums the input and output tokens from both calls, but [`RequestUsage.requests`][pydantic_ai.usage.RequestUsage.requests] is fixed at one request per model step and cannot carry the real count, so `provider_details['requests']` is `2` when Jev chose and then filled.
 

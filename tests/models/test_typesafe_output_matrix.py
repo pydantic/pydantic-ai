@@ -133,6 +133,29 @@ NOT_A_RUBRIC = ': a rubric must be the whole numbers from 0 upwards, in order, a
 NOT_STRINGS = ': its options are not two or more strings'
 
 
+class OneArea(str, Enum):
+    """The only area."""
+
+    billing = 'billing'
+
+
+class Areas(UseEnumMemberDocstrings, str, Enum):
+    """Which area."""
+
+    billing = 'billing'
+    """Charges, refunds and invoices."""
+    shipping = 'shipping'
+    """Where an order is."""
+
+
+EnumKeyed = probe('applies', dict[Areas, bool], description='Which apply?')
+Stepped = probe('risk', float, ge=0, le=100, multiple_of=10, description='How risky?')
+Capped = probe('applies', dict[Area, bool], max_length=2, description='Which apply?')
+BoolLiteral = probe('which', Literal[True, False], description='Which?')
+Percentage = probe('risk', float, ge=0, le=100, description='How risky?')
+Applies = probe('applies', dict[Area, bool], description='Which apply?')
+
+
 @dataclass(frozen=True)
 class Refused:
     """An output type Jev will not take, and the whole message the user gets for it."""
@@ -192,16 +215,36 @@ REFUSED = [
         probe('area', Literal['billing'], description='Which area?'),
         unsupported('area'),
     ),
-    # A mapping keyed by a pick-one is not a question either, as an output type or as a field.
-    Refused('mapping of options', dict[Area, bool], unsupported('response')),
-    Refused(
-        'field: mapping of options',
-        probe('applies', dict[Area, bool], description='Which apply?'),
-        unsupported('applies'),
-    ),
     Refused('mapping of text', dict[str, str], unsupported('response')),
     # A list is one yes/no per option, so its items have to be the options.
     Refused('list of models', list[Ticket], unsupported('response', NOT_A_LIST)),
+    # A bound is the units a probability is asked in. A field that only accepts steps along it is a set of
+    # levels instead, and every key of a mapping is answered, so a limit on how many there may be cannot hold.
+    Refused('field: stepped number', Stepped, unsupported('risk')),
+    Refused('field: mapping with a size limit', Capped, unsupported('applies')),
+    Refused(
+        'field: list with a size limit',
+        probe('areas', list[Area], max_length=1, description='Which apply?'),
+        unsupported('areas'),
+    ),
+    # `dict[str, Any]` says its values are unconstrained by writing `additionalProperties: true` rather than a
+    # schema, which is not a thing to call `.get` on.
+    Refused('field: mapping of anything', probe('blob', dict[str, Any], description='Anything?'), unsupported('blob')),
+    # The values have to be a plain yes/no: anything narrower forbids an answer Jev is free to give.
+    Refused(
+        'field: mapping to a fixed value',
+        probe('m', dict[Area, Literal[True]], description='Which?'),
+        unsupported('m'),
+    ),
+    # And the keys have to be options: `dict[str, bool]` says nothing about what they are.
+    Refused('field: mapping of free keys', probe('m', dict[str, bool], description='Which?'), unsupported('m')),
+    # One option is not a set to fan out over, the same as a pick-one of one option. A single `Literal` key
+    # reaches the schema as a `const`, which is not a set at all; a one-member `Enum` is a set of one.
+    Refused(
+        'field: mapping of one option',
+        probe('m', dict[OneArea, bool], description='Which?'),
+        unsupported('m', ': a mapping must be keyed by two or more options'),
+    ),
     # A `tuple` is an array whose members are positional, which Pydantic renders as `prefixItems` and no
     # `items`, so there are no options to fan out over.
     Refused(
@@ -214,12 +257,58 @@ REFUSED = [
     Refused('field: model that contains itself', Thread, contains_itself('parent.parent')),
     # A number is only a question when it is a probability or a rubric level.
     Refused('field: bounded int', probe('clarity', int, ge=0, le=4, description='How clear?'), unsupported('clarity')),
-    Refused('field: percentage', probe('risk', float, ge=0, le=100, description='How risky?'), unsupported('risk')),
 ]
 
 
 def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
     raise AssertionError('a refused output type must not reach a request')
+
+
+# The refused rows that every other model takes. Being here is not a bug — Jev answers questions rather than
+# writing values, and most of these are things only a model that writes can do. It is a list to decide against
+# on purpose: `None` as a route was on it, and was worth closing. Anything joining it is worth the same look.
+GAPS = [
+    'field: IntEnum of codes',
+    'field: None | None',
+    'field: bounded int',
+    'field: list with a size limit',
+    'field: list | None',
+    'field: mapping of anything',
+    'field: mapping of free keys',
+    'field: model | None',
+    'field: pick-one of ints',
+    'field: pick-one of mixed types',
+    'field: pick-one of one option',
+    'field: stepped number',
+    'field: tuple of pick-ones',
+    'field: union of models',
+    'list of models',
+    'mapping of text',
+    'pick-one | None',
+    'union with a pick-one',
+]
+
+
+async def test_which_refusals_are_gaps_with_the_rest_of_the_library(allow_model_requests: None):
+    """Which refusals above are Jev's own limits, and which are output types every other model takes.
+
+    The table says what Jev does. It cannot say whether a refusal is a deliberate limit or a hole, and the two
+    look identical in it — which is why `None` as a route sat here looking like the first kind. Running each
+    refused type against a model with no such limits separates them: a row that answers there is a gap with
+    the rest of the library, and a row that does not is Jev's own.
+
+    A row moving between the two lists is the point of this test. Adding a refusal the rest of the library
+    accepts is a decision worth making on purpose rather than noticing later.
+    """
+    gaps: list[str] = []
+    for case in REFUSED:
+        try:
+            await Agent(TestModel(), output_type=case.output_type).run('anything')
+        except Exception:
+            continue
+        gaps.append(case.id)
+
+    assert sorted(gaps) == GAPS
 
 
 @pytest.mark.parametrize('behind_a_model', [False, True], ids=['jev alone', 'with a model behind it'])
@@ -381,6 +470,19 @@ ACCEPTED = [
         picks='final_result_Escalation',
     ),
     Accepted('output function | None', [escalate, None], None, picks='final_result_None'),
+    # `Literal[True, False]` spells out what a `bool` already is, so it asks the same yes/no.
+    Accepted('field: pick-one of booleans', BoolLiteral, BoolLiteral(which=True)),
+    # A bounded number asks for a probability; the bound is the units it comes back in.
+    Accepted('field: percentage', Percentage, Percentage(risk=90.0)),
+    # A mapping of options to yes/no fans out like a list of them, keeping every answer rather than the yeses.
+    Accepted(
+        'field: mapping of options', Applies, Applies(applies={'billing': True, 'shipping': True, 'security': True})
+    ),
+    Accepted('mapping of options', dict[Area, bool], {'billing': True, 'shipping': True, 'security': True}),
+    # An `Enum` key reaches the schema as a `$ref` under `propertyNames`, which the walk resolves like any other.
+    Accepted(
+        'field: mapping keyed by an Enum', EnumKeyed, EnumKeyed(applies={Areas.billing: True, Areas.shipping: True})
+    ),
     # Writing what `None` means puts a `description` beside its `{'type': 'null'}`, which does not stop it
     # being `None`: the route is still taken on the pick alone, and the field is still one more option.
     Accepted(
