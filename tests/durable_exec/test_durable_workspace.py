@@ -49,6 +49,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileEntry,
+    LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
     WorkspaceBackend,
@@ -56,6 +57,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WrapperWorkspace,
 )
 
 from ..workspace_fakes import FakeWorkspace, InMemoryProvider, WorkspaceCapability
@@ -288,7 +290,7 @@ async def test_an_unexpected_backend_error_fails_the_unit() -> None:
         await result.workspace.read_text('x.txt')
 
 
-async def test_ensure_failure_surfaces_as_the_workspace_error() -> None:
+async def test_ensure_failure_surfaces_as_the_workspace_error(tmp_path: Path) -> None:
     class Dead(FakeWorkspace):
         async def working_dir(self) -> str:
             raise WorkspaceUnavailableError('environment expired')
@@ -297,6 +299,13 @@ async def test_ensure_failure_surfaces_as_the_workspace_error() -> None:
 
     with pytest.raises(WorkspaceUnavailableError, match='environment expired'):
         await agent.run('go')
+
+    # A local ref precedes any operation, so `ensure` is what surfaces a directory that is gone.
+    durability = FakeDurability()
+    missing = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path / 'missing'), durability])
+    with pytest.raises(WorkspaceUnavailableError, match='does not exist'):
+        await missing.run('go')
+    assert _workspace_units(durability) == ['ensure']
 
 
 async def test_durable_agent_outside_the_container_keeps_the_selected_workspace() -> None:
@@ -436,6 +445,35 @@ async def test_per_run_policy_must_match_the_construction_tree_when_units_rebuil
     result = await Agent(TestModel(), name='ws', capabilities=[ReadOnlyPerRun(tmp_path), FakeDurability()]).run('go')
     with pytest.raises(UserError, match='read-only'):
         await result.workspace.make_dir('sub')
+
+    # The same wrapper classes with different state are a different policy too: the wrappers'
+    # own attributes are compared, not just their types.
+    class Allowlist(WrapperWorkspace):
+        def __init__(self, wrapped: Workspace, allowed: frozenset[str]) -> None:
+            super().__init__(wrapped)
+            self.allowed = allowed
+
+    class Allowlisted(AbstractCapability[Any]):
+        def __init__(self, allowed: frozenset[str], *, per_run: frozenset[str] | None = None) -> None:
+            self.allowed = allowed
+            self.per_run = per_run
+
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            return self if self.per_run is None else Allowlisted(self.per_run)
+
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            backend = LocalWorkspaceBackend(tmp_path)
+            if ref is not None and ref != backend.ref:
+                return None
+            return Allowlist(Workspace(backend), self.allowed)
+
+    same = Allowlisted(frozenset({'src'}), per_run=frozenset({'src'}))
+    result = await Agent(TestModel(), name='ws', capabilities=[same, RebuildingDurability()]).run('go')
+    assert isinstance(result.workspace, DurableWorkspace) and isinstance(result.workspace.wrapped, Allowlist)
+
+    narrowed = Allowlisted(frozenset({'src'}), per_run=frozenset({'src', 'secrets'}))
+    with pytest.raises(UserError, match=r'\(Allowlist, Workspace\) is configured differently .* wrappers are the same'):
+        await Agent(TestModel(), name='ws', capabilities=[narrowed, RebuildingDurability()]).run('go')
 
 
 async def test_sub_agent_run_from_a_unit_uses_the_forwarded_workspace_directly() -> None:
