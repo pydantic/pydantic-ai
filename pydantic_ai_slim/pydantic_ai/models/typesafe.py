@@ -260,7 +260,8 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     as context. An option is described by a description on its value in the schema, and by its name without one.
     A bare `bool`, `Literal` or `float` output has no field to describe, so there the agent's instructions are the
     question.
-    A string field is selection, not writing: the `email` or `uri` schema format, or an explicit
+    A string field is selection, not writing: the `email` or `uri` schema format that Pydantic's own `EmailStr`
+    and `AnyUrl` declare, or an explicit
     [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor] passed as `text_extractors`,
     supplies whole candidates from the state before the request, and Jev picks one of them or the no-match option.
     A schema `pattern` is not read as an extractor. A required field left without a value is raised as

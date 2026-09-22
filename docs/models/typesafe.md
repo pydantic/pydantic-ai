@@ -228,24 +228,19 @@ A nested model is its fields, asked as `outer.inner` and put back in place; the 
 
 Jev cannot write text, but it can pick one string that is already there. A `str` field is answerable only when Pydantic AI can extract its candidates deterministically before the request.
 
-The JSON Schema formats `email` and `uri` carry built-in extractors, so a field that declares one is answerable with nothing added: the model is the plain `typesafe:jev-latest` string, and the field's description is what tells Jev which of the addresses in the text is the one being asked for. These are the two formats Pydantic AI tests; another format does not imply extraction support.
+The JSON Schema formats `email` and `uri` carry built-in extractors, so a field that declares one is answerable with nothing added: the model is the plain `typesafe:jev-latest` string, and the field's description is what tells Jev which of the addresses in the text is the one being asked for. Pydantic's own [`EmailStr`](https://docs.pydantic.dev/latest/api/networks/#pydantic.networks.EmailStr) and [`AnyUrl`](https://docs.pydantic.dev/latest/api/networks/#pydantic.networks.AnyUrl) declare exactly those formats, so there is nothing to annotate by hand. These are the two formats Pydantic AI tests; another format does not imply extraction support.
 
 ```python {title="pick_a_contact.py"}
-from typing import Annotated
-
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import AnyUrl, BaseModel, EmailStr, Field
 
 from pydantic_ai import Agent
 
-EmailText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'email'})]
-UriText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'uri'})]
-
 
 class CustomerContact(BaseModel):
-    customer_email: EmailText = Field(
+    customer_email: EmailStr = Field(
         description='Which email address is the customer, rather than our own staff?'
     )
-    account_page: UriText = Field(
+    account_page: AnyUrl = Field(
         description="Which URI is the customer's own account page?"
     )
 
@@ -257,7 +252,9 @@ result = agent.run_sync(
     'billing policy is at https://ourcompany.example/policy.'
 )
 print(result.output)
-#> customer_email='mira@example.com' account_page='https://app.example.com/8812'
+"""
+customer_email='mira@example.com' account_page=AnyUrl('https://app.example.com/8812')
+"""
 ```
 
 For a shape Pydantic AI does not know — a case number, an invoice amount, an order id — write the extractor yourself. A [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor] is an ordinary function of yours that returns the candidate strings for one field, and it is passed to [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] as `text_extractors`, keyed by field name; use the flattened name such as `customer.email` for a nested field. An explicit extractor takes the place of the one a `format` would imply, though its selected value must still pass the field's Pydantic validation.
@@ -271,18 +268,15 @@ The two kinds mix in one output type: `customer_email` below needs no extractor,
 ```python {title="extract_invoice_details.py"}
 import json
 import re
-from typing import Annotated
 
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import BaseModel, EmailStr, Field
 
 from pydantic_ai import Agent
 from pydantic_ai.models.typesafe import TypeSafeModel
 
-EmailText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'email'})]
-
 
 class InvoiceDetails(BaseModel):
-    customer_email: EmailText = Field(
+    customer_email: EmailStr = Field(
         description='Which email address belongs to the customer?'
     )
     open_case: str = Field(description='Which case is still open?')
