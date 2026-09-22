@@ -44,6 +44,10 @@ class ReadOnlyWorkspace(WrapperWorkspace):
     tampered with is not protected by this wrapper.
     """
 
+    @property
+    def read_only(self) -> bool:
+        return True
+
     async def write_bytes(self, path: str, data: bytes) -> Never:
         raise UserError(_READ_ONLY_REASON)
 

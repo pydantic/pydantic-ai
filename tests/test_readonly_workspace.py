@@ -7,11 +7,21 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import UserError
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef, WrapperWorkspace
 
 from .workspace_fakes import FakeWorkspace, RunOnlyWorkspaceBackend
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_read_only_probe_tracks_policy_through_stacked_wrappers() -> None:
+    workspace = Workspace(FakeWorkspace('read-only-probe'))
+    read_only = ReadOnlyWorkspace(workspace)
+    outer = WrapperWorkspace(read_only)
+
+    assert workspace.read_only is False
+    assert read_only.read_only is True
+    assert outer.read_only is True
 
 
 async def test_read_only_workspace_forwards_reads_and_refuses_run_and_writes() -> None:

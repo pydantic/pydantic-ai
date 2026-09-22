@@ -300,6 +300,17 @@ class Workspace(WorkspaceBackend):
         return self._backend
 
     @property
+    def read_only(self) -> bool:
+        """Whether this workspace refuses mutations (writes, `make_dir`, `remove`, `run`).
+
+        `False` for a plain facade. Policy wrappers that refuse mutations, such as
+        [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace], return `True`, and any
+        wrapper that adds the same policy must override this the same way. Tool providers use it
+        to leave mutation tools unregistered instead of offering tools that can only fail.
+        """
+        return False
+
+    @property
     def ref(self) -> WorkspaceRef | None:
         """Identity of the environment when the backend has a reconnectable identity; otherwise `None`."""
         return self._backend.ref
@@ -588,6 +599,10 @@ class WrapperWorkspace(Workspace):
     @property
     def wrapped(self) -> Workspace:
         return self._backend
+
+    @property
+    def read_only(self) -> bool:
+        return self.wrapped.read_only
 
     async def _read_file_via_shell(
         self, path: str, offset: int, limit: int | None, max_bytes: int | None
