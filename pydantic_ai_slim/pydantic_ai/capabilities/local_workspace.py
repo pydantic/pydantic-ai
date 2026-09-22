@@ -26,7 +26,10 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
 
     Each run gets a [`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend] for
     `working_dir`, whose [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is
-    `WorkspaceRef(provider='local', id=<working_dir>)`. This capability supplies the workspace when
+    `WorkspaceRef(provider='local', id=<working_dir>)` from construction: the directory is the
+    environment, and the first operation raises
+    [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it does
+    not exist. This capability supplies the workspace when
     there is no reference to continue from, or when the reference names its own `working_dir`. It
     declines every other reference, including a local one for a different directory, so a reference
     in message history cannot point the agent at an arbitrary directory on the host. Other workspace

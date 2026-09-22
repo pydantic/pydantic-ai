@@ -301,7 +301,11 @@ class Workspace(WorkspaceBackend):
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        """Identity of the environment when the backend has a reconnectable identity; otherwise `None`."""
+        """The wrapped backend's [`ref`][pydantic_ai.workspaces.WorkspaceBackend.ref]: `None` until an environment exists.
+
+        A ref names an environment, never the facade or a policy wrapper around it, so the same
+        value is reported through every layer.
+        """
         return self._backend.ref
 
     @property
