@@ -106,12 +106,13 @@ def _build_output_handlers(
 
 
 def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
-    """`isinstance(value, type_)` that also works for generics like `list[Bar]`.
+    """`isinstance(value, type_)` that also works for generics like `list[Bar]` and for `Annotated[Bar, ...]`.
 
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
     (here `list`), so union output resolution still matches the collection type when the
     element type can't be checked at runtime.
     """
+    type_ = _utils.unwrap_annotated(type_)
     try:
         return isinstance(value, type_)
     except TypeError:
@@ -851,8 +852,10 @@ def _output_type_name(output: Any) -> str | None:
     `final_result_NoneType` has to know a Python implementation detail to read it as "no answer", so the
     route is named for the value instead. Both spellings arrive here: `int | None` resolves to the type,
     while `ToolOutput(None)` and a bare `None` in a list of output types are unwrapped to the value, which
-    has no `__name__` at all and would otherwise leave its route named `final_result_`.
+    has no `__name__` at all and would otherwise leave its route named `final_result_`. An `Annotated[X, ...]`
+    is named for `X`: its own `__name__` is `Annotated`, which every annotated member of a union would share.
     """
+    output = _utils.unwrap_annotated(output)
     if output is NoneType or output is None:
         return 'None'
     return getattr(output, '__name__', None)
@@ -934,8 +937,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
             raw_json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            # If output type is Annotated[..., Field(description=...)], it puts overridden description in raw_json_schema['description']
-            # Preserve it before check_object_json_schema replaces the schema with the referenced model schema.
+            # `Annotated[Model, Field(description=...)]` renders as a `$ref` to the model with the description beside it,
+            # so keep that description when `check_object_json_schema` swaps the `$ref` for the model's own schema.
             schema_description = raw_json_schema.get('description')
             json_schema = _utils.check_object_json_schema(raw_json_schema)
             if schema_description is not None:
