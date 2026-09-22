@@ -1576,7 +1576,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
 @overload
 def _flatten_output_spec(
-    output_spec: OutputTypeOrFunction[T] | Sequence[OutputTypeOrFunction[T] | _NoneOutput[T]],
+    output_spec: OutputTypeOrFunction[T] | Sequence[OutputTypeOrFunction[T]],
 ) -> Sequence[OutputTypeOrFunction[T]]: ...
 
 

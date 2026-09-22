@@ -2443,9 +2443,8 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
             ),
         )
 
-    # `None` in an `output_type` list is not spelled out in the overloads, so the output type is named here;
-    # it runs on every model.
-    agent: Agent[None, Ticket | None] = Agent(mock_model(record), output_type=[Ticket, None])
+    # It runs on every model.
+    agent = Agent(mock_model(record), output_type=[Ticket, None])
     result = await agent.run('Nothing here needs handling.')
 
     assert result.output is None
