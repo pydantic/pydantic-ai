@@ -359,8 +359,9 @@ jobs:
           enable-cache: true
           cache-suffix: docs-only
 
+      # The `lint` group brings pyright, which `tests/test_examples.py` uses to type-check the examples.
       - name: Install documentation test dependencies
-        run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+        run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
       - name: Check Markdown files
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
@@ -555,6 +556,8 @@ jobs:
       # Everything under `tests/durable_exec` is ignored here and runs in `test-durable-exec`
       # instead: most of those tests pin xdist groups around real local servers, so the chains
       # they form would otherwise be this job's critical-path floor.
+      # `tests/test_examples.py` type-checks the docs examples with pyright wherever the `lint`
+      # group is installed, so only the Python 3.14 cells install it: one pyright run per shard.
       - name: run tests
         shell: bash
         run: |
@@ -565,7 +568,8 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          uv run --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run --all-extras --no-extra mcp-tasks ${{ matrix.python-version == '3.14' && '--group lint' || '' }} \
+            "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec --splits 2 --group ${{ matrix.shard }}
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}

@@ -6,12 +6,16 @@ import os
 import re
 import shutil
 import ssl
+import subprocess
 import sys
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from inspect import FrameInfo
 from pathlib import Path
+from textwrap import indent
 from typing import Any
 
 import httpx
@@ -230,15 +234,157 @@ def _patch_realtime_models(mocker: MockerFixture) -> None:
         mocker.patch.object(model_class, 'connect', new=_mock_realtime_connect)
 
 
-def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+def _python_version_skip_reason(min_version: str | None, max_version: str | None) -> str | None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
         if sys.version_info < min_info:
-            pytest.skip(f'Python version {min_version} required')  # pragma: lax no cover
+            return f'Python version {min_version} required'  # pragma: lax no cover
     if max_version:
         max_info = tuple(int(v) for v in max_version.split('.'))
         if sys.version_info[:2] > max_info:
-            pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
+            return f'Python version <= {max_version} required'  # pragma: lax no cover
+    return None
+
+
+def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+    if reason := _python_version_skip_reason(min_version, max_version):
+        pytest.skip(reason)  # pragma: lax no cover
+
+
+def _typecheck_skipped(prefix_settings: dict[str, str]) -> bool:
+    """Type checking runs wherever linting does, unless the fence also says `typecheck="skip"`."""
+    return prefix_settings.get('lint', '').startswith('skip') or prefix_settings.get('typecheck', '').startswith('skip')
+
+
+def _example_key(example: CodeExample) -> str:
+    return f'{example.path}:{example.start_line}'
+
+
+def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict[str, list[str]]:
+    """Type-check the examples with a single pyright run, returning each example's errors by `_example_key`.
+
+    Each example gets its own directory (and pyright execution environment), holding the examples it
+    `requires` as sibling modules, the way `tmp_path_cwd` makes them importable at runtime. Only the
+    example's own errors are reported, with their location in the Markdown or docstring it came from.
+    """
+    root_dir = Path(__file__).parent.parent
+    files: dict[Path, CodeExample] = {}
+    environments: list[dict[str, Any]] = []
+    for index, example in enumerate(examples):
+        prefix_settings = example.prefix_settings()
+        example_dir = work_dir / 'examples' / str(index)
+        example_dir.mkdir(parents=True)
+        for req in filter(None, prefix_settings.get('requires', '').split(',')):
+            (example_dir / req).write_text(code_examples[req].source, encoding='utf-8')
+        title = prefix_settings.get('title', '')
+        file = example_dir / (title if title.endswith('.py') else 'example.py')
+        file.write_text(example.source, encoding='utf-8')
+        files[file.resolve()] = example
+        environment: dict[str, Any] = {
+            'root': str(example_dir),
+            'extraPaths': [str(root_dir / 'tests' / 'example_modules')],
+        }
+        if python_version := prefix_settings.get('py'):
+            environment['pythonVersion'] = python_version
+        environments.append(environment)
+
+    config = {
+        'include': ['examples'],
+        'pythonVersion': '3.10',
+        'typeCheckingMode': 'standard',
+        'reportUnnecessaryTypeIgnoreComment': 'error',
+        'reportMissingModuleSource': False,
+        'executionEnvironments': environments,
+    }
+    (work_dir / 'pyrightconfig.json').write_text(json.dumps(config), encoding='utf-8')
+    process = subprocess.run(
+        [sys.executable, '-m', 'pyright', '--outputjson', '--pythonpath', sys.executable, '--project', str(work_dir)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, 'PYRIGHT_PYTHON_IGNORE_WARNINGS': '1'},
+        timeout=600,
+    )
+    if process.returncode not in (0, 1):  # pragma: no cover
+        raise RuntimeError(f'pyright exited with code {process.returncode}:\n{process.stderr or process.stdout}')
+
+    errors: dict[str, list[str]] = {}
+    for diagnostic in json.loads(process.stdout)['generalDiagnostics']:
+        example = files.get(Path(diagnostic['file']).resolve())
+        if example is None or diagnostic['severity'] != 'error':
+            continue
+        start = diagnostic['range']['start']
+        line = example.start_line + start['line'] + 1
+        column = example.indent + start['character'] + 1
+        rule = f' [{rule}]' if (rule := diagnostic.get('rule')) else ''
+        errors.setdefault(_example_key(example), []).append(
+            f'{example.path}:{line}:{column}: {diagnostic["message"]}{rule}'
+        )
+    return errors
+
+
+def _check_types(example: CodeExample, examples_type_errors: dict[str, list[str]] | None) -> None:
+    if examples_type_errors is None or _typecheck_skipped(example.prefix_settings()):
+        return
+    if type_errors := examples_type_errors.get(_example_key(example)):
+        pytest.fail('pyright failed:\n' + indent('\n'.join(type_errors), '  '), pytrace=False)
+
+
+@pytest.fixture(scope='session')
+def examples_type_errors(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> dict[str, list[str]] | None:
+    """The pyright errors of the selected examples, or `None` when pyright isn't installed.
+
+    Pyright comes with the `lint` dependency group, which `make install` installs. CI installs it only in
+    the docs-only job and the Python 3.14 all-extras jobs, so the check runs once per test run rather
+    than across the whole matrix.
+
+    One pyright run covers every selected example, in `standard` mode. Under xdist, the first worker
+    to get here runs it and the others wait for its result.
+    """
+    if find_spec('pyright') is None:
+        return None  # pragma: lax no cover
+
+    examples: list[CodeExample] = []
+    for item in request.session.items:
+        if (
+            isinstance(item, pytest.Function)
+            and item.originalname == 'test_docs_examples'
+            and isinstance(example := item.callspec.params['example'], CodeExample)
+        ):
+            prefix_settings = example.prefix_settings()
+            if not _typecheck_skipped(prefix_settings) and not _python_version_skip_reason(
+                prefix_settings.get('py'), prefix_settings.get('max_py')
+            ):
+                examples.append(example)
+
+    if os.environ.get('PYTEST_XDIST_WORKER') is None:
+        return _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))  # pragma: lax no cover
+
+    # All workers of a session share the parent of their base temp directory.
+    shared_dir = tmp_path_factory.getbasetemp().parent
+    result_file = shared_dir / 'docs-examples-pyright.json'
+    try:
+        os.close(os.open(shared_dir / 'docs-examples-pyright.lock', os.O_CREAT | os.O_EXCL))
+    except FileExistsError:
+        deadline = time.monotonic() + 900
+        while not result_file.exists():
+            if time.monotonic() > deadline:  # pragma: no cover
+                raise TimeoutError('Timed out waiting for another xdist worker to type-check the examples')
+            time.sleep(0.5)
+    else:
+        try:
+            result: dict[str, Any] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
+        except Exception as e:  # pragma: no cover
+            result = {'failure': repr(e)}
+        tmp_file = result_file.with_suffix('.tmp')
+        tmp_file.write_text(json.dumps(result), encoding='utf-8')
+        tmp_file.replace(result_file)
+
+    result = json.loads(result_file.read_text(encoding='utf-8'))
+    if failure := result.get('failure'):  # pragma: no cover
+        raise RuntimeError(f'Type-checking the examples failed: {failure}')
+    return result['errors']
 
 
 @pytest.mark.parametrize('example', list(find_filter_examples()))
@@ -250,6 +396,7 @@ def test_docs_examples(
     env: TestEnv,
     tmp_path_cwd: Path,
     vertex_provider_auth: None,
+    examples_type_errors: dict[str, list[str]] | None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
@@ -405,6 +552,8 @@ def test_docs_examples(
             eval_example.format_ruff(example)
         else:
             eval_example.lint_ruff(example)
+
+    _check_types(example, examples_type_errors)
 
     if opt_test.startswith('skip'):
         pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
