@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
 import pytest
 from pydantic import BaseModel, Field
@@ -643,6 +643,10 @@ class Tone(str, Enum):
     """Correct but gives the customer nothing extra."""
 
 
+Confidence: TypeAlias = Annotated[float, Field(ge=0, le=1)]
+"""The bounded `float` the `Classifier` docstring and the evaluator docs advertise as an answer shape."""
+
+
 class Reply(BaseModel):
     """Triage a support reply."""
 
@@ -674,10 +678,11 @@ async def test_classifier():
     assert await evaluator.evaluate(ctx) == 'curt'
 
     # A bounded `float` takes the same bare-answer path as a `bool`, and is the fourth shape the docstring
-    # and the docs advertise, so it is the fourth one pinned here.
+    # and the docs advertise, so it is the fourth one pinned here. The `ignore` is not about `Classifier`:
+    # Pyright rejects an `Annotated` alias as an `output_type` value on `Agent` too, which is #8601.
     evaluator = Classifier(
         'How well does it answer the question?',
-        output_type=Annotated[float, Field(ge=0, le=1)],
+        output_type=Confidence,  # pyright: ignore[reportArgumentType]
         model=answering({'response': 0.7}),
     )
     assert await evaluator.evaluate(ctx) == 0.7
