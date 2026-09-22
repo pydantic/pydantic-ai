@@ -84,11 +84,22 @@ even when OpenAI's own model list exposes only the base id. Add a separate genai
 for each confirmed host with its own published rates; do not infer Bedrock or Azure availability
 from an older sibling model.
 
-For OpenAI, compare the new price entry's `match` with adjacent model families. Their entries
-usually match both the base id and a strictly date-suffixed snapshot (`-YYYY-MM-DD`), so a later
-snapshot gets the same price and context data. Test both forms, including the canonical model id;
-this match rule does not add a speculative id to Pydantic AI's model-name literals. Its profile
-prefix should resolve the same capabilities for either form.
+Compare the new price entry's `match` with the adjacent model families in the same provider file,
+and accept the same id forms they do, even before the provider publishes a snapshot. That way a
+later snapshot gets the same price and context data. The forms differ per provider file:
+
+| genai-prices file | Forms the siblings accept |
+|---|---|
+| `openai.yml` | base id + `-YYYY-MM-DD` |
+| `anthropic.yml` | base id + `-YYYYMMDD` (Claude Opus entries also take `claude-opus-X.Y` / `claude-X-Y-opus` aliases) |
+| `google.yml` (Vertex Claude) | base id + `@YYYYMMDD` |
+| `aws.yml` (Bedrock) | `global.` and `us.`/`eu.`/`jp.`/`au.` profiles, bare `anthropic.` id, and `-v1` / `-v1:0` suffixes |
+| `openrouter.yml` | slug + `:beta` |
+
+Dump the siblings' clauses before writing yours rather than copying one PR's shape (see #8635 and
+genai-prices #709). Test the base and suffixed forms, including the canonical model id. This match
+rule does not add a speculative id to Pydantic AI's model-name literals. Its profile prefix should
+resolve the same capabilities for either form.
 
 ## Step 4 — SDK pin check
 
@@ -208,7 +219,7 @@ check. Keep the model-specific evidence concise:
 - **Bump the SDK through the 7-day quarantine rather than bridging, once the SDK lists the id.** `exclude-newer = "7 days"` in the root `pyproject.toml` keeps a same-day `anthropic` release out of the lock; admit exactly that release with a timestamp cutoff under `[tool.uv.exclude-newer-package]` (one second past its last artifact's PyPI `upload_time`, plus a `TODO` to remove it once the global window covers it — past that date it turns into a ceiling), raise the floor in `pydantic_ai_slim/pyproject.toml`, run `uv lock --upgrade-package anthropic`, and refresh the gh-aw runner's own lock with `uv lock --script .github/scripts/pydantic-ai-runner` (no CI step checks it, so a stale one stays green while silently dropping its pinned hashes). File a tracking issue for removing the cutoff and link it from the `TODO`. Precedents: #7989 (1.3.0), #8637 (1.8.0). The local-`Literal` bridge below is the fallback for when no SDK release lists the id yet.
 - **An SDK bump is a real change: pyright `models/anthropic.py` and the Anthropic tests against it.** 1.8.0 renamed the citations request TypedDict to `BetaCitationsConfigParamParam` (`BetaCitationsConfigParam` became a response model, and passing it into a request param broke a dict assertion) and widened `BetaInputTransformation` to a union with `thinking_mismatch_allowed`.
 - **Opus 5.5 skips thinking on trivial prompts at its default `medium` effort.** A cassette test that needs a thinking block (e.g. `stale_thinking_block_history`) has to raise `anthropic_effort` for it.
-- **genai-prices matches ids by prefix too.** Until genai-prices ships an entry, a point release can resolve to its base model's price rather than raising `LookupError` (genai-prices 0.1.7 priced `claude-opus-5-5` as `claude-opus-5`, $5/$25 instead of $4/$20). Check `calc_price(..., model_ref='<new-id>')` against the published price; a *wrong* price is worse than a missing one.
+- **A point release falls into its base model's price entry.** The base entries' prefix and `contains` clauses (`starts_with: claude-opus-5`) also capture `claude-opus-5-5`. So until the new entry exists, `calc_price` returns the *old* model's price with no error: genai-prices 0.1.7 priced Opus 5.5 at Opus 5's $5/$25 instead of $4/$20. Check `calc_price(..., model_ref='<new-id>')` against the published price. The genai-prices PR has to narrow the base entry's clauses so they stop at the base model, keeping every form they matched before and pinning those forms with a positive test (genai-prices #671, #709), as well as add the new entry per Step 3b.
 - **Forced `tool_choice` is a real per-model divergence worth probing.** Most Anthropic models accept `tool_choice` `{'type':'any'}`/`{'type':'tool'}` and only reject forcing alongside *thinking*; Claude Fable 5.1, Claude Mythos 5.1, and Claude Opus 5.5 reject it **unconditionally** (400 `tool_choice forces tool use is not compatible with this model`). That's modeled by `AnthropicModelProfile.anthropic_supports_forced_tool_choice` (default `True`) threaded into `_support_tool_forcing` in `models/anthropic.py`. Probe `tool_choice={'type':'any'}` against the new id AND its neighbour to tell a genuine divergence from a thinking-only constraint.
 - **Tests:** profile-flag unit tests go in `tests/profiles/test_anthropic.py` (NOT `tests/models/test_anthropic.py`). Forced-tool-choice / `_prepare_tools_and_tool_choice` fallback tests go in `tests/models/test_tool_choice_unit.py`. The capability behaviors keyed on shared flags (sampling drop, budget-thinking reject, xhigh) are already covered by the opus-4-7/4-8 parametrized tests — adding the new id to those lists is redundant once a dedicated profile test asserts the flags.
 - **`tests/test_capability_spec.py::test_model_json_schema_with_capabilities`** snapshots the whole `KnownModelName` enum. Refresh it by running THAT TEST ALONE with `--inline-snapshot=fix` — running the whole file can pull in unrelated `snapshot()` blocks and abort the fix.
