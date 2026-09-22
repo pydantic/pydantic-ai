@@ -290,6 +290,8 @@ OpenAIModelName = (
         'gpt-5.5-2026-04-23',
         'gpt-5.5-pro',
         'gpt-5.5-pro-2026-04-23',
+        'gpt-6-luna',
+        'gpt-6-sol',
     ]
 )
 """
@@ -302,9 +304,10 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 
-The ids in the local `Literal` are bridged because `AllModels` doesn't list them at the floor the
-`openai` extra declares; they arrived in `openai` 3.1.0
-(https://github.com/openai/openai-python/pull/3617). Drop them once the floor is bumped past it.
+These ids are bridged because `AllModels` doesn't list them at the floor the `openai` extra
+declares. The older ids arrived in `openai` 3.1.0
+(https://github.com/openai/openai-python/pull/3617); GPT-6 Sol and Luna arrived in 3.18.0.
+Drop them once the floor is bumped past the respective releases.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
