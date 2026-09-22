@@ -281,7 +281,17 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-5.5-2026-04-23', 'gpt-5.5-pro', 'gpt-5.5-pro-2026-04-23']
+OpenAIModelName = (
+    str
+    | AllModels
+    | Literal[
+        'gpt-audio-mini',
+        'gpt-audio-mini-2025-12-15',
+        'gpt-5.5-2026-04-23',
+        'gpt-5.5-pro',
+        'gpt-5.5-pro-2026-04-23',
+    ]
+)
 """
 Possible OpenAI model names.
 
