@@ -61,8 +61,8 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     async def __aexit__(self, *args: Any) -> bool | None:
         if self._exit_stack is not None:
-            await self._exit_stack.aclose()
-            self._exit_stack = None
+            exit_stack, self._exit_stack = self._exit_stack, None
+            return await exit_stack.__aexit__(*args)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         toolsets_tools = await gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))

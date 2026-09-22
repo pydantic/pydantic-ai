@@ -750,6 +750,21 @@ async def test_comprehensive_toolset_composition():
     )
 
 
+async def test_combined_toolset_forwards_exit_exception():
+    """The composite lifecycle is the behavior under test, so no provider request is involved."""
+    child = AsyncMock(spec=AbstractToolset)
+    child.__aexit__.return_value = True
+    error = ValueError('boom')
+
+    async with CombinedToolset([child]):
+        raise error
+
+    _, exc_type, exc_value, traceback = child.__aexit__.await_args.args
+    assert exc_type is ValueError
+    assert exc_value is error
+    assert traceback is not None
+
+
 async def test_context_manager():
     try:
         from fastmcp.client.transports import StdioTransport
