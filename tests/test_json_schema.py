@@ -2,12 +2,17 @@
 
 from __future__ import annotations as _annotations
 
+import re
 from copy import deepcopy
 from typing import Any
 
 import pytest
 
+from pydantic_ai import Agent, Tool, UserError
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.profiles import ModelProfile
 
 from ._inline_snapshot import snapshot
 
@@ -110,6 +115,74 @@ def test_boolean_schema_nodes_round_trip(value_schema: bool):
     transformer = _PassthroughTransformer(original_schema)
 
     assert transformer.walk() == original_schema
+
+
+_NON_SCHEMA_NODES: dict[str, tuple[dict[str, Any], str]] = {
+    # id: (schema, expected error message)
+    'subschema-is-a-string': (
+        {'type': 'object', 'properties': {'x': 'string'}},
+        "Invalid JSON Schema: a schema must be an object or a boolean, got 'string'",
+    ),
+    'subschema-is-a-list': (
+        {'type': 'object', 'properties': {'x': ['string']}},
+        "Invalid JSON Schema: a schema must be an object or a boolean, got ['string']",
+    ),
+    'nested': (
+        {'type': 'object', 'properties': {'x': {'type': 'object', 'properties': {'y': 'string'}}}},
+        "Invalid JSON Schema: a schema must be an object or a boolean, got 'string'",
+    ),
+    'properties-is-a-string': (
+        {'type': 'object', 'properties': 'nope'},
+        "Invalid JSON Schema: `properties` must be an object, got 'nope'",
+    ),
+    'patternProperties-is-a-string': (
+        {'type': 'object', 'patternProperties': 'nope'},
+        "Invalid JSON Schema: `patternProperties` must be an object, got 'nope'",
+    ),
+    'additionalProperties-is-a-string': (
+        {'type': 'object', 'additionalProperties': 'nope'},
+        "Invalid JSON Schema: a schema must be an object or a boolean, got 'nope'",
+    ),
+    'defs-is-a-string': (
+        {'type': 'object', '$defs': 'nope'},
+        "Invalid JSON Schema: `$defs` must be an object, got 'nope'",
+    ),
+    'anyOf-is-a-string': (
+        {'anyOf': 'nope'},
+        "Invalid JSON Schema: `anyOf` must be an array, got 'nope'",
+    ),
+    'allOf-is-a-string-typed': (
+        {'type': 'object', 'allOf': 'nope'},
+        "Invalid JSON Schema: `allOf` must be an array, got 'nope'",
+    ),
+    'prefixItems-is-a-string': (
+        {'type': 'array', 'prefixItems': 'nope'},
+        "Invalid JSON Schema: `prefixItems` must be an array, got 'nope'",
+    ),
+    'items-is-a-list': (
+        {'type': 'array', 'items': ['string']},
+        "Invalid JSON Schema: a schema must be an object or a boolean, got ['string']",
+    ),
+}
+
+
+@pytest.mark.parametrize('transformer_cls', [_PassthroughTransformer, InlineDefsJsonSchemaTransformer])
+@pytest.mark.parametrize('case', list(_NON_SCHEMA_NODES), ids=list(_NON_SCHEMA_NODES))
+def test_non_schema_nodes_raise_user_error(transformer_cls: type[JsonSchemaTransformer], case: str):
+    """A node that is neither an object nor a boolean is not a JSON Schema (draft 2020-12, section 4.3).
+
+    Such nodes only come from hand-written or third-party (e.g. MCP) tool definitions, which are
+    passed through as plain dicts. The walker used to crash on them with an `AttributeError` from
+    deep inside `_handle`; it should instead name the offending node in a `UserError`.
+
+    Unit test rather than VCR: the guard fires before a request exists, so there is nothing to record.
+    """
+    schema, message = _NON_SCHEMA_NODES[case]
+
+    with pytest.raises(UserError) as exc_info:
+        transformer_cls(deepcopy(schema)).walk()
+
+    assert str(exc_info.value) == message
 
 
 def test_boolean_schema_in_single_member_union():
@@ -562,3 +635,30 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
     assert set(result['$defs']) == {'Node', 'Node_root'}
     # The definition the root points at is intact, not overwritten by the root.
     assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
+
+
+def test_agent_run_rejects_a_tool_schema_that_is_not_a_json_schema():
+    """A malformed hand-written tool schema fails the run with a `UserError` before any request is made.
+
+    Provider-agnostic: `FunctionModel` with a profile that installs the inlining transformer stands in for
+    Google/Bedrock, which are the providers that inline `$defs`. Not a VCR test because the rejection happens
+    in `prepare_request`, before there is a request to record; the model function asserts it is never reached.
+    """
+
+    def never_called(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise AssertionError('the model must not be called for a tool with an invalid schema')
+
+    def lookup(**_kwargs: Any) -> str:
+        raise AssertionError('the tool must not be called for a tool with an invalid schema')
+
+    model = FunctionModel(never_called, profile=ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer))
+    tool = Tool.from_schema(
+        lookup,
+        name='lookup',
+        description='A tool whose schema puts the type name where a subschema belongs.',
+        json_schema={'type': 'object', 'properties': {'x': 'string'}},
+    )
+    agent = Agent(model, tools=[tool])
+
+    with pytest.raises(UserError, match=re.escape("a schema must be an object or a boolean, got 'string'")):
+        agent.run_sync('hi')
