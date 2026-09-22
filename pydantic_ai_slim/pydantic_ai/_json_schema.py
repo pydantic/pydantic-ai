@@ -4,7 +4,11 @@ import re
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias, cast
+
+from pydantic import BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic_core import PydanticCustomError
+from typing_extensions import TypedDict
 
 from .exceptions import UserError
 
@@ -12,18 +16,67 @@ JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
 
-def _as_object(value: dict[str, Any], keyword: str) -> dict[str, Any]:
-    """`keyword`'s value, which JSON Schema requires to be an object."""
-    if not isinstance(value, dict):
-        raise UserError(f'Invalid JSON Schema: `{keyword}` must be an object, got {value!r}')
-    return value
+def _must_be_schema(value: Any) -> Any:
+    # Draft 2020-12, section 4.3: "A JSON Schema MUST be an object or a boolean."
+    if not isinstance(value, bool | dict):
+        raise PydanticCustomError('json_schema_node', 'a schema must be an object or a boolean')
+    return value  # pyright: ignore[reportUnknownVariableType]
 
 
-def _as_array(value: list[_JsonSchemaNode], keyword: str) -> list[_JsonSchemaNode]:
-    """`keyword`'s value, which JSON Schema requires to be an array."""
-    if not isinstance(value, list):
-        raise UserError(f'Invalid JSON Schema: `{keyword}` must be an array, got {value!r}')
-    return value
+class _SchemaShape(TypedDict, total=False):
+    """The keywords the transformers read, with the types JSON Schema gives them.
+
+    Tool schemas that come from outside Pydantic AI (`Tool.from_schema`, `ExternalToolset`, MCP `inputSchema`,
+    AG-UI frontend tools) are plain dicts, so a node that is not a schema can reach the walker. This declares
+    the shape the walker and every provider `transform()` rely on, and nothing more: keywords not listed here
+    are passed through to the provider untouched, so provider extensions are unaffected. If a transformer
+    starts reading a new keyword, declare it here.
+    """
+
+    __pydantic_config__ = ConfigDict(strict=True)  # type: ignore[misc]  # e.g. `0` must not pass as `False`
+
+    # Keywords whose values are schemas; the walker recurses into these.
+    properties: dict[str, _JsonSchemaShapeNode]
+    patternProperties: dict[str, _JsonSchemaShapeNode]
+    additionalProperties: _JsonSchemaShapeNode
+    items: _JsonSchemaShapeNode
+    prefixItems: list[_JsonSchemaShapeNode]
+    allOf: list[_JsonSchemaShapeNode]
+    anyOf: list[_JsonSchemaShapeNode]
+    oneOf: list[_JsonSchemaShapeNode]
+    defs: Annotated[dict[str, _JsonSchemaShapeNode], Field(alias='$defs')]
+    ref: Annotated[str, Field(alias='$ref')]
+    # Keywords whose values the transformers interpret.
+    type: str | list[str]
+    required: list[str]
+    enum: list[Any]
+
+
+_JsonSchemaShapeNode: TypeAlias = Annotated[bool | _SchemaShape, BeforeValidator(_must_be_schema)]
+_SCHEMA_SHAPE_ADAPTER = TypeAdapter[Any](_JsonSchemaShapeNode)
+
+
+def _check_schema_shape(schema: JsonSchema) -> None:
+    """Raise `UserError` naming the offending node if `schema` is not shaped like a JSON Schema."""
+    try:
+        _SCHEMA_SHAPE_ADAPTER.validate_python(schema)
+    except ValidationError as e:
+        # A node is `bool | _SchemaShape`, so one bad node yields an error per union branch; the deepest one
+        # is the specific one. Its location also carries union branch tags, so descend the input along it to
+        # keep only real keys and indexes and to find the offending value.
+        error = max(e.errors(), key=lambda err: len(err['loc']))
+        path: list[str] = []
+        node: Any = schema
+        for part in error['loc']:
+            if isinstance(node, dict) and part in cast(dict[str, Any], node):
+                node = cast(dict[str, Any], node)[part]
+                path.append(str(part))
+            elif isinstance(node, list) and isinstance(part, int):
+                node = cast(list[Any], node)[part]
+                path.append(str(part))
+        raise UserError(
+            f'Invalid JSON Schema at `{".".join(path) or "<root>"}`: {error["msg"]}, got {node!r}'
+        ) from None
 
 
 class UseEnumMemberDocstrings:
@@ -64,6 +117,7 @@ class JsonSchemaTransformer(ABC):
         prefer_inlined_defs: bool = False,
         simplify_nullable_unions: bool = False,
     ):
+        _check_schema_shape(schema)
         self.schema = schema
 
         self.strict = strict
@@ -79,7 +133,7 @@ class JsonSchemaTransformer(ABC):
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
-        self.defs: dict[str, JsonSchema] = deepcopy(_as_object(self.schema.get('$defs', {}), '$defs'))
+        self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
         self._walked_defs: dict[str, JsonSchema] = {}
@@ -125,11 +179,6 @@ class JsonSchemaTransformer(ABC):
         if isinstance(schema, bool):
             return schema
 
-        if not isinstance(schema, dict):
-            # Draft 2020-12: "A JSON Schema MUST be an object or a boolean." Anything else reaches us from a
-            # hand-written or third-party (e.g. MCP) tool definition, and every walker below assumes a mapping.
-            raise UserError(f'Invalid JSON Schema: a schema must be an object or a boolean, got {schema!r}')
-
         if self.prefer_inlined_defs and (ref := schema.get('$ref')):
             key = re.sub(r'^#/\$defs/', '', ref)
             if key in self.refs_stack:
@@ -159,7 +208,7 @@ class JsonSchemaTransformer(ABC):
         if type_ is not None:
             for union_kind in ('allOf', 'anyOf', 'oneOf'):
                 if members := schema.get(union_kind):
-                    schema[union_kind] = [self._handle(member) for member in _as_array(members, union_kind)]
+                    schema[union_kind] = [self._handle(member) for member in members]
         # Apply the base transform
         return self.transform(schema)
 
@@ -191,7 +240,7 @@ class JsonSchemaTransformer(ABC):
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         if properties := schema.get('properties'):
             handled_properties = {}
-            for key, value in _as_object(properties, 'properties').items():
+            for key, value in properties.items():
                 handled_properties[key] = self._handle(value)
             schema['properties'] = handled_properties
 
@@ -203,7 +252,7 @@ class JsonSchemaTransformer(ABC):
 
         if (pattern_properties := schema.get('patternProperties')) is not None:
             handled_pattern_properties = {}
-            for key, value in _as_object(pattern_properties, 'patternProperties').items():
+            for key, value in pattern_properties.items():
                 handled_pattern_properties[key] = self._handle(value)
             schema['patternProperties'] = handled_pattern_properties
 
@@ -211,7 +260,7 @@ class JsonSchemaTransformer(ABC):
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:
         if prefix_items := schema.get('prefixItems'):
-            schema['prefixItems'] = [self._handle(item) for item in _as_array(prefix_items, 'prefixItems')]
+            schema['prefixItems'] = [self._handle(item) for item in prefix_items]
 
         if items := schema.get('items'):
             schema['items'] = self._handle(items)
@@ -224,7 +273,7 @@ class JsonSchemaTransformer(ABC):
         except KeyError:
             return schema
 
-        handled = [self._handle(member) for member in _as_array(members, union_kind)]
+        handled = [self._handle(member) for member in members]
 
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
