@@ -462,10 +462,8 @@ async def test_per_run_policy_must_match_the_construction_tree_when_units_rebuil
             return self if self.per_run is None else Allowlisted(self.per_run)
 
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-            backend = LocalWorkspaceBackend(tmp_path)
-            if ref is not None and ref != backend.ref:
-                return None
-            return Allowlist(Workspace(backend), self.allowed)
+            # Only ever asked for its own local ref (or none), so there is nothing to decline.
+            return Allowlist(Workspace(LocalWorkspaceBackend(tmp_path)), self.allowed)
 
     same = Allowlisted(frozenset({'src'}), per_run=frozenset({'src'}))
     result = await Agent(TestModel(), name='ws', capabilities=[same, RebuildingDurability()]).run('go')
