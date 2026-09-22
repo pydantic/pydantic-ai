@@ -541,43 +541,6 @@ The descriptions are what make this worth a helper: each option carries its mean
 
 Like [`StructuredDict()`](#structured-dict), `Choices()` returns a type rather than a marker, so the same value works as an `output_type`, as a field of a Pydantic model, and as a [tool](tools.md) parameter.
 
-#### A `bool` whose answers need explaining {#described-bool}
-
-A `bool` field's description says what is being asked; it has nowhere to say what either answer would
-amount to. [`DescribedBool()`][pydantic_ai.output.DescribedBool] takes both, and describes each of the two values a boolean
-can be:
-
-```python {title="described_bool.py"}
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent, DescribedBool
-
-
-class Settled(BaseModel):
-    """Review the transcript."""
-
-    refunded: DescribedBool(
-        true='Money was returned to the customer.',
-        false='No refund was issued.',
-    ) = Field(description='Was a refund issued?')
-
-
-agent = Agent('openai:gpt-5.2', output_type=Settled)
-result = agent.run_sync('We have sent the 40 pounds back to your card.')
-print(result.output.refunded)
-#> True
-```
-
-Unlike `Choices()` and [`StructuredDict()`](#structured-dict), which return a `str` and a `dict` subclass,
-`DescribedBool()` returns an annotated `bool`, because `bool` cannot be subclassed. The value is a plain `True` or
-`False`, and the descriptions travel in the schema.
-
-!!! note
-    Being an annotation, `DescribedBool()` is subject to the same caveat as `Choices()`: in a module with
-    `from __future__ import annotations`, it can only be used in an annotation if it's reachable by name
-    where the annotation is evaluated, so a module-level assignment works and one built inside a function
-    does not.
-
 #### Choices that stand for something else
 
 An option can stand for a value instead of its own key, by giving [`Choice`][pydantic_ai.output.Choice] the value alongside the description. The model still picks a key, and the output is what that key stands for:
