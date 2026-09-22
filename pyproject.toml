@@ -191,7 +191,7 @@ typesafe-sdk = false
 logfire = false
 logfire-api = false
 # Anthropic 1.8.0 is the first release listing `claude-opus-5-5`.
-# TODO(DouweM): Remove after 2026-09-29 16:25 UTC.
+# TODO(DouweM): Remove after 2026-09-29 16:25 UTC. https://github.com/pydantic/pydantic-ai/issues/8636
 # This admits only the reviewed 1.8.0 artifacts; later Anthropic artifacts remain quarantined.
 anthropic = "2026-09-22T16:25:39Z"
 # OpenAI 3.8.0 is the first release listing `gpt-6-astra` in `ChatModel`/`ReasoningEffort('max')`.

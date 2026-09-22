@@ -1057,7 +1057,7 @@ _STALE_THINKING_BLOCK_PREFIX_CHANGE = pytest.mark.moves_cache_prefix(
 
 
 # Opus 5.5 answers a trivial prompt at its default `medium` effort without thinking, which would leave
-# no block to invalidate.
+# no block to invalidate. Opus 5 runs at the same effort so it stays a like-for-like control for 5.5.
 _HISTORY_SETTINGS: dict[str, AnthropicModelSettings] = {
     'claude-opus-5-5': AnthropicModelSettings(anthropic_effort='high'),
     'claude-opus-5': AnthropicModelSettings(anthropic_effort='high'),
@@ -1081,10 +1081,9 @@ _BINDING_MODELS = pytest.mark.parametrize('model_name', ['claude-fable-5-1', 'cl
 
 
 @_STALE_THINKING_BLOCK_PREFIX_CHANGE
-@_BINDING_MODELS
 @pytest.mark.vcr()
-async def test_anthropic_replays_a_stale_thinking_block_on_a_legacy_account(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture, model_name: str
+async def test_anthropic_fable_5_1_replays_a_stale_thinking_block_on_a_legacy_account(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Pins the account-age carve-out this PR's default depends on.
 
@@ -1101,7 +1100,7 @@ async def test_anthropic_replays_a_stale_thinking_block_on_a_legacy_account(
 
     https://platform.claude.com/docs/en/models/fable-5-1/whats-new-fable-5-1#editing-earlier-turns-invalidates-thinking-blocks
     """
-    m = anthropic_model(model_name, capture=True)
+    m = anthropic_model('claude-fable-5-1', capture=True)
     history = await stale_thinking_block_history(m)
 
     second = Agent(m, instructions='You are a helpful assistant. Answer briefly. Today is 2026-09-01.')

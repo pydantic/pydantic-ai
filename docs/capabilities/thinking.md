@@ -143,7 +143,7 @@ Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://
     Claude Opus 5 rejects `xhigh` and `max` effort while thinking is explicitly disabled with `anthropic_thinking={'type': 'disabled'}`; use an effort of `high` or below, or leave thinking enabled. Claude Opus 4.8 accepts that combination, so audit requests that disable thinking when migrating. Pydantic AI raises a `UserError` before sending the request rather than surfacing Anthropic's 400.
 
 !!! note "Claude Opus 5.5 always thinks"
-    Claude Opus 5.5 can't disable thinking: Anthropic rejects `anthropic_thinking={'type': 'disabled'}` at every effort level. The unified `thinking=False` setting sends no `thinking` field, so the model thinks adaptively at its default `medium` effort. Lower the effort (for example `thinking='low'` or `anthropic_effort='low'`) where you previously disabled thinking.
+    Claude Opus 5.5 can't disable thinking: Anthropic rejects `anthropic_thinking={'type': 'disabled'}` at every effort level. The unified `thinking=False` setting sends no `thinking` field, so the model thinks adaptively at its default `medium` effort. Where you previously disabled thinking, lower `anthropic_effort` instead (for example `anthropic_effort='low'`). A unified `thinking` setting also works, but on this model it switches a structured `output_type` away from Tool Output; see [Forced tool choice](../models/anthropic.md#forced-tool-choice).
 
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent
