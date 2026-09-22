@@ -4780,7 +4780,8 @@ async def test_temporal_workspace_restores_ref_and_replays_without_side_effects(
     assert replay.replay_failure is None
     expected = 'policy:worker:existing-123:connected|policy:worker:existing-123:connected'
     assert TypeAdapter(dict[str, str]).validate_json(output) == {'probe_workspace': expected}
-    assert sum(backend.attach_calls for backend in _workspace_probe_backends) == 1
+    # The `ensure` activity attaches once at run start, the tool activity once more; nothing creates.
+    assert sum(backend.attach_calls for backend in _workspace_probe_backends) == 2
     assert sum(backend.create_calls for backend in _workspace_probe_backends) == 0
     assert len(_workspace_probe_backends) == backend_count
     assert [command for backend in _workspace_probe_backends for command in backend.commands] == [['first'], ['second']]

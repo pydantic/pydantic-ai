@@ -181,8 +181,8 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         model_config: ActivityConfig,
         event_config: ActivityConfig,
         tool_config: ActivityConfig,
-        workspace_config: Callable[[DurableOperationId], ActivityConfig],
         resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
+        workspace_config: Callable[[DurableOperationId], ActivityConfig] | None = None,
         runtime: object | None = None,
     ) -> None:
         super().__init__(
@@ -191,7 +191,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
                 model=model_config,
                 event=event_config,
                 tool=tool_config,
-                workspace=workspace_config,
+                workspace=workspace_config or (lambda operation_id: tool_config),
                 resolve_tool=resolve_tool_config,
             ),
         )

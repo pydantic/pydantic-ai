@@ -2725,7 +2725,8 @@ async def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
     assert decoded.workspace is decoded.workspace
     assert replace(decoded).workspace is decoded.workspace
     assert decoded.workspace.ref is None
-    with pytest.raises(UserError, match=r'custom .*deserialize_run_context'):
+    # Without a worker agent to rebuild it through, the ref cannot become a workspace.
+    with pytest.raises(UserError, match=r'No workspace is attached to this run'):
         await decoded.workspace.run(['pwd'])
 
 
