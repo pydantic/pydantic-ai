@@ -28,6 +28,28 @@ Use `/set display.tool_output true` to show detailed output again, or
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
+## Desktop notifications
+
+The built-in `notifications` plugin is enabled by default. Interactive sessions
+send a desktop notification when a turn finishes or fails, and when the model
+asks a question through `ask_user`. Cancelled turns do not notify. Messages use
+the title `CLAI2` and generic status text, not prompts, answers, paths, or errors.
+
+macOS uses the system `osascript` notification service. Allow notifications for
+Script Editor in System Settings > Notifications; Focus modes can suppress them.
+Linux uses `/usr/bin/notify-send` when installed and a desktop notification service is
+available. Windows, redirected output, headless mode, and SSH sessions do not
+send notifications. These are local OS notifications, not terminal escape
+sequences, so local tmux sessions need no passthrough configuration. CLAI does
+not detect terminal focus; notifications are submitted even while you are
+looking at the terminal. Delivery and presentation depend on OS settings.
+
+Use `/plugins disable notifications` to persistently turn them off and
+`/plugins enable notifications` to restore them. `/plugins remove notifications`
+resets the built-in default. Missing services, nonzero exits, and a two-second
+submission timeout do not fail the turn. No notification-specific telemetry is
+emitted.
+
 ## Code highlighting
 
 Fenced code uses the fence's language for syntax highlighting. CLAI renders a

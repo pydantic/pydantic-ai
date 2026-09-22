@@ -49,6 +49,7 @@ def test_catalog_covers_public_harness_capabilities() -> None:
         'compaction',
         'persistence',
         'logfire',
+        'notifications',
     }
 
 
