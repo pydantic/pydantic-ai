@@ -205,10 +205,33 @@ async def test_filesystem_only_backend_works_without_command_execution() -> None
     assert (await workspace.read_file('data.txt', offset=2, limit=1)).lines == ('two',)
     await workspace.write_text('new.txt', 'content')
     assert await workspace.read_text('new.txt') == 'content'
+    assert (await workspace.stat('new.txt')).size == len('content')
+    await workspace.make_dir('nested')
+    assert sorted(entry.name for entry in await workspace.list_dir('.')) == ['data.txt', 'new.txt']
+    await workspace.remove('new.txt')
+    assert not await workspace.exists('new.txt')
+    assert workspace.ref == WorkspaceRef(provider='fake', id='fake-files-only')
     assert inner.commands == []
 
     with pytest.raises(UserError, match='does not support command execution'):
         await workspace.run(['true'])
+
+
+async def test_backend_without_commands_or_filesystem_explains_what_to_attach() -> None:
+    class IdentityOnlyBackend(WorkspaceBackend):
+        @property
+        def ref(self) -> None:
+            return None
+
+        async def working_dir(self) -> str:
+            return '/workspace'
+
+    workspace = Workspace(IdentityOnlyBackend())
+
+    assert workspace.ref is None
+    assert await workspace.working_dir() == '/workspace'
+    with pytest.raises(UserError, match='does not support filesystem operations'):
+        await workspace.read_text('data.txt')
 
 
 async def test_text_helpers_resolve_relative_paths() -> None:
