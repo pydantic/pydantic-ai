@@ -154,7 +154,7 @@ Each field of the output type is a question, and all of them go out in a single 
 |---|---|---|
 | `bool`, or `Literal[True, False]` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
-| `float` with `ge=0` and an upper bound | the probability of yes | Jev's probability, unrounded, in the field's own units |
+| `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | Jev's probability, unrounded, in the field's own units |
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
 | `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer |
