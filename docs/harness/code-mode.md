@@ -295,19 +295,49 @@ already in flight instead of starting the tool cold. This overlaps tool latency 
 model generation (speculative programmatic tool calling,
 <https://alexzhang13.github.io/blog/2026/spec-ptc/>).
 
-```python
+### Choose tools that are safe to run early
+
+A speculated call can run for a branch the snippet never takes. Read-only is necessary but
+not sufficient: reading changing state earlier can produce a different answer. Choose tools
+whose results and external interactions are acceptable at launch time, even if never used.
+Unused requests can still incur API charges, consume rate limits, and send arguments to an
+external service. Cancellation does not undo a request that has already been sent.
+
+This example registers two independent lookups over fixed data. Running it requires provider
+credentials, such as `OPENAI_API_KEY`. Real network lookups offer more opportunity to overlap
+latency than these local functions.
+
+```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
+
+def lookup_author(*, title: str) -> str:
+    """Find a book's author in a fixed catalog."""
+    return {'Frankenstein': 'Mary Shelley'}.get(title, 'Unknown')
+
+
+def lookup_year(*, title: str) -> int | None:
+    """Find a book's publication year in a fixed catalog."""
+    return {'Frankenstein': 1818}.get(title)
+
+
+code_mode = CodeMode(speculate=['lookup_author', 'lookup_year'])
 agent = Agent(
     'openai:gpt-5.6-sol',
-    capabilities=[CodeMode(speculate=['search', 'fetch'])],
+    capabilities=[code_mode],
+    tools=[lookup_author, lookup_year],
 )
+result = agent.run_sync(
+    'Use run_code to look up the author and publication year of Frankenstein. '
+    'Call both tools independently with the literal keyword argument title="Frankenstein".'
+)
+print(result.output)
+print(code_mode.speculation_stats)
 ```
 
-Name only tools that are safe to run early: a speculated call can run for a branch the
-snippet never takes, so it must be harmless to repeat or discard. Calls the snippet never
-claims are cancelled when the snippet finishes successfully. A snippet that fails before it
+The model chooses the snippet, so the prompt does not guarantee speculative launches.
+Calls the snippet never claims are cancelled when the snippet finishes successfully. A snippet that fails before it
 runs (a syntax or type error) keeps its launches so the retry can claim them; whatever the
 retry leaves unclaimed is cancelled when the following model step starts.
 
@@ -335,12 +365,24 @@ agent = Agent(
 )
 ```
 
-Speculation also runs when the snippet starts executing: the complete code is scanned and
-every eligible literal call that is not already in flight starts at once, so a sequence of
-`await`s collects from calls that are all running instead of waiting for each in turn. A call
-inside an `if`/`else` starts for both arms; the taken arm claims its result and the other
-launch is discarded. Discarded launches are the cost of hiding branch latency, which is why
-eligibility demands side-effect freedom.
+### Understand execution order
+
+At snippet execution, Code Mode also scans for eligible literal calls not already in flight,
+subject to the launch limit and ordering barriers. Those calls can overlap instead of waiting
+for each `await` in turn. Eligible calls in both arms of an `if`/`else` can start; the taken
+arm claims its result and the other launch is discarded.
+
+Lookahead stops at a known tool call that is not eligible, including a `sequential` tool.
+For example, if `update_record` is not eligible and `search` is eligible:
+
+```python {test="skip"}
+await update_record(key='status', value='ready')
+await search(query='status')  # Runs after the update, not speculatively ahead of it.
+```
+
+To overlap an earlier blocking read with later calls, that read must also be eligible.
+Streamed `run_code` parts following another model tool call wait for normal dispatch.
+Eligibility is a trust decision, not an analysis of arbitrary Python side effects.
 
 Keep these limitations in mind:
 
@@ -348,9 +390,6 @@ Keep these limitations in mind:
   from an earlier statement waits for that statement.
 - Calls are found in the streamed text, so a call spelled inside a string literal or a
   comment can start too. It is discarded when the snippet finishes.
-- Lookahead stops at a call to a tool outside the speculation allowlist, so later reads
-  cannot overtake that tool's writes. To overlap a blocking read with later calls, that read
-  must also be eligible. Streamed parts following another model tool call wait for dispatch.
 - `sequential` tools never speculate, and nothing speculates when the run's parallel
   execution mode is `sequential`.
 - Hooks on a speculated tool run when it starts, not when the snippet claims it. Hooks,
@@ -370,8 +409,29 @@ Keep these limitations in mind:
 finished writing, and speculation starts the calls it has not reached yet (branch arms, calls
 after a slow statement). Statements that eager mode runs claim those launches too.
 
-Aggregate counters are available on `CodeMode.speculation_stats` (`launched`, `adopted`,
-`evicted`). The lifecycle is also emitted as
+### Check whether speculation helps
+
+`CodeMode.speculation_stats` is `None` when speculation is disabled. When enabled, its counters
+accumulate across runs using that capability instance; take before/after snapshots for a
+per-run comparison. Successful `run_code` returns can also carry a `speculation` entry in
+history-only metadata, alongside `tool_calls` and `tool_returns`. Model-visible content is unchanged.
+
+| Metric | Scope | Meaning |
+| --- | --- | --- |
+| `launched` | Capability instance | Calls started speculatively, during streaming or execution. |
+| `adopted` | Capability instance | Speculative outcomes consumed by actual dispatches, including tool errors. |
+| `evicted` | Capability instance | Unclaimed launches discarded or sent a cancellation request. |
+| `hits` | `run_code` return | Dispatches that consumed a speculative outcome. |
+| `misses` | `run_code` return | Dispatches to eligible tools that found no matching launch and ran normally. |
+| `wasted` | `run_code` return | Unclaimed launches discarded at this call's successful completion. |
+| `hidden_ms` | `run_code` return | Sum of launch-to-settlement durations for adopted calls. |
+
+`hidden_ms` is **not measured end-to-end time saved**: calls can overlap, and it includes time
+spent waiting for a launch that was still running when claimed. Compare total run latency and
+external request cost with speculation on and off. Neither `evicted` nor `wasted` proves that
+an unused call completed, stopped, or avoided its cost.
+
+The lifecycle is also emitted as
 [capability events](https://pydantic.dev/docs/ai/core-concepts/hooks/) in the `code_mode`
 namespace, so UIs and other capabilities can follow it live from the run's event stream:
 `SpeculativeCodeUpdateEvent` (the decoded snippet so far, with its closed-statement
@@ -379,10 +439,20 @@ boundary), `SpeculativeCallLaunchedEvent` (with the launching statement's line s
 `phase` of `streaming` or `execution`), `SpeculativeCallSettledEvent` (only while the stream
 is still flowing; a call that finishes later reports its state on its claimed or evicted
 event instead), and, once the snippet runs, `SpeculativeCallClaimedEvent`,
-`SpeculativeCallMissedEvent`, and `SpeculativeCallEvictedEvent`. When speculation did work for a `run_code` call, the return's
-history-only metadata gains a `speculation` entry (`hits`, `hidden_ms`, `misses`, `wasted`)
-alongside the nested `tool_calls`/`tool_returns` records; the content the model sees is
-unchanged.
+`SpeculativeCallMissedEvent`, and `SpeculativeCallEvictedEvent`.
+
+### Why isn't a call speculating?
+
+- Is the tool registered and exposed inside `run_code`, rather than kept native?
+- Is its original tool name allowlisted, or does it carry a trusted read-only declaration?
+- Does the generated call use literal keyword arguments rather than variables or positional arguments?
+- Does an earlier non-eligible tool call block lookahead, or an earlier model tool call defer it?
+- Is the tool marked `sequential`, or is the run using global sequential execution?
+- Is durable execution active, or has the per-call speculative launch limit been reached?
+
+If these checks pass, inspect the generated code and launch events. Oversized streamed arguments
+and exhausted parser-work budgets also stop stream scanning; speculation is an optimization,
+not a guarantee that every eligible call starts early.
 
 ## Temporal durability
 
