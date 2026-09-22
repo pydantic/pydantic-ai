@@ -339,7 +339,7 @@ from pydantic_ai import Agent, RunContext
 assistant = Agent(instructions='You are a helpful engineering assistant.')
 
 
-async def route(ctx: RunContext[None], tier: Literal['fast', 'capable']) -> str:
+async def route(ctx: RunContext, tier: Literal['fast', 'capable']) -> str:
     """Answer the question on a model suited to it.
 
     Args:
@@ -400,7 +400,7 @@ router = Agent(
 )
 
 
-async def select_model(ctx: ModelSelectionContext[None]) -> Model:
+async def select_model(ctx: ModelSelectionContext) -> Model:
     if not ctx.messages:
         # `ctx.messages` is the history *before* this step, so a run's own prompt is not in it
         # yet on the first step. A run given `message_history` does have something to read.
@@ -713,7 +713,7 @@ class Ticket(BaseModel):
 support = Agent('openai:gpt-5.6-sol', instructions='Reply to the customer.')
 
 
-async def reply(ctx: RunContext[None]) -> str:
+async def reply(ctx: RunContext) -> str:
     """Write the customer a reply."""
     # `ctx.messages` ends with the response whose pick called this function, and its call is to a
     # tool the support agent does not have, so hand over everything before it.

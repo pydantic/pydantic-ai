@@ -56,7 +56,7 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     label: str
 ```
 
@@ -66,7 +66,7 @@ If you define a custom `__init__`, set only the metadata you want to expose. The
 from pydantic_ai.capabilities import AbstractCapability
 
 
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     def __init__(
         self,
         label: str,
@@ -888,15 +888,15 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.models.test import TestModel
 
 
-class Summaries(AbstractCapability[None]):
+class Summaries(AbstractCapability):
     id = 'summaries'
 
-    async def before_run(self, ctx: RunContext[None]) -> None:
+    async def before_run(self, ctx: RunContext) -> None:
         summary = await self.summarize(ctx, ['one', 'two'])
         assert summary == '2 messages'
 
     @durable_operation(name='summarize')
-    async def summarize(self, ctx: RunContext[None], messages: list[str]) -> str:
+    async def summarize(self, ctx: RunContext, messages: list[str]) -> str:
         return f'{len(messages)} messages'
 
 

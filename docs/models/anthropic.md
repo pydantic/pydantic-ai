@@ -512,7 +512,7 @@ agent = Agent('anthropic:claude-opus-4-8', system_prompt='You are a code reviewe
 
 
 @agent.tool
-def require_type_annotations(ctx: RunContext[None]) -> str:
+def require_type_annotations(ctx: RunContext) -> str:
     ctx.enqueue(SystemPromptPart(content='Every suggestion must include explicit type annotations.'))
     return 'rule added'
 ```
