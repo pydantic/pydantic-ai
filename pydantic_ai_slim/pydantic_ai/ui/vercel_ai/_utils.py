@@ -51,7 +51,6 @@ COMPACTION_DATA_TYPE = 'data-compaction'
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
 _INTERNAL_METADATA_KEY = '__pydantic_ai__'
-_UI_MESSAGE_ID_KEY = 'ui_message_id'
 
 
 class _PydanticAIMessageMetadata(BaseModel):
@@ -169,26 +168,6 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 
     if pydantic_metadata.timestamp is not None:
         message.timestamp = pydantic_metadata.timestamp
-
-
-def set_ui_message_id(message: ModelMessage, ui_message_id: str) -> None:
-    """Keep the `UIMessage.id` that `message` was loaded from, for `get_ui_message_id` to restore.
-
-    It lives under the reserved `__pydantic_ai__` namespace, which never crosses into `UIMessage.metadata`.
-    """
-    metadata = message.metadata or {}
-    namespace = metadata.get(_INTERNAL_METADATA_KEY)
-    message.metadata = {
-        **metadata,
-        _INTERNAL_METADATA_KEY: {**(namespace if is_str_dict(namespace) else {}), _UI_MESSAGE_ID_KEY: ui_message_id},
-    }
-
-
-def get_ui_message_id(message: ModelMessage) -> str | None:
-    """Return the `UIMessage.id` kept by `set_ui_message_id`, if any."""
-    namespace = (message.metadata or {}).get(_INTERNAL_METADATA_KEY)
-    ui_message_id = namespace.get(_UI_MESSAGE_ID_KEY) if is_str_dict(namespace) else None
-    return ui_message_id if isinstance(ui_message_id, str) else None
 
 
 # Data-carrying chunk types that have a direct UIMessagePart counterpart in the

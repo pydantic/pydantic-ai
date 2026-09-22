@@ -63,6 +63,7 @@ from .._adapter import (
     compaction_payload,
     tool_availability_delta_from_payload,
 )
+from .._message_id import get_ui_message_id, set_ui_message_id
 
 try:
     from ag_ui.core import (
@@ -409,6 +410,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         # onward; older versions drop the client's claim, so the field is only read when present.
         use_encrypted_value = parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION
         for msg in messages:
+            checkpoint = builder.checkpoint()
             match msg:
                 case UserMessage(content=content):
                     if isinstance(content, str):
@@ -638,6 +640,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         UserWarning,
                         stacklevel=2,
                     )
+
+            # Keep the AG-UI message id on the `ModelMessage` its parts landed in, for `dump_messages`.
+            # An AG-UI message never spans a request and a response, so there is at most one.
+            if (target := builder.last_modified(checkpoint)) is not None:
+                set_ui_message_id(target, msg.id)
 
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
@@ -917,7 +924,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         - `ModelRequest.metadata` and top-level `ModelResponse.provider_details` are lost. AG-UI has
           no trusted message-level carrier for framework or provider state; general client-controlled
-          metadata must not be restored as server-side state.
+          metadata must not be restored as server-side state. The one thing `load_messages` keeps in
+          the reserved `__pydantic_ai__` namespace is the AG-UI message id, which comes back on the
+          last message dumped from each `ModelMessage`.
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
@@ -976,15 +985,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
-                request_messages = cls._dump_request_parts(
+                dumped = cls._dump_request_parts(
                     msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
                 )
-                result.extend(request_messages)
             elif isinstance(msg, ModelResponse):
-                result.extend(
-                    cls._dump_response_parts(msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data)
+                dumped = cls._dump_response_parts(
+                    msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
                 )
             else:
                 assert_never(msg)
+            # The id `load_messages` kept belongs to the last AG-UI message merged into `msg`, so it goes
+            # back on the last AG-UI message dumped from it; any others keep generated ids.
+            if dumped and (ui_message_id := get_ui_message_id(msg)) is not None:
+                dumped[-1].id = ui_message_id
+            result.extend(dumped)
 
         return result
