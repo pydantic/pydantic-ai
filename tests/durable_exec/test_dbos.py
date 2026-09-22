@@ -3716,6 +3716,28 @@ async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:
     assert 'durability_handler__event_stream_handler' in step_names
 
 
+async def test_dbos_durability_dispatches_single_event_outside_legacy_workflow(dbos: DBOS) -> None:
+    handled: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        handled.extend([event async for event in stream])
+
+    durability = DBOSDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='nonlegacy_single_event', capabilities=[durability])
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
+    event = FunctionToolCallEvent(ToolCallPart('tool', {}, 'call-id'))
+    ctx = RunContext[object](deps=object(), model=TestModel(), usage=RunUsage(), agent=agent)
+
+    @DBOS.workflow()
+    async def dispatch_event() -> None:
+        await bound._dispatch_event_stream_event(ctx, event)  # pyright: ignore[reportPrivateUsage]
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        await dispatch_event()
+    assert handled == [event]
+
+
 async def test_dbos_durability_event_stream_handler_rejects_enqueue(dbos: DBOS) -> None:
     """An `event_stream_handler` that enqueues inside a durable step raises, like a tool would.
 
