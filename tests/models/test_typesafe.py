@@ -2531,9 +2531,10 @@ async def test_a_route_that_says_nothing_anywhere_is_still_refused(allow_model_r
 async def test_the_fill_repeats_the_state_and_carries_the_picked_routes_purpose(allow_model_requests: None):
     """The two requests of a union are one question each, not a conversation.
 
-    Jev is not told what it picked: the route was decided here, and putting it back in front of a request that
-    only fills fields would be a second decision. What does travel is what the chosen route is *for*, as each
-    field question's `goal`, so the fields are answered for the route they belong to.
+    Nothing about the first request survives into the second except the state, so the fill has to carry the
+    route on its own: its name as `chosen` and what it is for as `goal`, on every field question. Neither is
+    a second decision -- the route was decided by the first request and is not on offer again -- and without
+    them a field is answered with no idea which route it belongs to.
     """
     seen: list[dict[str, Any]] = []
 
@@ -2554,6 +2555,7 @@ async def test_the_fill_repeats_the_state_and_carries_the_picked_routes_purpose(
         {
             'field': 'security',
             'question': 'Does this involve a security or privacy risk?',
+            'chosen': 'Escalation',
             'goal': 'Hand the ticket to a human specialist.',
         }
     )
