@@ -467,7 +467,7 @@ ACCEPTED = [
         'model | described None, declined',
         [Ticket, Annotated[None, Field(description='Nothing needs doing.')]],
         None,
-        picks='final_result_Annotated',
+        picks='final_result_None',
     ),
     Accepted('a described `None` option', DescribedNoneArea, DescribedNoneArea(area='billing')),
 ]

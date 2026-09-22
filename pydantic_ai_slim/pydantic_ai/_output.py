@@ -852,7 +852,10 @@ def _output_type_name(output: Any) -> str | None:
     route is named for the value instead. Both spellings arrive here: `int | None` resolves to the type,
     while `ToolOutput(None)` and a bare `None` in a list of output types are unwrapped to the value, which
     has no `__name__` at all and would otherwise leave its route named `final_result_`.
+
+    `Annotated[X, ...]` is named after `X`, not `Annotated`.
     """
+    output = _utils.unwrap_annotated(output)
     if output is NoneType or output is None:
         return 'None'
     return getattr(output, '__name__', None)
@@ -909,8 +912,11 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             self.output_type = cast(type[Any], output)
             json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
-            if _utils.is_model_like(output):
+            unwrapped_output = _utils.unwrap_annotated(output)
+            if _utils.is_model_like(unwrapped_output):
+                # Keep Annotated metadata for schema generation, but treat the inner type as model-like.
                 json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
+                self.output_type = cast(type[Any], unwrapped_output)
             else:
                 self.outer_typed_dict_key = 'response'
                 output_type: type[OutputDataT] = cast(type[OutputDataT], output)
@@ -932,9 +938,13 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
-            json_schema = _utils.check_object_json_schema(
-                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            )
+            raw_json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+            # Annotated[..., Field(description=...)] puts the Field description on the outer schema.
+            # Preserve it before check_object_json_schema replaces the schema with the $ref target.
+            schema_description = raw_json_schema.get('description')
+            json_schema = _utils.check_object_json_schema(raw_json_schema)
+            if schema_description is not None:
+                json_schema['description'] = schema_description
 
             if self.outer_typed_dict_key:
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
