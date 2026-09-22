@@ -87,7 +87,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
-```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py"}
+```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py" typecheck="skip - dirty-equals matchers stand in for timestamps and IDs"}
 from datetime import timezone
 import pytest
 

@@ -488,7 +488,7 @@ MyEvaluator(evaluation_name='my_custom_name')
 
 ### SQL Validation
 
-```python
+```python {typecheck="skip - sqlparse is not installed in the test environment"}
 from dataclasses import dataclass
 
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext

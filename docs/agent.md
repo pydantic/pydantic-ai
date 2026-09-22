@@ -1414,7 +1414,7 @@ In particular, agents are generic in both the type of their dependencies and the
 
 Consider the following script with type mistakes:
 
-```python {title="type_mistakes.py" hl_lines="18 28"}
+```python {title="type_mistakes.py" hl_lines="18 28" typecheck="skip - deliberately wrong to show what a type checker reports"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext

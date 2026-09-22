@@ -456,7 +456,7 @@ class ExaToolset(FunctionToolset):
     Deprecated in favor of the [`ExaSearch`](https://pydantic.dev/docs/ai/harness/exa-search/)
     capability in the Pydantic AI Harness:
 
-    ```python {test="skip"}
+    ```python {test="skip" typecheck="skip - pydantic-ai-harness is not installed in the test environment"}
     from pydantic_ai_harness.exa import ExaSearch
 
     from pydantic_ai import Agent

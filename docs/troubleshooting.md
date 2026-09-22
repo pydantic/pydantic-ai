@@ -17,7 +17,7 @@ result = await agent.run('Who let the dogs out?')
 
 **Legacy environments or specific integrations**: If you encounter event loop conflicts, use [`nest-asyncio`](https://pypi.org/project/nest-asyncio/):
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - nest-asyncio is not installed in the test environment"}
 import nest_asyncio
 
 from pydantic_ai import Agent

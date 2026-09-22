@@ -935,7 +935,7 @@ If you'd like to use tools or a [toolkit](https://python.langchain.com/docs/conc
 
 You will need to install the `langchain-community` package and any others required by the tools in question.
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - langchain-community is not installed in the test environment"}
 from langchain_community.agent_toolkits import SlackToolkit
 
 from pydantic_ai import Agent

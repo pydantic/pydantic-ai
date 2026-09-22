@@ -62,7 +62,7 @@ Nodes are generic in:
 
 Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.basenode.End]:
 
-```py {title="intermediate_node.py" noqa="F821" test="skip"}
+```py {title="intermediate_node.py" noqa="F821" test="skip" typecheck="skip - fragment where MyState and AnotherNode are not defined"}
 from dataclasses import dataclass
 
 from pydantic_graph import BaseNode, GraphRunContext
@@ -87,7 +87,7 @@ class MyNode(BaseNode[MyState]):  # (1)!
 
 We could extend `MyNode` to optionally end the run if `foo` is divisible by 5:
 
-```py {title="intermediate_or_end_node.py" hl_lines="7 13 15" noqa="F821" test="skip"}
+```py {title="intermediate_or_end_node.py" hl_lines="7 13 15" noqa="F821" test="skip" typecheck="skip - fragment where MyState and AnotherNode are not defined"}
 from dataclasses import dataclass
 
 from pydantic_graph import BaseNode, End, GraphRunContext
