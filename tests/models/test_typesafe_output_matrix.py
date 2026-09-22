@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import IntEnum
-from typing import Annotated, Any, Literal
+from enum import Enum, IntEnum
+from typing import Annotated, Any, Literal, Union
 
 import httpx2
 import pytest
@@ -136,6 +136,29 @@ NOT_A_RUBRIC = ': a rubric must be the whole numbers from 0 upwards, in order, a
 NOT_STRINGS = ': its options are not two or more strings'
 
 
+class OneArea(str, Enum):
+    """The only area."""
+
+    billing = 'billing'
+
+
+class Areas(UseEnumMemberDocstrings, str, Enum):
+    """Which area."""
+
+    billing = 'billing'
+    """Charges, refunds and invoices."""
+    shipping = 'shipping'
+    """Where an order is."""
+
+
+EnumKeyed = probe('applies', dict[Areas, bool], description='Which apply?')
+Stepped = probe('risk', float, ge=0, le=100, multiple_of=10, description='How risky?')
+Capped = probe('applies', dict[Area, bool], max_length=2, description='Which apply?')
+BoolLiteral = probe('which', Literal[True, False], description='Which?')
+Percentage = probe('risk', float, ge=0, le=100, description='How risky?')
+Applies = probe('applies', dict[Area, bool], description='Which apply?')
+
+
 @dataclass(frozen=True)
 class Refused:
     """An output type Jev will not take, and the whole message the user gets for it."""
@@ -155,6 +178,17 @@ REFUSED = [
         'field: list | None',
         probe('areas', list[Area] | None, description='Which?'),
         unsupported('areas', NOT_OPTIONAL),
+    ),
+    # `None` beside `None` is a union with nothing to ask about, so there is no `X` for the extra option to
+    # stand beside. It is refused as an unsupported field, not as an optional one.
+    Refused(
+        'field: None | None',
+        probe(
+            'nothing',
+            Union[Annotated[None, Field(description='one')], Annotated[None, Field(description='the other')]],  # noqa: UP007
+            description='Which?',
+        ),
+        unsupported('nothing'),
     ),
     # A route is weighed by what it says about itself, and a `Literal` has nowhere to write that down.
     Refused('union with a pick-one', [Ticket, Area], says_nothing('final_result_Literal')),
@@ -180,25 +214,40 @@ REFUSED = [
         unsupported('which', NOT_STRINGS),
     ),
     Refused(
-        'field: pick-one of booleans',
-        probe('which', Literal[True, False], description='Which?'),
-        unsupported('which', NOT_STRINGS),
-    ),
-    Refused(
         'field: pick-one of one option',
         probe('area', Literal['billing'], description='Which area?'),
         unsupported('area'),
     ),
-    # A mapping keyed by a pick-one is not a question either, as an output type or as a field.
-    Refused('mapping of options', dict[Area, bool], unsupported('response')),
-    Refused(
-        'field: mapping of options',
-        probe('applies', dict[Area, bool], description='Which apply?'),
-        unsupported('applies'),
-    ),
     Refused('mapping of text', dict[str, str], unsupported('response')),
     # A list is one yes/no per option, so its items have to be the options.
     Refused('list of models', list[Ticket], unsupported('response', NOT_A_LIST)),
+    # A bound is the units a probability is asked in. A field that only accepts steps along it is a set of
+    # levels instead, and every key of a mapping is answered, so a limit on how many there may be cannot hold.
+    Refused('field: stepped number', Stepped, unsupported('risk')),
+    Refused('field: mapping with a size limit', Capped, unsupported('applies')),
+    Refused(
+        'field: list with a size limit',
+        probe('areas', list[Area], max_length=1, description='Which apply?'),
+        unsupported('areas'),
+    ),
+    # `dict[str, Any]` says its values are unconstrained by writing `additionalProperties: true` rather than a
+    # schema, which is not a thing to call `.get` on.
+    Refused('field: mapping of anything', probe('blob', dict[str, Any], description='Anything?'), unsupported('blob')),
+    # The values have to be a plain yes/no: anything narrower forbids an answer Jev is free to give.
+    Refused(
+        'field: mapping to a fixed value',
+        probe('m', dict[Area, Literal[True]], description='Which?'),
+        unsupported('m'),
+    ),
+    # And the keys have to be options: `dict[str, bool]` says nothing about what they are.
+    Refused('field: mapping of free keys', probe('m', dict[str, bool], description='Which?'), unsupported('m')),
+    # One option is not a set to fan out over, the same as a pick-one of one option. A single `Literal` key
+    # reaches the schema as a `const`, which is not a set at all; a one-member `Enum` is a set of one.
+    Refused(
+        'field: mapping of one option',
+        probe('m', dict[OneArea, bool], description='Which?'),
+        unsupported('m', ': a mapping must be keyed by two or more options'),
+    ),
     # A `tuple` is an array whose members are positional, which Pydantic renders as `prefixItems` and no
     # `items`, so there are no options to fan out over.
     Refused(
@@ -211,7 +260,6 @@ REFUSED = [
     Refused('field: model that contains itself', Thread, contains_itself('parent.parent')),
     # A number is only a question when it is a probability or a rubric level.
     Refused('field: bounded int', probe('clarity', int, ge=0, le=4, description='How clear?'), unsupported('clarity')),
-    Refused('field: percentage', probe('risk', float, ge=0, le=100, description='How risky?'), unsupported('risk')),
 ]
 
 
@@ -242,6 +290,12 @@ class OptionalArea(BaseModel):
     """Triage the ticket."""
 
     area: Area | None = Field(description='Which area, if any?')
+
+
+class DescribedNoneArea(BaseModel):
+    """Triage the ticket."""
+
+    area: Area | Annotated[None, Field(description='Nothing to route.')] = Field(description='Which area, if any?')
 
 
 class Clarity(UseEnumMemberDocstrings, IntEnum):
@@ -350,6 +404,28 @@ ACCEPTED = [
         picks='final_result_Escalation',
     ),
     Accepted('output function | None', [escalate, None], None, picks='final_result_None'),
+    # `Literal[True, False]` spells out what a `bool` already is, so it asks the same yes/no.
+    Accepted('field: pick-one of booleans', BoolLiteral, BoolLiteral(which=True)),
+    # A bounded number asks for a probability; the bound is the units it comes back in.
+    Accepted('field: percentage', Percentage, Percentage(risk=90.0)),
+    # A mapping of options to yes/no fans out like a list of them, keeping every answer rather than the yeses.
+    Accepted(
+        'field: mapping of options', Applies, Applies(applies={'billing': True, 'shipping': True, 'security': True})
+    ),
+    Accepted('mapping of options', dict[Area, bool], {'billing': True, 'shipping': True, 'security': True}),
+    # An `Enum` key reaches the schema as a `$ref` under `propertyNames`, which the walk resolves like any other.
+    Accepted(
+        'field: mapping keyed by an Enum', EnumKeyed, EnumKeyed(applies={Areas.billing: True, Areas.shipping: True})
+    ),
+    # Writing what `None` means puts a `description` beside its `{'type': 'null'}`, which does not stop it
+    # being `None`: the route is still taken on the pick alone, and the field is still one more option.
+    Accepted(
+        'model | described None, declined',
+        [Ticket, Annotated[None, Field(description='Nothing needs doing.')]],
+        None,
+        picks='final_result_Annotated',
+    ),
+    Accepted('a described `None` option', DescribedNoneArea, DescribedNoneArea(area='billing')),
 ]
 
 

@@ -6,7 +6,7 @@ that significantly slows pytest-xdist worker initialization, especially on Pytho
 When no --inline-snapshot flag is passed to pytest, we use lightweight stubs:
 - snapshot(value) returns a proxy that compares using the value, warning on mismatch
 - snapshot() with no args raises an error directing you to use --inline-snapshot=create
-- Is(value) compares using the underlying value
+- Is(value) returns the value, as the real one does when it is not recording
 - customize is a no-op decorator
 
 Pass --inline-snapshot=<mode> or --snap/--snap-fix to use the real library.
@@ -77,15 +77,14 @@ else:
             )
         return _SnapshotProxy(value)
 
-    class Is:
-        def __init__(self, value: Any) -> None:
-            self.value = value
+    def Is(value: Any) -> Any:
+        """The real `Is` is transparent when inline-snapshot is not recording, so the stub is too.
 
-        def __repr__(self) -> str:
-            return f'Is({self.value!r})'
-
-        def __eq__(self, other: object) -> bool:
-            return other == self.value
+        A wrapper object here is not the same thing to the code under test: put one inside a field that
+        validates what it holds, such as `UserPromptPart.content`, and the stub raises where the real
+        library would not.
+        """
+        return value
 
     def customize(func: Any) -> Any:
         return func
