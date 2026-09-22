@@ -2427,22 +2427,25 @@ def test_load_dump_preserves_message_id() -> None:
 def test_load_dump_message_id_on_merged_and_split_messages() -> None:
     """An id is kept per `ModelMessage`, so it follows how AG-UI messages merge into them.
 
-    A system + user pair merges into one `ModelRequest`, which keeps the last id and dumps it on the
-    last message produced from it, the user message. Every other message here maps to its own
-    `ModelRequest` or `ModelResponse` and gets its own id back.
+    A system + user pair merges into one `ModelRequest`, and two tool results for parallel tool calls
+    merge into one `ModelRequest`. Each keeps the last id and dumps it on the last message produced
+    from it; the messages before it get fresh ids, so the two `ToolMessage`s never share one.
+    Every other message maps to its own `ModelRequest` or `ModelResponse` and gets its own id back.
     """
     ag_ui_msgs: list[Message] = [
         SystemMessage(id='sys-1', content='Be brief.'),
-        UserMessage(id='usr-1', content='Weather in Paris?'),
+        UserMessage(id='usr-1', content='Weather in Paris and Rome?'),
         AssistantMessage(
             id='asst-1',
             content='Checking.',
             tool_calls=[
-                ToolCall(id='call_1', type='function', function=FunctionCall(name='get_weather', arguments='{}'))
+                ToolCall(id='call_1', type='function', function=FunctionCall(name='get_weather', arguments='{}')),
+                ToolCall(id='call_2', type='function', function=FunctionCall(name='get_weather', arguments='{}')),
             ],
         ),
         ToolMessage(id='tool-1', tool_call_id='call_1', content='18C and sunny'),
-        AssistantMessage(id='asst-2', content='It is 18C and sunny in Paris.'),
+        ToolMessage(id='tool-2', tool_call_id='call_2', content='24C and cloudy'),
+        AssistantMessage(id='asst-2', content='Paris is 18C and sunny, Rome is 24C and cloudy.'),
     ]
 
     dumped = AGUIAdapter.dump_messages(AGUIAdapter.load_messages(ag_ui_msgs))
@@ -2451,10 +2454,12 @@ def test_load_dump_message_id_on_merged_and_split_messages() -> None:
         ('SystemMessage', IsStr()),
         ('UserMessage', 'usr-1'),
         ('AssistantMessage', 'asst-1'),
-        ('ToolMessage', 'tool-1'),
+        ('ToolMessage', IsStr()),
+        ('ToolMessage', 'tool-2'),
         ('AssistantMessage', 'asst-2'),
     ]
     uuid.UUID(dumped[0].id)
+    uuid.UUID(dumped[3].id)
 
 
 def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:

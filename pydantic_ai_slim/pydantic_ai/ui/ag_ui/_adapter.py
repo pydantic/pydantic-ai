@@ -641,8 +641,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         stacklevel=2,
                     )
 
-            # Keep the AG-UI message id on the `ModelMessage` its parts landed in, for `dump_messages`.
-            # An AG-UI message never spans a request and a response, so there is at most one.
+            # Keep the AG-UI message id for `dump_messages`. `ModelRequest`/`ModelResponse` have no id
+            # field, so it goes in the metadata of the message the parts above landed in. That may be a new
+            # message or the previous one extended, and some AG-UI messages add no parts at all, so ask the
+            # builder rather than assume the tail. No type filter: an `ActivityMessage` can land in either.
             if (target := builder.last_modified(checkpoint)) is not None:
                 set_ui_message_id(target, msg.id)
 
@@ -984,21 +986,21 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             warn_tool_kind_not_persisted(ag_ui_version)
 
         for msg in messages:
-            dumped_before = len(result)
             if isinstance(msg, ModelRequest):
-                request_messages = cls._dump_request_parts(
+                dumped = cls._dump_request_parts(
                     msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
                 )
-                result.extend(request_messages)
             elif isinstance(msg, ModelResponse):
-                result.extend(
-                    cls._dump_response_parts(msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data)
+                dumped = cls._dump_response_parts(
+                    msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
                 )
             else:
                 assert_never(msg)
-            # The id `load_messages` kept belongs to the last AG-UI message merged into `msg`, so it goes
-            # back on the last AG-UI message dumped from it; any others keep generated ids.
-            if len(result) > dumped_before and (ui_message_id := get_ui_message_id(msg)) is not None:
-                result[-1].id = ui_message_id
+            # `load_messages` kept the id of the last AG-UI message merged into `msg`, so it goes back on the
+            # last AG-UI message dumped from it. The others keep their fresh ids: several tool results in one
+            # request become several `ToolMessage`s, and those need distinct ids.
+            if dumped and (ui_message_id := get_ui_message_id(msg)) is not None:
+                dumped[-1].id = ui_message_id
+            result.extend(dumped)
 
         return result

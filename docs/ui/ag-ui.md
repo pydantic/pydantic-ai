@@ -524,7 +524,7 @@ Tool calls attach to whichever assistant message is open when they stream: text 
 
 ### Message ids across round-trips
 
-[`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages] keeps each inbound message's `id` in the reserved `__pydantic_ai__` key of the message it produces, and [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] uses it as the id again, so a history the client sent comes back with the ids the client assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive AG-UI messages merge into one message, such as a system message followed by a user message, only the last id is kept and it goes on the last message dumped from it. Messages produced by an agent run have no kept id and get a fresh UUID on every dump.
+[`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages] keeps each inbound message's `id` in the reserved `__pydantic_ai__` key of the message it produces, and [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] uses it as the id again, so a history the client sent comes back with the ids the client assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive AG-UI messages merge into one message, such as the tool results of parallel tool calls or a system message followed by a user message, only the last id is kept and it goes on the last message dumped from it; the others get fresh ids. Messages produced by an agent run have no kept id and get a fresh UUID on every dump.
 
 ### Preserving failed tool outcomes
 
