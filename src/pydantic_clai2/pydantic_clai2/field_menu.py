@@ -1,8 +1,8 @@
 """A full-screen editor for a set of named, validated fields. `/set` and `/add_model` both use it."""
 
 import json
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from pydantic import JsonValue, ValidationError
@@ -35,10 +35,15 @@ class FieldRow:
     default: str
     choices: tuple[str, ...] = ()
     label: str = ''
+    choice_labels: Mapping[str, str] = field(default_factory=dict[str, str])
     allow_custom: bool = True
     secret: bool = False
     note: str = ''
     """Where the value comes from when not from the user; shown muted after the value."""
+
+    def display(self, value: str) -> str:
+        """Label a choice without changing its stored or validated value."""
+        return self.choice_labels.get(value, value)
 
 
 class FieldSource(Protocol):
@@ -95,7 +100,7 @@ class FieldMenu:
         """One row per field with its current value."""
         return [
             MenuItem(
-                f'{row.label or row.key:<24} {self._source.current(row)}',
+                f'{row.label or row.key:<24} {row.display(self._source.current(row))}',
                 value=row.key,
                 description=f'{theme.sgr(theme.MUTED)}{row.note}' if row.note else '',
             )
@@ -111,13 +116,13 @@ class FieldMenu:
         lines = [
             row.label or row.key,
             '',
-            f'current  {current}' + (' (default)' if current == row.default else ''),
-            f'default  {row.default}',
+            f'current  {row.display(current)}' + (' (default)' if current == row.default else ''),
+            f'default  {row.display(row.default)}',
         ]
         if row.note:
             lines.append(f'origin   {row.note}')
         if row.choices and len(row.choices) <= 8:
-            lines.append(f'choices  {", ".join(row.choices)}')
+            lines.append(f'choices  {", ".join(row.display(choice) for choice in row.choices)}')
         elif row.choices:
             lines.append(f'choices  {len(row.choices)} options; Enter opens a searchable list')
         lines += ['', row.description]
@@ -149,7 +154,8 @@ class FieldMenu:
         """A picker for fields with a fixed set of values, plus typing your own."""
         current = self._source.current(row)
         items = [
-            MenuItem(f'{choice}{" (current)" if choice == current else ""}', value=choice) for choice in row.choices
+            MenuItem(f'{row.display(choice)}{" (current)" if choice == current else ""}', value=choice)
+            for choice in row.choices
         ]
         if row.allow_custom:
             items += [MenuItem(CUSTOM, value=CUSTOM), MenuItem(KEEP, value=KEEP)]
@@ -171,7 +177,11 @@ class FieldMenu:
             TextInputBuilder(f'New value for {row.label or row.key}')
             .style(markdown_style())
             .prompt('Value: ')
-            .placeholder('Enter a new secret' if row.secret else f'current: {self._source.current(row)} (empty resets)')
+            .placeholder(
+                'Enter a new secret'
+                if row.secret
+                else f'current: {row.display(self._source.current(row))} (empty resets)'
+            )
             .validator(lambda text: None if not text.strip() else self._source.problem(row, text.strip()))
             .footer_hint('Enter save - Esc cancel')
             .key_source(menu_key)

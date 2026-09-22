@@ -388,6 +388,16 @@ Tab completes added models.
 on the next prompt. `r` resets a field; Esc or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
+First add `openai-codex:gpt-6-astra` with `/add_model`, then open `/model_settings openai-codex:gpt-6-astra`
+(or your saved Codex model), then **Service Tier / Fast Mode**. Choose
+**Fast (priority)** to request fast processing, or **Standard (default)** to
+turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
+uses more ChatGPT credits and depends on model and account availability. It does
+not lower reasoning effort. Reset restores the existing model default; it does
+not enable fast mode. The stored values remain `service_tier=priority` and
+`service_tier=default`, so older CLAI versions can read them. A custom
+`service_tier` body parameter still takes precedence.
+
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
 compatibility fix. Editing or resetting a known field preserves unknown fields

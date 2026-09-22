@@ -152,3 +152,32 @@ def test_historical_model_preferences_survive_new_editor(tmp_path: Path) -> None
     expected = dict(original)
     expected.pop('temperature')
     assert SettingsStore(path).model_settings('openai:gpt-4o') == expected
+
+
+@pytest.mark.parametrize('tier', ['auto', 'default', 'flex', 'priority'])
+def test_codex_speed_labels_preserve_existing_preferences(tmp_path: Path, tier: str) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    name = 'openai-codex:gpt-6-astra'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO model_settings VALUES (?, ?)',
+            (name, '{"service_tier":"' + tier + '","openai_reasoning_effort":"high","future_option":42}'),
+        )
+    original = store.model_settings(name)
+    source = ModelSettingsSource(SettingsStore(path), name)
+    menu = FieldMenu(source)
+    row = menu.row_for('service_tier')
+    assert row is not None and source.current(row) == tier
+    assert SettingsStore(path).model_settings(name) == original
+    assert source.apply(row, 'priority').startswith('Saved')
+    assert SettingsStore(path).model_settings(name) == {**original, 'service_tier': 'priority'}
+    settings = model_settings_from_json(SettingsStore(path).model_settings(name), model=name).to_model_settings()
+    assert settings is not None and settings.get('service_tier') == 'priority'
+    assert settings.get('openai_reasoning_effort') == 'high'
+    snapshot = path.read_bytes()
+    assert not source.apply(row, 'fast').startswith('Saved')
+    assert path.read_bytes() == snapshot
+    source.reset(row)
+    assert SettingsStore(path).model_settings(name) == {'openai_reasoning_effort': 'high', 'future_option': 42}
+    assert source.current(row) == 'default'

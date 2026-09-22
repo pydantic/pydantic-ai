@@ -417,6 +417,16 @@ identifier, not an alias for your custom instance. Noninteractive Session expose
 resolve_model for translating overrides; chat currently configures its own
 resolver for Codex authentication, not a plugin provider registry.
 
+For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
+(or your saved Codex model), then **Service Tier / Fast Mode**. Choose
+**Fast (priority)** to request fast processing, or **Standard (default)** to
+turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
+uses more ChatGPT credits and depends on model and account availability. It does
+not lower reasoning effort. Reset restores the existing model default; it does
+not enable fast mode. The stored values remain `service_tier=priority` and
+`service_tier=default`, so older CLAI versions can read them. A custom
+`service_tier` body parameter still takes precedence.
+
 To extend the built-in picker in a CLAI source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings

@@ -51,12 +51,25 @@ class ModelSettingsSource:
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
                 continue
+            codex_tier = key == 'service_tier' and self.model.startswith('openai-codex:')
             rows.append(
                 FieldRow(
                     key=key,
-                    label=_setting_label(key),
+                    label='Service Tier / Fast Mode' if codex_tier else _setting_label(key),
                     allow_custom=False,
-                    description=info.description or '',
+                    description=(
+                        'Fast mode uses more ChatGPT credits.\n'
+                        'Requests priority processing on supported Codex models.\n'
+                        'Availability depends on your model and account.\n'
+                        'Standard turns fast mode off.\n'
+                        'Reasoning effort is unchanged.\n'
+                        'Custom service_tier parameters override this setting.'
+                        if codex_tier
+                        else info.description or ''
+                    ),
+                    choice_labels={'priority': 'Fast (priority)', 'default': 'Standard (default)'}
+                    if codex_tier
+                    else {},
                     default=shown(model_defaults(model=self.model).get(key)),
                     choices=options.get(key, ()) or _choices(info.annotation),
                 )
