@@ -243,7 +243,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
 - [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
-- [Patronus AI](https://docs.patronus.ai/docs/percival/integrations/pydantic)
+- [Patronus AI](https://patronus.ai/blog/percival-integrations)
 - [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
 - [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
 - [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
