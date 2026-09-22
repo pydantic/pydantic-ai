@@ -10,7 +10,7 @@ from typing_extensions import assert_never
 
 from .. import _utils, usage
 from .._http import to_httpx2_timeout
-from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION
+from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..messages import (
@@ -310,7 +310,6 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         ):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool)
-        properties = _fields(output_tool) if output_tool else {}
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
@@ -331,12 +330,12 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                 'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
                 'it from this model.'
             )
-        questions = _questions(properties, output_tool, instructions) if output_tool else {}
-        tool_key = _tool_question(questions, output_tools, tools, instructions)
+        ask = _Ask.about(output_tool, instructions) if output_tool else _Ask.nothing()
+        tool_key = _tool_question(ask.questions, output_tools, tools, instructions)
 
-        response = await self._system_one(state, questions, settings)
+        response = await self._system_one(state, ask.questions, settings)
         response_usage = _request_usage(response)
-        args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
+        args, provider_details = ask.answers(response, boolean_threshold)
         parts: list[ModelResponsePart] = []
         if output_tool:
             parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
@@ -427,14 +426,13 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         and it is refused before any request. Offered beside others, it is a route like any other.
         """
         try:
-            properties = _fields(tool)
-            questions = _questions(properties, tool, instructions)
+            ask = _Ask.about(tool, instructions, picked=True)
         except UserError:
             raise ToolCallProposed(self._model_name, tool.name, probability) from None
 
         try:
-            response = await self._system_one(state, questions, settings)
-            args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
+            response = await self._system_one(state, ask.questions, settings)
+            args, provider_details = ask.answers(response, boolean_threshold)
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
             # could silently choose another route, so a failure while filling is terminal and names that route.
@@ -706,7 +704,7 @@ def _tool_call(
 def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
     """Whether Jev could fill this route's fields, asked without sending anything."""
     try:
-        _questions(_fields(tool), tool, instructions)
+        _Ask.about(tool, instructions)
     except UserError:
         return False
     return True
@@ -958,7 +956,7 @@ def _options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
 
 
 def _ask(
-    name: str, prop: dict[str, Any], output_tool: ToolDefinition, instructions: str | None
+    name: str, prop: dict[str, Any], output_tool: ToolDefinition, instructions: str | None, *, picked: bool = False
 ) -> dict[str, JSONContent]:
     """What a field asks, as the labelled parts TypeSafe's own examples use."""
     # Only what the user wrote goes to Jev. A bare `bool` output is wrapped in a field named `response`
@@ -971,6 +969,11 @@ def _ask(
         ask['field'] = name
     if description := prop.get('description'):
         ask['question'] = description
+    if picked and (route := _route_name(output_tool)):
+        # A fill is a second request about the same text, so nothing in it says a route was already picked.
+        # Its name is what the choice question offered and what the answer named, and a field of that route
+        # reads differently once you know which one you are filling.
+        ask['chosen'] = route
     if described := _described(output_tool):
         ask['goal'] = described
     if instructions:
@@ -981,13 +984,49 @@ def _ask(
     return ask
 
 
+@dataclass(frozen=True)
+class _Ask:
+    """One route's fields as Jev questions, and how to read its answers back.
+
+    `_fields` and `_questions` are derived from the same route, and `_answers` needs both of them again to
+    make sense of what comes back, so the three travel together rather than being rebuilt side by side at
+    every call site. A turn that picks a route and then fills it builds one of these per request, and what
+    a question carries about its route is decided in one place instead of once per caller.
+    """
+
+    properties: dict[str, dict[str, Any]]
+    questions: dict[str, Noul | Choice | Score]
+
+    @classmethod
+    def about(cls, tool: ToolDefinition, instructions: str | None, *, picked: bool = False) -> _Ask:
+        """The questions this route's fields become, or a `UserError` if Jev cannot express one of them.
+
+        `picked` is for the second request of a turn that chose a route first: those questions name the
+        route they belong to, which the first request's questions have no reason to.
+        """
+        properties = _fields(tool)
+        return cls(properties, _questions(properties, tool, instructions, picked=picked))
+
+    @classmethod
+    def nothing(cls) -> _Ask:
+        """No fields to fill: a turn that only picks a route still reports the same empty details."""
+        return cls({}, {})
+
+    def answers(self, response: SystemOneResponse, boolean_threshold: float) -> tuple[dict[str, Any], dict[str, Any]]:
+        return _answers(response.answers, self.properties, self.questions, boolean_threshold)
+
+
 def _questions(
-    properties: dict[str, dict[str, Any]], output_tool: ToolDefinition, instructions: str | None
+    properties: dict[str, dict[str, Any]],
+    output_tool: ToolDefinition,
+    instructions: str | None,
+    *,
+    picked: bool = False,
 ) -> dict[str, Noul | Choice | Score]:
     """One Jev question per output field."""
     questions: dict[str, Noul | Choice | Score] = {}
     for name, prop in properties.items():
-        ask = _ask(name, prop, output_tool, instructions)
+        ask = _ask(name, prop, output_tool, instructions, picked=picked)
         prop, none_key = _optional(prop)
         options = _options(prop)
         if options and all(isinstance(option, bool) for option in options):
@@ -1050,6 +1089,18 @@ def _questions(
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
+
+
+def _route_name(tool: ToolDefinition) -> str | None:
+    """What to call a picked route when telling Jev which one it picked.
+
+    Only what the user wrote means anything: an output route is named for the library's own tool, either
+    `final_result` on its own or `final_result_<Member>` for a union member, and the bare prefix says no
+    more than "the answer" does. A function tool's name is the user's.
+    """
+    if tool.kind != 'output':
+        return tool.name
+    return tool.name.removeprefix(DEFAULT_OUTPUT_TOOL_NAME).lstrip('_') or None
 
 
 def _described(tool: ToolDefinition) -> str | None:
