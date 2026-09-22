@@ -261,18 +261,23 @@ def _example_key(example: CodeExample) -> str:
 
 
 def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict[str, list[str]]:
-    """Type-check the examples with a single pyright run, returning each example's errors by `_example_key`.
+    """Type-check the examples with pyright, returning each example's errors by `_example_key`.
 
     Each example gets its own directory (and pyright execution environment), holding the examples it
     `requires` as sibling modules, the way `tmp_path_cwd` makes them importable at runtime. Only the
     example's own errors are reported, with their location in the Markdown or docstring it came from.
+
+    There is one pyright run per Python version the examples target (`py="3.11"` on the fence), run
+    concurrently: an execution environment's `pythonVersion` doesn't carry over to the installed packages
+    it imports, so a 3.11 example catching a library's exception with `except*` would still fail.
     """
     root_dir = Path(__file__).parent.parent
     files: dict[Path, CodeExample] = {}
-    environments: list[dict[str, Any]] = []
+    environments: dict[str, list[dict[str, Any]]] = {}
     for index, example in enumerate(examples):
         prefix_settings = example.prefix_settings()
-        example_dir = work_dir / 'examples' / str(index)
+        python_version = prefix_settings.get('py', '3.10')
+        example_dir = work_dir / f'py{python_version}' / str(index)
         example_dir.mkdir(parents=True)
         for req in filter(None, prefix_settings.get('requires', '').split(',')):
             (example_dir / req).write_text(code_examples[req].source, encoding='utf-8')
@@ -280,45 +285,47 @@ def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict
         file = example_dir / (title if title.endswith('.py') else 'example.py')
         file.write_text(example.source, encoding='utf-8')
         files[file.resolve()] = example
-        environment: dict[str, Any] = {
-            'root': str(example_dir),
-            'extraPaths': [str(root_dir / 'tests' / 'example_modules')],
-        }
-        if python_version := prefix_settings.get('py'):
-            environment['pythonVersion'] = python_version
-        environments.append(environment)
+        environments.setdefault(python_version, []).append(
+            {'root': str(example_dir), 'extraPaths': [str(root_dir / 'tests' / 'example_modules')]}
+        )
 
-    config = {
-        'include': ['examples'],
-        'pythonVersion': '3.10',
-        'typeCheckingMode': 'standard',
-        'reportUnnecessaryTypeIgnoreComment': 'error',
-        'reportMissingModuleSource': False,
-        'executionEnvironments': environments,
-    }
-    (work_dir / 'pyrightconfig.json').write_text(json.dumps(config), encoding='utf-8')
-    process = subprocess.run(
-        [sys.executable, '-m', 'pyright', '--outputjson', '--pythonpath', sys.executable, '--project', str(work_dir)],
-        capture_output=True,
-        text=True,
-        env={**os.environ, 'PYRIGHT_PYTHON_IGNORE_WARNINGS': '1'},
-        timeout=600,
-    )
-    if process.returncode not in (0, 1):  # pragma: no cover
-        raise RuntimeError(f'pyright exited with code {process.returncode}:\n{process.stderr or process.stdout}')
+    processes: list[subprocess.Popen[str]] = []
+    for python_version, version_environments in environments.items():
+        project_dir = work_dir / f'py{python_version}'
+        config = {
+            'pythonVersion': python_version,
+            'typeCheckingMode': 'standard',
+            'reportUnnecessaryTypeIgnoreComment': 'error',
+            'reportMissingModuleSource': False,
+            'executionEnvironments': version_environments,
+        }
+        (project_dir / 'pyrightconfig.json').write_text(json.dumps(config), encoding='utf-8')
+        processes.append(
+            subprocess.Popen(
+                [sys.executable, '-m', 'pyright', '--outputjson', '--pythonpath', sys.executable, '-p', project_dir],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env={**os.environ, 'PYRIGHT_PYTHON_IGNORE_WARNINGS': '1'},
+            )
+        )
 
     errors: dict[str, list[str]] = {}
-    for diagnostic in json.loads(process.stdout)['generalDiagnostics']:
-        example = files.get(Path(diagnostic['file']).resolve())
-        if example is None or diagnostic['severity'] != 'error':
-            continue
-        start = diagnostic['range']['start']
-        line = example.start_line + start['line'] + 1
-        column = example.indent + start['character'] + 1
-        rule = f' [{rule}]' if (rule := diagnostic.get('rule')) else ''
-        errors.setdefault(_example_key(example), []).append(
-            f'{example.path}:{line}:{column}: {diagnostic["message"]}{rule}'
-        )
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=600)
+        if process.returncode not in (0, 1):  # pragma: no cover
+            raise RuntimeError(f'pyright exited with code {process.returncode}:\n{stderr or stdout}')
+        for diagnostic in json.loads(stdout)['generalDiagnostics']:
+            example = files.get(Path(diagnostic['file']).resolve())
+            if example is None or diagnostic['severity'] != 'error':
+                continue
+            start = diagnostic['range']['start']
+            line = example.start_line + start['line'] + 1
+            column = example.indent + start['character'] + 1
+            rule = f' [{rule}]' if (rule := diagnostic.get('rule')) else ''
+            errors.setdefault(_example_key(example), []).append(
+                f'{example.path}:{line}:{column}: {diagnostic["message"]}{rule}'
+            )
     return errors
 
 
