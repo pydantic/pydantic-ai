@@ -161,7 +161,6 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     so a value left over from an earlier response can never read as started.
     """
     _error: bool = False
-    _cancelled_run: bool = False
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
@@ -234,16 +233,15 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             return
 
         extra: dict[str, Any] = {}
-        if self._cancelled_run:
-            if self._lifecycle_1_0:
-                # Cancellation has no result; usage is optional.
-                extra['outcome'] = RunFinishedCancelledOutcome()
+        if self.cancelled is not None:
             # Below 1.0 there is no cancelled outcome (ag-ui#880).
+            if self._lifecycle_1_0:
+                extra['outcome'] = RunFinishedCancelledOutcome()
         elif HAS_INTERRUPTS:
             # Omit `outcome` for SDKs that predate interrupts.
             extra['outcome'] = self._build_outcome()
-            if self._lifecycle_1_0 and (usage := self._build_usage()):
-                extra['usage'] = usage
+        if self._lifecycle_1_0 and (usage := self._build_usage()):
+            extra['usage'] = usage
         yield RunFinishedEvent(
             thread_id=self.thread_id,
             run_id=self.run_id,
@@ -252,10 +250,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
     def _build_usage(self) -> list[TokenUsage]:
-        """Build usage for this run, grouped by provider and model."""
-        if self._result is None:
-            return []
-        return token_usage_from_messages(self._result.new_messages())
+        """Usage for this run's own model calls, finished or cancelled, grouped by provider and model.
+
+        Empty for a stream transformed without an agent run, which has no messages to report.
+        """
+        run = self._result if self._result is not None else self.cancelled
+        return token_usage_from_messages(run.new_messages()) if run is not None else []
 
     def _build_outcome(self) -> RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None:
         """Build the `RunFinishedEvent.outcome` from the final agent result.
@@ -284,7 +284,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield RunErrorEvent(message=str(error), timestamp=self._get_timestamp())
 
     async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseEvent]:
-        self._cancelled_run = True
+        # Not an error: `after_stream` reports the cancellation on `RUN_FINISHED`.
         return
         yield
 

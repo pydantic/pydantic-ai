@@ -8201,8 +8201,8 @@ async def test_run_started_protocol_version_is_negotiated() -> None:
 
 @requires_ag_ui('1.0.0')
 async def test_run_finished_cancelled_outcome() -> None:
-    """A cancelled run ends with a `cancelled` outcome on 1.0 and no result; below 1.0 see
-    `test_run_cancelled_finishes_without_error_or_outcome`."""
+    """A cancelled run ends with a `cancelled` outcome on 1.0, no result, and the usage of the calls it
+    made; below 1.0 see `test_run_cancelled_finishes_without_error_or_outcome`."""
     agent = Agent(model=TestModel())
 
     @agent.tool
@@ -8217,6 +8217,10 @@ async def test_run_finished_cancelled_outcome() -> None:
 
     assert run_finished['outcome'] == {'type': 'cancelled'}
     assert 'result' not in run_finished
+    # The cancellation lands before the streamed response's output count is final.
+    assert run_finished['usage'] == snapshot(
+        [{'provider': 'test', 'model': 'test', 'inputTokens': 51, 'totalTokens': 51}]
+    )
     assert 'RUN_ERROR' not in [event['type'] for event in events]
 
 
