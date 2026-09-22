@@ -319,6 +319,7 @@ Shell(
     denied_operators=[],           # blocked shell operators
     default_timeout=30.0,          # seconds, per run_command
     max_output_chars=50_000,       # output cap returned to the model
+    max_file_bytes=None,          # POSIX per-file size limit (None = no added limit)
     persist_cwd=False,             # make cd sticky across calls
     allow_interactive=False,       # allow TTY-style commands
     env=None,                      # explicit env, replacing inheritance (None = inherit)
