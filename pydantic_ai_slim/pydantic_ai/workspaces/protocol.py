@@ -25,9 +25,12 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
 from pydantic_ai.messages import WorkspaceRef
+
+if TYPE_CHECKING:
+    from .workspace import Workspace
 
 # These protocols are frozen once released: conformance is structural, so adding a member
 # would silently break every existing backend. New operations go on concrete types or on new
@@ -36,6 +39,7 @@ from pydantic_ai.messages import WorkspaceRef
 __all__ = (
     'CommandResult',
     'FileEntry',
+    'MountableFilesystem',
     'WorkspaceBackend',
     'WorkspaceCommand',
     'WorkspaceError',
@@ -255,6 +259,26 @@ class SupportsFilesystem(Protocol):
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
+        ...
+
+
+@runtime_checkable
+class MountableFilesystem(SupportsFilesystem, Protocol):
+    """A filesystem that can also be made visible to commands in a workspace.
+
+    Unlike a plain [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], a mountable
+    filesystem serves the same files through its filesystem methods and through commands after
+    [`ensure_mounted`][pydantic_ai.workspaces.MountableFilesystem.ensure_mounted] succeeds.
+    """
+
+    async def ensure_mounted(self, target: Workspace, path: str) -> None:
+        """Make this filesystem visible to commands at `path` in `target`, or raise.
+
+        `target` is the existing command environment without the workspace's configured mounts,
+        so commands run here do not recursively trigger mounting. Implementations must be safe to
+        call after reconnecting to an environment where the filesystem may already be mounted,
+        and must not leave an ordinary directory at `path` after raising.
+        """
         ...
 
 

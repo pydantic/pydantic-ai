@@ -46,7 +46,7 @@ as separate packages.
 
 [`CompositeFilesystem`][pydantic_ai.workspaces.CompositeFilesystem] is a thin
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem] implementation that selects a
-filesystem by the longest matching mount prefix and delegates the operation. Each child sees its
+filesystem by the longest matching path prefix and delegates the operation. Each child sees its
 own namespace rooted at `/`, and may itself be another `CompositeFilesystem`.
 
 A composite is only a filesystem, not a workspace backend: the backend that owns the stores also
@@ -82,15 +82,48 @@ def build_workspace(
 ```
 
 Here `/README.md` becomes `project_filesystem.read_bytes('/README.md')`, while
-`/skills/guide.md` becomes `skills_filesystem.read_bytes('/guide.md')`. A more-specific mount
+`/skills/guide.md` becomes `skills_filesystem.read_bytes('/guide.md')`. A more-specific route
 shadows an entry with the same name in its parent filesystem. Directory listings merge ordinary
-entries with mounted children, and mount points and their shared parents appear as directories.
-Operations outside the mount table fail when there is no `/` mount; mount points and their ancestors
-cannot be removed.
+entries with routed children, and route roots and their shared parents appear as directories.
+Operations outside the routing table fail when there is no `/` route; route roots and their
+ancestors cannot be removed.
 
-A command-capable provider may use the same router for its native filesystem methods, but the
-provider remains responsible for ensuring commands see those files at the same paths. Physical
-mounting and provider integration are outside `CompositeFilesystem`.
+These routes are logical: they do not make files visible to commands in another backend. Use a
+mountable filesystem when file tools and commands need the same files.
+
+## Mounting filesystems for commands
+
+[`MountableFilesystem`][pydantic_ai.workspaces.MountableFilesystem] is a stronger
+[`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem] that can make the files it serves
+visible to commands in an existing workspace. Pass mountable filesystems by path when constructing
+the workspace:
+
+```python
+from pydantic_ai.workspaces import MountableFilesystem, Workspace, WorkspaceBackend
+
+
+def workspace_with_data(
+    backend: WorkspaceBackend,
+    data: MountableFilesystem,
+) -> Workspace:
+    return Workspace(backend, mounts={'/data': data})
+```
+
+Construction performs no I/O. File operations under `/data` route directly to `data`, with `/data`
+removed from the path passed to it. Before the first command, `Workspace` calls
+`data.ensure_mounted(...)`; the backend still creates or attaches lazily through the operations the
+filesystem performs there. A successful mount is reused by that `Workspace` instance. A rebuilt
+workspace calls `ensure_mounted` again, so implementations must detect an existing healthy mount.
+
+Mounting is strict: if any filesystem cannot be mounted, the command does not run and the next
+command retries. This prevents a write intended for a mount path from silently landing in an
+ordinary directory in the command environment. File operations remain available through the
+filesystem itself.
+
+Only pass `MountableFilesystem` implementations to `mounts`. Use `CompositeFilesystem` for logical
+routing of ordinary filesystems. Runtime mounting also requires support from the command
+environment, such as FUSE, the appropriate driver, permissions, and network access. Provider-native
+mounts that must be declared when an environment is created remain provider backend configuration.
 
 ## Reading and writing files
 

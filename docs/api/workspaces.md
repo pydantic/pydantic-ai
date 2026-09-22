@@ -14,6 +14,7 @@
             - WorkspaceUnavailableError
             - SupportsCommands
             - SupportsFilesystem
+            - MountableFilesystem
             - WrapperWorkspace
             - LocalWorkspace
             - ReadOnlyWorkspace
