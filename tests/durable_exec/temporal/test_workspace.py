@@ -469,7 +469,7 @@ uncaught_agent = Agent(
 class UncaughtErrorWorkflow:
     @workflow.run
     async def run(self) -> str:
-        return (await uncaught_agent.run('Nothing to do.')).output  # pragma: no cover
+        return (await uncaught_agent.run('Nothing to do.')).output
 
 
 async def test_uncaught_workspace_error_in_workflow_code_fails_the_workflow(client: Client) -> None:
@@ -701,7 +701,7 @@ amnesiac_agent = Agent(
 class AmnesiacWorkflow:
     @workflow.run
     async def run(self) -> str:
-        return (await amnesiac_agent.run('Nothing to do.')).output  # pragma: no cover
+        return (await amnesiac_agent.run('Nothing to do.')).output
 
 
 async def test_a_creating_capability_must_recognize_the_ref_it_created(client: Client) -> None:

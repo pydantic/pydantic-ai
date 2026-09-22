@@ -2766,7 +2766,7 @@ temporal_agent_workspace_agent = Agent(
 
 @temporal_agent_workspace_agent.tool
 async def probe_workspace(ctx: RunContext[None]) -> str:
-    return (await ctx.workspace.run(['pwd'])).stdout  # pragma: no cover
+    return (await ctx.workspace.run(['pwd'])).stdout
 
 
 temporal_agent_workspace_wrapper = TemporalAgent(  # pyright: ignore[reportDeprecated]
