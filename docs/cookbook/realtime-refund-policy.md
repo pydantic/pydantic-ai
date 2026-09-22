@@ -14,7 +14,6 @@ export OPENAI_API_KEY=your-api-key
 
 ```python {dunder_name="not_main"}
 import asyncio
-import math
 from dataclasses import dataclass, field
 
 from pydantic_ai import (
@@ -32,7 +31,7 @@ from pydantic_ai.messages import ToolReturnPart
 class Account:
     customer_id: str
     order_ids: set[str]
-    remaining_refundable: dict[str, float]
+    remaining_refundable_cents: dict[str, int]
     completed_tool_calls: set[str] = field(default_factory=set)
 
 
@@ -42,25 +41,20 @@ executed_refunds: list[str] = []
 
 @agent.tool(requires_approval=True, sequential=True)
 async def refund_authenticated_order(
-    ctx: RunContext[Account], order_id: str, amount: float
+    ctx: RunContext[Account], order_id: str, amount_cents: int
 ) -> str:
     assert ctx.tool_call_id is not None
     if ctx.tool_call_id in ctx.deps.completed_tool_calls:
         return 'This refund request was already completed.'
 
-    remaining = ctx.deps.remaining_refundable.get(order_id, 0)
-    if (
-        order_id not in ctx.deps.order_ids
-        or not math.isfinite(amount)
-        or amount <= 0
-        or amount > remaining
-    ):
+    remaining = ctx.deps.remaining_refundable_cents.get(order_id, 0)
+    if order_id not in ctx.deps.order_ids or amount_cents <= 0 or amount_cents > remaining:
         return 'Refund refused: the amount is not currently refundable.'
 
-    ctx.deps.remaining_refundable[order_id] = remaining - amount
+    ctx.deps.remaining_refundable_cents[order_id] = remaining - amount_cents
     ctx.deps.completed_tool_calls.add(ctx.tool_call_id)
     executed_refunds.append(f'{ctx.deps.customer_id}:{order_id}')
-    return f'Refunded ${amount:.2f}.'
+    return f'Refunded ${amount_cents / 100:.2f}.'
 
 
 async def refund_policy(
@@ -69,16 +63,17 @@ async def refund_policy(
     decisions = DeferredToolResults()
     for call in requests.approvals:
         args = call.args_as_dict()
-        amount = args.get('amount')
-        if args['order_id'] not in ctx.deps.order_ids:
+        order_id = args.get('order_id')
+        amount_cents = args.get('amount_cents')
+        if order_id not in ctx.deps.order_ids:
             decision = ToolDenied('That order is not in the authenticated account.')
-        elif not isinstance(amount, int | float) or isinstance(amount, bool) or not math.isfinite(amount):
-            decision = ToolDenied('The refund amount must be a finite number.')
-        elif amount <= 0:
+        elif not isinstance(amount_cents, int) or isinstance(amount_cents, bool):
+            decision = ToolDenied('The refund amount must be integer cents.')
+        elif amount_cents <= 0:
             decision = ToolDenied('The refund amount must be positive.')
-        elif amount > 100:
+        elif amount_cents > 10_000:
             decision = ToolDenied('Refunds over $100 need a human agent.')
-        elif amount > ctx.deps.remaining_refundable.get(args['order_id'], 0):
+        elif amount_cents > ctx.deps.remaining_refundable_cents.get(order_id, 0):
             decision = ToolDenied('That amount exceeds the remaining refundable balance.')
         else:
             decision = True
@@ -92,7 +87,7 @@ async def main() -> None:
         deps=Account(
             customer_id='cus_123',
             order_ids={'B200'},
-            remaining_refundable={'B200': 75},
+            remaining_refundable_cents={'B200': 7500},
         ),
         capabilities=[HandleDeferredToolCalls(handler=refund_policy)],
     )
@@ -107,12 +102,16 @@ async def main() -> None:
                 break
 
     refund_result = next(
-        part
-        for message in session.all_messages()
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'refund_authenticated_order'
+        (
+            part
+            for message in session.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'refund_authenticated_order'
+        ),
+        None,
     )
-    print(refund_result.outcome, executed_refunds)
+    outcome = refund_result.outcome if refund_result else 'no refund tool call'
+    print(outcome, executed_refunds)
     #> denied []
 
 

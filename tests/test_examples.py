@@ -197,7 +197,7 @@ class MockRealtimeConnection(RealtimeConnection):
             yield ToolCall(
                 tool_call_id='refund_1',
                 tool_name='refund_authenticated_order',
-                args='{"order_id": "A100", "amount": 50}',
+                args='{"order_id": "A100", "amount_cents": 5000}',
             )
             yield ResponseDone()
             await self._tool_result_received.wait()
