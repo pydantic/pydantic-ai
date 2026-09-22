@@ -622,9 +622,10 @@ class DurableWorkspace(WrapperWorkspace):
             if ctx is not None:
                 self._ctx = ctx
             ctx = get_current_run_context() or self._ctx
-            operation = self._durability._workspace_operation('ensure')  # pyright: ignore[reportPrivateUsage]
+            arguments = EnsureArguments()
+            operation = self._durability._workspace_operation(arguments.method)  # pyright: ignore[reportPrivateUsage]
             result = await operation(
-                WorkspaceOperationParams(run_context=ctx, ref=self.wrapped.ref, arguments=EnsureArguments())
+                WorkspaceOperationParams(run_context=ctx, ref=self.wrapped.ref, arguments=arguments)
             )
             if result.error is not None:
                 raise_operation_error(result.error)

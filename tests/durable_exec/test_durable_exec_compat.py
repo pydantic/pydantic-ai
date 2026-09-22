@@ -339,7 +339,7 @@ def test_default_journal_operation_name_matrix() -> None:
     assert workspace_names == JOURNAL_WORKSPACE_NAMES
 
 
-def test_journal_workspace_units_bind_only_with_a_supplier() -> None:
+async def test_journal_workspace_units_bind_only_with_a_supplier() -> None:
     def bound_workspace_names(*capabilities: AbstractCapability[Any]) -> set[str]:
         durability = JournalDurability()
         agent = Agent(TestModel(), name='compat', capabilities=[*capabilities, durability])
@@ -353,6 +353,15 @@ def test_journal_workspace_units_bind_only_with_a_supplier() -> None:
 
     assert bound_workspace_names(CompatCapability()) == set()
     assert bound_workspace_names(CompatCapability(), CompatWorkspaceSupplier()) == JOURNAL_WORKSPACE_NAMES
+
+    durability = JournalDurability()
+    agent = Agent(TestModel(), name='compat', capabilities=[CompatWorkspaceSupplier(), durability])
+    result = await agent.run('go')
+    await result.workspace.write_text('a.txt', 'a')
+    assert [name for name in durability.recorded_names if 'workspace' in name] == [
+        'compat__workspace__ensure',
+        'compat__workspace__write_text',
+    ]
 
 
 def test_prefect_operation_name_matrix() -> None:

@@ -40,15 +40,18 @@ from pydantic_ai.workspaces import (
 
 try:
     from temporalio import activity, workflow
+    from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
+    from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._workspace import DurableWorkspace, RunArguments
+    from pydantic_ai.durable_exec._workspace import DurableWorkspace, EnsureArguments, RunArguments
     from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
     from pydantic_ai.durable_exec.temporal._operation_backend import TemporalBoundOperation
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._transports import _WorkspaceOperationWire
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -383,8 +386,17 @@ class BinaryWorkflow:
         workspace = result.workspace
         await workspace.write_bytes('blob.bin', _BINARY)
         await workspace.write_text('lines.txt', 'one\ntwo\nthree\n')
+        await workspace.make_dir('sub')
+        await workspace.write_text('sub/gone.txt', 'x')
+        await workspace.remove('sub/gone.txt')
         window = await workspace.read_file('lines.txt', offset=2, limit=1)
         entry = await workspace.stat('blob.bin')
+        try:
+            await workspace.stat('sub/gone.txt')
+        except FileNotFoundError as error:
+            stat_missing = f'{type(error).__name__}:{error}'
+        else:  # pragma: no cover
+            stat_missing = 'none'
         try:
             await workspace.read_text('blob.bin')
         except UnicodeDecodeError as error:
@@ -410,6 +422,7 @@ class BinaryWorkflow:
             'exists': [await workspace.exists('blob.bin'), await workspace.exists('nope')],
             'decode_error': decode_error,
             'missing': missing,
+            'stat_missing': stat_missing,
             'argument_error': argument_error,
         }
 
@@ -430,6 +443,7 @@ async def test_binary_content_and_expected_errors_cross_the_activity_boundary(cl
             'exists': [True, False],
             'decode_error': 'UnicodeDecodeError:invalid start byte:True',
             'missing': 'FileNotFoundError:/remote/missing.txt',
+            'stat_missing': 'FileNotFoundError:/remote/sub/gone.txt',
             'argument_error': 'TypeError:a shell string needs `shell=True`, an argv sequence needs `shell=False`',
         }
     )
@@ -562,7 +576,7 @@ async def read_seed(ctx: RunContext[Any]) -> str:
     return await ctx.workspace.read_text('seed.txt')
 
 
-ExplicitKind = Literal['ref', 'live_with_ref', 'live_fresh', 'foreign_ref', 'previous_result']
+ExplicitKind = Literal['ref', 'live_with_ref', 'live_fresh', 'foreign_ref', 'previous_result', 'dead_ref']
 
 
 @workflow.defn
@@ -578,6 +592,8 @@ class ExplicitWorkspaceWorkflow:
             workspace = RemoteBackend(None)
         elif kind == 'foreign_ref':
             workspace = WorkspaceRef(provider='other', id='x')
+        elif kind == 'dead_ref':
+            workspace = WorkspaceRef(provider='remote', id='expired')
         else:
             workspace = (await explicit_agent.run('Read the seed.', workspace=seeded)).workspace
         result = await explicit_agent.run('Read the seed.', workspace=workspace)
@@ -644,6 +660,68 @@ async def test_explicit_workspace_nobody_can_rebuild_is_rejected(
     cause = _workflow_failure_cause(exc_info.value)
     assert (cause.type, cause.message) == ('UserError', message)
     assert _ENVIRONMENTS == {}
+
+
+async def test_a_dead_environment_fails_the_workflow_with_the_workspace_error(client: Client) -> None:
+    """`ensure` cannot attach to an environment that no longer exists; the error crosses and fails the workflow."""
+    _reset_provider()
+
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ExplicitWorkspaceWorkflow], plugins=[AgentPlugin(explicit_agent)]
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExplicitWorkspaceWorkflow.run,
+                'dead_ref',
+                id=f'{ExplicitWorkspaceWorkflow.__name__}-dead-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert (cause.type, cause.message) == ('WorkspaceUnavailableError', "environment 'expired' does not exist")
+
+
+# --- A capability that creates environments must recognize their refs ---------------------------
+
+
+class AmnesiacWorkspaces(AbstractCapability[Any]):
+    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        return RemoteBackend(None) if ref is None else None
+
+
+amnesiac_agent = Agent(
+    TestModel(),
+    name='amnesiac',
+    capabilities=[AmnesiacWorkspaces(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class AmnesiacWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await amnesiac_agent.run('Nothing to do.')).output  # pragma: no cover
+
+
+async def test_a_creating_capability_must_recognize_the_ref_it_created(client: Client) -> None:
+    """The `ensure` activity created an environment the workflow cannot rebuild a workspace for."""
+    _reset_provider()
+
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[AmnesiacWorkflow], plugins=[AgentPlugin(amnesiac_agent)]
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                AmnesiacWorkflow.run, id=f'{AmnesiacWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == 'UserError'
+    assert cause.message == snapshot(
+        "No capability can supply workspace 'env-1' from provider 'remote', which the run just created. A "
+        '`get_workspace` hook that creates an environment must also recognize its ref.'
+    )
 
 
 # --- Activity configuration --------------------------------------------------------------------
@@ -727,6 +805,26 @@ def test_run_timeout_widens_the_activity_deadline() -> None:
     assert widened.get('start_to_close_timeout') == timedelta(seconds=630)
     assert isinstance(run, TemporalBoundOperation)
     assert widened.get('retry_policy') is run.config.get('retry_policy')
+
+
+async def test_activity_refuses_a_ref_no_worker_capability_recognizes() -> None:
+    """An `ensure` activity for a ref the worker's capabilities cannot rebuild fails with an explanation."""
+    agent = Agent(TestModel(), name='ctx', capabilities=[RemoteWorkspaces(), TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ensure = next(
+        item
+        for item in durability.temporal_activities
+        if ActivityDefinition.must_from_callable(item).name == 'agent__ctx__workspace__ensure'  # pyright: ignore[reportUnknownMemberType]
+    )
+    wire = _WorkspaceOperationWire[EnsureArguments](
+        arguments=EnsureArguments(),
+        ref=WorkspaceRef(provider='other', id='x'),
+        serialized_run_context={'run_id': 'r', 'workspace_ref': {'provider': 'other', 'id': 'x'}},
+    )
+
+    with pytest.raises(UserError, match="No capability can supply the workspace 'x' from provider 'other'"):
+        await ActivityEnvironment().run(ensure, wire, None)
 
 
 def test_activity_run_context_rebuilds_the_workspace_from_the_serialized_ref() -> None:

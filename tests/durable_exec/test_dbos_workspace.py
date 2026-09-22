@@ -43,7 +43,7 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
         'name': 'pydantic_dbos_workspace_tests',
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
         'run_admin_server': False,
-        'enable_otlp': True,
+        'enable_otlp': False,
     }
     dbos = DBOS(config=dbos_config)
     DBOS.launch()
@@ -51,14 +51,12 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
         yield dbos
     finally:
         DBOS.destroy()
-        # See the `dbos` fixture in `test_dbos.py`: DBOS leaves OTel handlers and filters on the
-        # loggers, and their emit path is fatal inside the Temporal workflow sandbox.
+        # DBOS leaves its log filter on every logger, and the filter's emit path imports
+        # `dbos._context`, which is fatal inside the Temporal workflow sandbox when an xdist
+        # worker later runs the Temporal suite. See the `dbos` fixture in `test_dbos.py`.
         from dbos import _logger as dbos_logger_module
-        from opentelemetry.sdk._logs import LoggingHandler
 
         for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
-            for handler in [h for h in logger.handlers if isinstance(h, LoggingHandler)]:
-                logger.removeHandler(handler)
             for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
                 logger.removeFilter(log_filter)
 

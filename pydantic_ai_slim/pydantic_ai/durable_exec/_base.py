@@ -435,11 +435,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return workspace.wrapped
         if attached_workspace(workspace):
             return workspace
+        # The run's own context carries the per-run tree; a deserialized one carries the worker agent's.
         root_capability = ctx.root_capability
-        if root_capability is None:
-            # `for_agent` always binds before a run.
-            assert self._agent is not None
-            root_capability = self._agent.root_capability
+        assert root_capability is not None
         resolved = resolve_run_workspace(root_capability, ctx, params.ref)
         if resolved is None:
             ref = params.ref

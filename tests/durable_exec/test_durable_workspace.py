@@ -20,7 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext, UserError
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, WrapperCapability
 from pydantic_ai.capabilities.abstract import CapabilityOrdering, WrapRunHandler
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
@@ -58,7 +58,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 
-from ..workspace_fakes import FakeWorkspace, WorkspaceCapability
+from ..workspace_fakes import FakeWorkspace, InMemoryProvider, WorkspaceCapability
 
 pytestmark = pytest.mark.anyio
 
@@ -209,6 +209,7 @@ async def test_parallel_first_uses_share_one_ensure() -> None:
             async with anyio.create_task_group() as tg:
                 tg.start_soon(ctx.workspace.write_text, 'a.txt', 'a')
                 tg.start_soon(ctx.workspace.write_text, 'b.txt', 'b')
+                tg.start_soon(ctx.workspace.working_dir)
             return await handler()
 
     agent = Agent(TestModel(), name='ws', capabilities=[EarlyWrapRun(), supplier, durability])
@@ -275,6 +276,18 @@ async def test_ensure_rejects_a_backend_without_a_ref() -> None:
         await agent.run('go')
 
 
+async def test_an_unexpected_backend_error_fails_the_unit() -> None:
+    class Flaky(FakeWorkspace):
+        async def read_bytes(self, path: str) -> bytes:
+            raise ConnectionError('provider hiccup')
+
+    agent = Agent(TestModel(), name='ws', capabilities=[WorkspaceCapability(Flaky('flaky')), FakeDurability()])
+    result = await agent.run('go')
+
+    with pytest.raises(ConnectionError, match='provider hiccup'):
+        await result.workspace.read_text('x.txt')
+
+
 async def test_ensure_failure_surfaces_as_the_workspace_error() -> None:
     class Dead(FakeWorkspace):
         async def working_dir(self) -> str:
@@ -307,18 +320,37 @@ async def test_durable_agent_outside_the_container_keeps_the_selected_workspace(
 
 
 async def test_result_workspace_calls_directly_once_the_container_has_ended() -> None:
-    supplier = WorkspaceCapability()
+    """Every method of a `DurableWorkspace` reaches the wrapped workspace once no container is active."""
+    supplier = WorkspaceCapability(FakeWorkspace('direct', files={'/workspace/seed.txt': b'seed\n'}))
     durability = FakeDurability()
     agent = Agent(TestModel(), name='ws', capabilities=[supplier, durability])
     result = await agent.run('go')
+    workspace = result.workspace
+    assert isinstance(workspace, DurableWorkspace)
 
     bound = FakeDurability.from_agent(agent)
     assert bound is not None
     bound.in_container = False
-    await result.workspace.write_text('after.txt', 'done')
-    assert await result.workspace.working_dir() == '/workspace'
-    assert supplier.backend.files['/workspace/after.txt'] == b'done'
+    assert workspace.backend is workspace.wrapped
+    await workspace.write_text('after.txt', 'done')
+    await workspace.write_bytes('after.bin', b'\x00')
+    await workspace.make_dir('sub')
+    assert await workspace.read_text('after.txt') == 'done'
+    assert await workspace.read_bytes('after.bin') == b'\x00'
+    assert (await workspace.read_file('seed.txt')).lines == ('seed',)
+    assert (await workspace.stat('after.txt')).size == 4
+    assert {entry.name for entry in await workspace.list_dir('.')} >= {'after.txt', 'after.bin', 'seed.txt'}
+    assert (await workspace.run(['true'])).stdout == 'connected'
+    assert await workspace.working_dir() == '/workspace'
+    await workspace.remove('after.bin')
+    assert await workspace.exists('after.bin') is False
     assert _workspace_units(durability) == ['ensure']
+
+    # A wrapper that never ran `ensure` asks the wrapped workspace for its working directory too.
+    unensured = DurableWorkspace(
+        Workspace(FakeWorkspace('never')), durability=TransparentDurability(), ctx=_run_context()
+    )
+    assert await unensured.working_dir() == '/workspace'
 
 
 async def test_no_units_are_bound_without_a_construction_time_supplier() -> None:
@@ -332,6 +364,20 @@ async def test_no_units_are_bound_without_a_construction_time_supplier() -> None
     supplier = WorkspaceCapability()
     with pytest.raises(UserError, match='no capability supplied workspaces when the agent was constructed'):
         await Agent(TestModel(), name='ws', capabilities=[durability]).run('go', capabilities=[supplier])
+
+
+async def test_a_wrapper_capability_supplying_workspaces_binds_the_units() -> None:
+    class SuppliesThroughWrapper(WrapperCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            return FakeWorkspace('wrapped')
+
+    durability = FakeDurability()
+    agent = Agent(TestModel(), name='ws', capabilities=[SuppliesThroughWrapper(Capability(id='inner')), durability])
+
+    result = await agent.run('go')
+
+    assert result.workspace.ref == WorkspaceRef(provider='fake', id='fake-wrapped')
+    assert _workspace_units(durability) == ['ensure']
 
 
 async def test_explicit_workspace_argument_inside_the_container() -> None:
@@ -417,6 +463,59 @@ async def test_sub_agent_run_from_a_unit_uses_the_forwarded_workspace_directly()
     # for the parent run, and no unit for anything the tools did.
     assert type(child_workspaces[0]) is DurableWorkspace
     assert [name for name in durability.units if '__workspace__' in name] == ['parent__workspace__ensure']
+
+
+async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> None:
+    provider = InMemoryProvider()
+    durability = FakeDurability()
+    agent = Agent(TestModel(), name='ws', capabilities=[provider.capability(), durability])
+    result = await agent.run('go')
+    workspace = result.workspace
+
+    await workspace.make_dir('sub')
+    await workspace.write_text('sub/a.txt', 'alpha')
+    await workspace.write_bytes('b.bin', b'\x00\x01')
+    assert (await workspace.run(['ls'])).stdout == 'ran:ls'
+    assert (await workspace.stat('sub/a.txt')).size == 5
+    assert [entry.name for entry in await workspace.list_dir('.')] == ['b.bin', 'a.txt']
+    assert (await workspace.read_file('sub/a.txt')).lines == ('alpha',)
+    assert await workspace.exists('b.bin') is True
+    await workspace.remove('b.bin')
+    assert await workspace.exists('b.bin') is False
+    with pytest.raises(FileNotFoundError):
+        await workspace.remove('b.bin')
+    with pytest.raises(FileNotFoundError):
+        await workspace.stat('b.bin')
+    with pytest.raises(FileNotFoundError):
+        await workspace.read_bytes('b.bin')
+    with pytest.raises(TypeError, match='shell'):
+        await workspace.run('ls', shell=False)
+    assert _workspace_units(durability) == snapshot(
+        [
+            'ensure',
+            'make_dir',
+            'write_text',
+            'write_bytes',
+            'run',
+            'stat',
+            'list_dir',
+            'read_file',
+            'exists',
+            'remove',
+            'exists',
+            'remove',
+            'stat',
+            'read_bytes',
+            'run',
+        ]
+    )
+    assert provider.log == ['create:env-1']
+
+    # A ref from another provider is declined, and a ref to a vanished environment cannot attach.
+    with pytest.raises(UserError, match="No capability can supply workspace 'x'"):
+        await agent.run('go', workspace=WorkspaceRef(provider='other', id='x'))
+    with pytest.raises(WorkspaceUnavailableError, match="environment 'expired' does not exist"):
+        await agent.run('go', workspace=WorkspaceRef(provider='fake', id='expired'))
 
 
 def test_workspace_role_falls_back_to_the_capability_config() -> None:
