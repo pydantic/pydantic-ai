@@ -271,6 +271,12 @@ Each metric point carries the `gen_ai.provider.name` (and legacy `gen_ai.system`
 !!! note "Stability and histogram buckets"
     `gen_ai.client.operation.time_to_first_chunk` is currently at **Development** stability in the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md#metric-gen_aiclientoperationtime_to_first_chunk), so its name or shape may change before stabilization. Both `gen_ai.client.token.usage` and `gen_ai.client.operation.time_to_first_chunk` advise the explicit bucket boundaries specified by the conventions. These are only advisories: you can override them by configuring a [View](https://opentelemetry.io/docs/specs/otel/metrics/sdk/#view) on your `MeterProvider`, and SDKs configured for exponential histogram aggregation (such as Logfire) ignore them entirely.
 
+### Run composition attributes
+
+Agent run spans include `pydantic_ai.capability.ids` and `pydantic_ai.toolset.ids`, which list the capabilities and leaf toolsets that make up the run. Each entry contains the component's fully qualified Python type and, when present, its explicit `id`, so traces can distinguish framework components from user-defined ones and separate differently configured instances of the same type.
+
+These attributes can include the names of user-defined capability and toolset classes. They describe the application code that produced the trace and are recorded regardless of `include_content`; configure your OpenTelemetry exporter if class names should not leave your environment.
+
 ### Aggregated usage attribute names
 
 By default, model request spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes, while agent run spans use `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`.

@@ -94,7 +94,18 @@ class LogfireSummary:
             # logfire attaches the aggregated `gen_ai.client.token.usage` metric to spans, older does not.
             # Strip it so these assertions hold across the supported logfire range; the token usage itself
             # is still covered by the stable `gen_ai.usage.*` attributes and `get_collected_metrics()`.
-            self.attributes[id_counter] = {k: v for k, v in span['attributes'].items() if k != 'logfire.metrics'}
+            # Run composition has a focused raw-span assertion below; keep older snapshots scoped to the
+            # behavior they were written to cover instead of repeating the composition on every run span.
+            self.attributes[id_counter] = {
+                k: v
+                for k, v in span['attributes'].items()
+                if k
+                not in {
+                    'logfire.metrics',
+                    'pydantic_ai.capability.ids',
+                    'pydantic_ai.toolset.ids',
+                }
+            }
             id_counter += 1
             if parent := span['parent']:
                 parent_span = span_lookup[(parent['trace_id'], parent['span_id'])]
@@ -1159,6 +1170,8 @@ async def test_aggregated_usage_attribute_names_default(capfire: CaptureLogfire)
 
     # Verify that agent run span uses aggregated_usage attribute names
     agent_run_span = next(s for s in spans if s['name'] == 'invoke_agent agent')
+    agent_run_span['attributes'].pop('pydantic_ai.capability.ids')
+    agent_run_span['attributes'].pop('pydantic_ai.toolset.ids')
     assert agent_run_span['attributes'] == snapshot(
         {
             'model_name': 'function:model_function:',
@@ -1325,7 +1338,11 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
     assert traceparent == snapshot('00-00000000000000000000000000000001-0000000000000001-01')
     record_feedback(traceparent, 'factuality', 0.1, comment='the agent lied', extra={'foo': 'bar'})
 
-    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
+    run_span = next(span for span in spans if span['name'].startswith('invoke_agent'))
+    run_span['attributes'].pop('pydantic_ai.capability.ids')
+    run_span['attributes'].pop('pydantic_ai.toolset.ids')
+    assert spans == snapshot(
         [
             {
                 'name': 'chat test',
@@ -3881,6 +3898,46 @@ def test_instrumentation_capability_explicit(
             }
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_agent_run_span_records_capabilities_and_toolsets(
+    capfire: CaptureLogfire,
+) -> None:
+    @dataclass
+    class AgentCapability(AbstractCapability[Any]):
+        id: str | None = 'agent-capability'
+
+    @dataclass
+    class RunCapability(AbstractCapability[Any]):
+        id: str | None = 'run-capability'
+
+    toolset = FunctionToolset(id='custom-tools')
+    agent = Agent(
+        model=TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), AgentCapability()],
+        toolsets=[toolset],
+    )
+
+    agent.run_sync('Hello', capabilities=[RunCapability()])
+
+    agent_run_attrs = next(
+        span['attributes']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+        and span['attributes'].get('logfire.span_type') != 'pending_span'
+    )
+    assert set(agent_run_attrs['pydantic_ai.capability.ids']) == {
+        'pydantic_ai.capabilities.instrumentation.Instrumentation:instrumentation',
+        'pydantic_ai.capabilities._tool_search.ToolSearch:tool_search',
+        'pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability',
+        'tests.test_logfire.test_agent_run_span_records_capabilities_and_toolsets.<locals>.AgentCapability:agent-capability',
+        'tests.test_logfire.test_agent_run_span_records_capabilities_and_toolsets.<locals>.RunCapability:run-capability',
+    }
+    assert set(agent_run_attrs['pydantic_ai.toolset.ids']) == {
+        'pydantic_ai.agent._AgentFunctionToolset:<agent>',
+        'pydantic_ai.toolsets.function.FunctionToolset:custom-tools',
+    }
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

@@ -39,6 +39,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 
 from .abstract import (
@@ -66,6 +67,13 @@ def _default_settings() -> InstrumentationSettings:
     from pydantic_ai.models.instrumented import InstrumentationSettings
 
     return InstrumentationSettings()
+
+
+def _component_id(component: AbstractCapability[Any] | AbstractToolset[Any]) -> str:
+    """Return a stable, queryable identity for a capability or toolset."""
+    component_type = type(component)
+    type_name = f'{component_type.__module__}.{component_type.__qualname__}'
+    return f'{type_name}:{component.id}' if component.id is not None else type_name
 
 
 @dataclass
@@ -215,6 +223,12 @@ class Instrumentation(AbstractCapability[Any]):
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
+
+        span_attributes['pydantic_ai.capability.ids'] = [_component_id(cap) for cap in ctx.capabilities.values()]
+        if ctx.tool_manager is not None:  # pragma: no branch
+            toolsets: list[AbstractToolset[Any]] = []
+            ctx.tool_manager.toolset.apply(toolsets.append)
+            span_attributes['pydantic_ai.toolset.ids'] = [_component_id(toolset) for toolset in toolsets]
 
         if ctx.agent is not None:  # pragma: no branch
             rendered = ctx.agent.render_description(ctx.deps)
