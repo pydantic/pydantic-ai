@@ -41,4 +41,14 @@ These recipes form a progressive introduction to the core agent loop:
 - [Route a request to a specialist agent](specialist-routing.md)
 - [Authorize a refund during a realtime call](realtime-refund-policy.md)
 
-Each recipe recommends one bounded pattern. It deliberately links to the relevant guide instead of duplicating every configuration option or provider variation.
+## Go further with Pydantic AI Harness
+
+For longer-running agents that need several Harness capabilities to work together, use these tested application examples:
+
+- [Keep a tool-heavy run within its context window](https://pydantic.dev/docs/ai/harness/examples/#keep-a-tool-heavy-run-within-its-context-window)
+- [Keep host secrets out of a coding agent](https://pydantic.dev/docs/ai/harness/examples/#keep-host-secrets-out-of-a-coding-agent)
+- [Recover a partially applied migration](https://pydantic.dev/docs/ai/harness/examples/#recover-a-partially-applied-migration)
+
+These examples live in the Pydantic AI Harness repository so their capability imports and composition tests run against the package that owns them.
+
+Each core recipe recommends one bounded pattern. It deliberately links to the relevant guide or Harness example instead of duplicating every configuration option or provider variation.
