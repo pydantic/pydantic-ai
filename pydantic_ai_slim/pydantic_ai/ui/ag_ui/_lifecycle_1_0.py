@@ -51,6 +51,7 @@ def token_usage_from_messages(messages: Sequence[ModelMessage]) -> list[TokenUsa
         usage = message.usage
         if not (usage.input_tokens or usage.output_tokens):
             continue
+        # usage-attribution: a fresh per-(provider, model) total for the RUN_FINISHED report, not a run's usage
         grouped.setdefault((message.provider_name, message.model_name), RequestUsage()).incr(usage)
 
     return [
