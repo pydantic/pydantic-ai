@@ -57,9 +57,9 @@ class MessagesBuilder:
         self,
         checkpoint: BuilderCheckpoint,
         *,
-        of_type: type[ModelRequest] | type[ModelResponse] | None = None,
+        of_type: type[ModelRequest] | type[ModelResponse],
     ) -> ModelMessage | None:
-        """Find the most recently created or extended `ModelMessage` of `of_type` (any type if `None`) since `checkpoint`.
+        """Find the most recently created or extended `ModelMessage` of `of_type` since `checkpoint`.
 
         A single round of `add()` calls can either grow the previous tail's parts list (if the new
         part matches the tail's type) or append fresh messages (which can be more than one when
@@ -71,4 +71,4 @@ class MessagesBuilder:
         if prev_last is not None and len(prev_last.parts) > checkpoint.last_message_part_count:
             candidates.append(prev_last)
         candidates.extend(self.messages[checkpoint.message_count :])
-        return next((message for message in candidates if of_type is None or isinstance(message, of_type)), None)
+        return next((message for message in candidates if isinstance(message, of_type)), None)

@@ -644,8 +644,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             # Keep the AG-UI message id for `dump_messages`. `ModelRequest`/`ModelResponse` have no id
             # field, so it goes in the metadata of the message the parts above landed in. That may be a new
             # message or the previous one extended, and some AG-UI messages add no parts at all, so ask the
-            # builder rather than assume the tail. No type filter: an `ActivityMessage` can land in either.
-            if (target := builder.last_modified(checkpoint)) is not None:
+            # builder rather than assume the tail. An AG-UI message lands in a request or a response, never
+            # both (an `ActivityMessage` can be either), so whichever lookup answers is the one.
+            target = builder.last_modified(checkpoint, of_type=ModelRequest) or builder.last_modified(
+                checkpoint, of_type=ModelResponse
+            )
+            if target is not None:
                 set_ui_message_id(target, msg.id)
 
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
