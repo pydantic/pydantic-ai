@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field
@@ -672,6 +672,15 @@ async def test_classifier():
 
     evaluator = Classifier('How does it treat the customer?', output_type=Tone, model=answering({'response': 'curt'}))
     assert await evaluator.evaluate(ctx) == 'curt'
+
+    # A bounded `float` takes the same bare-answer path as a `bool`, and is the fourth shape the docstring
+    # and the docs advertise, so it is the fourth one pinned here.
+    evaluator = Classifier(
+        'How well does it answer the question?',
+        output_type=Annotated[float, Field(ge=0, le=1)],
+        model=answering({'response': 0.7}),
+    )
+    assert await evaluator.evaluate(ctx) == 0.7
 
     evaluator = Classifier(output_type=Reply, model=answering({'polite': True, 'tone': 'curt'}))
     assert await evaluator.evaluate(ctx) == snapshot({'polite': True, 'tone': 'curt'})
