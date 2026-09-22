@@ -169,6 +169,8 @@ async def test_new_workspace_ignores_a_foreign_ref_in_history(tmp_path: Path) ->
 async def test_a_repeated_local_workspace_resolves_to_the_later_one(tmp_path: Path) -> None:
     """The default `id` makes a repeat one configuration stated twice; a distinct `id` keeps both."""
     first, second = tmp_path / 'first', tmp_path / 'second'
+    first.mkdir()
+    second.mkdir()
     merged = Agent(TestModel(), capabilities=[LocalWorkspace(first), LocalWorkspace(second)])
     distinct = Agent(TestModel(), capabilities=[LocalWorkspace(first), LocalWorkspace(second, id='scratch')])
 
