@@ -10,6 +10,8 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 
 from __future__ import annotations as _annotations
 
+import asyncio
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +29,14 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.realtime import RealtimeModelProfile, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeModelProfile, RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -81,6 +84,7 @@ async def test_audio_in_server_vad_turn(
         [
             'PartStartEvent',
             'PartDeltaEvent',
+            'PartEndEvent',
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',
@@ -152,6 +156,32 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     # Reasoning (`thoughtsTokenCount`) is billed but left out of Gemini's response/total counts, so the
     # session captures it in `details` rather than dropping it.
     assert response.usage.details.get('thoughts_tokens') == snapshot(24)
+
+
+async def test_text_context_waits_for_next_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send('The visitor is called Ada.', respond=False)
+        await asyncio.sleep(1)
+        assert not [message for message in session.new_messages() if isinstance(message, ModelResponse)]
+        await session.send('What is the visitor called?')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(
+        ['ModelRequest', 'ModelRequest', 'ModelResponse']
+    )
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, SpeechPart)
+    assert 'ada' in (part.transcript or '').lower()
 
 
 async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
@@ -242,8 +272,9 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert isinstance(tool_response, ModelResponse)
     assert tool_response.parts == [ToolCallPart(tool_name='record_reading', args=IsStr(), tool_call_id=IsStr())]
     # Gemini's tool-call frame carries no usage metadata; the later completed turn owns the only usage
-    # report the provider supplies, so the intermediate response remains honestly empty.
-    assert tool_response.usage == RequestUsage()
+    # report the provider supplies, so the intermediate response remains honestly empty: no tokens, and
+    # therefore a zero price rather than an unknown one.
+    assert tool_response.usage == RequestUsage(cost=Decimal('0'))
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -267,6 +298,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     # must not be collapsed into the output total.
     assert final.usage == (
         RequestUsage(
+            cost=Decimal('0.0016495'),
             input_tokens=1267,
             output_tokens=103,
             input_text_tokens=1267,
@@ -334,6 +366,54 @@ async def test_asap_enqueue_waits_for_response_boundary(
     assert transcripts == ['FIRST RESPONSE COMPLETE', 'QUEUED MARKER RECEIVED']
 
 
+async def test_session_when_idle_enqueue_waits_for_response_boundary(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A `when_idle` system prompt enqueued on the session waits for Gemini's active spoken response to finish."""
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent: Agent[None, str] = Agent(
+        instructions='First say exactly "FIRST RESPONSE COMPLETE". After any later message, follow its instruction exactly.',
+    )
+
+    completions: list[RealtimeTurnCompleteEvent] = []
+    enqueued = False
+    async with agent.realtime(model).session() as session:
+        await session.send('Begin.')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if (
+                    not enqueued
+                    and isinstance(event, PartDeltaEvent)
+                    and isinstance(event.delta, SpeechPartDelta)
+                    and event.delta.audio_chunk
+                ):
+                    session.enqueue(
+                        SystemPromptPart(content='Say exactly "QUEUED MARKER RECEIVED".'), priority='when_idle'
+                    )
+                    enqueued = True
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    completions.append(event)
+                    if len(completions) == 2:
+                        break
+
+    assert len(completions) == 2
+    assert [
+        part.content
+        for message in session.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ] == ['Begin.', '<system>Say exactly "QUEUED MARKER RECEIVED".</system>']
+    assert [
+        part.transcript
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ] == ['FIRST RESPONSE COMPLETE', 'QUEUED MARKER RECEIVED']
+
+
 async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """Seeded prior turns are sent on the wire and reflected in the model's reply."""
     provider, cassette = gemini_ws_cassette
@@ -384,6 +464,7 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
     assert 'alice' in transcript and 'teal' in transcript
 
 
+@pytest.mark.usefixtures('no_genai_prices_context_window')
 def test_profile_allow_seeding() -> None:
     """Unit guard: the model advertises session seeding, which the seeding cassette test relies on.
 
@@ -402,7 +483,7 @@ def test_profile_allow_seeding() -> None:
         supports_webrtc=False,
         supports_seeding_images=True,
         supports_seeding_audio=False,
-        supports_thinking=True,  # every current Gemini Live model takes a thinking config
+        supports_thinking=True,  # native-audio and 3.x Live models take a thinking config
         # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
         supports_async_tool_calls=True,
         # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
@@ -413,4 +494,45 @@ def test_profile_allow_seeding() -> None:
         emits_input_speech_events=False,
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,
+        context_window=None,
     )
+
+
+async def test_handle_barge_in_over_live_speech(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """`handle_barge_in=True` against Gemini Live: only the local flush is left to do.
+
+    Gemini reports no speech onset; it interrupts its own generation when the user speaks over it
+    and says so with `RealtimeResponseInterruptedEvent`. The session's half is purely local —
+    flushing buffered playback audio — so nothing barge-in-related goes out on the wire, and the
+    barged-in utterance still gets a reply.
+    """
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    # A long reply keeps the model mid-generation when the user speaks over it, so the recording
+    # actually captures the provider interrupting itself.
+    agent = Agent(instructions='Reply with several full sentences; be expansive.')
+    pcm = assets_path.joinpath('marcelo_16khz.pcm').read_bytes()
+
+    events: list[Any] = []
+    async with agent.realtime(model).session(handle_barge_in=True) as session:
+        stream = session.stream_audio()
+        with anyio.fail_after(90):
+            for start in range(0, len(pcm), 3200):  # ~100 ms chunks at 16 kHz
+                await session.send_audio(pcm[start : start + 3200])
+            # Wait for the reply's audio to start flowing before speaking over it.
+            assert len(await anext(stream)) > 0
+            for start in range(0, len(pcm), 3200):
+                await session.send_audio(pcm[start : start + 3200])
+            turns_complete = 0
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    turns_complete += 1
+                    if turns_complete == 2:
+                        break
+
+    assert any(isinstance(event, RealtimeResponseInterruptedEvent) for event in events)
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert 'interrupted' in [response.state for response in responses]

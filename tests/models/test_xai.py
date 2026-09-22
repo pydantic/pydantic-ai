@@ -63,6 +63,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     CachePoint,
     FinishReason,
     UploadedFile,
@@ -4951,6 +4952,108 @@ async def test_xai_stream_server_side_tool_call_and_return_dedupes(allow_model_r
     assert builtin_returns[0].tool_name == 'web_search'
     assert builtin_returns[0].content == {'status': 'ok'}
     assert builtin_returns[0].tool_call_id == 'server_tool_1'
+
+
+def _interleaved_text_and_server_tool_stream():
+    """Build a streamed response where text surrounds a server-side tool call and return.
+
+    Each text run arrives as two adjacent chunks so delta coalescing is exercised.
+    Live xAI streams emit server-side tool deltas mid-response (#7153); text after
+    the tool return is an adapter-level sequence, not a documented xAI ordering.
+    """
+    server_tool_call = create_server_tool_call(
+        tool_name='web_search',
+        arguments={'query': 'What is the weather?'},
+        tool_call_id='server_tool_1',
+    )
+    tool_output_json = json.dumps({'status': 'ok'})
+    return [
+        (
+            create_response(content='Checking', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='Checking'),
+        ),
+        (
+            create_response(content='Checking now...', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content=' now...'),
+        ),
+        (
+            create_response(content='', tool_calls=[server_tool_call], finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[server_tool_call]),
+        ),
+        (
+            create_response(content=tool_output_json, tool_calls=[server_tool_call], finish_reason='stop'),
+            create_stream_chunk(
+                role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[server_tool_call], content=tool_output_json
+            ),
+        ),
+        (
+            create_response(content='72 and ', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='72 and '),
+        ),
+        (
+            create_response(content='72 and sunny.', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='sunny.'),
+        ),
+    ]
+
+
+async def test_xai_stream_text_after_server_side_tool_call_returns_output(allow_model_requests: None):
+    """Text streamed after a server-side tool call is kept as a separate part (#7923).
+
+    With a constant text vendor part id, the post-call text merged into the already-ended
+    first text part, `CallToolsNode` then discarded it as pre-call text, and the run
+    failed with `UnexpectedModelBehavior: Exceeded maximum output retries`.
+    """
+    mock_client = MockXai.create_mock_stream([_interleaved_text_and_server_tool_stream()])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, output_type=str | None, capabilities=[NativeTool(WebSearchTool())])
+
+    async with agent.run_stream('What is the weather?') as result:
+        async for _ in result.stream_response(debounce_by=None):
+            pass
+
+        assert await result.get_output() == '72 and sunny.'
+        assert [type(part).__name__ for part in result.all_messages()[-1].parts] == [
+            'TextPart',
+            'NativeToolCallPart',
+            'NativeToolReturnPart',
+            'TextPart',
+        ]
+        assert result.usage.requests == 1
+
+
+async def test_xai_stream_interleaved_text_part_lifecycle_events(allow_model_requests: None):
+    """Each interleaved text run gets its own part start/end events; deltas coalesce."""
+    mock_client = MockXai.create_mock_stream([_interleaved_text_and_server_tool_stream()])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, output_type=str | None, capabilities=[NativeTool(WebSearchTool())])
+
+    events: list[AgentStreamEvent] = []
+    async with agent.iter(user_prompt='What is the weather?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        events.append(event)
+
+    part_events = [event for event in events if isinstance(event, PartStartEvent | PartDeltaEvent | PartEndEvent)]
+    text_starts = [
+        event for event in part_events if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+    ]
+    text_ends = [event for event in part_events if isinstance(event, PartEndEvent) and isinstance(event.part, TextPart)]
+    text_deltas = [event for event in part_events if isinstance(event, PartDeltaEvent)]
+
+    assert [event.index for event in text_starts] == [0, 3]
+    assert [event.index for event in text_ends] == [0, 3]
+    assert text_ends[-1].part == TextPart(content='72 and sunny.')
+    assert [event.index for event in text_deltas] == [0, 3]
+
+    ended_indexes: set[int] = set()
+    for event in part_events:
+        if isinstance(event, PartEndEvent):
+            ended_indexes.add(event.index)
+        elif isinstance(event, PartDeltaEvent):
+            assert event.index not in ended_indexes
 
 
 async def test_xai_stream_server_side_tool_call_ignored_for_unknown_role(allow_model_requests: None):

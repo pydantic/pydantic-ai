@@ -484,6 +484,130 @@ async def test_tool_cancels_run_and_history_is_resumable():
     )
 
 
+def _single_tool_agent() -> tuple[Agent, list[list[ModelMessage]], asyncio.Event]:
+    """An agent whose first response calls a single tool that never returns.
+
+    Returns the agent, a list capturing the raw messages each model request receives, and an
+    event set once the tool is in flight.
+    """
+    seen_by_model: list[list[ModelMessage]] = []
+    tool_started = asyncio.Event()
+
+    def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_by_model.append(list(messages))
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='in_flight_tool', args={}, tool_call_id='call_only')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_func))
+
+    @agent.tool_plain
+    async def in_flight_tool() -> str:
+        tool_started.set()
+        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        return 'never reached'  # pragma: no cover
+
+    return agent, seen_by_model, tool_started
+
+
+async def test_cancel_during_only_tool_call_is_resumable():
+    """Cancelling while the response's only tool call is still in flight stays resumable.
+
+    No tool produced a result, so the interrupted request that closes out the turn is empty —
+    but it's still recorded, because it's what tells a resumed run that the response's calls
+    will never be answered. Without it the history ends in a response with an unanswered tool
+    call, and a new prompt is refused.
+    """
+    agent, seen_by_model, tool_started = _single_tool_agent()
+
+    token = CancellationToken()
+    task = asyncio.create_task(agent.run('go', cancellation_token=token))
+    await asyncio.wait_for(tool_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    token.cancel()
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await task
+
+    messages = exc_info.value.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='in_flight_tool', args={}, tool_call_id='call_only')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_func:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+    result = await agent.run('never mind, wrap up', message_history=messages)
+    assert result.output == 'done'
+    assert seen_by_model[-1][-1] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='in_flight_tool',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='call_only',
+                    metadata={'pydantic_ai_synthesized_tool_return': True},
+                    timestamp=IsNow(tz=timezone.utc),
+                    outcome='interrupted',
+                ),
+                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            timestamp=IsNow(tz=timezone.utc),
+        )
+    )
+
+
+async def test_cancel_during_only_tool_call_is_resumable_without_a_new_prompt():
+    """The same history also resumes with no new prompt: the synthesized return is sent on its own."""
+    agent, seen_by_model, tool_started = _single_tool_agent()
+
+    token = CancellationToken()
+    task = asyncio.create_task(agent.run('go', cancellation_token=token))
+    await asyncio.wait_for(tool_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    token.cancel()
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await task
+
+    result = await agent.run(message_history=exc_info.value.all_messages())
+    assert result.output == 'done'
+    assert seen_by_model[-1][-1] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='in_flight_tool',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='call_only',
+                    metadata={'pydantic_ai_synthesized_tool_return': True},
+                    timestamp=IsNow(tz=timezone.utc),
+                    outcome='interrupted',
+                )
+            ],
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
 async def test_agent_run_cancel_from_another_task():
     """`AgentRun.cancel()` is safe to call from a sibling task (a TUI's Esc handler) and
     surfaces as `RunCancelled` from whatever is driving the run."""
@@ -868,6 +992,13 @@ async def test_task_cancel_of_run_carries_run_cancelled():
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
         ]
     )
     assert cancelled.usage.requests == 1
@@ -901,7 +1032,7 @@ async def test_direct_await_cancellation_carries_run_cancelled_on_all_versions()
 
     (cancelled,) = recorded
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
     assert cancelled.usage.requests == 1
     assert cancelled.run_id is not None
 
@@ -930,7 +1061,7 @@ async def test_from_cancellation_through_asyncio_timeout():
 
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
     assert started.is_set()
 
 
@@ -1034,7 +1165,7 @@ async def test_iter_external_cancel_carries_run_cancelled():
 
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
     assert cancelled.usage.requests == 1
 
 
@@ -1186,11 +1317,11 @@ async def test_run_stream_events_external_cancel_of_consumer():
     assert task.cancelled()
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
     assert cancelled.usage.requests == 1
     # The handle itself also remains usable after teardown.
     (events,) = holder
-    assert [type(message) for message in events.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in events.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
     assert events.result is None
 
 
@@ -1224,7 +1355,7 @@ async def test_run_stream_events_external_cancel_caught_in_task():
 
     (cancelled,) = recorded
     assert cancelled is not None
-    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse]
+    assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
 
 
 async def test_run_stream_events_external_cancel_before_iteration_attaches_nothing():

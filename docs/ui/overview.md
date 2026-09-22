@@ -4,6 +4,8 @@ If you're building a chat app or other interactive frontend for an AI agent, you
 
 While your frontend could use Pydantic AI's [`ModelRequest`][pydantic_ai.messages.ModelRequest] and [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] directly, you'll typically want to use a UI event stream protocol that's natively supported by your frontend framework.
 
+To push data of your own to the frontend mid-run, like a progress update from a long-running tool, emit a [custom event](../agent.md#custom-events): both protocols below forward it as their own custom-data event, unless its class is declared `ui=False` for events you only want server-side.
+
 Pydantic AI natively supports two UI event stream protocols:
 
 - [Agent-User Interaction (AG-UI) Protocol](./ag-ui.md)
@@ -17,7 +19,7 @@ The protocol-specific [`UIAdapter`][pydantic_ai.ui.UIAdapter] subclass (i.e. [`A
 
 If you're using a Starlette-based web framework like FastAPI, you can use the [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] class method from an endpoint function to directly handle a request and return a streaming response of protocol-specific events. This is demonstrated in the next section.
 
-If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `UIAdapter` instance and directly use its methods. This is demonstrated in "Advanced Usage" section below.
+If you're using a web framework not based on Starlette (e.g. Django or Flask) or need fine-grained control over the input or output, you can create a `UIAdapter` instance and directly use its methods. This is demonstrated in the "Advanced Usage" section below.
 
 ### Usage with Starlette/FastAPI
 
@@ -77,6 +79,10 @@ app = FastAPI()
 
 @app.post('/chat')
 async def chat(request: Request) -> Response:
+    media_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
+    if media_type != 'application/json':  # (1)!
+        return Response(status_code=HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
         run_input = VercelAIAdapter.build_run_input(await request.body())
@@ -93,6 +99,30 @@ async def chat(request: Request) -> Response:
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
+
+1. `build_run_input()` takes bytes, so it can't apply the media-type check that
+   [`from_request()`][pydantic_ai.ui.UIAdapter.from_request] does — see
+   [the trust model](#trust-model-for-client-submitted-messages) for what it's for. Do it in your own
+   framework's idiom, as here, whenever you read the body yourself.
+
+### Running the agent elsewhere
+
+The adapter assumes the agent runs inside the request that serves the frontend. It doesn't have to. If the agent runs on a [durable execution](../durable_execution/overview.md) worker, a background job, or another service, the adapter's two jobs simply split across that boundary: the request side builds the run input and transforms the events it receives back into protocol events, and whatever runs the agent builds the run arguments from the same request body.
+
+The request side never calls `run_stream()`. It hands [`UIAdapter.transform_stream()`][pydantic_ai.ui.UIAdapter.transform_stream] the agent's events as they arrive over your transport (the media-type and validation handling from the example above still applies, and is elided here):
+
+```py {title="remote_run_handler.py" test="skip" lint="skip"}
+async def chat(request: Request) -> Response:
+    body = await request.body()
+    events = start_the_run_somewhere_else(body)  # an async iterator of Pydantic AI events
+
+    adapter = VercelAIAdapter(agent=agent, run_input=VercelAIAdapter.build_run_input(body))
+    return adapter.streaming_response(adapter.transform_stream(events))
+```
+
+The transport has to deliver the run's [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] as well as its [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s — that's what closes the protocol out and what `on_complete` receives — so it needs to carry what [`Agent.run_stream_events()`](../agent.md#running-agents) yields, not just the model's events.
+
+Temporal's [Workflow Streams](../durable_execution/temporal.md#streaming-events-to-a-frontend-with-workflow-streams) are one such transport, and are worth reading as a worked example: the workflow is the queue, the events are durable and offset-addressed, and a frontend that reconnects can be reattached to a run it didn't start.
 
 ### Encoding events without a request
 
@@ -111,7 +141,7 @@ async def encode_events(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str
         yield sse_event
 ```
 
-An event stream instance carries the state of one run as it goes (the current message ID, the part it's streaming, the tool calls it's waiting on), so build a new one per run rather than reusing it.
+An event stream instance carries the state of one run as it goes (the current message ID, the part it's streaming, the tool calls it's waiting on), so build a new one per run.
 
 The AG-UI protocol identifies every run to the frontend: its `RUN_STARTED` and `RUN_FINISHED` events carry a thread ID and a run ID, which [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] reads off the run input when it has one, warning you if you pass IDs it then overrides. Without a run input, pass the IDs your own transport already assigns to the conversation and the run:
 
@@ -126,6 +156,8 @@ Each defaults to a new UUID, minted every time the stream is constructed: a conv
 ## Trust model for client-submitted messages
 
 UI adapter endpoints aren't authentication boundaries. Both the AG-UI and Vercel AI protocols are designed around the client transmitting the full conversation history on each request, so anything in `message_history` from the protocol — assistant messages, tool calls, file URLs, tool results — is under the caller's control. Treat the adapter endpoint as an internal backend service, running it inside your own authenticated route handler. See the [AG-UI security considerations](https://learn.microsoft.com/en-us/agent-framework/integrations/ag-ui/security-considerations) page for more on the deployment model both protocols assume.
+
+Authenticating the endpoint settles *who* may call it, not *what caused the call*. Where that authentication is a cookie or any other credential the browser attaches on its own, a page your user has open elsewhere can post to your route on their behalf: the run starts and its tools execute, and the attacker never needs to read the response. To keep a request a browser can forge without a preflight from reaching the agent, the adapters accept only `application/json` request bodies, answering anything else with a `415` before the body is read. Both protocols' SDK transports send that content type, so a frontend on another origin is preflighted and admitted by your own CORS policy exactly as before. Widen the set, or skip the check on a route that carries CSRF protection of its own, with the `allowed_content_types` argument to [`UIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] and [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request]. It's one control rather than a CSRF strategy: on a route that carries ambient credentials, pair it with whatever your framework offers.
 
 The adapters apply a few defaults so that the authoritative state stays on your side:
 

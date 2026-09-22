@@ -515,9 +515,26 @@ class MistralModel(Model[Mistral]):
         """
         # 1) Handle anyOf first, because it's a different schema structure
         if any_of := value.get('anyOf'):
-            # Simplistic approach: pick the first option in anyOf
-            # (In reality, you'd possibly want to merge or union types)
-            return f'Optional[{cls._get_python_type(any_of[0])}]'
+            if all('const' in option for option in any_of):
+                # Described options (an `Enum` with member docstrings): the same type as a plain `enum`.
+                value = {key: val for key, val in value.items() if key != 'anyOf'}
+                if 'type' not in value:
+                    # An option's own `type` is what the schema says; fall back to the constant's Python type
+                    # only when it says nothing. `bool` is checked first, being a subclass of `int`.
+                    const = any_of[0]['const']
+                    value['type'] = any_of[0].get('type') or (
+                        'boolean'
+                        if isinstance(const, bool)
+                        else 'integer'
+                        if isinstance(const, int)
+                        else 'number'
+                        if isinstance(const, float)
+                        else 'string'
+                    )
+            else:
+                # Simplistic approach: pick the first option in anyOf
+                # (In reality, you'd possibly want to merge or union types)
+                return f'Optional[{cls._get_python_type(any_of[0])}]'
 
         # 2) If we have a top-level "type" field
         value_type = value.get('type')

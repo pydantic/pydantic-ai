@@ -59,7 +59,7 @@ async def main():
     #> [11, 12, 13]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 All three steps receive the same input value (`10`) and execute in parallel.
 
@@ -105,7 +105,7 @@ async def main():
     #> [1, 4, 9, 16, 25]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### Spreading AsyncIterables
 
@@ -153,7 +153,7 @@ async def main():
     #> [3, 6, 9]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 This allows for progressive processing where downstream steps can start working on early results while later results are still being generated.
 
@@ -198,7 +198,7 @@ async def main():
     #> ['Value: 10', 'Value: 20', 'Value: 30']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Empty Iterables
 
@@ -241,7 +241,7 @@ async def main():
     #> []
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Nested Parallel Operations
 
@@ -291,7 +291,7 @@ async def main():
     #> [11, 12, 21, 22]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 The result contains:
 - From 10: `10+1=11` and `10+2=12`
@@ -343,7 +343,7 @@ async def main():
     #> ['num:1', 'num:2', 'num:3', 'num:4']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Edge Labels
 
@@ -391,7 +391,7 @@ async def main():
     #> ['item-1', 'item-2', 'item-3']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## State Sharing in Parallel Execution
 
@@ -440,7 +440,7 @@ async def main():
     #> Tracked: [1, 2, 3]
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Edge Transformations
 
@@ -481,7 +481,7 @@ async def main():
     #> The answer is: 84
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 The transform function receives a [`StepContext`][pydantic_graph.step.StepContext] with the current inputs and has access to state and dependencies. This is useful for:
 
@@ -534,7 +534,7 @@ async def main():
     #> ['Processed: 10', 'Processed: 20', 'Processed: 30']
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `import asyncio; asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Next Steps
 

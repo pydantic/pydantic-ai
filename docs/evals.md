@@ -30,6 +30,11 @@ title: Pydantic Evals
 - [LLM as a Judge](evals/evaluators/llm-judge.md) - Use LLMs to evaluate subjective qualities, complex criteria, and natural language outputs
 - [Custom Evaluators](evals/evaluators/custom.md) - Implement domain-specific scoring logic and custom evaluation metrics
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Evaluate internal agent behavior (tool calls, execution flow) using OpenTelemetry traces. Essential for complex agents where correctness depends on _how_ the answer was reached, not just the final output. Also ensures eval assertions align with production telemetry.
+- [Agentic Evaluators](evals/evaluators/agentic.md) - Grade an agent's *trajectory*, the sequence and arguments of its tool calls, not just the final output
+
+**Online Evaluation:**
+
+- [Online Evaluation](evals/online-evaluation.md) - Attach evaluators to production or staging traffic so every call, or a sampled subset, is graded in the background
 
 **How-To Guides:**
 
@@ -52,9 +57,9 @@ title: Pydantic Evals
 
 Pydantic Evals follows a **code-first approach** where you define all evaluation components (datasets, experiments, tasks, cases and evaluators) in Python code, or as serialized data loaded by Python code. This differs from platforms with fully web-based configuration.
 
-When you run an _Experiment_ you'll see a progress indicator and can print the results wherever you run your python code (IDE, terminal, etc). You also get a report object back that you can serialize and store or send to a notebook or other application for further visualization and analysis.
+When you run an _Experiment_, you'll see a progress indicator and can print the results wherever you run your Python code (IDE, terminal, etc.). You also get a report object back that you can serialize and store or send to a notebook or other application for further visualization and analysis.
 
-If you are using [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/), your experiment results automatically appear in the Logfire web interface for visualization, comparison, and collaborative analysis. Logfire serves as a observability layer - you write and run evals in code, then view and analyze results in the web UI.
+If you are using [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/), your experiment results automatically appear in the Logfire web interface for visualization, comparison, and collaborative analysis. Logfire serves as an observability layer: you write and run evals in code, then view and analyze the results in the web UI.
 
 ## Installation
 
@@ -204,6 +209,7 @@ Learn more:
 - [LLM Judge](evals/evaluators/llm-judge.md) - Using LLMs as evaluators
 - [Custom Evaluators](evals/evaluators/custom.md) - Write your own logic
 - [Span-Based Evaluation](evals/evaluators/span-based.md) - Analyze execution traces
+- [Agentic Evaluators](evals/evaluators/agentic.md) - Grade an agent's trajectory
 
 ## Running Experiments
 

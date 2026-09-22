@@ -27,8 +27,9 @@ BASELINE_COLLECTION_MAX_SECONDS = 90
 MIN_BASELINE_SAMPLES = 10
 # Must stay above the number of tracked jobs so a full run renders every row: `no_baseline` sorts
 # into the truncated tail with `normal`, and every newly-minted signature starts there. Today's
-# `ci.yml` matrices give 5 pythons x (4 installs + lowest-versions) + 5 x 2 durable-exec = 35.
-REPORT_ROW_LIMIT = 40
+# `ci.yml` matrices give 5 pythons x (3 installs + 2 all-extras shards + 2 lowest-versions
+# shards) + 5 x 2 durable-exec = 45.
+REPORT_ROW_LIMIT = 50
 WARNING_MIN_SECONDS = 60
 SLOW_THRESHOLD_MULTIPLIER = 1.25
 FAST_THRESHOLD_MULTIPLIER = 0.75

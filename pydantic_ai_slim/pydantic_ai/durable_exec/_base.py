@@ -23,8 +23,9 @@ from typing_extensions import Self
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
-from pydantic_ai.agent import EventStreamHandler
+from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.capabilities import ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
@@ -51,6 +52,7 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
+from .. import _usage_attribution
 from ._capability_operation import (
     CapabilityBoundOperation,
     CapabilityCacheIdentity,
@@ -60,6 +62,7 @@ from ._capability_operation import (
     ModelRequestContextProjection,
     _ResolvedModelRequestContext,  # pyright: ignore[reportPrivateUsage]
     bind_arguments,
+    bind_declaration_body,
     call_declaration,
     capability_operation_result_type,
     collect_capability_operations,
@@ -110,6 +113,7 @@ from ._toolset import (
     guard_run_context,
     resolve_tool_durable_config,
     run_args_validator,
+    toolset_for_unit,
     unwrap_recorded_tool_call_result,
     unwrap_tool_call_result,
     validate_dynamic_tool_args,
@@ -120,12 +124,33 @@ from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, 
 _T = TypeVar('_T')
 
 
+def construction_toolsets(agent: AbstractAgent[AgentDepsT, Any]) -> Sequence[AbstractToolset[AgentDepsT]]:
+    """The toolsets `agent` was built with, ignoring anything added after construction.
+
+    `AbstractAgent.toolsets` is the wrong list to ask for here: it reflects an active
+    `override(toolsets=...)` and includes toolsets a `@agent.toolset` decorator registered after
+    construction. Those would land in the known-good set, and the runtime-toolset guard would wave
+    through the very thing it exists to catch -- toolsets that arrive after binding and were
+    therefore never wrapped for the durable engine.
+
+    Only `Agent` can tell the two lists apart, and only durable execution needs them told apart, so
+    the question is asked here rather than widened into a hook that every `AbstractAgent`
+    implementation would have to answer. An agent that supports no post-construction additions has
+    nothing to subtract, which is what its `toolsets` already reports.
+    """
+    if isinstance(agent, WrapperAgent):
+        return construction_toolsets(agent.wrapped)
+    if isinstance(agent, Agent):
+        return agent._construction_toolsets  # pyright: ignore[reportPrivateUsage]
+    return agent.toolsets
+
+
 @runtime_checkable
 class _RestrictedRunContext(Protocol):
     def _expose_field(self, name: str) -> None: ...
 
 
-_MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
+MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
 
 class _BoundModelOperations(NamedTuple):
@@ -275,7 +300,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._capability_declarations: dict[tuple[str, str], CapabilityMethodDeclaration] = {}
         self._resolved_request_models: dict[int, _ResolvedRequestModel] = {}
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability to use with the agent.
+
+        An engine that needs a companion capability alongside itself (Temporal pairs one in the
+        `outermost` tier to publish its Workflow Stream terminal event) overrides this and composes
+        around `_bind_for_agent`, which stays typed as the engine's own bound copy.
+        """
+        return self._bind_for_agent(agent)
+
+    def _bind_for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
         self._check_bindable()
         if not (self.name or agent.name):
@@ -304,7 +338,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._bound_capability_operations = {}
         self._capability_declarations = {}
         backend = self.get_durable_operation_backend()
-        durability_ref = ref(self)
         for capability in leaf_capabilities(agent.root_capability):
             declarations = collect_capability_operations(capability)
             if not declarations:
@@ -380,51 +413,47 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 self._bound_capability_operations[key] = backend.bind(operation)
                 self._capability_declarations[key] = declaration
 
-                async def dispatch_for_run_context(
-                    ctx: RunContext[object],
-                    args: tuple[object, ...],
-                    kwargs: dict[str, object],
-                    _capability: AbstractCapability[Any] = capability,
-                    _operation_name: str = operation_name,
-                ) -> Any:
-                    durability = durability_ref()
-                    if durability is None:  # pragma: no cover
-                        raise RuntimeError('The durability capability bound to this agent is no longer available.')
-                    return await durability._invoke_capability_operation(
-                        _capability,
-                        _operation_name,
-                        ctx=ctx,
-                        args=args,
-                        kwargs=kwargs,
-                    )
-
-                bindings = capability._get_durable_operation_bindings()
-                bindings.setdefault(agent)[operation_name] = dispatch_for_run_context
-
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         """Register dispatchers on `RunContext` for worker-side and per-run capability recovery."""
-        ctx._durable_operations = {}  # pyright: ignore[reportPrivateUsage]
+        # Mutated in place, never reassigned: the graph shares one mapping by reference into every
+        # `RunContext` it builds, so an operation called from a per-request hook resolves the same
+        # per-run dispatchers `before_run` does.
+        operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
+        if operations is None:
+            operations = ctx._durable_operations = {}  # pyright: ignore[reportPrivateUsage]
+        operations.clear()
         if ctx.agent is None:
             return
-        operations: dict[tuple[str, str], Callable[..., Awaitable[object]]] = {}
         run_capabilities = ctx._run_capabilities_by_id or {}  # pyright: ignore[reportPrivateUsage]
+        if unreachable := sorted({key[0] for key in self._bound_capability_operations} - run_capabilities.keys()):
+            # Without this the operations would dispatch nowhere and their methods would run inline,
+            # non-durably, with nothing said — precisely what a durable operation exists to prevent.
+            ids = ', '.join(repr(capability_id) for capability_id in unreachable)
+            raise UserError(
+                f'No capability with id {ids} is present in this run, but one was bound to the agent '
+                'and contributes durable operations. A `for_run` replacement has to keep the '
+                "capability's `id`: it identifies the capability across the run, and persisted "
+                'operation identity and worker-side recovery are built on it.'
+            )
         for capability_id, capability in run_capabilities.items():
             for bound_capability_id, operation_name in self._bound_capability_operations:
                 if capability_id != bound_capability_id:
                     continue
 
                 async def dispatch(
-                    *args: object,
+                    call_ctx: RunContext[object],
+                    args: tuple[object, ...],
+                    kwargs: dict[str, object],
                     _capability: AbstractCapability[Any] = capability,
                     _operation_name: str = operation_name,
-                    **kwargs: object,
                 ) -> object:
+                    # The caller's context, not the one this ran at run setup: a per-request hook
+                    # dispatches with the step's own model, usage and messages.
                     return await self._invoke_capability_operation(
-                        _capability, _operation_name, ctx=ctx, args=args, kwargs=kwargs
+                        _capability, _operation_name, ctx=call_ctx, args=args, kwargs=kwargs
                     )
 
                 operations[(capability_id, operation_name)] = dispatch
-        ctx._durable_operations = operations  # pyright: ignore[reportPrivateUsage]
 
     async def _invoke_capability_operation(
         self,
@@ -446,8 +475,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         key = (capability_id, operation)
         declaration = self._capability_declarations[key]
         if not self.in_durable_context:
-            bound = declaration.function.__get__(capability, type(capability))
-            return await bound(*args, **kwargs)
+            return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
         request_context = next(
             (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
@@ -480,7 +508,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         else:
             value = result.value
         if not (ctx.usage - usage_before).has_values():
-            ctx.usage.incr(result.usage_delta)
+            # Recorded, not incremented: the operation accumulated this delta across the durable
+            # boundary, where the activity's context can't reach the spans open back here.
+            _usage_attribution.record_usage(ctx.usage, result.usage_delta)
         return value
 
     def _capability_operation_parameter_transport(
@@ -534,7 +564,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         construction_leaves: set[int] = set()
         # `for_agent` always binds before a run.
         if self._agent is not None:  # pragma: no branch
-            for agent_toolset in self._agent.toolsets:
+            for agent_toolset in construction_toolsets(self._agent):
                 agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
 
         runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
@@ -604,6 +634,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         return self._event_stream_handler
 
+    def _model_stream_event_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """The handler that consumes the live model stream inside a model-request unit.
+
+        Defaults to the run's event stream handler, which is the only handler most engines have.
+        Temporal overrides it to wrap that handler in one that also publishes the live model events
+        to a Workflow Stream topic: publishing has to happen inside the activity to reach the caller
+        while the model is still streaming, whereas the run's workflow-side events are published from
+        workflow code and must not go through this handler as well.
+        """
+        return self._effective_event_stream_handler()
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
         return self._effective_event_stream_handler() is not None
@@ -627,7 +668,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 # `ModelResponseStreamEvent`s were already delivered live to the handler inside the
                 # model-request boundary; workflow-side they're the replay, so only `HandleResponseEvent`s
                 # are dispatched to the handler here.
-                if dispatch_events and not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                if dispatch_events and not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES):
                     await self._dispatch_event_stream_event(ctx, event)
                 yield event
         finally:
@@ -676,7 +717,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
                 f"The ID will be used to identify the toolset's {self.durable_unit_plural} within the "
-                f'{self.durable_container_noun}.'
+                f'{self.durable_container_noun}. Set it on the toolset itself with '
+                '`FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, or, when the toolset is '
+                "contributed by a capability, set the capability's `id` (for example, "
+                "`WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
             )
         self._toolsets_by_id[ts_id] = wrapped
         return wrapped
@@ -1148,7 +1192,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _bind_mcp_get_tools_operation(self, toolset: Any) -> Any:
         async def get_tools_handler(params: ToolsetGetToolsParams) -> dict[str, ToolDefinition]:
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
-                tools = await toolset.get_tools(durable_ctx)
+                # Discovery is normally the first unit to need the server, so this is usually where
+                # the session the run holds gets opened — inside a unit, where the engine retries a
+                # failed connection — and it then stays open for the units that follow.
+                async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
+                    tools = await unit_toolset.get_tools(durable_ctx)
             return {name: tool.tool_def for name, tool in tools.items()}
 
         operation = DurableOperation(
@@ -1192,12 +1240,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def get_instructions_handler(params: ToolsetGetToolsParams) -> Instructions:
             with self._durable_run_context_scope(params.ctx) as durable_ctx:
                 # A server's instructions are captured during `__aenter__`, so it has to be
-                # connected *inside* this unit: an engine whose lifecycle never enters the
-                # toolset (DBOS's `enter-never`) would otherwise journal `None` and silently
-                # drop the instructions. Entry is refcounted, so this is a no-op when the
-                # toolset is already entered (`enter-always`/`enter-outside-durable`).
-                async with toolset:
-                    return await toolset.get_instructions(durable_ctx)
+                # connected *inside* this unit: an engine whose lifecycle leaves entering to the
+                # units would otherwise journal `None` and silently drop the instructions. Entry is
+                # refcounted, so reusing the session the run holds — or one the wrapper already
+                # entered (`enter-always`/`enter-outside-durable`) — costs nothing.
+                async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
+                    return await unit_toolset.get_instructions(durable_ctx)
 
         operation = DurableOperation(
             operation_id=ToolsetGetInstructionsId(cast(str, toolset.id)),
@@ -1221,9 +1269,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         async def call_tool_handler(params: ToolsetCallToolParams) -> CallToolResult:
             assert params.tool is not None
             with self._durable_run_context_scope(params.ctx) as durable_ctx:
-                return await wrap_tool_call_result(
-                    toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
-                )
+                async with toolset_for_unit(toolset, durable_ctx) as unit_toolset:
+                    return await wrap_tool_call_result(
+                        unit_toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
+                    )
 
         backend = self.get_durable_operation_backend()
         call_operation = DurableOperation(
@@ -1433,7 +1482,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 events = await capture_event_stream(
                     run_context=durable_ctx,
                     stream=streamed,
-                    handler=self._effective_event_stream_handler(),
+                    handler=self._model_stream_event_handler(),
                 )
         response = streamed.get()
         self._stamp_response(response, params.messages)
@@ -1471,9 +1520,31 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             ts_id = ts.id
-            if ts_id is not None and ts_id in self._toolsets_by_id:
-                return self._toolsets_by_id[ts_id]
-            return ts
+            if ts_id is None or (registered := self._toolsets_by_id.get(ts_id)) is None:
+                return ts
+            if registered.wrapped is not ts:
+                # A toolset that arrived after binding (via `run(toolsets=...)`,
+                # `override(toolsets=...)`, or a per-run capability) under an `id` that is already
+                # registered would be replaced here by the wrapper around the *construction-time*
+                # toolset, silently running that toolset's tools instead of its own. The
+                # construction-time counterpart of this is caught in `_wrap_and_register_leaf`.
+                #
+                # Only inside a workflow, flow, or step. `get_wrapper_toolset` runs on every run,
+                # and core toolsets carry no global uniqueness requirement, so raising outside a
+                # durable context would stop a durability capability being transparent for ordinary
+                # runs -- moving behavior on the plain-`Agent` surface to fix a durable-only defect.
+                # Outside one there is no durable unit to dispatch to, so the toolset that actually
+                # arrived is simply used as-is.
+                if not self.in_durable_context:
+                    return ts
+                raise UserError(
+                    f'A toolset added at run time has the same `id` {ts_id!r} as one the agent was '
+                    f'constructed with. Toolset `id`s must be unique: the `id` identifies which registered '
+                    f"toolset's {self.durable_unit_noun} a tool call is dispatched to inside the "
+                    f'{self.durable_container_noun}, so this run would have called the construction-time '
+                    "toolset's tools instead. Give the toolset a different `id`."
+                )
+            return registered
 
         return toolset.visit_and_replace(swap)
 

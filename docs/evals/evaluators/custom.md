@@ -54,7 +54,7 @@ class MyEvaluator(Evaluator):
         ctx.metrics           # dict[str, int | float]
         ctx.attributes        # dict[str, Any]
 
-        # OpenTelemetry spans (if logfire configured)
+        # OpenTelemetry spans (if Logfire is configured)
         ctx.span_tree         # SpanTree for behavioral checks
 
         return True

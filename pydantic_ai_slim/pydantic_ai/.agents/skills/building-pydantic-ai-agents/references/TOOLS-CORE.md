@@ -35,6 +35,40 @@ Default choices:
 - `Tool(...)` in `tools=[...]` when the tool should be reusable across agents
 - `FunctionToolset` when multiple related tools should be managed as a group
 
+## Describe Enum Options to the Model
+
+An `Enum` parameter or field reaches the model as a bare list of values. Mix in `UseEnumMemberDocstrings` to
+send the docstring written under each member as that option's description; the enum then renders as `anyOf` of
+described `const`s. This is the enum counterpart to `model_config = ConfigDict(use_attribute_docstrings=True)`
+on a Pydantic model — an `Enum` has no config to carry a flag, and any assigned class attribute becomes a
+member, so a base class is the marker.
+
+```python
+from enum import Enum
+
+from pydantic_ai import Agent, UseEnumMemberDocstrings
+
+agent = Agent('openai:gpt-5.2', name='ticket_agent')
+
+
+class Urgency(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@agent.tool_plain
+def set_urgency(urgency: Urgency) -> str:
+    """Set the urgency of the ticket."""
+    return f'Urgency set to {urgency.value}.'
+```
+
+Without the mix-in the docstrings are ignored and the schema is unchanged. `Literal`s have nowhere to write a
+docstring; use a described `Enum` when the model needs to know what each option means.
+
 ## Organize or Restrict Which Tools an Agent Can Use
 
 Use toolsets when the user has multiple related tools or wants cross-cutting behavior applied to a group.
@@ -56,7 +90,12 @@ Useful `RunContext` fields include:
 - `ctx.messages`
 - `ctx.retry`
 - `ctx.realtime` — whether the run is a realtime session
-- `ctx.realtime_session` — the live `RealtimeSession` once connected (`None` in classic runs and before connect)
+- `ctx.realtime_session` — the live `RealtimeSession` in tools and `on_event` hooks (`None` in
+  classic runs, setup hooks, and throughout `wrap_run`, whose context copy predates the connection)
+
+Inside a realtime tool, `await ctx.realtime_session.close()` hangs up cleanly: the calling tool does
+not resume, and its call is recorded as interrupted. Use `ctx.cancel()` instead when the session
+context should raise `RunCancelled`; that route also records the call as interrupted.
 
 ## Use MCP Servers
 
@@ -92,6 +131,8 @@ agent = Agent(
 ```
 
 When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://pydantic.dev/docs/ai/mcp/client/) directly and pass it via `toolsets=[...]`. Its `tool_error_behavior` controls how a tool error from the server surfaces: `'retry'` (default) raises `ModelRetry`, `'failed'` raises `ToolFailed` (recorded as `outcome='failed'`), and `'error'` raises the raw `fastmcp` `ToolError`. For SEP-1686 tools with optional task support, set `prefer_tasks=False` to use normal calls; required tasks still use task-augmented execution.
+
+An agent inside an MCP server can use `MCPSamplingModel(ctx.session)` to request inference from the connected client. It accepts prior function tool calls, results, and retries via `message_history` using the MCP 2025-11-25 sampling format. This preserves completed tool exchanges; it does not enable new tool calls or multimodal tool results. See [MCP sampling](https://pydantic.dev/docs/ai/mcp/server/#mcp-sampling).
 
 ## Search with DuckDuckGo, Tavily, or Exa
 

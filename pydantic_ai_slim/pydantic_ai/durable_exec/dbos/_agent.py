@@ -156,7 +156,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     if toolset.id is None:
                         raise UserError(
                             'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
-                            "The ID will be used to identify the MCP server's steps within the workflow."
+                            "The ID will be used to identify the MCP server's steps within the workflow. "
+                            'Set it on the toolset itself with `MCPToolset(..., id=...)`, or, when the toolset '
+                            "is contributed by a capability, set the capability's `id` "
+                            "(for example, `MCP(url='...', id='...')`)."
                         )
                     # The id keys the per-run tool-defs cache and the step names, so two leaf toolsets
                     # sharing one id would silently collide (the second server would return the first's
@@ -1235,6 +1238,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
         provider_session: RealtimeProviderSession | None = None,
@@ -1264,6 +1268,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             run_id=run_id,
             message_history=message_history,
             audio_retention=audio_retention,
+            handle_barge_in=handle_barge_in,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
             provider_session=provider_session,

@@ -41,13 +41,13 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 ## Quick Start
 
-This section contains instructions on how to set up your account and run your app with Pydantic AI Gateway credentials.
+Set up your account and run your app with Pydantic AI Gateway credentials.
 
 ### Create an account
 
 1. Sign up at [logfire.pydantic.dev](https://logfire.pydantic.dev/)
 2. Choose a region and create an account.
-3. Activate the gateway in your organizations settings.
+3. Activate the Gateway in your organization's settings.
 
 ### Create Gateway API keys
 
@@ -69,6 +69,8 @@ Examples of providers and models that can be used are:
 | Google Cloud (formerly Vertex AI) | `google-cloud` | `gateway/google-cloud:gemini-3-flash-preview` |
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
+
+[Image generation](image-generation.md) routes through the gateway as `gateway/google:<model>`, which serves the Gemini image models over Google Cloud.
 
 ### Pydantic AI
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 import pytest
+from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
 from typing_extensions import assert_never
 
@@ -18,7 +19,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from openai import AsyncBedrockOpenAI
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.models.bedrock import BedrockConverseModel, LatestBedrockModelNames
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
@@ -200,16 +201,69 @@ def test_bedrock_mantle_model_rejects_wrong_endpoint_family() -> None:
 
 
 def test_bedrock_converse_rejects_proprietary_openai() -> None:
-    # Proprietary GPT models are not served by the Converse API: the profile flags them
-    # (`bedrock_supported_on_converse=False`) and `BedrockConverseModel` raises at construction with a
-    # pointer to `BedrockMantleProvider`. Family-based (not GPT-OSS), so it survives future GPT generations.
-    for model_name in ('openai.gpt-5.6-luna', 'openai.gpt-6', 'openai.gpt-8-turbo'):
+    # Proprietary GPT models Converse doesn't serve (GPT-5.4, GPT-5.5, GPT-5.6 Cyber — and future GPT
+    # generations until AWS lists them) are flagged by the profile (`bedrock_supported_on_converse=False`)
+    # and `BedrockConverseModel` raises at construction with a pointer to `BedrockMantleProvider`.
+    # Exact names, not a prefix: GPT-5.6 Sol/Luna/Terra are served on Converse; `gpt-5.6-cyber` is not.
+    for model_name in (
+        'openai.gpt-5.6-cyber',
+        'openai.gpt-5.4',
+        'openai.gpt-5.5',
+    ):
         assert BedrockProvider.model_profile(model_name) == snapshot({'bedrock_supported_on_converse': False})
         with pytest.raises(UserError, match='BedrockMantleProvider'):
             infer_model(f'bedrock:{model_name}')
     # The open-weight GPT-OSS family remains available on Converse.
     assert isinstance(infer_model('bedrock:openai.gpt-oss-120b'), BedrockConverseModel)
     assert isinstance(infer_model('bedrock:openai.gpt-oss-safeguard-20b'), BedrockConverseModel)
+
+
+def test_bedrock_converse_accepts_gpt_5_6_models() -> None:
+    # #7793: AWS model cards list GPT-5.6 Sol/Luna/Terra on the Converse API — unlike every other
+    # proprietary GPT model, they construct on `BedrockConverseModel`. No Pydantic AI profile overrides
+    # have been verified for them, so the effective profile keeps the relevant defaults.
+    for base_name in ('gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'):
+        assert BedrockProvider.model_profile(f'openai.{base_name}') is None
+        model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
+        assert {
+            'supports_json_schema_output': model.profile.get('supports_json_schema_output', False),
+            'supports_thinking': model.profile.get('supports_thinking', False),
+            'bedrock_thinking_variant': model.profile.get('bedrock_thinking_variant'),
+        } == snapshot(
+            {
+                'supports_json_schema_output': False,
+                'supports_thinking': False,
+                'bedrock_thinking_variant': None,
+            }
+        )
+    assert isinstance(infer_model('bedrock:openai.gpt-5.6-luna'), BedrockConverseModel)
+
+
+def test_bedrock_converse_gpt_5_6_inference_id_forms() -> None:
+    # AWS lists eight GPT-5.6 cross-region inference-profile IDs for Converse: Sol supports US and
+    # global routing, while Luna and Terra additionally support India routing.
+    model_names = tuple(name for name in get_args(LatestBedrockModelNames) if '.openai.gpt-5.6-' in name)
+    assert model_names == snapshot(
+        (
+            'us.openai.gpt-5.6-sol',
+            'global.openai.gpt-5.6-sol',
+            'us.openai.gpt-5.6-luna',
+            'in.openai.gpt-5.6-luna',
+            'global.openai.gpt-5.6-luna',
+            'us.openai.gpt-5.6-terra',
+            'in.openai.gpt-5.6-terra',
+            'global.openai.gpt-5.6-terra',
+        )
+    )
+    for model_name in model_names:
+        BedrockConverseModel(model_name, provider=BedrockProvider(region_name='us-west-2'))
+
+    # India normalization must still route unsupported proprietary models through the OpenAI profile gate.
+    assert BedrockProvider.model_profile('in.openai.gpt-5.6-cyber') == snapshot(
+        {'bedrock_supported_on_converse': False}
+    )
+    with pytest.raises(UserError, match='BedrockMantleProvider'):
+        BedrockConverseModel('in.openai.gpt-5.6-cyber', provider=BedrockProvider(region_name='ap-south-1'))
 
 
 def test_gateway_bedrock_remains_on_converse() -> None:
@@ -223,7 +277,9 @@ def test_gateway_bedrock_remains_on_converse() -> None:
 def test_bedrock_mantle_profiles() -> None:
     # #6517: the vendor `openai.` prefix is stripped, so the OpenAI profile is resolved correctly and
     # GPT-5.6 keeps its real capabilities (phase / reasoning / image output).
-    assert infer_model_profile('bedrock-mantle:openai.gpt-5.6-luna') == snapshot(
+    profile = infer_model_profile('bedrock-mantle:openai.gpt-5.6-luna')
+    context_window = profile.pop('context_window')
+    assert profile == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_json_schema_output': True,
@@ -248,6 +304,11 @@ def test_bedrock_mantle_profiles() -> None:
             'supported_native_tools': frozenset(),
         }
     )
+    # Compare against a direct genai-prices query so the test doesn't pin a data value.
+    _, model_info = get_snapshot().find_provider_model(
+        'openai.gpt-5.6-luna', provider=None, provider_id='bedrock-mantle', provider_api_url=None
+    )
+    assert context_window == model_info.context_window
     # Every GPT-5.x model on Mantle's `/openai/v1` Responses endpoint resets tool-call IDs across
     # separate responses (verified live on 5.5 and 5.6), so response-scoping keys on the interface,
     # not the model version.

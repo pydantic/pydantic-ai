@@ -1,11 +1,13 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import copy
 import functools
 import inspect
 import re
 import sys
+import textwrap
 import time
 import uuid
 from collections.abc import (
@@ -23,6 +25,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -569,6 +572,15 @@ def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, co
     message.conversation_id = message.conversation_id or conversation_id
 
 
+def validate_uploaded_file_provider(item: _messages.UploadedFile, *, system: str, model_type_name: str) -> None:
+    """Raise `UserError` if an `UploadedFile` references a different provider than the model it was passed to."""
+    if item.provider_name != system:
+        raise UserError(
+            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {model_type_name}. '
+            f'Expected `provider_name` to be `{system!r}`.'
+        )
+
+
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
@@ -739,6 +751,38 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
 
     kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if include_field(f))
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
+
+
+def own_annotations(cls: type) -> dict[str, Any]:
+    """The annotations written on `cls` itself, without forcing lazy (PEP 649) evaluation.
+
+    On Python 3.14+ annotations are evaluated lazily, so a field referencing a class defined later in
+    the module must not be evaluated while the class is still being built — `@dataclass` defers it,
+    and anything inspecting a class from `__init_subclass__` has to as well. `Format.FORWARDREF`
+    never raises `NameError`, so an unresolvable annotation comes back as a `ForwardRef` instead.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        return dict(annotationlib.get_annotations(cls, format=annotationlib.Format.FORWARDREF))
+    return dict(inspect.get_annotations(cls))
+
+
+def declares_dataclass_fields(cls: type) -> bool:
+    """Whether `@dataclass` would give `cls` fields of its own, i.e. it annotates a non-`ClassVar` name.
+
+    Annotations are inspected without being evaluated (see [`own_annotations`][]), so a `ClassVar`
+    that can't be resolved yet is still recognized from the way it was written.
+    """
+    for annotation in own_annotations(cls).values():
+        if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
+            continue
+        # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
+        text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
+        if text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()):
+            continue
+        return True
+    return False
 
 
 def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
@@ -1076,3 +1120,48 @@ def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> 
             f'-----END FILE id="{identifier}"-----',
         ]
     )
+
+
+_TOKEN_SPLIT_PATTERN = re.compile(r'[\s",.:]+')
+
+
+def estimate_string_tokens(text: str) -> int:
+    """Roughly estimate the number of tokens in a string by splitting on whitespace and punctuation.
+
+    Shared by the test models, which report a plausible usage count without pulling in a tokenizer.
+    Blank text counts as one token, so a caller that wants zero for it guards the call itself.
+    """
+    return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))
+
+
+def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
+    """The docstring under each member of an `Enum`, by member name.
+
+    Pydantic reads a docstring under a model field with `use_attribute_docstrings`, but not one under an enum
+    member; this does the same for enums, so each option can be described where it is declared. Empty when the
+    source is not available, such as for a class defined in the REPL.
+    """
+    try:
+        source = inspect.getsource(cls)
+    except (OSError, TypeError):
+        return {}
+    class_def = ast.parse(textwrap.dedent(source)).body[0]
+    if not isinstance(class_def, ast.ClassDef):  # pragma: no cover
+        return {}
+    docstrings: dict[str, str] = {}
+    for previous, node in zip(class_def.body, class_def.body[1:]):
+        if not (
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        ):
+            continue
+        # A member is a plain or an annotated assignment; a string after anything else describes no option,
+        # and neither does one after a name that is not a member, such as `_ignore_`.
+        if isinstance(previous, ast.Assign):
+            targets = previous.targets
+        elif isinstance(previous, ast.AnnAssign):
+            targets = [previous.target]
+        else:
+            continue
+        for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
+            docstrings[name] = inspect.cleandoc(node.value.value)
+    return docstrings

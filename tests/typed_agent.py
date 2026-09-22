@@ -5,6 +5,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import partial
 from typing import Any, TypeAlias
 
 from starlette.requests import Request
@@ -13,7 +14,7 @@ from typing_extensions import assert_type
 from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import PrepareTools, Thinking, WebSearch
-from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.output import Choice, Choices, StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -246,6 +247,52 @@ structured_dict = StructuredDict(
 )
 structured_dict_agent = Agent(output_type=structured_dict)
 assert_type(structured_dict_agent, Agent[object, dict[str, Any]])
+
+
+@dataclass
+class Doc:
+    id: str
+    title: str
+
+
+docs = [Doc(id='rfc-6265', title='Cookies')]
+
+
+def click(target: str) -> str:
+    return f'clicked {target}'
+
+
+async def look() -> int:
+    return 1
+
+
+assert_type(Agent(output_type=Choices({'refund': 'Money back.', 'replace': 'A new one.'})).run_sync('x').output, str)
+assert_type(Agent(output_type=Choices(['yes', 'no'])).run_sync('x').output, str)
+assert_type(
+    Agent(output_type=Choices({doc.id: Choice(doc.title, value=doc) for doc in docs})).run_sync('x').output, Doc
+)
+# A callable value is called, so the output is what the action returns, not the action itself.
+assert_type(
+    Agent(output_type=Choices({'login': Choice('The Login button.', value=partial(click, 'login'))}))
+    .run_sync('x')
+    .output,
+    str,
+)
+assert_type(Agent(output_type=Choices({'look': Choice('Look again.', value=look)})).run_sync('x').output, int)
+assert_type(
+    Agent(output_type=Choices({'abstain': Choice('Do nothing.', value=lambda: Decimal(0))})).run_sync('x').output,
+    Decimal,
+)
+# Mixing plain descriptions with `Choice` values widens the output to the union. Mypy infers the dict
+# literal as `dict[str, str]` from the first overload's context and reports the union as `str`.
+assert_type(  # type: ignore[assert-type]
+    Agent(
+        output_type=Choices({'cite': Choice('Cite it.', value=docs[0]), 'skip': 'Say nothing.'})  # type: ignore[dict-item]
+    )
+    .run_sync('x')
+    .output,
+    str | Doc,
+)
 
 
 def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> Decimal:

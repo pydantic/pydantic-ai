@@ -102,7 +102,7 @@ async def main():
 2. Attach durability via `capabilities=[...]`. The capability routes model requests, tool calls, and MCP communication through Prefect tasks when the agent runs inside a flow.
 3. Wrap `agent.run()` in your own `@flow` to make the run durable.
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 Because the same agent works inside and outside a Prefect flow, [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] composes with all other [capabilities](../capabilities/overview.md) without each needing a Prefect-specific wrapper variant.
 
@@ -168,7 +168,15 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 * **Caching**: Tool results are cached based on their inputs
 * **Observability**: Tool execution is tracked in the Prefect UI
 
-For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], tool discovery and each tool call run as Prefect tasks. Each task resolves and enters the toolset independently, so task retries re-resolve it and flow retries replay recorded discovery and tool results.
+For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], tool discovery and each tool call run as Prefect tasks, and flow retries replay recorded discovery and tool results. When the factory is built with `per_run_step=False`, the run resolves the toolset once and each task reuses it, entering it the first time a task needs it and leaving it entered for the rest of the run. Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is entered — so connecting happens inside a task, where it is retried like any other task failure. The factory itself runs in flow code and re-runs whenever that replays, so like the capability factory below it must be deterministic given the run's `deps`: build the toolset in the factory and leave its I/O to the tasks. This is the lifecycle a non-durable run gives the toolset, so a toolset's own caching — such as [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] on an `MCPToolset` the factory returns — works as it does outside a flow, instead of being discarded between tasks. A `per_run_step=True` factory is re-resolved inside each task, as it asks to be.
+
+For an [`MCPToolset`][pydantic_ai.mcp.MCPToolset], tool discovery and each tool call run as Prefect
+tasks, and the server is connected inside the first task that needs it rather than in flow code, so a
+failed connection is covered by that task's retry policy. The flow then holds the session until the
+run ends, so the server is connected once per run and its own
+[`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] answers the later discovery tasks. Concurrent
+runs in one process share a server's session, as they do outside a flow, and it is closed once the
+last of them ends.
 
 A tool with an [`args_validator`](../tools-advanced.md#args-validator) gets a `Validate Tool Args: {name}` task, so the validator's I/O is checkpointed like the tool call's. A tool without one gets no extra task, and a tool with `metadata={'prefect': False}` is validated in flow code alongside its call. Validation runs before [approval and deferral](../deferred-tools.md), so rejected arguments never reach an approver. Validators can also defer from inside the task; resuming with approval runs validation again with `tool_call_approved` set.
 
@@ -225,6 +233,8 @@ A durability `event_stream_handler=` and a separately registered `ProcessEventSt
 
 A per-run handler passed to `Agent.run(event_stream_handler=...)` also runs flow-side against replayed model events.
 
+Events emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from inside a durable task — including a [capability event](../capabilities/overview.md#capability-events) emitted by a capability's own tool — are delivered when the task actually runs, and are *not* re-emitted when its recorded result is replayed on a flow retry or cache hit. Like a log line written inside a task, an emitted event is a side effect of running the task rather than part of its recorded result. Emit from flow-level code, such as a [capability](../capabilities/overview.md) hook, if a listener must see the event on every attempt. Capability listeners registered with [`@on_event`][pydantic_ai.capabilities.on_event] run in flow code rather than in a task, so they re-run on a flow retry and must be deterministic; keep I/O in a durability `event_stream_handler=`, which runs in its own task. Unlike [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], which is rejected inside a task because dropping it would change what the model sees, a missed event only means an observer wasn't notified. Carrying a durable unit's emitted events in its recorded output, so a replay reproduces them, is tracked in [pydantic-ai#7971](https://github.com/pydantic/pydantic-ai/issues/7971).
+
 Because the model stream is consumed inside the task, cancelling it from the flow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary.
 
 [`CancellationToken`][pydantic_ai.CancellationToken] and [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] are same-process cancellation handles and cannot cross the Prefect durable boundary; cancel the Prefect flow instead.
@@ -237,7 +247,11 @@ When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs 
 
 ### Toolsets at Runtime
 
-Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but only toolsets that don't need durable wrapping are supported: non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools all opt out of task wrapping with `metadata={'prefect': False}`. Other executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`.
+Pass every executing toolset that needs durable wrapping to the agent constructor so its tasks are registered before the flow runs. This includes [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]: give it an explicit `id` and pass it to `Agent(toolsets=[...])`. The [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator registers after the engine's durable units were created, so under [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] using it inside a flow raises a `UserError`. The deprecated `PrefectAgent` doesn't run this check: inside a flow it runs the task-wrapped toolset list frozen at wrap time, so a toolset registered that late is silently left out of the run.
+
+Additional toolsets can be passed per run via `agent.run(toolsets=...)`, but only toolsets that don't need durable wrapping are supported: non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]s whose tools all opt out of task wrapping with `metadata={'prefect': False}`. Other executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets passed at runtime raise a `UserError`.
+
+Toolsets swapped in with [`agent.override(toolsets=...)`][pydantic_ai.agent.AbstractAgent.override] inside a flow are held to the same rule, as they also arrive after the agent's tasks were registered. A toolset added at runtime also cannot reuse the `id` of one the agent was constructed with, as the `id` is what identifies which registered toolset's task a tool call is dispatched to.
 
 ## Task Configuration
 
@@ -286,17 +300,17 @@ async def main():
     #> Paris
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### Retry Considerations
 
 Pydantic AI and provider API clients have their own retry logic. When using Prefect, you may want to:
 
-* Disable [HTTP Request Retries](../models/http-request-retries.md) in Pydantic AI
+* Disable [transport retries](../retries.md#transport-retries) in Pydantic AI
 * Turn off your provider API client's retry logic (e.g., `max_retries=0` on a [custom OpenAI client](../models/openai.md#custom-openai-client))
 * Rely on Prefect's task-level retry configuration for consistency
 
-This prevents requests from being retried multiple times at different layers.
+This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
 
 ## Caching and Idempotency
 

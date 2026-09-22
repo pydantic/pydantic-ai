@@ -27,6 +27,7 @@ network:
     - api.minimax.io
 tools:
   bash: []
+  cli-proxy: false
   github: false
 safe-outputs:
   footer: false

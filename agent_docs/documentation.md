@@ -1,49 +1,42 @@
 # Documentation
 
-> Rules for writing docstrings, comments, user-facing documentation, and maintaining documentation accuracy
+> Guidance for documentation, docstrings, comments, examples, and other user-facing text
 
-**When to check**: When writing or updating documentation, comments, or docstrings
+**When to check**: When writing or reviewing documentation, comments, docstrings, examples, or user-facing text
 
-## Rules
+## Write for reader value
 
-<!-- rule:272 -->
-- Wrap all code identifiers in docstrings with single backticks — parameters, variables, functions, classes, types, fields, API terms — Ensures consistent docstring formatting and makes code elements visually distinct for better readability
-<!-- rule:339 -->
-- Remove comments that restate obvious code — explain non-obvious intent, edge cases, or constraints instead — Reduces noise and maintenance burden while preserving information that can't be inferred from self-documenting code
-<!-- rule:35 -->
-- Use Markdown heading syntax (`##`, `###`, `####`) instead of bold text for sections — preserves semantic structure and document hierarchy — Proper heading levels enable navigation, accessibility, and consistent documentation structure across all `.md` files
-<!-- rule:396 -->
-- Establish one canonical source per topic and link to it — prevents inconsistency and maintenance burden — Documentation that's duplicated across locations becomes outdated differently, creating contradictions and requiring multiple updates for every change
-- When linking to a section of a docs page from anywhere in the repo — a docstring, a skill reference, an example README — use the `{#custom-id}` pinned on that heading in `docs/`, never an id copied out of a rendered page's URL — A copied id is whatever the site's slugifier happened to generate that week, so it goes dead the moment the heading is pinned or the slugifier changes; only files under `docs/`, `examples/`, and the repository root are anchor-checked in CI, so a link written anywhere else has nothing to catch it
-<!-- rule:34 -->
-- Link to official provider/project docs instead of duplicating model lists, features, or setup details — prevents stale documentation and reduces maintenance burden — Exhaustive inline lists become outdated quickly; authoritative external sources stay current and reduce maintenance
-<!-- rule:138 -->
-- Update all related docs in the same PR when changing functionality, APIs, or capabilities — includes docstrings, comments, external docs (e.g., `pydantic.dev/docs/ai`), and API references — Prevents documentation drift that misleads users about actual behavior, limitations, or API contracts
-<!-- rule:107 -->
-- Register new `docs/` files in `docs/navigation.yml` — Keeps the published pydantic.dev/docs/ai navigation complete and prevents orphaned pages or route drift
-<!-- rule:31 -->
-- Use consistent terminology across code, docs, comments, and errors (e.g., `freeform` vs `free-form`, `messages` vs `last message`) — prevents user confusion and makes codebase searchable — Inconsistent terminology fragments documentation searches, confuses users trying to map concepts between docs and code, and signals poor API design quality
-<!-- rule:76 -->
-- Prefix future work with `TODO:` and link workarounds to upstream/internal issues — enables tracking and cleanup when conditions change — Explicit markers with tracking links prevent abandoned workarounds and make technical debt actionable and removable when upstream fixes land
-<!-- rule:611 -->
-- Reference issues and PRs in comments and docstrings with the full URL (`https://github.com/pydantic/pydantic-ai/issues/1234`), not the `#1234` shorthand — The shorthand isn't clickable outside GitHub's own rendering (IDEs, generated API docs, plain-text views), so a full link stays navigable wherever the code is read
-<!-- rule:386 -->
-- Keep docs and implementation in sync — when they conflict, explicitly decide which to update and fix it — Prevents user confusion and wasted debugging time when documented behavior doesn't match actual behavior; applies to params, config options, component characteristics, and especially test docstrings which must describe what's actually validated
-<!-- rule:106 -->
-- Document provider feature support with 'Supported by:' sections — link each provider, list supported/unsupported, distinguish variants (Google Gemini vs Google Cloud (formerly known as Vertex AI)), include syntax/config/permissions — Prevents users from attempting unsupported features and enables quick evaluation of provider capabilities without trial-and-error testing across multiple providers
-<!-- rule:750 -->
-- Document all defaults comprehensively: explicit values, fallback chains, compatibility tradeoffs (backward/forward), and implicit/conditional defaults from parameter interactions — Prevents API confusion and misuse by making fallback behavior, override precedence, and compatibility constraints discoverable in docstrings rather than requiring code archaeology
-<!-- rule:150 -->
-- Comment non-obvious conditionals — explain edge cases, error handling, and state-based logic — Intent isn't always clear from code alone; comments prevent confusion during maintenance and debugging
-<!-- rule:368 -->
-- Document what code does now, not what it used to do — skip historical references like "original", "old", "legacy", or "this used to do X" — Historical comments become outdated noise that confuses future readers; focus on current behavior and rationale
-<!-- rule:801 -->
-- Keep documentation concise—focus on essential information, not implementation details or edge cases — Reduces maintenance burden and improves readability by avoiding unnecessary detail that becomes outdated or clutters the docs
-<!-- rule:313 -->
-- Document workarounds with (1) expected behavior, (2) why it fails, and (3) that it compensates for external constraints — Prevents future developers from "fixing" workarounds that address API limitations, spec non-compliance, or external bugs — these look like code smells but are actually intentional compensations
-<!-- rule:623 -->
-- Avoid line numbers in comments/docstrings — use function/class names instead — Line numbers become stale immediately when code changes, breaking the reference and misleading readers
-<!-- rule:656 -->
-- Document new user-facing features in dedicated sections where users naturally encounter them, not just in docstrings — Users discover features through conceptual docs and guides, not API references — ensures feature discoverability and proper context
-<!-- rule:-4 -->
-- Link to a Pydantic AI Harness capability via its docs page at `https://pydantic.dev/docs/ai/harness/<slug>/` (e.g. `https://pydantic.dev/docs/ai/harness/exa-search/`, `https://pydantic.dev/docs/ai/harness/compaction/`), not its GitHub repo/README — the harness has published docs; only fall back to a GitHub link when a capability has no docs page yet — Gives readers rendered, canonical docs instead of raw source, and matches how the rest of the repo references the harness (`https://pydantic.dev/docs/ai/harness/`)
+- Minimize the inference required from the reader. Preserve every useful fact, condition, consequence, limitation, and distinction.
+- Test each clause, parenthetical, comparison, contrast, and explanatory tail by removing it mentally. Delete it only when the reader loses nothing useful; shorten or rewrite it when the same information can be clearer.
+- Prefer direct, concrete statements and observable behavior over generic framing, unsupported promotion, vague referents, empty reassurance, or an obvious inverse.
+- Preserve alternatives and negative boundaries when they prevent a plausible misunderstanding. Words such as `rather than`, `only`, `never`, and `without` often carry essential information.
+- Preserve useful human voice. Change second person, passive voice, long sentences, parentheses, dashes, or colloquial language only when the specific passage becomes clearer or more accurate.
+- Use one precise term for each concept across code, docs, comments, errors, and other user-facing text.
+
+## Documentation and examples
+
+- Help readers decide what to do and then do it correctly. Lead with the reader's action or decision when that improves findability, while retaining prerequisites and consequences.
+- Make the recommended approach easy to find. Explain meaningful alternatives, trade-offs, conflicts, and negative boundaries.
+- Lead with current APIs. Include deprecated or historical behavior only when readers need migration or compatibility guidance.
+- Include implementation details only when they change a user decision or explain observable behavior.
+- Document behavior changes in every affected user-facing surface in the same PR. Fix any conflict between documentation and implementation instead of leaving competing contracts.
+- Give each maintained fact one canonical home and link to it elsewhere. Link changing provider inventories, feature lists, and setup details to their authoritative source instead of copying them.
+- When a section needs a stable explicit anchor, add `{#custom-id}` to its heading and link to that ID. Use generated fragments only when they are clear and stable.
+- Put user-facing features where users naturally look for them, not only in API reference docstrings.
+- Use current frontier models in reader-facing examples. Verify the latest supported identifiers instead of copying static examples from this guidance.
+- Use Markdown headings for real document sections. Register new published pages in `docs/navigation.yml`.
+- Link to rendered Pydantic AI Harness documentation when it exists. Use the Harness repository only when no published page covers the capability.
+
+## Docstrings
+
+- Help users choose and correctly use public APIs. State behavior, important conditions, errors, side effects, defaults, precedence, and boundaries without repeating the signature or implementation.
+- For configurable features, document the default, fallback and precedence conditions, compatibility consequences, and when users should override it.
+- Format code identifiers as Markdown code or API reference links, as appropriate.
+- For provider-dependent APIs, identify supported providers and explain differences that affect user choices. Do not claim mechanisms the provider does not document.
+
+## Code comments
+
+- Explain non-obvious intent, invariants, constraints, trade-offs, or why an obvious implementation is wrong. Do not narrate behavior that is clear from the code.
+- Describe the current constraint. Keep history only when it explains a live compatibility boundary, workaround, regression risk, or otherwise surprising decision.
+- Explain a workaround's intended behavior and the external constraint it compensates for. Mark future cleanup with `TODO:` and link it to a tracking issue.
+- Use stable references. Link GitHub issues and PRs with full URLs, and name symbols or behavior instead of line numbers.

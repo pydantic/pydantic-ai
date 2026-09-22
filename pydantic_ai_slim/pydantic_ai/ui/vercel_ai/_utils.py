@@ -50,6 +50,7 @@ COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
+_INTERNAL_METADATA_KEY = '__pydantic_ai__'
 
 
 class _PydanticAIMessageMetadata(BaseModel):
@@ -75,7 +76,7 @@ def tool_return_output(part: BaseToolReturnPart) -> Any:
     """Serialize a tool return's full content for `ToolOutputAvailablePart.output`.
 
     Vercel's `output` field is `Any`, so the full return — file data included — is always dumped inline
-    and rehydrated on load via `ToolReturnContent`'s discriminator (`_validate_tool_output`). No gating.
+    and rehydrated on load through the `ToolReturnContent` union (`_validate_tool_output`). No gating.
     The same function serializes both the `dump_messages` history path and the live event stream
     (`tool-output-available`), so files survive either round-trip.
     """
@@ -127,7 +128,11 @@ def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
     `UIMessage.metadata` is typed as `unknown` since AI SDK v5, so older frontends will
     silently ignore the field rather than reject the message.
     """
-    metadata = dict(message.metadata) if message.metadata else {}
+    metadata = (
+        {key: value for key, value in message.metadata.items() if key != _INTERNAL_METADATA_KEY}
+        if message.metadata
+        else {}
+    )
 
     pydantic_metadata = _PydanticAIMessageMetadata(timestamp=message.timestamp)
     if pydantic_metadata_dump := pydantic_metadata.model_dump(mode='json', exclude_defaults=True):
@@ -148,7 +153,9 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
         return
 
     raw_pydantic_metadata = metadata.get(PROVIDER_METADATA_KEY)
-    if application_metadata := {k: v for k, v in metadata.items() if k != PROVIDER_METADATA_KEY}:
+    if application_metadata := {
+        key: value for key, value in metadata.items() if key not in (PROVIDER_METADATA_KEY, _INTERNAL_METADATA_KEY)
+    }:
         message.metadata = application_metadata
 
     if not is_str_dict(raw_pydantic_metadata):
@@ -171,7 +178,7 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 #
 # If the Vercel AI SDK introduces new data-carrying UIMessagePart variants,
 # the corresponding chunk type should be added here.
-_DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
+DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 
 
 def iter_metadata_chunks(
@@ -179,18 +186,18 @@ def iter_metadata_chunks(
 ) -> Iterator[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]:
     """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
-    Used by both the streaming and dump paths. Only `_DATA_CHUNK_TYPES` are
+    Used by both the streaming and dump paths. Only `DATA_CHUNK_TYPES` are
     yielded; protocol-control chunks are filtered out.
     """
     possible = tool_result.metadata or tool_result.content
-    if isinstance(possible, _DATA_CHUNK_TYPES):
+    if isinstance(possible, DATA_CHUNK_TYPES):
         yield possible
     elif isinstance(possible, (str, bytes)):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
     elif isinstance(possible, Iterable):  # pragma: no branch
         for item in possible:  # type: ignore[reportUnknownMemberType]
-            if isinstance(item, _DATA_CHUNK_TYPES):  # pragma: no branch
+            if isinstance(item, DATA_CHUNK_TYPES):  # pragma: no branch
                 yield item
 
 
