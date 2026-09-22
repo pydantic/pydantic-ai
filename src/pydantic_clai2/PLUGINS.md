@@ -138,9 +138,13 @@ clai2 --worktree my-task
 that directory before reading project settings or activating plugins. Relative paths in your plugin, the coding tools,
 and `repo_context` therefore refer to that checkout. User plugins and settings
 still load from the same database directory, even with a relative `--database`
-path. Only committed project files reach the new checkout. Worktrees and their
-`clai/NAME` branches stay on disk after the session ends; plugins do not own their
-cleanup. See [Git worktrees](README.md#git-worktrees) for naming and cleanup.
+path. Only committed project files reach the new checkout. After interactive
+shutdown and plugin cleanup, CLAI offers to remove the linked worktree, defaulting
+to keep. This includes existing linked worktrees. Removal uses Git without
+`--force` and keeps the branch; dirty or locked checkouts stay on disk.
+Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
+and `/reload` keep the checkout in use. Plugins do not own worktree cleanup.
+See [Git worktrees](README.md#git-worktrees) for naming and cleanup.
 
 ## The built-in plugins
 
