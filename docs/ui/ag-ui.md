@@ -506,7 +506,7 @@ That gate runs in both directions. On the way out, content an older protocol ver
 
 What gets skipped is decided by the tag alone: any `role` or `type` string the installed models don't declare qualifies, except for a retired shape, which is translated. A client that misspells `"txet"` is skipped with the same warning as genuinely newer content — the server has no way to tell those apart. The skip is scoped to well-formed items: a message must still carry a string `id`, the field every AG-UI message type requires.
 
-Everything else is still rejected with `422 Unprocessable Entity` — a payload that is malformed under a `role` or `type` the install *does* know, a `role` or `type` that isn't a string at all, and a body that isn't valid JSON. If you see the warning and the content was real, upgrading `ag-ui-protocol` is what makes it reach your agent.
+Everything else is still rejected with `422 Unprocessable Entity` — a payload that is malformed under a `role` or `type` the install *does* know, a `role` or `type` that isn't a string at all, and a body that isn't valid JSON. If you see the warning and the content was real, upgrading `ag-ui-protocol` is what makes it reach your agent. One more thing is dropped after validation with a `UserWarning`: a `file` source whose provider isn't one Pydantic AI knows. Upgrading doesn't change that; it is handled like an [`UploadedFile`][pydantic_ai.messages.UploadedFile] the adapter isn't allowed to forward (see [Trust model](#trust-model)).
 
 ### Trust model
 

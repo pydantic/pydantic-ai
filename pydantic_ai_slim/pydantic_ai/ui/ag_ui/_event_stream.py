@@ -275,7 +275,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                     interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
                 )
             if output.calls and self._lifecycle_1_0:
-                # Frontend tool calls are pending work on a successful run.
+                # Every call the run left for the client to execute has no `TOOL_CALL_RESULT` yet.
                 return RunFinishedSuccessOutcome(pending_tool_call_ids=[call.tool_call_id for call in output.calls])
         return RunFinishedSuccessOutcome()
 
@@ -294,6 +294,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         else:
             message_id = self.new_message_id()
             self._started_message_id = message_id
+            # `role` became optional in 1.0 and the SDK omits it from the wire when unset; 0.x client
+            # schemas require it.
             yield TextMessageStartEvent(message_id=message_id, role='assistant')
 
         if part.content:  # pragma: no branch
@@ -372,6 +374,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # The message carries no text, so it is closed straight away: the AG-UI client's event
             # verifier rejects `RUN_FINISHED` while a text message is still open.
             self._started_message_id = parent_message_id
+            # `role` is explicit for the reason given in `handle_text_start`.
             yield TextMessageStartEvent(message_id=parent_message_id, role='assistant')
             yield TextMessageEndEvent(message_id=parent_message_id)
 

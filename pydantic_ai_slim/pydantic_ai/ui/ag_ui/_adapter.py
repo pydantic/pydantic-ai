@@ -70,7 +70,6 @@ try:
         ActivityMessage,
         AssistantMessage,
         BaseEvent,
-        BinaryInputContent,
         DeveloperMessage,
         FunctionCall,
         InputContent,
@@ -86,7 +85,7 @@ try:
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
     from ._event_stream import AGUIEventStream
-    from ._forward_compat import HAS_BINARY_INPUT_CONTENT, adapt_unsupported_items
+    from ._forward_compat import HAS_BINARY_INPUT_CONTENT, BinaryInputContent, adapt_unsupported_items
     from ._interrupt import (
         HAS_INTERRUPTS,
         ResumeEntry,
@@ -321,9 +320,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         try:
             return RunAgentInput.model_validate_json(body)
         except ValidationError:
-            payload, skipped, adapted = adapt_unsupported_items(body)
-            if not skipped and not adapted:
+            if (adapted := adapt_unsupported_items(body)) is None:
                 raise
+            payload, skipped = adapted
 
         # Validated outside the `except` block so a body that is *also* malformed reports the
         # remaining errors on their own rather than chained behind the unknown-tag failure.
@@ -672,7 +671,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         each tool message, so a `ToolReturnPart` that precedes a `UserPromptPart` in the original
         request keeps its position instead of being reordered after the user prompt.
         """
-        # A 1.0 install no longer accepts `binary` in its input union.
+        # Unlike the legacy `THINKING_*` events, which are leaf models we can vendor, `binary` is a
+        # member of the SDK's `UserMessage.content` union: an install that dropped it cannot build the
+        # message, so the install's typed media wins over the negotiated version.
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION or not HAS_BINARY_INPUT_CONTENT
         # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) landed in 0.1.11 — see
         # `tool_kind_encrypted_value`.

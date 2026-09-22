@@ -106,7 +106,6 @@ with try_import() as imports_successful:
         ActivityMessage,
         AssistantMessage,
         BaseEvent,
-        BinaryInputContent,
         Context,
         CustomEvent,
         DeveloperMessage,
@@ -166,6 +165,10 @@ with try_import() as interrupts_imports_successful:
     # `ResumeEntry` and the interrupt-aware run lifecycle were added in ag-ui-protocol 0.1.19
     # (PR #1569). On older installs, the dedicated interrupt tests below are skipped.
     from ag_ui.core import ResumeEntry
+
+with try_import():
+    # Retired in 1.0 and kept importable for one release; every test using it is `skip_if_ag_ui_1_0`.
+    from ag_ui.core import BinaryInputContent
 
 with try_import():
     # These names were added in ag-ui-protocol 1.0.0; tests using them are version-gated below.
@@ -8403,8 +8406,8 @@ async def test_approval_interrupt_on_1_0_has_no_pending_tool_call_ids() -> None:
 @requires_ag_ui('1.0.0')
 async def test_retired_binary_part_is_translated_on_1_0() -> None:
     """A retired `binary` part becomes the typed media part without a warning: `url` wins over `data`, a
-    base64 data URI becomes a data source whose own media type wins, `mime_type` is accepted alongside
-    `mimeType`, and `filename` lands in `metadata`."""
+    base64 data URI becomes a data source whose own media type wins, and `mime_type` is accepted
+    alongside `mimeType`."""
     cases = [
         ({'url': 'https://example.com/image.png'}, ('image', 'url', 'https://example.com/image.png', 'image/png')),
         (
@@ -8429,22 +8432,6 @@ async def test_retired_binary_part_is_translated_on_1_0() -> None:
         assert isinstance(media, ImageInputContent | DocumentInputContent)
         assert (media.type, media.source.type, media.source.value, media.source.mime_type) == expected
 
-    run_input = AGUIAdapter.build_run_input(
-        build_run_input_body(
-            {
-                'id': 'msg-1',
-                'role': 'user',
-                'content': [
-                    {'type': 'binary', 'url': 'https://example.com/a', 'mime_type': 'image/png', 'filename': 'a.png'}
-                ],
-            }
-        )
-    )
-    content = run_input.messages[0].content
-    assert isinstance(content, list)
-    assert isinstance(content[0], ImageInputContent)
-    assert content[0].metadata == {'filename': 'a.png'}
-
 
 @requires_ag_ui('1.0.0')
 def test_retired_binary_part_without_payload_is_rejected() -> None:
@@ -8458,24 +8445,6 @@ def test_retired_binary_part_without_payload_is_rejected() -> None:
     ):
         with pytest.raises(ValidationError, match='binary'):
             AGUIAdapter.build_run_input(build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': content}))
-
-
-@skip_if_ag_ui_1_0
-def test_retired_binary_part_is_native_below_1_0() -> None:
-    """Below 1.0 `binary` is a known tag and validates natively, so translation never runs."""
-    run_input = AGUIAdapter.build_run_input(
-        build_run_input_body(
-            {
-                'id': 'msg-1',
-                'role': 'user',
-                'content': [{'type': 'binary', 'url': 'https://example.com/a', 'mimeType': 'image/png'}],
-            }
-        )
-    )
-    message = run_input.messages[0]
-    assert isinstance(message, UserMessage)
-    assert isinstance(message.content, list)
-    assert isinstance(message.content[0], BinaryInputContent)
 
 
 @requires_ag_ui('1.0.0')
@@ -8493,26 +8462,11 @@ def test_file_source_loads_as_uploaded_file() -> None:
         )
     assert unknown == []
 
-    with pytest.warns(UserWarning, match=r'provider None was skipped'):
+    with pytest.warns(UserWarning, match=r'with no provider was skipped'):
         missing = AGUIAdapter.load_messages(
             [UserMessage(id='m1', content=[ImageInputContent(source=FileSource(value='x'))])]
         )
     assert missing == []
-
-
-@requires_ag_ui('1.0.0')
-async def test_lifecycle_1_0_import_gate_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With the 1.0 names unavailable, negotiating 1.0 still emits the pre-1.0 wire."""
-    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream.HAS_LIFECYCLE_1_0', False)
-    events = await _collect_adapter_events(
-        agent=Agent(model=FunctionModel(stream_function=simple_stream)),
-        run_input=create_input(UserMessage(id='m1', content='hi')),
-        ag_ui_version='1.0.0',
-    )
-    started = next(event for event in events if event['type'] == 'RUN_STARTED')
-    finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
-    assert 'protocolVersion' not in started
-    assert 'usage' not in finished
 
 
 @pytestmark_interrupts

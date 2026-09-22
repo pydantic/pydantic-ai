@@ -17,12 +17,14 @@ under a tag we don't recognize.
 
 The one tag that is unknown because the SDK *retired* it, `binary` on 1.0, is translated to its typed
 replacement instead of skipped; a `binary` part with nothing to translate stays in and fails validation.
+The translation rewrites the raw JSON rather than going through the SDK's deprecated `BinaryInputContent`
+class, which 1.0 keeps importable for one release only.
 """
 
 from __future__ import annotations
 
 import json
-from typing import get_args
+from typing import TYPE_CHECKING, get_args
 
 from ag_ui.core import InputContent, Message
 from pydantic import BaseModel, JsonValue
@@ -30,7 +32,19 @@ from pydantic import BaseModel, JsonValue
 from ..._utils import get_union_args
 from ._utils import media_part_type
 
-__all__ = ['HAS_BINARY_INPUT_CONTENT', 'adapt_unsupported_items']
+if TYPE_CHECKING:
+    from ag_ui.core import BinaryInputContent
+else:
+    try:
+        from ag_ui.core import BinaryInputContent
+    except ImportError:  # pragma: lax no cover
+        # 1.0 keeps the retired class importable for one release; after that no part can match it.
+
+        class BinaryInputContent:
+            """Stub for SDKs without the retired `binary` input part."""
+
+
+__all__ = ['HAS_BINARY_INPUT_CONTENT', 'BinaryInputContent', 'adapt_unsupported_items']
 
 
 def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
@@ -89,22 +103,14 @@ def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] |
         source = {'type': 'data', 'value': data, 'mimeType': mime_type}
     else:
         return None
-    part: dict[str, JsonValue] = {
-        'type': media_part_type(mime_type),
-        'source': source,
-    }
-    filename = item.get('filename')
-    if isinstance(filename, str) and filename:
-        part['metadata'] = {'filename': filename}
-    return part
+    return {'type': media_part_type(mime_type), 'source': source}
 
 
-def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str], bool]:
+def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | None:
     """Re-read a rejected request, skipping unsupported tagged items and translating retired ones.
 
-    Returns the adapted payload, labels for the skipped tags, and whether any retired `binary` part
-    was translated. Nothing skipped and nothing translated means the caller should let the original
-    `ValidationError` stand.
+    Returns the adapted payload and labels for the skipped tags, or `None` when nothing was skipped
+    or translated, in which case the caller should let the original `ValidationError` stand.
     """
     try:
         payload: JsonValue = json.loads(body)
@@ -114,12 +120,12 @@ def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str], boo
         # `ValidationError` (and the 422 it maps to) must stand. Invalid JSON and invalid UTF-8 both
         # arrive as `ValueError` subclasses — `UnicodeDecodeError` is not a `JSONDecodeError` — and
         # input nested past the interpreter's limit arrives as `RecursionError`.
-        return None, frozenset(), False
+        return None
     if not isinstance(payload, dict):
-        return None, frozenset(), False
+        return None
     messages = payload.get('messages')
     if not isinstance(messages, list):
-        return None, frozenset(), False
+        return None
 
     skipped: set[str] = set()
     translated = False
@@ -157,5 +163,7 @@ def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str], boo
                 message['content'] = kept_content
         kept_messages.append(message)
 
+    if not skipped and not translated:
+        return None
     payload['messages'] = kept_messages
-    return payload, frozenset(skipped), translated
+    return payload, frozenset(skipped)

@@ -133,8 +133,9 @@ def multimodal_input_to_content(
         return BinaryContent(data=b64decode(source.value), media_type=source.mime_type, vendor_metadata=vendor_metadata)
     assert isinstance(source, FileSource)
     if source.provider not in _UPLOADED_FILE_PROVIDERS:
+        got = 'no provider' if source.provider is None else f'provider {source.provider!r}'
         warnings.warn(
-            f'AG-UI file content with provider {source.provider!r} was skipped; set `provider` on the file source '
+            f'AG-UI file content with {got} was skipped; set `provider` on the file source '
             f'to one of {sorted(_UPLOADED_FILE_PROVIDERS)} so the file can be passed to that provider.',
             UserWarning,
             stacklevel=3,
