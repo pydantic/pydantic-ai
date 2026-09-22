@@ -20,8 +20,9 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
 for trusted work. `working_dir` is required and must be absolute (a leading `~` is expanded); the
 caller owns that directory. `read_only=True` wraps it in `ReadOnlyWorkspace`. It has the default id
 `local_workspace`, so a second one replaces the first unless it gets its own `id`. Its ref is
-`WorkspaceRef(provider='local', id=<working_dir, ~ expanded>)`, and the capability claims only that
-exact ref: a foreign ref, or a local ref for another directory, gets `None`, so message history
+`WorkspaceRef(provider='local', id=<working_dir, ~ expanded>)` from construction (the directory
+must exist; the first operation raises `WorkspaceUnavailableError` otherwise), and the capability
+claims only that exact ref: a foreign ref, or a local ref for another directory, gets `None`, so message history
 cannot redirect the agent to another host directory (pass `workspace='new'` to start over in the
 configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('/absolute/path'))`.
@@ -48,11 +49,28 @@ creates the fresh workspace. With no supplier, the unavailable default explains 
 workspace without raising. `get_workspace` runs after `for_run`, is synchronous, and must have no
 side effects. A capability should return `None` for references it does not own.
 
+A `WorkspaceRef` names an environment that exists, and exists only once it does. A backend built
+without a ref reports `ref is None`, creates the environment on its first operation, and sets `ref`
+as soon as the create call returns; a backend built with a ref attaches on its first operation and
+raises `WorkspaceUnavailableError` if the environment is gone, never creating a replacement. A ref
+is never a label: no name-, conversation- or uuid-derived ref before the environment exists.
+`get_workspace` is the only path from a ref back to a workspace. The local backend is the one
+exception where the ref precedes any operation (the directory is the environment); `working_dir()`
+raises `WorkspaceUnavailableError` if the directory is missing. When a run ends, `workspace.ref` is
+recorded as `workspace_ref` on its last `ModelResponse` (`None` if no environment was created).
+
 A provider backend keeps credentials and its SDK client, exposes a typed awaitable native handle as
-`workspace`, and owns a lock/cache plus private `_create_or_attach(ref)`. No ref creates and publishes
-`WorkspaceRef(provider=..., id=...)`; a ref attaches or raises if the environment is gone. The core
-does not manage provider lifecycle at run boundaries. The application owns SDK retries, cleanup, TTL,
-and pause/stop operations.
+`workspace`, and owns a lock/cache plus private `_create_or_attach(ref)`. The core does not manage
+provider lifecycle at run boundaries. The application owns SDK retries, cleanup, TTL, and pause/stop
+operations.
+
+Exception contract a backend must follow: `WorkspaceUnavailableError` when the environment is gone
+or unreachable (ends the run; never reaches the model); `WorkspaceTimeoutError` for a command over
+its `timeout=`; builtin file errors (`FileNotFoundError`, `IsADirectoryError`, ...) for path-level
+failures the model can act on; `WorkspaceError` for other deliberate refusals; `TypeError`/`ValueError`
+for bad arguments. SDK transient errors propagate unchanged (durable engines retry them); if the SDK
+cannot tell a dead environment from a failed operation, probe with `working_dir()` and raise
+`WorkspaceUnavailableError`. `UserError` belongs to the facade and policy wrappers, not backends.
 
 `result.workspace` continues with a live backend; `result.workspace.ref` lets another worker attach.
 

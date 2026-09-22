@@ -180,15 +180,44 @@ selected workspace.
 
 `get_workspace` is synchronous and must have no side effects.
 
-A local workspace's reference is `WorkspaceRef(provider='local', id=...)`, where `id` is its
-`working_dir` with `~` expanded, so responses from a local run record which directory they worked
-in. [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] claims that reference only when it
-names its own `working_dir`, which is how a run continued from message history lands in the same
+To supply workspaces from your own capability, implement `get_workspace`: return a backend
+configured from the capability's own settings, carrying `ref` when one was passed in, and `None`
+for a ref you do not recognize. `get_workspace` is the only place a reference is turned back into a
+workspace, so a capability that creates environments must also recognize the references they get.
+
+## Workspace references {#workspace-references}
+
+A [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] names an environment that exists, and it
+exists only once the environment does:
+
+- A backend built without a reference reports `ref` as `None`. Its first operation creates the
+  environment, and the backend sets `ref` as soon as the creation call returns. A run whose tools
+  never touch a fresh workspace therefore ends without a reference, because nothing was created.
+- A backend built with a reference is bound to that environment. Its first operation attaches, and
+  if the environment is gone (deleted, expired, or unknown to the provider) that operation raises
+  [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError]. It never
+  creates a replacement, so a stale reference in message history fails loudly instead of quietly
+  starting over; pass `workspace='new'` to start over on purpose.
+- A reference is never a label. A backend does not derive one from a name, a conversation id or a
+  random id ahead of creating the environment, and reports one it was not given only after the
+  environment exists.
+
+When a run ends, the workspace's `ref` at that point is recorded as `workspace_ref` on the run's
+last `ModelResponse`, which is what lets the next run with the same `message_history` continue in
+the same environment, and what `result.workspace.ref` hands to another process.
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] strips it from client-supplied
+history by default.
+
+A local workspace is the one case where the reference precedes any operation: its directory is the
+environment, so `WorkspaceRef(provider='local', id=...)`, where `id` is the `working_dir` with `~`
+expanded, is known from construction, and responses from a local run record which directory they
+worked in. The first operation still checks the environment: `working_dir()` raises
+`WorkspaceUnavailableError` when the directory does not exist, and nothing creates it.
+[`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] claims that reference only when it names
+its own `working_dir`, which is how a run continued from message history lands in the same
 directory. It declines a local reference for any other directory, so message history can never point
 the agent at an arbitrary directory on the host; that run gets no workspace unless you pass
-`workspace='new'`. To supply workspaces from your own capability, implement `get_workspace`: return a
-backend configured from the capability's own settings, carrying `ref` when one was passed in, and
-`None` for a ref you do not recognize.
+`workspace='new'`.
 
 To disable workspace access explicitly, pass an
 [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] as `workspace=`:
@@ -212,11 +241,16 @@ through shell commands. A filesystem-only backend works without a shell; calling
 facade raises `UserError`. When both capabilities are present, commands and file operations must
 use the same environment.
 
-This backend runs commands on the host under a directory selected from its reference:
+The constructor takes the backend's configuration plus an optional reference and does no I/O; the
+first operation creates or attaches, following the [reference rules](#workspace-references). This
+backend gives each environment its own directory on the host under `base_dir`:
 
 ```python {title="host_workspace.py"}
-from collections.abc import Awaitable, Mapping
+import uuid
+from collections.abc import Mapping
 from pathlib import Path
+
+import anyio
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -224,21 +258,34 @@ from pydantic_ai.workspaces import (
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceRef,
+    WorkspaceUnavailableError,
 )
 
 
 class HostWorkspaceBackend(WorkspaceBackend):
-    def __init__(self, base_dir: Path, ref: WorkspaceRef):
+    def __init__(self, base_dir: Path, ref: WorkspaceRef | None = None):
+        self._base_dir = base_dir
         self._ref = ref
-        self._local = LocalWorkspaceBackend(base_dir / ref.id)
+        self._local: LocalWorkspaceBackend | None = None
 
     @property
-    def ref(self) -> WorkspaceRef:
+    def ref(self) -> WorkspaceRef | None:
         return self._ref
 
-    @property
-    def workspace(self) -> Awaitable[str]:
-        return self._local.working_dir()
+    async def _directory(self) -> LocalWorkspaceBackend:
+        if self._local is None:
+            if self._ref is None:
+                # No reference: create the environment, then report its identity.
+                directory = anyio.Path(self._base_dir / uuid.uuid4().hex)
+                await directory.mkdir()
+                self._ref = WorkspaceRef(provider='host', id=directory.name)
+            else:
+                # A reference: attach to the environment it names, or fail. Never create a replacement.
+                directory = anyio.Path(self._base_dir / self._ref.id)
+                if not await directory.is_dir():
+                    raise WorkspaceUnavailableError(f'workspace {self._ref.id!r} no longer exists')
+            self._local = LocalWorkspaceBackend(Path(directory))
+        return self._local
 
     async def run(
         self,
@@ -249,15 +296,16 @@ class HostWorkspaceBackend(WorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        return await self._local.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+        local = await self._directory()
+        return await local.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
-        return await self.workspace
+        local = await self._directory()
+        return await local.working_dir()
 ```
 
 Reading `ref` does not run a command. Keep the concrete backend when you need provider-specific
-methods: `await backend.workspace` returns its native handle, and `Workspace.backend` reaches the
-wrapped backend.
+methods: `Workspace.backend` reaches the wrapped backend.
 
 Pydantic AI does not create or destroy environments at run boundaries. Provision and clean them up
 in `before_run`, `after_run`, or `wrap_run` hooks, or with the provider's SDK. Pass
@@ -266,13 +314,31 @@ environment.
 
 ## Errors
 
-- A non-zero command exit is a normal result reported on `exit_code`.
-- A missing file raises `FileNotFoundError`.
-- An unavailable environment raises
-  [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
+The exception a workspace raises says whether the environment is still usable, so a backend must
+raise the right one in each case (this is the contract capabilities and the durable engines rely
+on; the full list is on the [`pydantic_ai.workspaces`][pydantic_ai.workspaces] module):
+
+- A non-zero command exit is a normal result reported on `exit_code`, not an exception.
+- An environment that is gone or unreachable raises
+  [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError], including on the
+  first operation of a backend whose reference no longer names a live environment. Retrying cannot
+  help, and a run cannot continue in that environment, so this error ends the agent run rather than
+  reaching the model.
 - A command that exceeds its deadline raises
   [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] with the output received so
   far. How the command is terminated depends on the provider.
+- A path-level failure raises the builtin file error: a missing file `FileNotFoundError`, a
+  directory where a file was expected `IsADirectoryError`, and so on. The environment itself is
+  fine, so a tool can report the failure to the model and carry on.
+- Any other failure the workspace layer refuses deliberately, such as command output over a
+  backend's limit, raises [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError]; invalid
+  arguments raise `TypeError` or `ValueError`.
+- A provider SDK's own transient errors propagate unchanged and are treated as infrastructure
+  failures: under durable execution the unit is retried. A backend whose platform reports a dead
+  environment and a failed operation with the same exception should probe, for example with
+  `working_dir()`, and raise `WorkspaceUnavailableError` when the environment is gone.
+- [`UserError`][pydantic_ai.exceptions.UserError] comes from the facade and policy wrappers, such
+  as a read-only refusal or an unattached workspace, not from a backend operation.
 
 ## Durable execution
 
