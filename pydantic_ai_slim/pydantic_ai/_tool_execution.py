@@ -497,6 +497,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # Check tool-call usage limits up front for the full count of function-kind calls.
         if self.ctx.deps.usage_limits.tool_calls_limit is not None and self.function_indices:
             projected_usage = deepcopy(self.ctx.state.usage)
+            # usage-attribution: a deepcopy, projected forward to check a limit before the calls run
             projected_usage.tool_calls += len(self.function_indices)
             self.ctx.deps.usage_limits.check_before_tool_call(projected_usage)
 

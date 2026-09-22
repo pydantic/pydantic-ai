@@ -47,6 +47,7 @@ from . import (
     _enqueue,
     _output,
     _system_prompt,
+    _usage_attribution,
     exceptions,
     messages as _messages,
     models,
@@ -433,8 +434,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
     # place — never reassigned. The per-step refresh relies on that shared identity for both, and
     # `discovered_tool_names` additionally on the in-step reveals written by tool execution.
-    # `loaded_capability_ids` is refreshed from history only: a capability loaded during a step
-    # lands from the next one, so nothing writes it mid-step. Reassigning either (here, or by
+    # `loaded_capability_ids` is refreshed from history only: a capability the *model* loads during
+    # a step lands from the next one, since its load return only reaches history at the step's end.
+    # It is still refreshed a second time within the step, after history processing has rewritten
+    # that history — the only way its contents move mid-step. Reassigning either (here, or by
     # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
@@ -469,6 +472,25 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     Runtime-only and id-keyed like `pending_immediate_dispatches`, and excluded from persistence for
     the same reason."""
+
+    durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] = dataclasses.field(
+        default_factory=dict[tuple[str, str], Callable[..., Awaitable[Any]]], repr=False
+    )
+    """Per-run durable capability operation dispatchers, keyed by `(capability id, operation name)`.
+
+    Shared by reference into every `RunContext` this run and only ever mutated in place, like
+    `loaded_capability_ids` above: the durability capability fills it once at run setup, and every
+    later `build_run_context` has to see the same populated mapping or a durable operation called
+    from a per-request hook would silently run inline.
+    """
+
+    run_capabilities_by_id: dict[str, AbstractCapability[DepsT]] = dataclasses.field(
+        default_factory=dict[str, AbstractCapability[Any]], repr=False
+    )
+    """The run's capability instances by `id`, used for worker-side durable recovery.
+
+    Shared by reference and mutated in place, for the same reason as `durable_operations`.
+    """
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -939,7 +961,7 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
     """
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
-        provisional.incr(continuation_usage)
+        provisional.incr(continuation_usage)  # usage-attribution: a provisional copy, for a check only
         run_context.usage_limits.check_tokens(provisional)
         if continuation_usage.cost is not None:
             # Continuation usage is provisional, so only warn after the run successfully finishes.
@@ -1236,7 +1258,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
             skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
             skip_sr = CompletedStreamedResponse(e.response, model_request_parameters=skip_mrp)
@@ -1277,7 +1299,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # separate request steps.
             async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
                 self._did_stream = True
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                 agent_stream_holder.append(agent_stream)
                 stream_ready.set()
@@ -1362,7 +1384,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await agent_stream.aclose_events()
                 return
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=model_request_parameters,
@@ -1406,7 +1428,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             conversation_id=ctx.state.conversation_id,
                         )
                         fill_response_cost(partial_response)
-                        ctx.state.usage.incr(partial_response.usage)
+                        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
                         ctx.state.message_history.append(partial_response)
                 else:
                     try:
@@ -1474,7 +1496,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             return await self._finish_handling(ctx, e.response)
 
         _handler_response: _messages.ModelResponse | None = None
@@ -1529,11 +1551,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, e)
         self.last_request_context = request_context
-        ctx.state.usage.requests += 1
+        _usage_attribution.record_request(ctx.state.usage)
 
         return await self._finish_handling(ctx, model_response)
 
@@ -1647,6 +1669,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
+
+        # Processing may have added or removed `load_capability` exchanges, and the durable history it
+        # just rewrote is what the rest of the step reads availability from. Refresh so the execution
+        # gate agrees with the reveal state `_with_outgoing_reveal_state` derives below from the same
+        # messages; `ToolManager.for_run_step` re-resolves off this set at dispatch, so a capability
+        # that became active here still governs its own tools through `prepare_tools`.
+        _refresh_loaded_capability_ids(ctx)
+
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
             messages,
@@ -1746,7 +1776,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 provider_name=model.system,
             )
             counted_usage.cost = counted_price.total_price if counted_price is not None else None
-            usage.incr(counted_usage)
+            usage.incr(counted_usage)  # usage-attribution: a deepcopy, to check a limit before the request
 
             ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
 
@@ -1855,6 +1885,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # replace its contents (dropping the suspended response) rather than the reference;
         # `_finish_handling` then appends the final merged response after the base history.
         ctx.state.message_history[:] = base_messages
+
+        # Same reason as in `_prepare_request`: processing may have changed which capabilities the
+        # durable history shows as loaded, and the tool calls this continuation comes back with are
+        # dispatched against that history.
+        _refresh_loaded_capability_ids(ctx)
+
         ctx.deps.new_message_index = _first_new_message_index(
             base_messages,
             ctx.state.run_id,
@@ -1928,7 +1964,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         fill_response_cost(response)
-        ctx.state.usage.incr(response.usage)
+        _usage_attribution.record_usage(ctx.state.usage, response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.
@@ -2256,8 +2292,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
         # The manager was already prepared for this same run step before the model request, so
-        # `for_run_step` deliberately returns it unchanged, keeping the retries it accumulated —
-        # which is why the evidence lands field by field rather than by swapping in `run_context`.
+        # `for_run_step` normally returns it unchanged, keeping the retries it accumulated — which is
+        # why the evidence lands field by field rather than by swapping in `run_context`. (It does
+        # re-resolve when capability availability moved since preparation, e.g. a history processor
+        # injected a `load_capability` exchange; that path carries the same retries through and ends
+        # up holding `run_context`, whose evidence this assignment then re-applies harmlessly.)
         # Only the retrospective evidence is carried: replacing the prospective shared sets would
         # affect the next request's reveal pruning and search ranking.
         assert ctx.deps.tool_manager.ctx is not None
@@ -2517,6 +2556,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
+        _durable_operations=ctx.deps.durable_operations,
+        _run_capabilities_by_id=ctx.deps.run_capabilities_by_id,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
@@ -2526,10 +2567,10 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
     # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
-    # `_mcp_tool_defs_cache` (see the invariant on `GraphAgentDeps.loaded_capability_ids`). Never
-    # add any of them as a `replace` kwarg — forking the object would silently break in-step
-    # capability loads / tool reveals / message enqueues / cancellation / event delivery /
-    # tool-defs caching.
+    # `_mcp_tool_defs_cache`, `_durable_operations`, `_run_capabilities_by_id` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
+    # the object would silently break in-step capability loads / tool reveals / message enqueues /
+    # cancellation / event delivery / tool-defs caching / durable operation dispatch.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 

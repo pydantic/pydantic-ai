@@ -91,6 +91,7 @@ with try_import() as openrouter_google_imports:
 _CANONICAL_DEFAULTS: dict[str, Any] = {
     # Top-level `ModelProfile` defaults
     'supports_tools': True,
+    'supports_text_output': True,
     'supports_tool_return_schema': False,
     'supports_json_schema_output': False,
     'supports_json_object_output': False,
@@ -727,6 +728,25 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_strict_tool_definition': True,
         }
     )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        ('us.anthropic.claude-sonnet-4-6', True),
+        ('us.anthropic.claude-sonnet-5', True),
+        ('us.anthropic.claude-opus-4-6-v1', True),
+        ('us.anthropic.claude-opus-5', True),
+        ('us.anthropic.claude-fable-5-1', False),
+    ],
+)
+def test_bedrock_anthropic_adaptive_thinking_tool_choice_support(model_name: str, expected: bool):
+    """Bedrock preserves the underlying Anthropic model's adaptive-thinking tool-choice support."""
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('bedrock_supports_tool_choice', False) is True
+    assert profile.get('anthropic_supports_forced_tool_choice', False) is expected
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')

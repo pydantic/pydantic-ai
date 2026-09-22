@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import json
+import time
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
+from markdownify import markdownify
 
+from pydantic_ai._utils import using_thread_executor
 from pydantic_ai.common_tools.web_fetch import (
     WebFetchLocalTool,
+    _convert_html,  # pyright: ignore[reportPrivateUsage]
     web_fetch_tool,
 )
+from pydantic_ai.exceptions import ModelRetry
 
 pytestmark = [pytest.mark.anyio]
 
@@ -337,6 +345,21 @@ class TestWebFetchLocalTool:
         with pytest.raises(ModelRetry, match='Failed to fetch'):
             await tool('not-a-url')
 
+    async def test_idna_invalid_hostname_raises_model_retry(self):
+        """A hostname httpx2's IDNA parser rejects raises ModelRetry, not `httpx2.InvalidURL`.
+
+        The URL is rejected before any name resolution, so this never reaches the network.
+        """
+        # A fullwidth "e" (U+FF45), spelled as an escape so the hostname survives any normalization
+        # a tool might apply to this file, and so a reader can tell it apart from a plain "e".
+        url = 'https://\uff45xample.com/'
+
+        tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+        with pytest.raises(ModelRetry, match='Failed to fetch') as exc_info:
+            await tool(url)
+
+        assert isinstance(exc_info.value.__cause__, httpx2.InvalidURL)
+
     async def test_allowed_domains_permits(self):
         """Allowed domain passes validation and is forwarded to safe_download."""
         mock_response = _html_response('<html><body>ok</body></html>')
@@ -510,8 +533,6 @@ class TestWebFetchLocalTool:
         self, serve_response: Callable[[httpx2.Response], None], content_type: str
     ):
         """A response body larger than `max_download_bytes` is rejected before it is buffered."""
-        from pydantic_ai.exceptions import ModelRetry
-
         request = httpx2.Request('GET', 'https://93.184.215.14/doc')
         serve_response(
             httpx2.Response(200, content=b'x' * 2000, headers={'content-type': content_type}, request=request)
@@ -533,6 +554,247 @@ class TestWebFetchLocalTool:
 
         assert isinstance(result, dict)
         assert len(result['content']) == 200_000
+
+    async def test_fetch_html_title_is_raw_and_case_insensitive(self):
+        """The title is the raw text between the tags, matched case-insensitively, with attributes ignored."""
+        html = '<html><head><TITLE lang="en">Fish &amp; Chips</TITLE></head><body><p>Content</p></body></html>'
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == 'Fish &amp; Chips'
+
+    async def test_fetch_html_title_after_case_expanding_character(self):
+        """Characters whose lowercase form is longer (`İ` becomes two code points) don't shift the title's offsets."""
+        html = '<html><head><meta name="x" content="İ"><title>İstanbul</title></head><body>İ</body></html>'
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == 'İstanbul'
+
+    async def test_html_decoding_and_conversion_run_in_worker_thread(self):
+        """Decoding the body and converting the HTML run through the sync-function executor, not on the event loop.
+
+        Both costs scale with the server-controlled body, and the charset the server picks can make
+        decoding far worse than linear, so neither may stall every other coroutine in the process.
+        `using_thread_executor` makes the offload observable: the decode and the conversion are the
+        only sync work the tool submits.
+        """
+
+        class RecordingExecutor(ThreadPoolExecutor):
+            def __init__(self):
+                super().__init__()
+                self.submitted: list[Future[Any]] = []
+
+            def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+                future = super().submit(fn, *args, **kwargs)
+                self.submitted.append(future)
+                return future
+
+        html = '<html><head><title>Threaded</title></head><body><p>Content</p></body></html>'
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response(html),
+            ),
+            RecordingExecutor() as executor,
+            using_thread_executor(executor),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == 'Threaded'
+        assert [future.result() for future in executor.submitted] == [html, ('Threaded', 'Threaded\n\nContent')]
+
+    async def test_fetch_html_repeated_unclosed_title_tags(self):
+        """A body made of `<title` fragments with no closing `>` converts in seconds, not minutes.
+
+        Each fragment is a candidate title start with no end in reach, which previously made title
+        extraction quadratic in the body size: a body of this size took minutes, during which the
+        event loop was blocked. The bound is generous; the point is that it isn't minutes.
+        """
+        html = '<title' * 300_000
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            start = time.perf_counter()
+            result = await tool('https://example.com')
+            elapsed = time.perf_counter() - start
+
+        assert isinstance(result, dict)
+        assert result['title'] == ''
+        assert result['content'] == ''
+        assert elapsed < 10
+
+    @pytest.mark.parametrize('html', ['<title>never closed', '<title never opened'])
+    async def test_fetch_html_unterminated_title_is_empty(self, html: str):
+        """A `<title>` that is never closed, or never even opened, yields no title."""
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['title'] == ''
+
+    async def test_fetch_html_nested_too_deeply_raises_model_retry(self):
+        """A page nested deeper than the recursion limit can't be converted, so the model is told to move on."""
+        html = '<div>' * 2000 + 'Content' + '</div>' * 2000
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(html),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(ModelRetry, match='nested too deeply'):
+                await tool('https://example.com')
+
+    @pytest.mark.parametrize('charset', ['idna', 'rot_13', 'base64_codec'])
+    async def test_undecodable_charset_raises_model_retry(self, charset: str):
+        """A charset the server picks that can't decode a document is reported as a failed fetch.
+
+        `idna` is a registered codec that rejects the replacement error handler; `rot_13` and
+        `base64_codec` are registered codecs that aren't text encodings at all. An unknown label,
+        by contrast, falls back to UTF-8 and never gets here.
+        """
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response('<p>Content</p>', content_type=f'text/html; charset={charset}'),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(ModelRetry, match='Failed to decode'):
+                await tool('https://example.com')
+
+    async def test_declared_charset_is_honored(self):
+        """The body is decoded with the charset the server declares, with undecodable bytes replaced."""
+        response = httpx2.Response(
+            200,
+            headers={'content-type': 'text/plain; charset=latin-1'},
+            content='caf\xe9'.encode('latin-1'),
+        )
+        with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=response):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['content'] == 'caf\xe9'
+
+    async def test_fetch_json_nested_too_deeply_returns_raw_text(self, monkeypatch: pytest.MonkeyPatch):
+        """A JSON document nested deeper than the recursion limit is returned as-is, like one that doesn't parse.
+
+        The depth at which `json.loads` gives up differs between interpreters, and past it some
+        overflow the stack instead of raising, so the parser is stood in for rather than fed a
+        real document.
+        """
+
+        def loads(text: str) -> Any:
+            raise RecursionError('maximum recursion depth exceeded')
+
+        monkeypatch.setattr(json, 'loads', loads)
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response('[[[[]]]]', content_type='application/json'),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['content'] == '[[[[]]]]'
+
+
+_CONVERTER_PARITY_CASES = [
+    pytest.param(
+        '<h1>Title</h1>\n<p>Some   text\twith  \n\n  mixed \r\n whitespace &amp; <b>bold</b> <code> x  y </code></p>',
+        id='whitespace',
+    ),
+    pytest.param(
+        '<ol start="3"><li>three</li><li>four\nsecond line</li><li></li><li><p>five</p><ul><li>a</li><li>b</li></ul></li></ol>'
+        '<ul><li>one</li><li><ol><li>nested</li><li>again</li></ol></li></ul><ol>\n  <li>a</li>\n  <li>b</li>\n</ol>',
+        id='lists',
+    ),
+    pytest.param(
+        '<pre>\n\n  code\n    more\n\n</pre><pre>   \n x \n   </pre><pre>x  </pre><pre>  x</pre><pre>\n</pre><pre></pre>'
+        '<pre><code class="language-py">print( 1 )\n\n</code></pre>',
+        id='pre',
+    ),
+    pytest.param(
+        '<div><p>a</p>   <p> b </p></div><table><tr><th>h</th></tr><tr><td> c  d </td></tr></table>'
+        '<blockquote>\n q\n</blockquote><a href="/x">  link  </a><!-- comment  with   spaces -->',
+        id='blocks',
+    ),
+    pytest.param(
+        '<p>a<![CDATA[ x   y \n z ]]>b<?php  echo  1 ?>c</p>',
+        id='cdata-and-pi',
+    ),
+]
+
+
+class TestMarkdownConverter:
+    @pytest.mark.parametrize('html', _CONVERTER_PARITY_CASES)
+    def test_matches_upstream(self, html: str):
+        """The linear-time replacements produce exactly what `markdownify`'s own steps produce."""
+        _, content = _convert_html(html)
+        assert content == markdownify(html, strip=['img', 'script', 'style'])
+
+    def test_non_decimal_list_start_is_ignored(self):
+        """A `start` made of digits `int()` rejects, like `²`, numbers the list from 1 instead of raising.
+
+        `markdownify` checks `isnumeric()` and then calls `int()`, which raises on such digits.
+        """
+        _, content = _convert_html('<ol start="²"><li>one</li><li>two</li></ol>')
+        assert content == '1. one\n2. two'
+
+    @pytest.mark.parametrize(
+        'html',
+        [
+            pytest.param('<p>x' + ' ' * 300_000 + 'x</p>', id='spaces-in-paragraph'),
+            pytest.param('<p><![CDATA[x' + ' ' * 300_000 + 'x]]></p>', id='spaces-in-cdata'),
+            pytest.param('<pre>' + ' ' * 300_000 + 'x</pre>', id='spaces-in-pre'),
+            pytest.param('<ol>' + '<li>x</li>' * 50_000 + '</ol>', id='long-ordered-list'),
+            pytest.param('<div>x' * 20_000, id='deep-nesting'),
+            pytest.param('x <i></i>' * 50_000, id='many-sibling-text-nodes'),
+        ],
+    )
+    def test_converts_pathological_runs_quickly(self, html: str):
+        """Whitespace runs, `<pre>` padding, ordered lists, deep nesting, and wide trees are handled in linear time.
+
+        `markdownify` on its own takes minutes on the whitespace and list shapes: a run of spaces
+        restarts its whitespace regexes at every character, and each `<li>` recounts its previous
+        siblings. The nested page can't be converted at all (it exceeds the recursion limit), but
+        finding that out must not take long either, and neither may normalizing text among tens of
+        thousands of siblings. The bound is generous; the point is that it isn't minutes.
+        """
+        start = time.perf_counter()
+        try:
+            _convert_html(html)
+        except RecursionError:
+            assert html.startswith('<div>x<div>')
+        assert time.perf_counter() - start < 10
 
 
 class TestWebFetchToolFactory:

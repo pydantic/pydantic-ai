@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json, to_jsonable_python
 
 from pydantic_ai import (
@@ -64,8 +64,10 @@ from pydantic_ai import (
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
+    _USER_CONTENT_TYPES,  # pyright: ignore[reportPrivateUsage]
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    CachePoint,
     CompactionPart,
     FileUrl,
     LoadCapabilityCallPart,
@@ -3281,3 +3283,94 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)
     assert isinstance(window[1], ModelRequest)
+
+
+def test_user_prompt_part_content_must_be_a_str_or_sequence():
+    """A non-sequence like a `dict` is iterable, so without a guard every model mapper would send its keys as the prompt.
+
+    A unit test rather than a VCR test: the guard fires before any request is built, so there is nothing to record.
+    """
+    error = re.escape(
+        '`UserPromptPart.content` must be a `str` or a sequence of `UserContent` items, got `dict`. '
+        'Serialize the value yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) '
+        'or `pydantic_ai.format_as_xml()`.'
+    )
+
+    with pytest.raises(ValueError, match=error):
+        UserPromptPart(cast(Any, {'name': 'John', 'height': 6}))
+
+    # Non-string keys used to reach `assert_never` and raise a bare `AssertionError` from inside the model mapper.
+    with pytest.raises(ValueError, match=error):
+        UserPromptPart(cast(Any, {1: 'John'}))
+
+    # Deserialized message history is validated by Pydantic before `__post_init__` runs.
+    with pytest.raises(ValidationError):
+        ModelMessagesTypeAdapter.validate_python(
+            [{'kind': 'request', 'parts': [{'part_kind': 'user-prompt', 'content': {'name': 'John'}}]}]
+        )
+
+    # `bytes` is a `Sequence` of `int`, so it is named as the container the caller actually passed.
+    with pytest.raises(
+        ValueError, match=re.escape('must be a `str` or a sequence of `UserContent` items, got `bytes`')
+    ):
+        UserPromptPart(cast(Any, b'hello'))
+
+    # Valid content is unaffected.
+    assert UserPromptPart('hello').content == 'hello'
+    assert UserPromptPart(['hello', ImageUrl('https://example.com/image.png')]).content == [
+        'hello',
+        ImageUrl('https://example.com/image.png'),
+    ]
+
+
+def test_user_prompt_part_content_items_must_be_user_content():
+    """A `list` passes the container check, so without a per-item check the mapper is where it goes wrong.
+
+    Each item reaches an exhaustive match in every model's message mapper, which raises a bare
+    `AssertionError: Expected code to be unreachable` on anything that is not `UserContent`.
+    """
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            '`UserPromptPart.content[0]` must be a `UserContent` item, got `dict`. Serialize the value '
+            'yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) or '
+            '`pydantic_ai.format_as_xml()`.'
+        ),
+    ):
+        UserPromptPart(cast(Any, [{'name': 'John'}, {'name': 'Jane'}]))
+
+    # The index is the caller's way back to the item, which matters once the good items outnumber the bad one.
+    with pytest.raises(
+        ValueError, match=re.escape('`UserPromptPart.content[1]` must be a `UserContent` item, got `int`')
+    ):
+        UserPromptPart(cast(Any, ['hello', 7]))
+
+    # `BinaryImage` is what an image `BinaryContent` narrows to on validation, and it is not in the tuple
+    # by name, so a subclass has to be accepted for a round-tripped image to survive this guard.
+    image = BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png')
+    assert UserPromptPart([image]).content == [image]
+
+    # Every member of the union is accepted, so adding one cannot be forgotten here.
+    assert UserPromptPart(['hello', TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()])
+
+
+def test_user_content_types_matches_union():
+    """`_USER_CONTENT_TYPES` is what the guard checks against, so a new `UserContent` member has to reach it.
+
+    Mirrors `test_multi_modal_content_types_matches_union`: without this, adding a member to the union would
+    leave the guard refusing it as if the user had written something unsupported.
+    """
+    union_members = {
+        get_args(m)[0] if get_origin(m) is Annotated else m
+        for member in get_args(UserContent)
+        for m in (get_args(get_args(member)[0]) if get_origin(member) is Annotated else (member,))
+    }
+    assert set(_USER_CONTENT_TYPES) == union_members
+
+
+@pytest.mark.anyio
+async def test_agent_run_rejects_non_sequence_user_prompt():
+    """The same guard reached through the public API, where the prompt becomes a `UserPromptPart` inside the run."""
+    agent = Agent(TestModel())
+    with pytest.raises(ValueError, match='must be a `str` or a sequence of `UserContent` items, got `dict`'):
+        await agent.run(cast(Any, {'name': 'John'}))
