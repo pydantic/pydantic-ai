@@ -261,8 +261,8 @@ _TYPECHECK_TIMEOUT = 600
 def _typecheck_enabled() -> bool:
     """Whether to type-check the examples: pyright is installed and `TYPECHECK_EXAMPLES` isn't `false`.
 
-    Pyright comes with the default `lint` dependency group. CI sets `TYPECHECK_EXAMPLES=false` in all
-    but one Python version's jobs, so the check runs once per test run rather than across the matrix.
+    Pyright comes with the default `lint` dependency group. CI leaves the check on only in the docs-only
+    job and the Python 3.14 all-extras jobs, rather than repeating it across the matrix.
     """
     return os.getenv('TYPECHECK_EXAMPLES') != 'false' and find_spec('pyright') is not None
 
