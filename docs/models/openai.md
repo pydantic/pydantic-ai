@@ -196,7 +196,7 @@ settings = OpenAIResponsesModelSettings(
 agent = Agent(model, model_settings=settings)
 
 result = agent.run_sync('Your prompt here')
-moderation = result.response.provider_details.get('moderation')
+moderation = (result.response.provider_details or {}).get('moderation')
 ```
 
 When the response includes moderation results, they are stored under the `'moderation'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], with `input` and `output` entries each carrying the flagged status, per-category flags, and category scores.
@@ -317,9 +317,9 @@ model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model=model)
 
 result = agent.run_sync('The secret is 1234')
-model_settings = OpenAIResponsesModelSettings(
-    openai_previous_response_id=result.all_messages()[-1].provider_response_id
-)
+response_id = result.response.provider_response_id
+assert response_id is not None
+model_settings = OpenAIResponsesModelSettings(openai_previous_response_id=response_id)
 result = agent.run_sync('What is the secret code?', model_settings=model_settings)
 print(result.output)
 #> 1234

@@ -280,7 +280,9 @@ async def application_code(prompt: str) -> str:  # (3)!
 
 _(This example is complete, it can be run "as is")_
 
-```python {title="test_joke_app.py" hl_lines="10-12" call_name="test_application_code" requires="joke_app.py"}
+```python {title="test_joke_app.py" hl_lines="12-14" call_name="test_application_code" requires="joke_app.py"}
+import httpx
+
 from joke_app import MyDeps, application_code, joke_agent
 
 
@@ -290,14 +292,14 @@ class TestMyDeps(MyDeps):  # (1)!
 
 
 async def test_application_code():
-    test_deps = TestMyDeps('test_key', None)  # (2)!
+    test_deps = TestMyDeps('test_key', httpx.AsyncClient())  # (2)!
     with joke_agent.override(deps=test_deps):  # (3)!
         joke = await application_code('Tell me a joke.')  # (4)!
     assert joke.startswith('Did you hear about the toothpaste scandal?')
 ```
 
 1. Define a subclass of `MyDeps` in tests to customise the system prompt factory.
-2. Create an instance of the test dependency, we don't need to pass an `http_client` here as it's not used.
+2. Create an instance of the test dependency. Its `http_client` goes unused, as the test system prompt factory makes no requests.
 3. Override the dependencies of the agent for the duration of the `with` block, `test_deps` will be used when the agent is run.
 4. Now we can safely call our application code, the agent will use the overridden dependencies.
 

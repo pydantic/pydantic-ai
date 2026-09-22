@@ -1355,6 +1355,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 End(data=FinalResult(output='The capital of France is Paris.')),
             ]
             '''
+            assert agent_run.result is not None
             print(agent_run.result.output)
             #> The capital of France is Paris.
         ```

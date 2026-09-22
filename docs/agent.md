@@ -502,6 +502,7 @@ async def main():
         End(data=FinalResult(output='The capital of France is Paris.')),
     ]
     """
+    assert agent_run.result is not None
     print(agent_run.result.output)
     #> The capital of France is Paris.
 ```
@@ -1626,6 +1627,7 @@ def user_name(ctx: RunContext) -> str:
 
 agent.run_sync('What is the capital of Italy?')
 
+assert model.last_model_request_parameters is not None
 parts = model.last_model_request_parameters.instruction_parts or []
 print([(part.name, str(part.id) if part.id is not None else None, part.content) for part in parts])
 """

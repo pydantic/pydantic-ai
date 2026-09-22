@@ -217,6 +217,7 @@ agent = Agent('typesafe:jev-latest', output_type=Review)
 result = agent.run_sync('Fixed a bug in the parser.')
 print(result.output)
 #> clarity=<Clarity.partial: 1>
+assert result.response.provider_details is not None
 print(result.response.provider_details['scores'])
 #> {'clarity': 1.2}
 ```
@@ -306,6 +307,7 @@ agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
 print(result.output)
 #> True
+assert result.response.provider_details is not None
 print(result.response.provider_details['confidence'])
 #> {'response': 0.84}
 ```
@@ -835,6 +837,7 @@ agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation])
 result = agent.run_sync('Someone else can see my invoices when they log in.')
 print(result.output)
 #> security=True
+assert result.response.provider_details is not None
 print(result.response.provider_details['requests'])
 #> 2
 ```
@@ -870,6 +873,7 @@ agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation, None])
 result = agent.run_sync('Thanks, that fixed it. Nothing else needed.')
 print(result.output)
 #> None
+assert result.response.provider_details is not None
 print(result.response.provider_details['tool']['choice'])
 #> final_result_None
 ```

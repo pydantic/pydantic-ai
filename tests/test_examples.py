@@ -1196,7 +1196,7 @@ async def model_logic(  # noqa: C901
                 provider_details={'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}},
             )
         elif m.content == 'The secret is 1234':
-            return ModelResponse(parts=[TextPart('The secret is safe with me')])
+            return ModelResponse(parts=[TextPart('The secret is safe with me')], provider_response_id='resp_1234')
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
         elif m.content == 'Summarize the conversation.':

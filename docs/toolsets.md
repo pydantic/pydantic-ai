@@ -37,6 +37,7 @@ test_model = TestModel() # (2)!
 agent = Agent(test_model, toolsets=[agent_toolset])
 
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['agent_tool']
 
@@ -102,6 +103,7 @@ test_model = TestModel()  # (1)!
 agent = Agent(test_model)
 
 result = agent.run_sync('What tools are available?', toolsets=[weather_toolset])
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['temperature_celsius', 'temperature_fahrenheit', 'conditions']
 
@@ -261,6 +263,7 @@ combined_toolset = CombinedToolset([weather_toolset, datetime_toolset])
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[combined_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['temperature_celsius', 'temperature_fahrenheit', 'conditions', 'now']
 ```
@@ -286,6 +289,7 @@ filtered_toolset = combined_toolset.filtered(lambda ctx, tool_def: 'fahrenheit' 
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[filtered_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['weather_temperature_celsius', 'weather_conditions', 'datetime_now']
 ```
@@ -316,6 +320,7 @@ combined_toolset = CombinedToolset(
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[combined_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 """
 [
@@ -354,6 +359,7 @@ renamed_toolset = combined_toolset.renamed(
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[renamed_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 """
 ['temperature_celsius', 'temperature_fahrenheit', 'weather_conditions', 'current_time']
@@ -403,6 +409,7 @@ prepared_toolset = renamed_toolset.prepared(add_descriptions)
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[prepared_toolset])
 result = agent.run_sync('What tools are available?')
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
@@ -842,6 +849,7 @@ def toggle(ctx: RunContext[ToggleableDeps]):
 deps = ToggleableDeps('weather')
 
 result = agent.run_sync('Toggle the toolset', deps=deps)
+assert test_model.last_model_request_parameters is not None
 print([t.name for t in test_model.last_model_request_parameters.function_tools])  # (3)!
 #> ['toggle', 'now']
 
