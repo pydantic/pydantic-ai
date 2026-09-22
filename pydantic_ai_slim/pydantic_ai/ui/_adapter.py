@@ -364,6 +364,20 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     sends *to* the client: file content the agent produces is always serialized on the way out.
     """
 
+    strip_workspace_refs: bool = True
+    """Whether to reset [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref]
+    to `None` on client-submitted messages.
+
+    Defaults to `True`. The most recent reference in history is offered to a capability's
+    [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace], so a client that
+    can set it could point a reconnecting capability at an environment it attaches to using
+    server-side provider credentials. Reconnect explicitly by passing an authorized `workspace=` to
+    the run method instead.
+
+    Set to `False` only when the client is trusted to hold the conversation's workspace identity,
+    so that a run continues in the environment its earlier responses were produced in.
+    """
+
     @classmethod
     async def from_request(
         cls,
@@ -374,6 +388,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
+        strip_workspace_refs: bool = True,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> Self:
@@ -394,6 +409,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
             allow_uploaded_files: Whether to honor `UploadedFile` references from client-submitted messages. See
                 [`UIAdapter.allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files].
+            strip_workspace_refs: Whether to reset `ModelResponse.workspace_ref` on client-submitted messages. See
+                [`UIAdapter.strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs].
             allowed_content_types: Request media types to accept, as a CSRF control. Defaults to
                 [`DEFAULT_ALLOWED_CONTENT_TYPES`][pydantic_ai.ui.DEFAULT_ALLOWED_CONTENT_TYPES]
                 (`application/json`); anything else is rejected with a `415` before the body is read.
@@ -411,6 +428,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
+            strip_workspace_refs=strip_workspace_refs,
             **kwargs,
         )
 
@@ -497,6 +515,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           [`allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download],
           and [`UploadedFile`][pydantic_ai.messages.UploadedFile]s are kept only when
           [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] is `True`.
+        - [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref] is reset
+          unless [`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs] is `False`.
         - Tool calls at the end of the history are kept when they correspond to a resolution in
           `deferred_tool_results`, so human-in-the-loop resumption continues to work.
         """
@@ -511,6 +531,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             allowed_file_url_schemes=self.allowed_file_url_schemes,
             allowed_file_url_force_download=self.allowed_file_url_force_download,
             allow_uploaded_files=self.allow_uploaded_files,
+            strip_workspace_refs=self.strip_workspace_refs,
             resolved_tool_call_ids=resolved_tool_call_ids,
         )
 
@@ -764,6 +785,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
+        strip_workspace_refs: bool = True,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> Response:
@@ -808,6 +830,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
             allow_uploaded_files: Whether to honor `UploadedFile` references from client-submitted messages. See
                 [`UIAdapter.allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files].
+            strip_workspace_refs: Whether to reset `ModelResponse.workspace_ref` on client-submitted messages. See
+                [`UIAdapter.strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs].
             allowed_content_types: Request media types to accept, as a CSRF control. See
                 [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
@@ -834,6 +858,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     allowed_file_url_schemes=allowed_file_url_schemes,
                     allowed_file_url_force_download=allowed_file_url_force_download,
                     allow_uploaded_files=allow_uploaded_files,
+                    strip_workspace_refs=strip_workspace_refs,
                     allowed_content_types=allowed_content_types,
                     **kwargs,
                 ),

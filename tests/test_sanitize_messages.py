@@ -340,3 +340,12 @@ def test_sanitize_messages_strips_workspace_ref():
     response = message(sanitize_messages(messages), ModelResponse)
     assert response.workspace_ref is None
     assert response.parts == [TextPart(content='done')]
+
+
+def test_sanitize_messages_keeps_workspace_refs_when_asked():
+    """`strip_workspace_refs=False` keeps the reference, for history the application trusts."""
+    ref = WorkspaceRef(provider='modal', id='own-env')
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='done')], workspace_ref=ref)]
+
+    response = message(sanitize_messages(messages, strip_workspace_refs=False), ModelResponse)
+    assert response.workspace_ref == ref
