@@ -903,7 +903,7 @@ async def rerank(query: str, candidates: list[str], top_k: int = 3) -> list[str]
     ranked = await asyncio.to_thread(
         reranker.rank, query, candidates, top_k=top_k, return_documents=True
     )
-    return [item['text'] for item in ranked]
+    return [str(item['text']) for item in ranked]
 ```
 
 Call `rerank()` on the candidates returned by your vector search (for example, in the `retrieve` tool of the [RAG example](examples/rag.md)) before handing the results to the LLM.
