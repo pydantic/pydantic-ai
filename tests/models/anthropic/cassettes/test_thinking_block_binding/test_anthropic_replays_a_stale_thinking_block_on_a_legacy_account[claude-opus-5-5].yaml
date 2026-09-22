@@ -1,0 +1,173 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '302'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Think about it, then say what 17*23 is.
+          type: text
+        role: user
+      model: claude-opus-5-5
+      output_config:
+        effort: high
+      stream: false
+      system:
+      - text: You are a helpful assistant. Answer briefly.
+        type: text
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1429'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-36d5af5663b77e3d5acc7c37c9671a79-f069171183ff76de-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - signature: CAQSpAQKEAgSGAI4AUIIdGhpbmtpbmcSDMGlGyN4qekdZTP8YhoM0LKhs7FjNhknKlmCIjAhV0F+Z1pjwCX5nJJIg+k0ui8QufIM3Zsoi/hWWl22zoz20o9U9NTSarpIZ4s4A9cqwQNas5S8cIBM7orvoXtFZ8TGXDlomGLDWu6OHts7urRRcl7lyVGVnZXpRZAQue8KXGVZ2BvpflT7aPT/ng2lBZtkzj7bBu/Heuiq6HIkdn6zopGvHO+eazo4xTnPnn3EipXZgIV68+tJabSwPC6FI9q2hEgWJAlkNIAKgobASTCX4B2oIpNHYFe78v5kitrpCKXh2chZ/UTZCb9xh8HGcA4qSahhnCmrxqqGAtsT1m3hE8pQHUnnYEcO4aQb6IlsUK2dozhp7rcje+8KBxZacqtdSBEdoOU/Zi6TpLg4U6kk9WeZNpRKxvjgNC/BBFk+znbfdiUuO4NfylYt30wmL6LPZxHwLDAuGuifqj0q+l1sYQlhTAFMgSD2sdrR/ms4avQ2AGbcy/+z3ILmXmjBgn2i0IdbUUpi5R1h5oddBmpUtmQOSuikKizdkrQFeQ14CIaI/kyCMLhZKvMPaTnK+PqFdzMqABBxwYgvtBtMKoxLGcyuovYjnyNAAfKs2YGJ8Qrik2mpFmjbr5yO3Gd69NRPi5SIJ7wfzRYqBNL0zmrCO+OG5xyY9SOt8Inv8IgSdgIWO/KcyEj2L1kE3MFQ/eUCgxgB
+        thinking: ''
+        type: thinking
+      - text: |-
+          17 × 23 = **391**
+
+          (17 × 20 = 340, plus 17 × 3 = 51, so 340 + 51 = 391.)
+        type: text
+      id: msg_011CfK1MqVY1tKWaoSFRXY9a
+      model: claude-opus-5-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 41
+        output_tokens: 60
+        output_tokens_details:
+          thinking_tokens: 10
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1311'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Think about it, then say what 17*23 is.
+          type: text
+        role: user
+      - content:
+        - signature: CAQSpAQKEAgSGAI4AUIIdGhpbmtpbmcSDMGlGyN4qekdZTP8YhoM0LKhs7FjNhknKlmCIjAhV0F+Z1pjwCX5nJJIg+k0ui8QufIM3Zsoi/hWWl22zoz20o9U9NTSarpIZ4s4A9cqwQNas5S8cIBM7orvoXtFZ8TGXDlomGLDWu6OHts7urRRcl7lyVGVnZXpRZAQue8KXGVZ2BvpflT7aPT/ng2lBZtkzj7bBu/Heuiq6HIkdn6zopGvHO+eazo4xTnPnn3EipXZgIV68+tJabSwPC6FI9q2hEgWJAlkNIAKgobASTCX4B2oIpNHYFe78v5kitrpCKXh2chZ/UTZCb9xh8HGcA4qSahhnCmrxqqGAtsT1m3hE8pQHUnnYEcO4aQb6IlsUK2dozhp7rcje+8KBxZacqtdSBEdoOU/Zi6TpLg4U6kk9WeZNpRKxvjgNC/BBFk+znbfdiUuO4NfylYt30wmL6LPZxHwLDAuGuifqj0q+l1sYQlhTAFMgSD2sdrR/ms4avQ2AGbcy/+z3ILmXmjBgn2i0IdbUUpi5R1h5oddBmpUtmQOSuikKizdkrQFeQ14CIaI/kyCMLhZKvMPaTnK+PqFdzMqABBxwYgvtBtMKoxLGcyuovYjnyNAAfKs2YGJ8Qrik2mpFmjbr5yO3Gd69NRPi5SIJ7wfzRYqBNL0zmrCO+OG5xyY9SOt8Inv8IgSdgIWO/KcyEj2L1kE3MFQ/eUCgxgB
+          thinking: ''
+          type: thinking
+        - text: |-
+            17 × 23 = **391**
+
+            (17 × 20 = 340, plus 17 × 3 = 51, so 340 + 51 = 391.)
+          type: text
+        role: assistant
+      - content:
+        - text: And times two?
+          type: text
+        role: user
+      model: claude-opus-5-5
+      stream: false
+      system:
+      - text: You are a helpful assistant. Answer briefly. Today is 2026-09-01.
+        type: text
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1462'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c3bed83b1908c3fcdf2005817452e89b-7e3ac6dbf28a8623-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - signature: CAQS7gQKEAgSGAI4AUIIdGhpbmtpbmcSDOyUWv04M4BevGtI1hoMphvft2XPvaTwd98wIjDbWsSJVMck5WPwGp7BfYY2M88pa1kZEb1qRK2rOfAhTCu54ka7JpSmWkGgEX3nY/sqiwRDnhFVkYlUIaV8EVxjnwDFfmp1ZX11tfcU2hmdYyHbmpj3UJcxUKCkxnlXzVJ79rJHLQl3+pBW1W2wQ4cFM1nI8JZEq9jqseCUgG99fVsitRWa72Nz1YiioQaaZGvo/fTTW8dO0TS3uOYbxdrFbBWtF014doqmpuCeZVPg4gmCVabvZbJrb1dQ5owjTrGI1C+d8kYe+1a4VTmbSTnA+dP7dgNasrD1Oo4qEoDmMrIDGxSA+EkSuM+2QZvgnL4pPuSmB4Q+6S+B+McFPSLrClJEoi02bJFwYg2s3rw/xjUZqH31vdnEIqz15NEhO8FymrW4iBINIRccIWWYHpPi64aORtn1tdn5ScXvDkFWbP2bN9y3fIQci9xwibLJJINyCBsYLRgw+I8uqWfOZJBbMwyjS2Q5ky/hXhVj4fYqC/znSHrwJkYzXvuQRAv95dwiy0k9JjVxf9f9zdlvkt9oNDyRoLErISNHYxVdgNPHhNTiSdihI+LLTUheGoXH+WITdB2vv7EIJ1cBryoMUxCG324TBHxIKVgjFW0Bb3bZXBk6+3z5BtJM6H9/g3HRUY6XgVJ+dcCf3SRfOiyz96R2OBAba51Kw7tpEyihlekKnv4A7HR2YkwZApC5xnHXV5T5VRx3mFGM2jREXKSf2XUD+i9GdXBPGXQIQfYxV7JsmNBeQWj0wy8KkyJ6QA6jGAE=
+        thinking: ''
+        type: thinking
+      - text: 391 × 2 = **782**
+        type: text
+      id: msg_011CfK1MvUux5FYEdDP3VkRJ
+      model: claude-opus-5-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 120
+        output_tokens: 20
+        output_tokens_details:
+          thinking_tokens: 8
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -162,7 +162,7 @@ try:
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
-        BetaCitationsConfigParam,
+        BetaCitationsConfigParamParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
@@ -183,6 +183,7 @@ try:
         BetaFileImageSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
+        BetaInputTransformation,
         BetaJSONOutputFormatParam,
         BetaMCPToolResultBlock,
         BetaMCPToolUseBlock,
@@ -223,7 +224,6 @@ try:
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
         BetaThinkingDelta,
-        BetaThinkingDroppedInputTransformation,
         BetaTokenTaskBudgetParam,
         BetaToolChoiceParam,
         BetaToolParam,
@@ -364,11 +364,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-AnthropicModelName = LatestAnthropicModelNames | Literal['claude-opus-5-5']
+AnthropicModelName = LatestAnthropicModelNames
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
-`claude-opus-5-5` is listed locally until the `anthropic` floor is bumped to 1.8.0, the first release that includes it.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
@@ -773,7 +772,7 @@ def _warn_stale_thinking_block_recovery(model_name: str) -> None:
 
 
 def _report_input_transformations(
-    transformations: list[BetaThinkingDroppedInputTransformation],
+    transformations: list[BetaInputTransformation],
 ) -> list[dict[str, Any]]:
     """Report Anthropic's input transformations on the current span, and return them for `provider_details`.
 
@@ -1820,7 +1819,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _map_web_fetch_tool(
         tool: WebFetchTool, supports_dynamic_filtering: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
-        citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
+        citations = BetaCitationsConfigParamParam(enabled=tool.enable_citations) if tool.enable_citations else None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
