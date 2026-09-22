@@ -186,8 +186,9 @@ in. [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] claims that refe
 names its own `working_dir`, which is how a run continued from message history lands in the same
 directory. It declines a local reference for any other directory, so message history can never point
 the agent at an arbitrary directory on the host; that run gets no workspace unless you pass
-`workspace='new'`. To supply workspaces from your own capability, implement `get_workspace`; see
-[Durable execution](#durable-execution) for an example.
+`workspace='new'`. To supply workspaces from your own capability, implement `get_workspace`: return a
+backend configured from the capability's own settings, carrying `ref` when one was passed in, and
+`None` for a ref you do not recognize.
 
 To disable workspace access explicitly, pass an
 [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] as `workspace=`:
@@ -275,69 +276,67 @@ environment.
 
 ## Durable execution
 
-Under a durable executor, the application owns provisioning, retries, and cleanup. Persist a stable
-[`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] before a workflow needs to reconnect. A live
-handle cannot cross a serialized boundary.
+Under [Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md) or
+[Prefect](durable_execution/prefect.md), a workspace supplied by a capability works everywhere a
+plain run's does, and workspace I/O never runs in workflow code. Attach the capability when the agent
+is constructed, so the durability capability can register one durable unit per `Workspace` method:
 
-In a Temporal workflow, tool calls already run as activities. The default context serializes the
-workspace reference. Subclass
-[`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] to rebuild the backend
-from worker configuration, and pass that context type to
-[`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]:
-
-```python {requires="host_workspace.py"}
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
-
-from pydantic import TypeAdapter
-
+```python {title="durable_workspace.py" test="skip"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.durable_exec.temporal import TemporalDurability, TemporalRunContext
-from pydantic_ai.workspaces import (
-    ReadOnlyWorkspace,
-    Workspace,
-    WorkspaceBackend,
-    WorkspaceRef,
-)
-
-from host_workspace import HostWorkspaceBackend
-
-workspace_root = Path.cwd() / 'workspaces'
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
+from pydantic_ai.durable_exec.temporal import TemporalDurability
 
 
-@dataclass
-class HostWorkspaces(AbstractCapability[None]):
-    def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        if ref is None or ref.provider != 'host':
-            return None
-        return HostWorkspaceBackend(workspace_root, ref)
-
-
-class AppTemporalContext(TemporalRunContext[None]):
-    @classmethod
-    def deserialize_run_context(cls, ctx: dict[str, Any], deps: None) -> 'AppTemporalContext':
-        data = dict(ctx)
-        ref = TypeAdapter(WorkspaceRef).validate_python(data.pop('workspace_ref'))
-        backend = HostWorkspaceBackend(workspace_root, ref)
-        workspace = ReadOnlyWorkspace(Workspace(backend))
-        return cls(**{**data, 'workspace': workspace}, deps=deps)
+class ShareTree(AbstractCapability[None]):
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        # Runs in workflow code: this write is one durable unit.
+        await ctx.workspace.write_text('TASK.md', 'Summarize the repository.')
 
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    name='report_reader',
-    capabilities=[HostWorkspaces(), TemporalDurability(run_context_type=AppTemporalContext)],
+    name='summarizer',
+    capabilities=[ShareTree(), LocalWorkspace('~/project'), TemporalDurability()],
 )
 
 
 @agent.tool
-async def read_report(ctx: RunContext[None]) -> str:
-    return await ctx.workspace.read_text('report.txt')
+async def read_task(ctx: RunContext[None]) -> str:
+    # Runs inside a durable unit: the workspace is used directly.
+    return await ctx.workspace.read_text('TASK.md')
 ```
 
-In the workflow, pass the saved reference through `agent.run(workspace=ref, ...)`. Provider
-credentials come from worker configuration. Rebuild any wrappers when deserializing the context.
-See the [Temporal guide](durable_execution/temporal.md), [DBOS guide](durable_execution/dbos.md), and
-[Prefect guide](durable_execution/prefect.md) for setup.
+Inside a durable container, [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace] and
+[`result.workspace`][pydantic_ai.agent.AgentRunResult.workspace] are a wrapper around the selected
+workspace whose operations each run as their own durable unit (a Temporal activity, a DBOS step, a
+Prefect task). Errors the workspace raises — a missing file, a read-only refusal, a timeout — come
+back as the same exception types. Inside a durable unit, such as a tool, `ctx.workspace` is the
+workspace itself: on Temporal it is rebuilt inside the activity from the run's serialized
+[`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] through the same capabilities, wrappers such
+as `LocalWorkspace(..., read_only=True)` included; on DBOS and Prefect it is the run's live workspace.
+
+One `ensure` unit runs at the start of every run in a container. It forces the environment to exist
+(so a run provisions one even if no tool ends up using it) and records its `WorkspaceRef` and
+canonical working directory. From then on every unit of the run carries the same ref, so parallel
+tool calls, retries, replay and recovery all reattach to one environment, and `working_dir()` and
+`resolve()` answer from the recorded value without a unit. A backend used under durable execution
+must therefore report a `ref` once any operation has completed. `resolve()` with an absolute path
+stays local and does not consult an inner wrapper's override; the next operation resolves the path
+inside the unit either way.
+
+A durable unit can run more than once if the process fails between the side effect and its
+checkpoint. Reads keep the engine's retry policy; `run`, `write_bytes`, `write_text`, `make_dir`
+and `remove` are attempted once by default, so a command or write is never repeated by a retry.
+Each engine's `workspace_*_config` knob changes that; see the engine guides.
+
+Inside a container, `workspace=` accepts `None`, `'new'`, a `WorkspaceRef`, a previous result's
+workspace, or a live instance whose ref an attached capability recognizes; the run then uses the
+capability-built workspace for that environment. Any other live backend or wrapper raises
+`UserError`: it cannot cross the durable boundary, and a wrapper applied around the argument, such
+as `ReadOnlyWorkspace(...)`, would not be reapplied on the other side. Policy belongs on the
+capability. To share an environment between durable agents, give them the same workspace capability
+and pass `result.workspace` (or its ref) along. `workspace.backend` is not available in workflow
+code, as calling the provider directly would bypass durability; reach it from a tool.
+
+The deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers have no durability
+capability and refuse a workspace inside their container.

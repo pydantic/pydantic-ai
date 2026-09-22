@@ -55,11 +55,20 @@ does not manage provider lifecycle at run boundaries. The application owns SDK r
 and pause/stop operations.
 
 `result.workspace` continues with a live backend; `result.workspace.ref` lets another worker attach.
-Persist the ref in application state when a durable workflow must resume. Temporal's default context
-serializes `workspace_ref` as JSON. Restore a live backend and any wrappers in an application custom
-`TemporalRunContext.deserialize_run_context` configured through
-`TemporalDurability(run_context_type=...)`; tools still call `ctx.workspace.run(...)` inside the
-durable boundary.
+
+Under `TemporalDurability`, `DBOSDurability` or `PrefectDurability`, attach the workspace capability
+at agent construction and nothing else is needed: in workflow code (hooks, output functions,
+`result.workspace`) every `Workspace` method runs as its own durable unit, and inside a unit (a
+tool) `ctx.workspace` is the plain workspace, rebuilt on Temporal from the serialized ref through the
+same capabilities (policy wrappers included). One `ensure` unit at run start creates or attaches the
+environment and records its ref and working directory, so all units share one environment and
+`working_dir()`/`resolve()` need no unit. Inside a container `workspace=` takes `None`, `'new'`, a
+`WorkspaceRef`, a previous `result.workspace`, or a live instance whose ref a capability recognizes;
+other live backends and wrappers raise `UserError` (put policy on the capability, e.g.
+`LocalWorkspace(..., read_only=True)`). `run`/writes/`make_dir`/`remove` are attempted once by
+default; configure with `workspace_activity_config`, `workspace_step_config` or
+`workspace_task_config`. The deprecated `TemporalAgent`/`DBOSAgent`/`PrefectAgent` wrappers refuse
+workspaces in their container.
 
 See the [workspace guide](https://ai.pydantic.dev/workspace/) for protocol details and lifecycle
 examples.

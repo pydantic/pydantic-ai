@@ -154,6 +154,12 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
 
+### Workspaces
+
+A [workspace](../workspace.md) supplied by a capability works inside a flow without further setup. Every workspace operation called from flow code — a capability hook, an output function, or `result.workspace` — runs as its own task, named `Workspace: {method}`, and one `Workspace: ensure` task at the start of the run creates or attaches the environment and records its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] and working directory. On a flow retry those tasks replay their cached results, so the rebuilt workspace reattaches to the same environment instead of creating a second one; `working_dir()` and `resolve()` answer from the recorded value. Inside a task (a tool, a `@durable_operation` hook) the workspace's calls reach the provider directly rather than starting nested tasks. Repeated identical operations get distinct cache keys, so a read after a write is not served the earlier read's result.
+
+Inside a flow, `workspace=` accepts `None`, `'new'`, a `WorkspaceRef`, a previous result's workspace, or a live instance whose ref an attached capability recognizes; any other live backend or wrapper raises a `UserError`, since a retry could not rebuild it. Attach the workspace capability when the agent is constructed. The deprecated `PrefectAgent` wrapper has no durability capability and refuses workspaces inside a flow altogether.
+
 ### Model Selection at Runtime
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the task boundary, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance: pre-register it by passing a `models` dict to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and reference it by key (or pass the registered instance), or pass a model-name string and build the instance inside the task with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials. Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default.
@@ -261,6 +267,7 @@ You can customize Prefect task behavior, such as retries and timeouts, by passin
 - `model_task_config`: Configuration for model request tasks
 - `event_stream_handler_task_config`: Configuration for event stream handler tasks
 - `tool_task_config`: Default configuration for all tool calls (per-tool overrides go on the tool's `'prefect'` metadata — see [Tool Wrapping](#tool-wrapping) above)
+- `workspace_task_config`: Configuration for [workspace](#workspaces) tasks. No retries by default, so a command or write is never repeated by a retry; setting `retries` applies to every workspace task, reads and writes alike.
 
 Available `TaskConfig` options:
 

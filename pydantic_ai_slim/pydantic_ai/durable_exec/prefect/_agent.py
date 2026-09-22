@@ -45,6 +45,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
+from .._workspace import RejectWorkspaceInContainer
 from ._model import PrefectModel
 from ._toolset import prefectify_toolset
 
@@ -60,6 +61,13 @@ if TYPE_CHECKING:
     )
 
 from ._types import TaskConfig, default_task_config
+
+# The wrapper agent has no durability capability, so nothing would route a workspace's operations
+# through tasks, and a hook would do provider I/O that a flow retry re-executes. `PrefectDurability`
+# handles workspaces; the wrapper refuses them.
+_reject_workspace_in_flow: RejectWorkspaceInContainer[Any] = RejectWorkspaceInContainer(
+    engine='Prefect', container_noun='flow', capability='PrefectDurability'
+)
 
 
 # TODO(v3): remove `PrefectAgent` in favor of the `PrefectDurability` capability.
@@ -1093,6 +1101,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Non-Prefect model cannot be set at agent run time inside a Prefect flow, it must be set at agent creation time.'
             )
 
+        if FlowRunContext.get() is not None:
+            capabilities = [*(capabilities or ()), _reject_workspace_in_flow]
         with self._prefect_overrides(toolsets):
             async with super().iter(
                 user_prompt=user_prompt,

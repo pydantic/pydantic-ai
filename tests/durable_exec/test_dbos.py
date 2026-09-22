@@ -242,7 +242,8 @@ async def round_trip_workspace(ctx: RunContext[None]) -> str:
     return await ctx.workspace.read_text('note.txt')
 
 
-async def test_dbos_agent_forwards_local_workspace(dbos: DBOS, tmp_path: Path) -> None:
+async def test_dbos_agent_rejects_a_workspace_in_its_workflow(dbos: DBOS, tmp_path: Path) -> None:
+    """The deprecated wrapper has no durability capability, so a workspace's operations could not run as steps."""
     agent = Agent(
         TestModel(call_tools=['round_trip_workspace']),
         name='dbos_agent_workspace',
@@ -251,11 +252,10 @@ async def test_dbos_agent_forwards_local_workspace(dbos: DBOS, tmp_path: Path) -
     )
     dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
 
-    result = await dbos_agent.run('Use the workspace.', workspace=LocalWorkspaceBackend(tmp_path))
-
-    assert result.output == '{"round_trip_workspace":"workspace content"}'
-    await result.workspace.write_text('after.txt', 'after run')
-    assert await result.workspace.read_text('after.txt') == 'after run'
+    with pytest.raises(
+        UserError, match='Workspaces are not supported inside a DBOS workflow through the deprecated wrapper agent'
+    ):
+        await dbos_agent.run('Use the workspace.', workspace=LocalWorkspaceBackend(tmp_path))
 
 
 class Deps(BaseModel):

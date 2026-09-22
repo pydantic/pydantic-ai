@@ -16,6 +16,7 @@ from collections.abc import (
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
@@ -114,7 +115,7 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceRef
 
 try:
     from prefect import flow, task
@@ -439,6 +440,19 @@ model = OpenAIChatModel(
 # Simple agent for basic testing
 simple_agent = Agent(model, name='simple_agent')
 simple_prefect_agent = PrefectAgent(simple_agent)  # pyright: ignore[reportDeprecated]
+
+
+async def test_prefect_agent_rejects_a_workspace_inside_a_flow(tmp_path: Path) -> None:
+    """The deprecated wrapper has no durability capability, so a workspace's operations could not run as tasks."""
+
+    @flow
+    async def run_agent() -> None:
+        await simple_prefect_agent.run('Hello', workspace=LocalWorkspaceBackend(tmp_path))
+
+    with pytest.raises(
+        UserError, match='Workspaces are not supported inside a Prefect flow through the deprecated wrapper agent'
+    ):
+        await run_agent()
 
 
 def test_prefect_agent_construction_warns_deprecated() -> None:

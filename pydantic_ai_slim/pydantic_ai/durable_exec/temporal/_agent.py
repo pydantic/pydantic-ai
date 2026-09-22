@@ -51,6 +51,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
+from .._workspace import RejectWorkspaceInContainer
 from ._activity_execution import execute_activity
 from ._durability import serialization_user_error
 from ._model import TemporalModel, TemporalProviderFactory
@@ -94,6 +95,14 @@ def _merge_activity_config(base: ActivityConfig, override: ActivityConfig) -> Ac
 class _EventStreamHandlerParams:
     event: _messages.AgentStreamEvent
     serialized_run_context: Any
+
+
+# The wrapper agent has no durability capability, so nothing would route a workspace's operations
+# through activities: a hook would do provider I/O in the workflow and each tool activity would
+# create an environment of its own. `TemporalDurability` handles workspaces; the wrapper refuses them.
+_reject_workspace_in_workflow: RejectWorkspaceInContainer[Any] = RejectWorkspaceInContainer(
+    engine='Temporal', container_noun='workflow', capability='TemporalDurability'
+)
 
 
 # TODO(v3): remove `TemporalAgent` in favor of the `TemporalDurability` capability.
@@ -1214,6 +1223,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             )
 
             resolved_model = None
+            capabilities = [*(capabilities or ()), _reject_workspace_in_workflow]
         else:
             resolved_model = self._temporal_model.resolve_model(model)
 

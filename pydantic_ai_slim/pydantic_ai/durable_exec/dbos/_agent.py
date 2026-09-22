@@ -50,6 +50,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
+from .._workspace import RejectWorkspaceInContainer
 from ._model import DBOSModel
 from ._utils import StepConfig
 
@@ -67,6 +68,14 @@ if TYPE_CHECKING:
 DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """The mode for executing tool calls in DBOS durable workflows. This is a subset of the ParallelExecutionMode because 'parallel' cannot guarantee deterministic ordering.
 """
+
+
+# The wrapper agent has no durability capability, so nothing would route a workspace's operations
+# through steps, and a hook would do provider I/O that recovery re-executes. `DBOSDurability`
+# handles workspaces; the wrapper refuses them.
+_reject_workspace_in_workflow: RejectWorkspaceInContainer[Any] = RejectWorkspaceInContainer(
+    engine='DBOS', container_noun='workflow', capability='DBOSDurability'
+)
 
 
 # TODO(v3): remove `DBOSAgent` in favor of the `DBOSDurability` capability, along with `DBOSDurability(register_legacy_workflows=...)` which exists solely to migrate off it
@@ -1180,6 +1189,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             )
 
         self._reject_unsupported_runtime_toolsets(toolsets)
+        if DBOS.workflow_id is not None and DBOS.step_id is None:
+            capabilities = [*(capabilities or ()), _reject_workspace_in_workflow]
         with self._dbos_overrides(toolsets):
             async with super().iter(
                 user_prompt=user_prompt,

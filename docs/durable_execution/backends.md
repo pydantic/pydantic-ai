@@ -137,7 +137,7 @@ The backend config object implements the backend configuration protocol. Its pub
 [`OperationConfigRole`][pydantic_ai.durable_exec.OperationConfigRole] and a
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId]. Match the concrete ID variants
 when config differs by model, toolset, or operation. The role is a coarse config bucket: `'model'`,
-`'event'`, `'tool'`, or `'capability'`. The operation ID carries the fine-grained identity. A
+`'event'`, `'tool'`, `'capability'`, or `'workspace'`. The operation ID carries the fine-grained identity. A
 capability operation ID includes the explicit name from `@durable_operation(name='...')`. That name
 is required because it becomes persisted compatibility data and must remain stable if the Python
 method is renamed. The ID union represents the IDs available in the installed Pydantic AI version.
@@ -148,9 +148,35 @@ MCP tools perform I/O and always run in their durable unit, so returning `False`
 
 The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
 `ModelCancelSuspendedResponseId`, `EventStreamHandlerId`, `ToolsetGetToolsId`,
-`ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
-`CapabilityOperationId`. Their Python class names do not determine
+`ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`,
+`CapabilityOperationId`, and `WorkspaceOperationId`. Their Python class names do not determine
 persisted operation names.
+
+### Workspace operations
+
+When a construction-time capability supplies a [workspace](../workspace.md), the base binds one
+operation per [`Workspace`][pydantic_ai.workspaces.Workspace] method called from container code,
+identified by [`WorkspaceOperationId`][pydantic_ai.durable_exec.WorkspaceOperationId] with the
+[`WorkspaceMethod`][pydantic_ai.durable_exec.WorkspaceMethod] as its `method`, plus an `'ensure'`
+operation that runs at the start of every run in the container to create or attach the environment
+and journal its `WorkspaceRef` and canonical working directory. Nothing is bound for an agent without
+a workspace supplier, so its persisted name set does not change.
+
+These operations use the `'workspace'` config role.
+[`RoleBasedOperationConfig`][pydantic_ai.durable_exec.RoleBasedOperationConfig] takes an optional
+`workspace=` config and falls back to the `capability` config without one. A namer must handle the
+new ID; [`JournalOperationNamer`][pydantic_ai.durable_exec.JournalOperationNamer] names it
+`{agent}__workspace__{method}`. Hash-keyed engines must add a per-container sequence to these
+operations' cache identity, as they do for event handling: two identical reads with a write between
+them are two operations, not one cached result.
+
+The parameters and results are pydantic dataclasses whose `bytes` fields serialize as base64, so
+they cross both codecs and an engine's own converter unchanged. A failure a workspace is expected
+to raise (`WorkspaceError` and its subclasses, `FileNotFoundError`, `PermissionError`,
+`UnicodeDecodeError`, and the other builtin file errors, plus `UserError`, `TypeError` and
+`ValueError`) crosses as data and is re-raised as the same type in container code; the unit only
+fails, and is retried, for anything else. Commands and writes are at-least-once under retries, so
+engines default `run`, `write_bytes`, `write_text`, `make_dir` and `remove` to a single attempt.
 
 ### API evolution
 
