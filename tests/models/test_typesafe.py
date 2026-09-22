@@ -841,6 +841,82 @@ async def test_a_defaulted_field_falls_back_to_its_default_rather_than_failing(
     assert result.response.parts == snapshot([ToolCallPart('final_result', {}, tool_call_id=IsStr())])
 
 
+def extract_cases_anywhere(state: JSONContent) -> list[str]:
+    """`extract_cases`, but it survives the retry a missing required field would cause.
+
+    The state is a bare string on the first request and the whole history on a retry, so an extractor that
+    only reads the string would fail on the second for a reason of its own. Reading both keeps a test that
+    asserts the first request is the only one honest about why a second happened.
+    """
+    return re.findall(r'CASE-\d+', json.dumps(state))
+
+
+@pytest.mark.parametrize('extracted', [False, True])
+async def test_a_required_nested_model_is_sent_even_when_every_field_under_it_takes_its_default(
+    allow_model_requests: None, extracted: bool
+):
+    """Leaving a defaulted field out cannot leave the model holding it out too.
+
+    A field is left out of the arguments so Pydantic can apply its default, and the nested model it lives in is
+    built from those arguments: with every field under `details` left out, an absent `details` is a missing
+    required field rather than one Pydantic fills from the defaults inside it.
+    """
+
+    class Details(BaseModel):
+        identifier: str = Field(default='unknown', description='Which case is open?')
+
+    class Report(BaseModel):
+        """Summarise what was filed."""
+
+        details: Details
+
+    no_match: dict[str, object] = {
+        'type': 'choice',
+        'choice': 'none',
+        'confidence': 0.8,
+        'probabilities': {'CASE-1000': 0.2, 'none': 0.8},
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if not extracted:  # pragma: no cover
+            raise AssertionError('the request should not be sent')
+        return answers(**{'details.identifier': no_match})
+
+    model = mock_model(handler, text_extractors={'details.identifier': extract_cases_anywhere})
+    prompt = 'CASE-1000 is closed; there is no open case.' if extracted else 'Nothing was filed.'
+    result = await Agent(model, output_type=Report).run(prompt)
+
+    assert result.output == snapshot(Report(details=Details(identifier='unknown')))
+    assert result.response.parts == snapshot([ToolCallPart('final_result', {'details': {}}, tool_call_id=IsStr())])
+
+
+async def test_a_nested_model_with_a_default_of_its_own_is_left_out_like_any_other_defaulted_field(
+    allow_model_requests: None,
+):
+    """The conservative direction: only a *required* nested model is sent empty.
+
+    `details` has a default of its own, so leaving it out is what applies that default — sending `{}` would
+    build a `Details` from its fields' defaults instead and quietly throw the outer one away.
+    """
+
+    class Details(BaseModel):
+        identifier: str = Field(default='unknown', description='Which case is open?')
+
+    class Report(BaseModel):
+        """Summarise what was filed."""
+
+        details: Details = Details(identifier='nothing filed')
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the request should not be sent')
+
+    model = mock_model(unreachable, text_extractors={'details.identifier': extract_cases_anywhere})
+    result = await Agent(model, output_type=Report).run('Nothing was filed.')
+
+    assert result.output == snapshot(Report(details=Details(identifier='nothing filed')))
+    assert result.response.parts == snapshot([ToolCallPart('final_result', {}, tool_call_id=IsStr())])
+
+
 @pytest.mark.parametrize('optional', [False, True])
 async def test_the_no_match_option_never_becomes_an_invented_value(allow_model_requests: None, optional: bool):
     annotation = str | None if optional else str

@@ -1,7 +1,16 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Container, Iterable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Collection,
+    Container,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -409,7 +418,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             # and there is nothing left to ask. This is also what keeps an absent value from becoming a made-up one.
             answers, response_usage, response_model = {}, usage.RequestUsage(), self._model_name
 
-        args, provider_details, unanswered = _answers(answers, properties, questions, candidates, boolean_threshold)
+        args, provider_details, unanswered = _answers(
+            answers, properties, required, questions, candidates, boolean_threshold
+        )
         parts: list[ModelResponsePart] = []
         output_taken = output_tool is not None
         if output_tool:
@@ -511,14 +522,16 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         unsupported here, and makes a route that has one a hand-off like any other field Jev cannot write.
         """
         try:
-            properties, _ = _fields(tool)
+            properties, required = _fields(tool)
             questions = _questions(properties, tool, instructions, {})
         except UserError:
             raise ToolCallProposed(self._model_name, tool.name, probability) from None
 
         try:
             response = await self._system_one(state, questions, settings)
-            args, provider_details, _ = _answers(response.answers, properties, questions, {}, boolean_threshold)
+            args, provider_details, _ = _answers(
+                response.answers, properties, required, questions, {}, boolean_threshold
+            )
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
             # could silently choose another route, so a failure while filling is terminal and names that route.
@@ -646,6 +659,7 @@ def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
 def _answers(
     answers: Mapping[str, object],
     properties: dict[str, dict[str, Any]],
+    required: Collection[str],
     questions: dict[str, Noul | Choice | Score],
     candidates: Mapping[str, _TextCandidates],
     boolean_threshold: float,
@@ -712,6 +726,10 @@ def _answers(
             scores[name] = answer.score
         else:
             raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
+    for name in sorted(set(required) - properties.keys()):
+        # A required nested model every one of whose fields was left out for its default: the fields are
+        # Pydantic's to fill, but the model itself has to be there for it to fill them into.
+        _nest(args, name)
     return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}, unanswered
 
 
@@ -915,7 +933,9 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set
     question. The answers are nested back into place by `_set`.
 
     The schema's `required` set comes back alongside, flattened the same way: a field with a default is not
-    required, and leaving it out of the arguments is what lets Pydantic apply that default.
+    required, and leaving it out of the arguments is what lets Pydantic apply that default. A required nested
+    model is in that set under its own name, beside the fields under it, because an absent model is a missing
+    field rather than an empty one Pydantic fills from the defaults inside it.
     """
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
@@ -952,6 +972,8 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set
                         'itself has no end to fill, and Jev asks a fixed set of questions. Give the field a type '
                         'that does not contain itself.'
                     )
+                if here:
+                    required.add(f'{prefix}{name}')
                 flatten(prop, f'{prefix}{name}.', here, seen | {ref} if ref else seen)
             else:
                 fields[f'{prefix}{name}'] = prop
@@ -970,6 +992,12 @@ def _set(args: dict[str, Any], name: str, value: Any) -> None:
     for part in path:
         args = args.setdefault(part, {})
     args[leaf] = value
+
+
+def _nest(args: dict[str, Any], name: str) -> None:
+    """Put a nested model into the arguments without answering anything under it, leaving what is there alone."""
+    for part in name.split('.'):
+        args = args.setdefault(part, {})
 
 
 def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:

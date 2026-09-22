@@ -178,7 +178,7 @@ Unless the schema describes an option, Jev sees it by its name alone, so name `L
 
 ### What each mapping does
 
-An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
+An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Only a `Literal` or `Enum` of strings, or a [`str` with a candidate extractor](#extracting-a-string-already-in-the-text), can be optional, since `None` has to be one more option to pick.
 
 A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them and at most ten, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 
