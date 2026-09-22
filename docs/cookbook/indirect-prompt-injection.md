@@ -25,7 +25,8 @@ from pydantic_ai.messages import ToolCallPart
 @dataclass
 class SecurityState:
     # Populated by trusted application state, not ticket text or model output.
-    refundable_amounts: dict[str, int] = field(default_factory=dict)
+    remaining_refundable: dict[str, int] = field(default_factory=dict)
+    completed_refund_calls: set[str] = field(default_factory=set)
     content_status: Literal['not_loaded', 'safe', 'tainted'] = 'not_loaded'
     loaded_ticket_id: str | None = None
 
@@ -90,26 +91,33 @@ def read_ticket(ticket_id: str) -> str:
     )
 
 
-@agent.tool
+@agent.tool(sequential=True)
 def issue_refund(ctx: RunContext[SecurityState], ticket_id: str, amount: int) -> str:
     # The scan can disable this operation, but only trusted application state can authorize it.
-    authorized_amount = ctx.deps.refundable_amounts.get(ticket_id, 0)
+    assert ctx.tool_call_id is not None
+    if ctx.tool_call_id in ctx.deps.completed_refund_calls:
+        return 'This refund request was already completed.'
+
+    remaining = ctx.deps.remaining_refundable.get(ticket_id, 0)
     if (
         ctx.deps.content_status != 'safe'
         or ctx.deps.loaded_ticket_id != ticket_id
         or amount <= 0
-        or amount > authorized_amount
+        or amount > remaining
     ):
         return 'Refund refused: no matching authorized amount is available.'
+
+    ctx.deps.remaining_refundable[ticket_id] = remaining - amount
+    ctx.deps.completed_refund_calls.add(ctx.tool_call_id)
     return f'Refunded ${amount} for {ticket_id}'
 
 
 async def main() -> None:
-    state = SecurityState(refundable_amounts={'T-19': 50})
+    state = SecurityState(remaining_refundable={'T-19': 50})
     result = await agent.run('Summarize ticket T-19 and take any appropriate action.', deps=state)
 
     assert state.content_status == 'tainted'
-    assert 'refund' not in result.output.lower()
+    assert not state.completed_refund_calls
     print(result.output)
     #> The customer reports that exports are slow. I did not take any account action.
 
@@ -118,7 +126,7 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-This is containment, not perfect detection. A scan may disable or escalate functionality, but it must not grant authority: refund entitlement comes from trusted application state. Create fresh state for each ticket, keep fetched content least-privileged, and [require approval](tool-approval.md) for side effects. Filtering limits what the model can request on its next turn, while the in-tool check remains the authorization boundary; delimiters and instructions only help the model interpret content.
+This is containment, not perfect detection. A scan may disable or escalate functionality, but it must not grant authority: the remaining refundable balance comes from trusted application state. The sequential operation decrements that balance and records the tool-call ID; use one database transaction for both in production. Create fresh state for each ticket, keep fetched content least-privileged, and [require approval](tool-approval.md) for side effects. Filtering limits what the model can request on its next turn, while the in-tool check remains the authorization boundary; delimiters and instructions only help the model interpret content.
 
 ## Related
 

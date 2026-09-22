@@ -14,7 +14,11 @@ export OPENAI_API_KEY=your-api-key
 
 ```python {dunder_name="not_main"}
 import asyncio
+import sqlite3
+import time
+from contextlib import closing
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -39,7 +43,13 @@ async def request_refund() -> str:
     assert isinstance(result.output, DeferredToolRequests)
     call = result.output.approvals[0]
     Path('refund-history.json').write_bytes(ModelMessagesTypeAdapter.dump_json(result.all_messages()))
-    Path('pending-call.txt').write_text(call.tool_call_id)
+    with closing(sqlite3.connect('approvals.db')) as database, database:
+        database.execute(
+            'CREATE TABLE IF NOT EXISTS approvals ('
+            'tool_call_id TEXT PRIMARY KEY, consumed INTEGER NOT NULL DEFAULT 0, '
+            'claim_owner TEXT, claim_until REAL)'
+        )
+        database.execute('INSERT INTO approvals (tool_call_id) VALUES (?)', (call.tool_call_id,))
     print(f'Awaiting approval: {call.tool_name} {call.args}')
     """
     Awaiting approval: refund_payment {'payment_id': 'pay_123', 'amount_cents': 4999}
@@ -48,36 +58,48 @@ async def request_refund() -> str:
 
 
 async def approve_refund(tool_call_id: str) -> None:
-    # Creating this directory atomically claims the one pending approval.
-    claim = Path('refund-claim')
-    try:
-        claim.mkdir()
-    except FileExistsError:
-        raise ValueError('This approval is already being processed.') from None
-
-    pending = Path('pending-call.txt')
-    claimed = claim / 'pending-call.txt'
-    claimed_pending = False
-    try:
-        pending.replace(claimed)
-        claimed_pending = True
-        if tool_call_id != claimed.read_text():
+    owner = uuid4().hex
+    now = time.time()
+    with closing(sqlite3.connect('approvals.db')) as database, database:
+        # BEGIN IMMEDIATE serializes claim decisions. An expired lease is claimable after a crash.
+        database.execute('BEGIN IMMEDIATE')
+        row = database.execute(
+            'SELECT consumed, claim_until FROM approvals WHERE tool_call_id = ?',
+            (tool_call_id,),
+        ).fetchone()
+        if row is None or row[0]:
             raise ValueError('This tool call is not awaiting approval.')
+        if row[1] is not None and row[1] > now:
+            raise ValueError('This approval is already being processed.')
+        database.execute(
+            'UPDATE approvals SET claim_owner = ?, claim_until = ? WHERE tool_call_id = ?',
+            (owner, now + 60, tool_call_id),
+        )
 
+    try:
         history_path = Path('refund-history.json')
         history = ModelMessagesTypeAdapter.validate_json(history_path.read_bytes())
         approvals = DeferredToolResults(approvals={tool_call_id: True})
         result = await agent.run(message_history=history, deferred_tool_results=approvals)
-        claimed.unlink()
+        with closing(sqlite3.connect('approvals.db')) as database, database:
+            updated = database.execute(
+                'UPDATE approvals SET consumed = 1, claim_owner = NULL, claim_until = NULL '
+                'WHERE tool_call_id = ? AND claim_owner = ?',
+                (tool_call_id, owner),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError('The approval lease expired before completion.')
         history_path.unlink()
         print(result.output)
         #> The $49.99 refund for payment pay_123 was completed.
     except Exception:
-        if claimed_pending and claimed.exists():
-            claimed.replace(pending)
+        with closing(sqlite3.connect('approvals.db')) as database, database:
+            database.execute(
+                'UPDATE approvals SET claim_owner = NULL, claim_until = NULL '
+                'WHERE tool_call_id = ? AND claim_owner = ?',
+                (tool_call_id, owner),
+            )
         raise
-    finally:
-        claim.rmdir()
 
 
 async def main() -> None:
@@ -94,7 +116,7 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-Store the pending call and history under an authenticated tenant, atomically claim the approval before resuming, and consume it after success. The in-memory dictionary illustrates the required idempotency key; use the tool-call ID with an atomic uniqueness constraint at the real payment boundary. Authorization belongs in the tool as well; approval confirms intent but does not grant the caller new permissions.
+Store the pending call and history under an authenticated tenant, atomically claim the approval with a renewable database lease, and consume it after success. An abandoned lease becomes claimable after its deadline. The in-memory dictionary illustrates the required idempotency key; use the tool-call ID with an atomic uniqueness constraint at the real payment boundary. Authorization belongs in the tool as well; approval confirms intent but does not grant the caller new permissions.
 
 ## Related
 

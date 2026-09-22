@@ -14,6 +14,7 @@ export OPENAI_API_KEY=your-api-key
 
 ```python {dunder_name="not_main"}
 import asyncio
+import math
 from dataclasses import dataclass, field
 
 from pydantic_ai import (
@@ -48,7 +49,12 @@ async def refund_authenticated_order(
         return 'This refund request was already completed.'
 
     remaining = ctx.deps.remaining_refundable.get(order_id, 0)
-    if order_id not in ctx.deps.order_ids or amount <= 0 or amount > remaining:
+    if (
+        order_id not in ctx.deps.order_ids
+        or not math.isfinite(amount)
+        or amount <= 0
+        or amount > remaining
+    ):
         return 'Refund refused: the amount is not currently refundable.'
 
     ctx.deps.remaining_refundable[order_id] = remaining - amount
@@ -63,13 +69,16 @@ async def refund_policy(
     decisions = DeferredToolResults()
     for call in requests.approvals:
         args = call.args_as_dict()
+        amount = args.get('amount')
         if args['order_id'] not in ctx.deps.order_ids:
             decision = ToolDenied('That order is not in the authenticated account.')
-        elif args['amount'] <= 0:
+        elif not isinstance(amount, int | float) or isinstance(amount, bool) or not math.isfinite(amount):
+            decision = ToolDenied('The refund amount must be a finite number.')
+        elif amount <= 0:
             decision = ToolDenied('The refund amount must be positive.')
-        elif args['amount'] > 100:
+        elif amount > 100:
             decision = ToolDenied('Refunds over $100 need a human agent.')
-        elif args['amount'] > ctx.deps.remaining_refundable.get(args['order_id'], 0):
+        elif amount > ctx.deps.remaining_refundable.get(args['order_id'], 0):
             decision = ToolDenied('That amount exceeds the remaining refundable balance.')
         else:
             decision = True
