@@ -21,3 +21,10 @@
             - WorkspaceCommand
             - WorkspaceFileEntry
             - WorkspaceResult
+
+# `pydantic_ai.workspaces.testing`
+
+::: pydantic_ai.workspaces.testing
+    options:
+        members:
+            - WorkspaceBackendSuite

@@ -268,6 +268,49 @@ in `before_run`, `after_run`, or `wrap_run` hooks, or with the provider's SDK. P
 `result.workspace` to a later run, or `ctx.workspace` to a subagent, to keep using the same
 environment.
 
+### Checking a backend
+
+Subclass [`WorkspaceBackendSuite`][pydantic_ai.workspaces.testing.WorkspaceBackendSuite] in your
+pytest suite and provide its `backend` fixture:
+
+```python {test="skip"}
+import pytest
+from pydantic_ai.workspaces.testing import WorkspaceBackendSuite
+
+
+class TestMyBackend(WorkspaceBackendSuite):
+    @pytest.fixture
+    def backend(self) -> MyBackend:
+        return MyBackend()
+```
+
+The fixture can be synchronous or asynchronous. The suite checks these rules. Command and
+filesystem rules skip when the backend does not implement
+the corresponding optional protocol; reattachment rules skip until their fixtures are provided.
+
+- `test_required_members`: The backend provides the structural `WorkspaceBackend` members.
+- `test_string_command_requires_shell`: A string command without `shell=True` raises `TypeError`.
+- `test_argv_command_rejects_shell`: An argv command with `shell=True` raises `TypeError`.
+- `test_relative_cwd_is_rejected`: A relative `cwd` raises `ValueError`.
+- `test_shell_result_is_honest`: A shell result carries the real `exit_code`, `stdout`, and `stderr`.
+- `test_argv_arguments_are_literal`: Argv items are passed literally, without shell interpretation.
+- `test_default_working_dir_is_canonical`: `working_dir` is an absolute, canonical POSIX path.
+- `test_timeout_raises_workspace_timeout_error`: A timeout raises `WorkspaceTimeoutError` with text output.
+- `test_env_is_added`: Extra environment variables reach the command.
+- `test_absolute_cwd_is_used`: An absolute `cwd` is honored.
+- `test_ref_is_stable_across_operations`: Once assigned, `ref` remains stable across operations.
+- `test_filesystem_bytes_round_trip`: Byte writes, replacements, and reads round trip exactly.
+- `test_filesystem_exists_is_truthful`: `exists` distinguishes present and absent paths.
+- `test_filesystem_entries_are_truthful`: `stat` and `list_dir` return truthful, non-recursive entries.
+- `test_filesystem_make_dir_has_mkdir_p_semantics`: `make_dir` creates parents and is idempotent.
+- `test_run_and_filesystem_share_one_environment`: Commands and filesystem methods see the same files.
+- `test_filesystem_missing_paths_raise_file_not_found`: Missing paths raise `FileNotFoundError` from `read_bytes`, `stat`, `list_dir`, and `remove`.
+- `test_filesystem_reading_directory_raises_is_a_directory`: Reading a directory raises `IsADirectoryError`.
+- `test_filesystem_remove_file_and_tree`: `remove` deletes a file or a directory tree.
+- `test_ref_is_none_until_the_environment_exists_then_stable`: A lazily created environment gets a stable, non-`None` ref on first use.
+- `test_reattach_by_ref_sees_the_same_files`: A second backend attached by ref sees the same files.
+- `test_reattach_after_destroy_raises_unavailable`: A ref to a destroyed environment raises `WorkspaceUnavailableError` on use.
+
 ## Errors
 
 - A non-zero command exit is a normal result reported on `exit_code`.

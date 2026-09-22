@@ -208,7 +208,7 @@ async def test_filesystem_only_backend_works_without_command_execution() -> None
     assert await workspace.read_text('new.txt') == 'content'
     assert (await workspace.stat('new.txt')).size == len('content')
     await workspace.make_dir('nested')
-    assert sorted(entry.name for entry in await workspace.list_dir('.')) == ['data.txt', 'new.txt']
+    assert sorted(entry.name for entry in await workspace.list_dir('.')) == ['data.txt', 'nested', 'new.txt']
     await workspace.remove('new.txt')
     assert not await workspace.exists('new.txt')
     assert workspace.ref == WorkspaceRef(provider='fake', id='fake-files-only')

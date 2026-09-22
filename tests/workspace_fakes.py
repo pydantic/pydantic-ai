@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 import re
 import shlex
 from collections.abc import Mapping, Sequence
@@ -19,6 +20,7 @@ from pydantic_ai.workspaces import (
     WorkspaceCommand,
     WorkspaceRef,
     WorkspaceResult,
+    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 
@@ -40,6 +42,110 @@ class FakeEntry:
 
 _SED_WINDOW = re.compile(r'^(\d+),(\d+)p;\2q$')
 _SED_REST = re.compile(r'^(\d+),\$p$')
+_SHELL_RESULT = re.compile(r'^printf ([0-9a-f]+); printf \1 >&2; exit 7$')
+_ENV_COMMAND = re.compile(r'^printf %s "\$([A-Z0-9_]+)"$')
+
+
+def _add_parent_directories(directories: set[str], path: str) -> None:
+    parent = posixpath.dirname(path)
+    while parent not in ('', '/'):
+        directories.add(parent)
+        parent = posixpath.dirname(parent)
+    directories.add('/')
+
+
+def _write(files: dict[str, bytes], directories: set[str], path: str, data: bytes) -> None:
+    if path in directories:
+        raise IsADirectoryError(path)
+    _add_parent_directories(directories, path)
+    files[path] = data
+
+
+def _stat(files: dict[str, bytes], directories: set[str], path: str) -> FakeEntry:
+    if path in files:
+        return FakeEntry(name=posixpath.basename(path), path=path, size=len(files[path]))
+    if path in directories:
+        return FakeEntry(name=posixpath.basename(path), path=path, is_dir=True)
+    raise FileNotFoundError(path)
+
+
+def _list_dir(files: dict[str, bytes], directories: set[str], path: str) -> list[FakeEntry]:
+    if path in files:
+        raise NotADirectoryError(path)
+    if path not in directories:
+        raise FileNotFoundError(path)
+    entries = [
+        FakeEntry(name=posixpath.basename(file), path=file, size=len(data))
+        for file, data in files.items()
+        if posixpath.dirname(file) == path
+    ]
+    entries.extend(
+        FakeEntry(name=posixpath.basename(directory), path=directory, is_dir=True)
+        for directory in directories
+        if directory != path and posixpath.dirname(directory) == path
+    )
+    return sorted(entries, key=lambda entry: entry.name)
+
+
+def _make_dir(files: dict[str, bytes], directories: set[str], path: str) -> None:
+    if path in files:
+        raise FileExistsError(path)
+    _add_parent_directories(directories, path)
+    directories.add(path)
+
+
+def _remove(files: dict[str, bytes], directories: set[str], path: str) -> None:
+    if path in files:
+        del files[path]
+        return
+    if path not in directories:
+        raise FileNotFoundError(path)
+    prefix = f'{path.rstrip("/")}/'
+    for file in [file for file in files if file.startswith(prefix)]:
+        del files[file]
+    directories.difference_update(
+        {directory for directory in directories if directory == path or directory.startswith(prefix)}
+    )
+
+
+def _run_conformance_command(
+    command: WorkspaceCommand,
+    *,
+    shell: bool,
+    cwd: str | None,
+    env: Mapping[str, str] | None,
+    timeout: float | None,
+    working_dir: str,
+    files: dict[str, bytes],
+    directories: set[str],
+) -> FakeWorkspaceResult | None:
+    if isinstance(command, str) != shell:
+        raise TypeError('a shell string needs `shell=True`, an argv sequence needs `shell=False`')
+    if cwd is not None and not posixpath.isabs(cwd):
+        raise ValueError('cwd must be absolute')
+    if not isinstance(command, str) and list(command) == ['sh', '-c', 'sleep 30'] and timeout is not None:
+        raise WorkspaceTimeoutError('command timed out', timeout=timeout)
+    if isinstance(command, str):
+        match = _SHELL_RESULT.fullmatch(command)
+        if match is not None:
+            token = match.group(1)
+            return FakeWorkspaceResult(exit_code=7, stdout=token, stderr=token)
+        return None
+    if list(command[:3]) == ['sh', '-c', 'pwd -P']:
+        return FakeWorkspaceResult(stdout=f'{cwd or working_dir}\n')
+    if len(command) == 5 and list(command[:4]) == ['sh', '-c', 'printf "%s" "$1"', 'sh']:
+        return FakeWorkspaceResult(stdout=command[4])
+    if len(command) == 3 and list(command[:2]) == ['sh', '-c']:
+        match = _ENV_COMMAND.fullmatch(command[2])
+        if match is not None:
+            return FakeWorkspaceResult(stdout=(env or {}).get(match.group(1), ''))
+    if len(command) == 7 and list(command[:2]) == ['sh', '-c'] and command[2].startswith('IFS= read'):
+        path, input_token, output_token = command[4:]
+        if files.get(path) != f'{input_token}\n'.encode():
+            return FakeWorkspaceResult(exit_code=1)
+        _write(files, directories, path, f'{output_token}\n'.encode())
+        return FakeWorkspaceResult()
+    return None
 
 
 class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
@@ -57,7 +163,10 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self.cleanup_calls: list[str] = []
         self.commands: list[str | Sequence[str]] = []
         self._sed = sed
-        self.files = files or {}
+        self.files = files if files is not None else {}
+        self.directories = {'/workspace'}
+        for path in self.files:
+            _add_parent_directories(self.directories, path)
         self.reads: list[str] = []
 
     @property
@@ -86,6 +195,18 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
         await self.ensure_ready()
+        conformance_result = _run_conformance_command(
+            command,
+            shell=shell,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            working_dir='/workspace',
+            files=self.files,
+            directories=self.directories,
+        )
+        if conformance_result is not None:
+            return conformance_result
         if not isinstance(command, str) and list(command[:2]) == ['head', '-c']:
             count, path = int(command[2]), command[3]
             if path not in self.files:
@@ -129,6 +250,8 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def read_bytes(self, path: str) -> bytes:
         await self.ensure_ready()
         self.reads.append(path)
+        if path in self.directories:
+            raise IsADirectoryError(path)
         try:
             return self.files[path]
         except KeyError:
@@ -136,33 +259,27 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         await self.ensure_ready()
-        self.files[path] = data
+        _write(self.files, self.directories, path, data)
 
     async def stat(self, path: str) -> FakeEntry:
         await self.ensure_ready()
-        try:
-            data = self.files[path]
-        except KeyError:
-            raise FileNotFoundError(path) from None
-        return FakeEntry(name=path.rsplit('/', 1)[-1], path=path, size=len(data))
+        return _stat(self.files, self.directories, path)
 
     async def list_dir(self, path: str) -> Sequence[FakeEntry]:
         await self.ensure_ready()
-        return [FakeEntry(name=p.rsplit('/', 1)[-1], path=p, size=len(data)) for p, data in self.files.items()]
+        return _list_dir(self.files, self.directories, path)
 
     async def make_dir(self, path: str) -> None:
         await self.ensure_ready()
+        _make_dir(self.files, self.directories, path)
 
     async def remove(self, path: str) -> None:
         await self.ensure_ready()
-        try:
-            del self.files[path]
-        except KeyError:
-            raise FileNotFoundError(path) from None
+        _remove(self.files, self.directories, path)
 
     async def exists(self, path: str) -> bool:
         await self.ensure_ready()
-        return path in self.files
+        return path in self.files or path in self.directories
 
     async def close(self, *, terminate: bool = False) -> None:  # pragma: no cover
         self.cleanup_calls.append(f'close:{terminate}')
@@ -322,10 +439,12 @@ class InMemoryProvider:
     def __init__(self, name: str = 'fake') -> None:
         self.name = name
         self.environments: dict[str, dict[str, bytes]] = {}
+        self.directories: dict[str, set[str]] = {}
         self.log: list[str] = []
 
     def reset(self) -> None:
         self.environments.clear()
+        self.directories.clear()
         self.log.clear()
 
     def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
@@ -351,6 +470,7 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if self._ref is None:
             env_id = f'env-{len(provider.environments) + 1}'
             provider.environments[env_id] = {}
+            provider.directories[env_id] = {'/remote'}
             provider.log.append(f'create:{env_id}')
             self._ref = WorkspaceRef(provider=provider.name, id=env_id)
         elif self._ref.id not in provider.environments:
@@ -358,7 +478,15 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         elif not self.attached:
             provider.log.append(f'attach:{self._ref.id}')
         self.attached = True
-        return provider.environments[self._ref.id]
+        files = provider.environments[self._ref.id]
+        directories = provider.directories.setdefault(self._ref.id, {'/remote'})
+        for path in files:
+            _add_parent_directories(directories, path)
+        return files
+
+    def _directories(self) -> set[str]:
+        assert self._ref is not None
+        return self._provider.directories[self._ref.id]
 
     async def run(
         self,
@@ -369,9 +497,19 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
-        await self._files()
-        if isinstance(command, str) != shell:
-            raise TypeError('a shell string needs `shell=True`, an argv sequence needs `shell=False`')
+        files = await self._files()
+        conformance_result = _run_conformance_command(
+            command,
+            shell=shell,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            working_dir='/remote',
+            files=files,
+            directories=self._directories(),
+        )
+        if conformance_result is not None:
+            return conformance_result
         if isinstance(command, str) or command[0] in ('head', 'sed'):
             # No shell utilities: the facade's bounded read falls back to the filesystem.
             return FakeWorkspaceResult(exit_code=127, stderr='not found')
@@ -383,36 +521,35 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
 
     async def read_bytes(self, path: str) -> bytes:
         files = await self._files()
+        if path in self._directories():
+            raise IsADirectoryError(path)
         if path not in files:
             raise FileNotFoundError(path)
         return files[path]
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        (await self._files())[path] = data
+        files = await self._files()
+        _write(files, self._directories(), path, data)
 
     async def stat(self, path: str) -> FakeEntry:
         files = await self._files()
-        if path not in files:
-            raise FileNotFoundError(path)
-        return FakeEntry(name=path.rsplit('/', 1)[-1], path=path, size=len(files[path]))
+        return _stat(files, self._directories(), path)
 
     async def list_dir(self, path: str) -> Sequence[FakeEntry]:
         files = await self._files()
-        return [
-            FakeEntry(name=file.rsplit('/', 1)[-1], path=file, size=len(data)) for file, data in sorted(files.items())
-        ]
+        return _list_dir(files, self._directories(), path)
 
     async def make_dir(self, path: str) -> None:
-        await self._files()
+        files = await self._files()
+        _make_dir(files, self._directories(), path)
 
     async def remove(self, path: str) -> None:
         files = await self._files()
-        if path not in files:
-            raise FileNotFoundError(path)
-        del files[path]
+        _remove(files, self._directories(), path)
 
     async def exists(self, path: str) -> bool:
-        return path in await self._files()
+        files = await self._files()
+        return path in files or path in self._directories()
 
 
 class ProviderWorkspaces(AbstractCapability[Any]):
