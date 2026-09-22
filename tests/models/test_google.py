@@ -96,6 +96,7 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai import Client, errors
     from google.genai.types import (
+        Blob,
         BlockedReason,
         Candidate,
         Content,
@@ -1870,6 +1871,72 @@ However, I am designed to always provide a response with content. If you receive
 
 Could you please tell me what you were expecting or if you'd like me to try again?\
 """)
+
+
+def _thought_images_response() -> GenerateContentResponse:
+    parts = [
+        Part(text='Drafting the image...', thought=True),
+        Part(inline_data=Blob(data=b'draft-1', mime_type='image/png'), thought=True),
+        Part(inline_data=Blob(data=b'draft-2', mime_type='image/png'), thought=True),
+        Part(inline_data=Blob(data=b'final', mime_type='image/png'), thought_signature=b'signature'),
+    ]
+    return GenerateContentResponse(
+        response_id='response-1',
+        model_version='gemini-2.5-flash-image',
+        candidates=[
+            Candidate(
+                content=Content(role='model', parts=parts),
+                finish_reason=GoogleFinishReason.STOP,
+            )
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(prompt_token_count=10, candidates_token_count=5),
+    )
+
+
+async def test_google_thought_images_skipped_non_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Interim thought images are dropped from non-streaming responses.
+
+    With thinking enabled, Gemini image models return interim images marked with `thought=True`
+    alongside the final rendered image. Thought images are thinking content, never output, so
+    the final rendered image is the only image in the output and message history.
+    """
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    mocker.patch.object(m.client.aio.models, 'generate_content', return_value=_thought_images_response())
+
+    agent = Agent(m, output_type=BinaryImage)
+    result = await agent.run('Draw a cat')
+
+    # The final rendered image is the output, not the first interim thought image.
+    assert result.output.data == b'final'
+    assert [image.data for image in result.response.images] == [b'final']
+
+    message_parts = result.all_messages()[-1].parts
+    # Thought text still surfaces as ThinkingPart.
+    assert [part.content for part in message_parts if isinstance(part, ThinkingPart)] == ['Drafting the image...']
+    # The final image is the only FilePart, and it keeps its thought signature.
+    image_parts = [part for part in message_parts if isinstance(part, FilePart)]
+    assert [part.content.data for part in image_parts] == [b'final']
+    assert image_parts[0].provider_details == {'thought_signature': IsStr()}
+
+
+async def test_google_thought_images_skipped_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Interim thought images are dropped from streamed responses, matching the non-streaming path."""
+    response = _thought_images_response()
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+    mocker.patch.object(m.client.aio.models, 'generate_content_stream', return_value=_aiter_chunks([response]))
+
+    agent = Agent(m, output_type=BinaryImage)
+    async with agent.run_stream('Draw a cat') as result:
+        output = await result.get_output()
+
+        assert output.data == b'final'
+        message_parts = result.all_messages()[-1].parts
+        assert [part.content.data for part in message_parts if isinstance(part, FilePart)] == [b'final']
+        assert [part.content for part in message_parts if isinstance(part, ThinkingPart)] == ['Drafting the image...']
 
 
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
