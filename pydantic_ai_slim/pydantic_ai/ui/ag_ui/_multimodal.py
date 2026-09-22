@@ -6,8 +6,9 @@ ag-ui-protocol >= 0.1.15 is installed, so these imports will succeed.
 
 from __future__ import annotations
 
+import warnings
 from base64 import b64decode
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast, get_args
 
 from ag_ui.core import (
     AudioInputContent,
@@ -19,7 +20,30 @@ from ag_ui.core import (
 )
 
 from ..._utils import is_str_dict
-from ...messages import AudioUrl, BinaryContent, DocumentUrl, ForceDownloadMode, ImageUrl, VideoUrl
+from ...messages import (
+    AudioUrl,
+    BinaryContent,
+    DocumentUrl,
+    ForceDownloadMode,
+    ImageUrl,
+    UploadedFile,
+    UploadedFileProviderName,
+    VideoUrl,
+)
+from ._utils import media_part_type
+
+if TYPE_CHECKING:
+    from ag_ui.core import FileSource
+else:
+    try:
+        from ag_ui.core import FileSource
+    except ImportError:
+
+        class FileSource:
+            """Stub for SDKs without `FileSource`."""
+
+
+_UPLOADED_FILE_PROVIDERS: frozenset[str] = frozenset(get_args(UploadedFileProviderName))
 
 AGUIContentTypes = ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent
 PydanticAIUrlType = ImageUrl | AudioUrl | VideoUrl | DocumentUrl
@@ -65,10 +89,11 @@ def media_url_to_multimodal(
     return _URL_TYPE_MAP[type(item)](source=source, metadata=dump_metadata(item))
 
 
-_MEDIA_PREFIX_TO_CONTENT: dict[str, type] = {
+_MEDIA_TYPE_TO_CONTENT: dict[str, type] = {
     'image': ImageInputContent,
     'audio': AudioInputContent,
     'video': VideoInputContent,
+    'document': DocumentInputContent,
 }
 
 
@@ -77,18 +102,19 @@ def binary_to_multimodal(
 ) -> AGUIContentTypes:
     """Convert BinaryContent to typed multimodal AG-UI input content based on media type prefix."""
     source = InputContentDataSource(type='data', value=item.base64, mime_type=item.media_type)
-    content_cls = _MEDIA_PREFIX_TO_CONTENT.get(item.media_type.split('/', 1)[0], DocumentInputContent)
+    content_cls = _MEDIA_TYPE_TO_CONTENT[media_part_type(item.media_type)]
     return content_cls(source=source, metadata=dump_metadata(item))
 
 
 def multimodal_input_to_content(
     part: AGUIContentTypes,
-) -> PydanticAIUrlType | BinaryContent:
-    """Convert a typed multimodal AG-UI input content back to a Pydantic AI content type."""
+) -> PydanticAIUrlType | BinaryContent | UploadedFile | None:
+    """Convert typed AG-UI content to Pydantic AI content.
+
+    Unknown `file` providers are skipped with a warning because their handles cannot be resolved.
+    """
     source = part.source
-    # `metadata` is client-controlled and typed as `Any`; a non-`dict` value is ignored, and a
-    # malformed (non-`dict`) `vendor_metadata` inside it is rejected by the validating constructors
-    # below, matching the Vercel adapter.
+    # Ignore non-dict metadata; constructors validate values under our reserved keys.
     metadata = part.metadata
     vendor_metadata: dict[str, Any] | None = None
     force_download: ForceDownloadMode = False
@@ -102,5 +128,20 @@ def multimodal_input_to_content(
             force_download=force_download,
             vendor_metadata=vendor_metadata,
         )
-    else:
+    if isinstance(source, InputContentDataSource):
         return BinaryContent(data=b64decode(source.value), media_type=source.mime_type, vendor_metadata=vendor_metadata)
+    assert isinstance(source, FileSource)
+    if source.provider not in _UPLOADED_FILE_PROVIDERS:
+        warnings.warn(
+            f'AG-UI file content with provider {source.provider!r} was skipped; set `provider` on the file source '
+            f'to one of {sorted(_UPLOADED_FILE_PROVIDERS)} so the file can be passed to that provider.',
+            UserWarning,
+            stacklevel=3,
+        )
+        return None
+    return UploadedFile(
+        file_id=source.value,
+        provider_name=cast(UploadedFileProviderName, source.provider),
+        media_type=source.mime_type,
+        vendor_metadata=vendor_metadata,
+    )

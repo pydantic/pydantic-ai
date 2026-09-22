@@ -9,6 +9,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import KW_ONLY, dataclass, field
+from typing import Any
 from uuid import uuid4
 
 from pydantic_core import to_json
@@ -43,12 +44,20 @@ from ._interrupt import (
     RunFinishedSuccessOutcome,
     approval_to_interrupt,
 )
+from ._lifecycle_1_0 import (
+    HAS_LIFECYCLE_1_0,
+    PROTOCOL_VERSION,
+    RunFinishedCancelledOutcome,
+    TokenUsage,
+    token_usage_from_messages,
+)
 from ._utils import (
     ACTIVITY_EVENTS_VERSION,
     BUILTIN_TOOL_CALL_ID_PREFIX,
     COMPACTION_ACTIVITY_TYPE,
     DEFAULT_AG_UI_VERSION,
     INTERRUPTS_VERSION,
+    LIFECYCLE_1_0_VERSION,
     REASONING_VERSION,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
     dump_tool_return_content,
@@ -196,11 +205,21 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 agui_event.timestamp = self._get_timestamp()
             yield agui_event
 
+    @property
+    def _lifecycle_1_0(self) -> bool:
+        """Whether 1.0 lifecycle fields are available for the negotiated peer."""
+        return HAS_LIFECYCLE_1_0 and parse_ag_ui_version(self.ag_ui_version) >= LIFECYCLE_1_0_VERSION
+
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
+        extra: dict[str, Any] = {}
+        if self._lifecycle_1_0:
+            # The producer declares its own version, not the input version.
+            extra['protocol_version'] = PROTOCOL_VERSION
         yield RunStartedEvent(
             thread_id=self.thread_id,
             run_id=self.run_id,
             timestamp=self._get_timestamp(),
+            **extra,
         )
 
     async def before_response(self) -> AsyncIterator[BaseEvent]:
@@ -214,33 +233,29 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
+        extra: dict[str, Any] = {}
         if self._cancelled_run:
-            # AG-UI has no cancelled outcome; revisit when the protocol fills this spec gap:
-            # https://github.com/ag-ui-protocol/ag-ui/issues/880
-            yield RunFinishedEvent(
-                thread_id=self.thread_id,
-                run_id=self.run_id,
-                timestamp=self._get_timestamp(),
-            )
-            return
+            if self._lifecycle_1_0:
+                # Cancellation has no result; usage is optional.
+                extra['outcome'] = RunFinishedCancelledOutcome()
+            # Below 1.0 there is no cancelled outcome (ag-ui#880).
+        elif HAS_INTERRUPTS:
+            # Omit `outcome` for SDKs that predate interrupts.
+            extra['outcome'] = self._build_outcome()
+            if self._lifecycle_1_0 and (usage := self._build_usage()):
+                extra['usage'] = usage
+        yield RunFinishedEvent(
+            thread_id=self.thread_id,
+            run_id=self.run_id,
+            timestamp=self._get_timestamp(),
+            **extra,
+        )
 
-        # `RunFinishedEvent.outcome` only exists in ag-ui-protocol >= 0.1.19. `ConfiguredBaseModel`
-        # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
-        # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
-        # to omit it entirely.
-        if HAS_INTERRUPTS:
-            yield RunFinishedEvent(
-                thread_id=self.thread_id,
-                run_id=self.run_id,
-                outcome=self._build_outcome(),
-                timestamp=self._get_timestamp(),
-            )
-        else:
-            yield RunFinishedEvent(
-                thread_id=self.thread_id,
-                run_id=self.run_id,
-                timestamp=self._get_timestamp(),
-            )
+    def _build_usage(self) -> list[TokenUsage]:
+        """Build usage for this run, grouped by provider and model."""
+        if self._result is None:
+            return []
+        return token_usage_from_messages(self._result.new_messages())
 
     def _build_outcome(self) -> RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None:
         """Build the `RunFinishedEvent.outcome` from the final agent result.
@@ -254,10 +269,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # `EventEncoder` serializes with `exclude_none=True`; the field is valid on this SDK.
             return None
         output = self._result.output if self._result else None
-        if isinstance(output, DeferredToolRequests) and output.approvals:
-            return RunFinishedInterruptOutcome(
-                interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
-            )
+        if isinstance(output, DeferredToolRequests):
+            if output.approvals:
+                return RunFinishedInterruptOutcome(
+                    interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
+                )
+            if output.calls and self._lifecycle_1_0:
+                # Frontend tool calls are pending work on a successful run.
+                return RunFinishedSuccessOutcome(pending_tool_call_ids=[call.tool_call_id for call in output.calls])
         return RunFinishedSuccessOutcome()
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
@@ -275,7 +294,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         else:
             message_id = self.new_message_id()
             self._started_message_id = message_id
-            yield TextMessageStartEvent(message_id=message_id)
+            yield TextMessageStartEvent(message_id=message_id, role='assistant')
 
         if part.content:  # pragma: no branch
             yield TextMessageContentEvent(message_id=message_id, delta=part.content)
@@ -353,7 +372,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # The message carries no text, so it is closed straight away: the AG-UI client's event
             # verifier rejects `RUN_FINISHED` while a text message is still open.
             self._started_message_id = parent_message_id
-            yield TextMessageStartEvent(message_id=parent_message_id)
+            yield TextMessageStartEvent(message_id=parent_message_id, role='assistant')
             yield TextMessageEndEvent(message_id=parent_message_id)
 
         yield ToolCallStartEvent(

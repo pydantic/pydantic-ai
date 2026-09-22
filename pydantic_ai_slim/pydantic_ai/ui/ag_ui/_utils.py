@@ -43,7 +43,8 @@ constructing the event raises — see `REASONING_MESSAGE_ROLE`.
 """
 
 MULTIMODAL_VERSION = (0, 1, 15)
-"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document)."""
+"""AG-UI version that introduced typed multimodal input content."""
+
 
 ACTIVITY_EVENTS_VERSION = (0, 1, 19)
 """AG-UI version that introduced activity snapshot and delta events."""
@@ -55,6 +56,9 @@ INTERRUPTS_VERSION = (0, 1, 19)
 `Interrupt`, `ResumeEntry`, and `RunAgentInput.resume` were added in
 [ag-ui-protocol#1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569).
 """
+
+LIFECYCLE_1_0_VERSION = (1, 0)
+"""AG-UI version that added `RUN_STARTED.protocolVersion`, the `cancelled` outcome, `pendingToolCallIds` and `usage`."""
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
@@ -97,6 +101,12 @@ class UploadedFileActivityContent(TypedDict, total=False):
     media_type: str
     identifier: str
     vendor_metadata: dict[str, Any]
+
+
+def media_part_type(mime_type: str) -> str:
+    """The AG-UI media part type (`image`, `audio`, `video` or `document`) for a MIME type."""
+    prefix = mime_type.split('/', 1)[0]
+    return prefix if prefix in ('image', 'audio', 'video') else 'document'
 
 
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')

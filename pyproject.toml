@@ -188,6 +188,9 @@ genai-prices = false
 # published on 2026-09-15, inside the 7-day window above.
 # TODO(adtyavrdhn): Remove after 2026-09-22.
 typesafe-sdk = false
+# `ag-ui-protocol==1.0.0` was published on 2026-09-17, inside the 7-day window above.
+# TODO(adtyavrdhn): Remove after 2026-09-24.
+ag-ui-protocol = false
 logfire = false
 logfire-api = false
 # Anthropic 1.3.0 is the first release listing `claude-fable-5-1` and `claude-mythos-5-1`.

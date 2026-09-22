@@ -36,24 +36,6 @@ class Plan(BaseModel):
     )
 
 
-class JSONPatchOp(BaseModel):
-    """A class representing a JSON Patch operation (RFC 6902)."""
-
-    op: Literal['add', 'remove', 'replace', 'move', 'copy', 'test'] = Field(
-        description='The operation to perform: add, remove, replace, move, copy, or test',
-    )
-    path: str = Field(description='JSON Pointer (RFC 6901) to the target location')
-    value: Any = Field(
-        default=None,
-        description='The value to apply (for add, replace operations)',
-    )
-    from_: str | None = Field(
-        default=None,
-        alias='from',
-        description='Source path (for move, copy operations)',
-    )
-
-
 agent = Agent(
     'openai:gpt-5-mini',
     instructions=dedent(
@@ -106,16 +88,19 @@ async def update_plan_step(
     Returns:
         StateDeltaEvent containing the changes made to the plan.
     """
-    changes: list[JSONPatchOp] = []
+    # JSON Patch (RFC 6902) operations, validated by `StateDeltaEvent`.
+    changes: list[Any] = []
     if description is not None:
         changes.append(
-            JSONPatchOp(
-                op='replace', path=f'/steps/{index}/description', value=description
-            )
+            {
+                'op': 'replace',
+                'path': f'/steps/{index}/description',
+                'value': description,
+            }
         )
     if status is not None:
         changes.append(
-            JSONPatchOp(op='replace', path=f'/steps/{index}/status', value=status)
+            {'op': 'replace', 'path': f'/steps/{index}/status', 'value': status}
         )
     return StateDeltaEvent(
         type=EventType.STATE_DELTA,

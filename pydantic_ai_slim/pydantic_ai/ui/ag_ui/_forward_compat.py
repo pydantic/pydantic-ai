@@ -14,6 +14,9 @@ and keeps failing validation, so a genuinely malformed payload is still rejected
 reinterpreted. An unknown tag alone isn't enough either — an item only qualifies as new functionality
 if it also satisfies the contract every member of its union shares, so a client bug can't ride in
 under a tag we don't recognize.
+
+The one tag that is unknown because the SDK *retired* it, `binary` on 1.0, is translated to its typed
+replacement instead of skipped; a `binary` part with nothing to translate stays in and fails validation.
 """
 
 from __future__ import annotations
@@ -25,8 +28,9 @@ from ag_ui.core import InputContent, Message
 from pydantic import BaseModel, JsonValue
 
 from ..._utils import get_union_args
+from ._utils import media_part_type
 
-__all__ = ['skip_unknown_tagged_items']
+__all__ = ['HAS_BINARY_INPUT_CONTENT', 'adapt_unsupported_items']
 
 
 def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
@@ -48,6 +52,9 @@ def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
 _KNOWN_MESSAGE_ROLES = _known_tags(Message, 'role')
 _KNOWN_INPUT_CONTENT_TYPES = _known_tags(InputContent, 'type')
 
+HAS_BINARY_INPUT_CONTENT = 'binary' in _KNOWN_INPUT_CONTENT_TYPES
+"""Whether the installed SDK still includes the retired `binary` input part."""
+
 
 def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozenset[str]) -> str | None:
     """A `"role='reasoning'"`-style label when `item`'s discriminator value is one the installed models don't know.
@@ -61,16 +68,41 @@ def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozense
     return None
 
 
-def skip_unknown_tagged_items(body: bytes) -> tuple[JsonValue, frozenset[str]]:
-    """Re-read a rejected AG-UI request body without the items this install can't dispatch.
+def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
+    """The typed media part for a retired `binary` part, or `None` when it has no MIME type or payload.
 
-    Returns the reduced payload and labels for the tags that were skipped. The payload is only
-    meaningful when the label set is non-empty; an empty set means there was nothing to skip and the
-    caller should let the original validation error stand.
+    `url` wins over `data`, as it did in the legacy loader. A base64 data URI in `url` is how 0.x
+    clients inlined bytes, so it becomes a data source; the part's declared MIME type is kept.
+    """
+    mime_type = item.get('mimeType', item.get('mime_type'))
+    if not isinstance(mime_type, str):
+        return None
+    url = item.get('url')
+    data = item.get('data')
+    if isinstance(url, str) and url.startswith('data:') and ';base64,' in url:
+        url, data = None, url.split(';base64,', 1)[1]
+    if isinstance(url, str) and url:
+        source: dict[str, JsonValue] = {'type': 'url', 'value': url, 'mimeType': mime_type}
+    elif isinstance(data, str) and data:
+        source = {'type': 'data', 'value': data, 'mimeType': mime_type}
+    else:
+        return None
+    part: dict[str, JsonValue] = {
+        'type': media_part_type(mime_type),
+        'source': source,
+    }
+    filename = item.get('filename')
+    if isinstance(filename, str) and filename:
+        part['metadata'] = {'filename': filename}
+    return part
 
-    `messages[]` and a user message's list `content` are the only tagged-union lists in
-    `RunAgentInput`. A body that isn't a JSON object, or whose `messages` isn't a list, is left for
-    validation to reject.
+
+def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str], bool]:
+    """Re-read a rejected request, skipping unsupported tagged items and translating retired ones.
+
+    Returns the adapted payload, labels for the skipped tags, and whether any retired `binary` part
+    was translated. Nothing skipped and nothing translated means the caller should let the original
+    `ValidationError` stand.
     """
     try:
         payload: JsonValue = json.loads(body)
@@ -80,14 +112,15 @@ def skip_unknown_tagged_items(body: bytes) -> tuple[JsonValue, frozenset[str]]:
         # `ValidationError` (and the 422 it maps to) must stand. Invalid JSON and invalid UTF-8 both
         # arrive as `ValueError` subclasses — `UnicodeDecodeError` is not a `JSONDecodeError` — and
         # input nested past the interpreter's limit arrives as `RecursionError`.
-        return None, frozenset()
+        return None, frozenset(), False
     if not isinstance(payload, dict):
-        return None, frozenset()
+        return None, frozenset(), False
     messages = payload.get('messages')
     if not isinstance(messages, list):
-        return None, frozenset()
+        return None, frozenset(), False
 
     skipped: set[str] = set()
+    translated = False
     kept_messages: list[JsonValue] = []
     for message in messages:
         if isinstance(message, dict):
@@ -109,11 +142,18 @@ def skip_unknown_tagged_items(body: bytes) -> tuple[JsonValue, frozenset[str]]:
                     if isinstance(item, dict) and (
                         (unknown_type := _unknown_tag(item, 'type', _KNOWN_INPUT_CONTENT_TYPES)) is not None
                     ):
-                        skipped.add(unknown_type)
-                        continue
+                        if item.get('type') != 'binary':
+                            skipped.add(unknown_type)
+                            continue
+                        if (media_part := _translate_binary_part(item)) is not None:
+                            translated = True
+                            kept_content.append(media_part)
+                            continue
+                        # A retired part with nothing to translate is malformed: it stays in so
+                        # validation reports it, like any malformed item under a known tag.
                     kept_content.append(item)
                 message['content'] = kept_content
         kept_messages.append(message)
 
     payload['messages'] = kept_messages
-    return payload, frozenset(skipped)
+    return payload, frozenset(skipped), translated
