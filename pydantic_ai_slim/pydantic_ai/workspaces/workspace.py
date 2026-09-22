@@ -21,8 +21,10 @@ import anyio
 
 from pydantic_ai.exceptions import UserError
 
+from .composite import CompositeFilesystem
 from .protocol import (
     FileEntry,
+    MountableFilesystem,
     SupportsCommands,
     SupportsFilesystem,
     WorkspaceBackend,
@@ -291,8 +293,30 @@ class Workspace(WorkspaceBackend):
     def __init__(
         self,
         backend: WorkspaceBackend,
+        *,
+        mounts: Mapping[str, MountableFilesystem] | None = None,
     ):
         self._backend = backend
+        self._mounts = dict(mounts or {})
+        for path, filesystem in self._mounts.items():
+            if path == '/' or not posixpath.isabs(path) or posixpath.normpath(path) != path:
+                raise ValueError(f'mount path must be a canonical absolute POSIX path other than `/`, got {path!r}')
+            if not isinstance(filesystem, MountableFilesystem):
+                raise TypeError(
+                    f'mount at {path!r} must implement `MountableFilesystem`; '
+                    'use `CompositeFilesystem` for logical filesystem routing'
+                )
+        paths = tuple(self._mounts)
+        for index, path in enumerate(paths):
+            if any(
+                other.startswith(path.rstrip('/') + '/') or path.startswith(other.rstrip('/') + '/')
+                for other in paths[index + 1 :]
+            ):
+                raise ValueError('nested workspace mounts are not supported')
+        if self._mounts and not isinstance(backend, SupportsCommands):
+            raise UserError('Workspace mounts require a backend that supports command execution.')
+        self._mount_target = Workspace(backend) if self._mounts else None
+        self._mount_lock = anyio.Lock()
 
     @property
     def backend(self) -> WorkspaceBackend:
@@ -308,14 +332,18 @@ class Workspace(WorkspaceBackend):
     def _filesystem(self) -> SupportsFilesystem:
         backend = self._backend
         if isinstance(backend, SupportsFilesystem):
-            return backend
-        if isinstance(backend, SupportsCommands):
+            filesystem: SupportsFilesystem = backend
+        elif isinstance(backend, SupportsCommands):
             # Do not cache this adapter: the backend may provide native filesystem methods later.
-            return _ShellFilesystem(backend)
-        raise UserError(
-            'This workspace does not support filesystem operations. Attach a backend that implements '
-            '`SupportsFilesystem` or `SupportsCommands`.'
-        )
+            filesystem = _ShellFilesystem(backend)
+        else:
+            raise UserError(
+                'This workspace does not support filesystem operations. Attach a backend that implements '
+                '`SupportsFilesystem` or `SupportsCommands`.'
+            )
+        if self._mounts:
+            return CompositeFilesystem({'/': filesystem, **self._mounts})
+        return filesystem
 
     async def run(
         self,
@@ -341,7 +369,16 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
+        await self._ensure_mounted()
         return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+
+    async def _ensure_mounted(self) -> None:
+        if not self._mounts:
+            return
+        assert self._mount_target is not None
+        async with self._mount_lock:
+            for path, filesystem in self._mounts.items():
+                await filesystem.ensure_mounted(self._mount_target, path)
 
     async def working_dir(self) -> str:
         """The workspace's default working directory (absolute, filesystem-canonical POSIX path).
@@ -468,6 +505,8 @@ class Workspace(WorkspaceBackend):
         if not isinstance(self._backend, SupportsCommands):
             return None
         resolved_path = await self.resolve(path)
+        if self._is_mount_path(resolved_path):
+            return None
         is_binary = await self._sniff_is_binary(resolved_path)
         if is_binary is None:
             # The shell utilities are unavailable; the authoritative read classifies from bytes.
@@ -494,7 +533,7 @@ class Workspace(WorkspaceBackend):
         if max_bytes is not None:
             command = f'{command} | head -c {max_bytes}'
         try:
-            result = await self.run(command, shell=True, timeout=_SHELL_SLICE_TIMEOUT)
+            result = await self._backend.run(command, shell=True, timeout=_SHELL_SLICE_TIMEOUT)
         except (NotImplementedError, OSError, WorkspaceTimeoutError, UserError):
             return None
         if result.exit_code != 0 or result.stderr:
@@ -549,7 +588,8 @@ class Workspace(WorkspaceBackend):
         classifies from the bytes it already holds).
         """
         try:
-            result = await self.run(
+            assert isinstance(self._backend, SupportsCommands)
+            result = await self._backend.run(
                 ['head', '-c', str(_BINARY_SNIFF_BYTES), resolved_path], timeout=_SHELL_SLICE_TIMEOUT
             )
         except (NotImplementedError, OSError, WorkspaceTimeoutError, UserError):
@@ -559,6 +599,9 @@ class Workspace(WorkspaceBackend):
         # `run` returns text decoded with U+FFFD replacement; a NUL code point marks binary
         # content, the same heuristic Git uses to tell text from binary.
         return '\x00' in result.stdout
+
+    def _is_mount_path(self, path: str) -> bool:
+        return any(path == mount_path or path.startswith(mount_path + '/') for mount_path in self._mounts)
 
     async def _safe_size(self, resolved_path: str) -> int | None:
         """The file's byte size when the backend can stat it, else `None`."""

@@ -34,6 +34,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileWindow,
     LocalWorkspace,
+    MountableFilesystem,
     ReadOnlyWorkspace,
     SupportsCommands,
     SupportsFilesystem,
@@ -191,6 +192,121 @@ async def test_flat_file_operations_use_the_backend_filesystem() -> None:
 
     assert backend.files['/workspace/data.txt'] == b'updated'
     assert not await workspace.exists('new.txt')
+
+
+async def test_mountable_filesystem_is_routed_to_file_tools_and_checked_before_each_command() -> None:
+    backend = FakeWorkspace('mounted')
+
+    class MountedFilesystem(FakeWorkspace):
+        def __init__(self) -> None:
+            super().__init__('filesystem', {'/file.txt': b'mounted'})
+            self.mounts: list[tuple[Workspace, str]] = []
+
+        async def ensure_mounted(self, target: Workspace, path: str) -> None:
+            self.mounts.append((target, path))
+            await target.run(['mount-filesystem', path])
+
+    filesystem = MountedFilesystem()
+    workspace = Workspace(backend, mounts={'/data': filesystem})
+
+    assert isinstance(filesystem, MountableFilesystem)
+    assert await workspace.read_bytes('/data/file.txt') == b'mounted'
+    assert filesystem.mounts == []
+
+    await workspace.run(['first-command'])
+    await workspace.run(['second-command'])
+
+    assert [(target.backend, path) for target, path in filesystem.mounts] == [
+        (backend, '/data'),
+        (backend, '/data'),
+    ]
+    assert backend.commands == [
+        ['mount-filesystem', '/data'],
+        ['first-command'],
+        ['mount-filesystem', '/data'],
+        ['second-command'],
+    ]
+
+
+def test_workspace_mounts_require_mountable_filesystems_and_canonical_non_nested_paths() -> None:
+    backend = FakeWorkspace('mount-validation')
+    filesystem = FakeWorkspace('plain-filesystem')
+
+    with pytest.raises(TypeError, match='must implement `MountableFilesystem`'):
+        Workspace(backend, mounts={'/data': filesystem})  # type: ignore[dict-item]
+
+    class MountedFilesystem(FakeWorkspace):
+        async def ensure_mounted(self, target: Workspace, path: str) -> None:
+            pass
+
+    mounted = MountedFilesystem('mounted-filesystem')
+    for path in ('/', 'data', '/data/../other'):
+        with pytest.raises(ValueError, match='canonical absolute POSIX path'):
+            Workspace(backend, mounts={path: mounted})
+    with pytest.raises(ValueError, match='nested workspace mounts'):
+        Workspace(backend, mounts={'/data': mounted, '/data/archive': mounted})
+
+    assert backend.create_calls == 0
+
+
+def test_filesystem_only_backend_cannot_have_command_mounts() -> None:
+    inner = FakeWorkspace('files-only-mount')
+
+    class MountedFilesystem(FakeWorkspace):
+        async def ensure_mounted(self, target: Workspace, path: str) -> None:
+            pass
+
+    with pytest.raises(UserError, match='require a backend that supports command execution'):
+        Workspace(FilesystemOnlyWorkspaceBackend(inner), mounts={'/data': MountedFilesystem('mounted')})
+    assert inner.create_calls == 0
+
+
+async def test_file_windows_never_trigger_command_mounting() -> None:
+    backend = FakeWorkspace('mount-file-window', {'/workspace/root.txt': b'root\nfile\n'})
+
+    class UnavailableMount(FakeWorkspace):
+        def __init__(self) -> None:
+            super().__init__('unavailable-mount', {'/mounted.txt': b'mounted\nfile\n'})
+            self.attempts = 0
+
+        async def ensure_mounted(self, target: Workspace, path: str) -> None:
+            self.attempts += 1
+            raise WorkspaceError('mount unavailable')
+
+    filesystem = UnavailableMount()
+    workspace = Workspace(backend, mounts={'/data': filesystem})
+
+    assert (await workspace.read_file('/workspace/root.txt', limit=1)).lines == ('root',)
+    assert (await workspace.read_file('/data/mounted.txt', limit=1)).lines == ('mounted',)
+    assert filesystem.attempts == 0
+    assert filesystem.reads == ['/mounted.txt']
+
+
+async def test_mount_failure_is_strict_and_retried_before_the_next_command() -> None:
+    backend = FakeWorkspace('mount-retry')
+
+    class FlakyFilesystem(FakeWorkspace):
+        def __init__(self) -> None:
+            super().__init__('filesystem')
+            self.attempts = 0
+
+        async def ensure_mounted(self, target: Workspace, path: str) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise WorkspaceError('mount unavailable')
+
+    filesystem = FlakyFilesystem()
+    workspace = Workspace(backend, mounts={'/data': filesystem})
+
+    with pytest.raises(WorkspaceError, match='mount unavailable'):
+        await workspace.run(['first-command'])
+    assert backend.commands == []
+
+    await workspace.run(['second-command'])
+    await workspace.run(['third-command'])
+
+    assert filesystem.attempts == 3
+    assert backend.commands == [['second-command'], ['third-command']]
 
 
 async def test_filesystem_only_backend_works_without_command_execution() -> None:

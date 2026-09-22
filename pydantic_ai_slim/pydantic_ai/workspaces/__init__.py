@@ -5,6 +5,7 @@ from .local import LocalWorkspace
 from .protocol import (
     CommandResult,
     FileEntry,
+    MountableFilesystem,
     SupportsCommands,
     SupportsFilesystem,
     WorkspaceBackend,
@@ -26,6 +27,7 @@ __all__ = (
     'FileEntry',
     'FileWindow',
     'LocalWorkspace',
+    'MountableFilesystem',
     'ReadOnlyWorkspace',
     'Workspace',
     'WrapperWorkspace',
