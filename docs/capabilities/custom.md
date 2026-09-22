@@ -988,7 +988,7 @@ To register a dynamic capability, pass a function that takes [`RunContext`][pyda
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequest, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 
@@ -1018,7 +1018,9 @@ def user_skill(ctx: RunContext[str]) -> AbstractCapability[str] | None:
 agent = Agent(TestModel(), deps_type=str, capabilities=[user_skill])
 
 result = agent.run_sync('hi', deps='alice')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 #> You can use the refunds skill (role: admin).
 ```
 

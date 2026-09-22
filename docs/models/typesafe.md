@@ -991,14 +991,14 @@ An `output_type` is the question in almost every case, and it is what makes the 
 The TypeSafe SDK client is on the model for those, configured with the same API key, base URL and HTTP client:
 
 ```python {title="ask_jev_directly.py"}
-from typesafe_sdk import Choice, Noul, NoulCriteria
+from typesafe_sdk import Choice, JSONValue, Noul, NoulAnswer, NoulCriteria
 
 from pydantic_ai.models.typesafe import TypeSafeModel
 
 model = TypeSafeModel('jev-latest')
 
 
-async def judge_order(order: dict[str, object]) -> float:
+async def judge_order(order: dict[str, JSONValue]) -> float:
     response = await model.client.system_one(
         {'order': order, 'policy': 'Refunds are allowed within 30 days.'},
         {
@@ -1016,7 +1016,9 @@ async def judge_order(order: dict[str, object]) -> float:
         },
         model=model.model_name,
     )
-    return response.answers['refundable'].noul
+    refundable = response.answers['refundable']
+    assert isinstance(refundable, NoulAnswer)
+    return refundable.noul
 ```
 
 This is the one example on this page that is not run by the documentation tests: the call never reaches a

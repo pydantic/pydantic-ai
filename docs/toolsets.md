@@ -123,7 +123,7 @@ A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instruct
 Instructions can be provided as strings, functions (sync or async, with or without [`RunContext`][pydantic_ai.tools.RunContext]), or a mix of both:
 
 ```python {title="toolset_instructions.py"}
-from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai import Agent, FunctionToolset, ModelRequest
 from pydantic_ai.models.test import TestModel
 
 search_toolset = FunctionToolset(
@@ -140,7 +140,9 @@ def search(query: str) -> str:
 test_model = TestModel()
 agent = Agent(test_model, toolsets=[search_toolset])
 result = agent.run_sync('What is the capital of France?')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 #> Always use the search tool before answering factual questions.
 ```
 
@@ -149,7 +151,7 @@ _(This example is complete, it can be run "as is")_
 You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context:
 
 ```python {title="toolset_instructions_decorator.py"}
-from pydantic_ai import Agent, FunctionToolset, RunContext
+from pydantic_ai import Agent, FunctionToolset, ModelRequest, RunContext
 from pydantic_ai.models.test import TestModel
 
 math_toolset = FunctionToolset[str]()
@@ -169,7 +171,9 @@ def calculator(expression: str) -> str:
 test_model = TestModel()
 agent = Agent(test_model, toolsets=[math_toolset], deps_type=str)
 result = agent.run_sync('What is 2+2?', deps='Alice')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 #> You are helping: Alice. Always show your work when using the calculator.
 ```
 
@@ -178,7 +182,7 @@ _(This example is complete, it can be run "as is")_
 When a toolset with instructions is used alongside agent-level [`instructions`][pydantic_ai.agent.Agent.__init__], the toolset instructions are appended after the agent instructions:
 
 ```python {title="toolset_instructions_combined.py"}
-from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai import Agent, FunctionToolset, ModelRequest
 from pydantic_ai.models.test import TestModel
 
 toolset = FunctionToolset(instructions='Use the greeting tool for all greetings.')
@@ -197,7 +201,9 @@ agent = Agent(
     toolsets=[toolset],
 )
 result = agent.run_sync('Hi there!')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 """
 You are a friendly assistant.
 
@@ -210,7 +216,7 @@ _(This example is complete, it can be run "as is")_
 When multiple toolsets with instructions are registered on an agent, all their instructions are combined:
 
 ```python {title="toolset_instructions_multiple.py"}
-from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai import Agent, FunctionToolset, ModelRequest
 from pydantic_ai.models.test import TestModel
 
 weather_toolset = FunctionToolset(instructions='Use weather tools for forecasts.')
@@ -234,7 +240,9 @@ def schedule(event: str) -> str:
 test_model = TestModel()
 agent = Agent(test_model, toolsets=[weather_toolset, calendar_toolset])
 result = agent.run_sync('Plan my day')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 """
 Use weather tools for forecasts.
 
