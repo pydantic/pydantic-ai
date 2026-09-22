@@ -45,6 +45,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceFileEntry,
     WorkspaceRef,
+    WorkspaceResult,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
     WrapperWorkspace,
@@ -526,10 +527,9 @@ class DurableWorkspace(WrapperWorkspace):
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-    ) -> CommandResult:
+    ) -> WorkspaceResult:
         if not self._in_container():
-            result = await self.wrapped.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
-            return CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+            return await self.wrapped.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
         return await self._dispatch(RunArguments(command=command, shell=shell, cwd=cwd, env=env, timeout=timeout))
 
     async def read_bytes(self, path: str) -> bytes:
