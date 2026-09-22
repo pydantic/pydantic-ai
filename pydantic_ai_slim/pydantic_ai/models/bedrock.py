@@ -398,6 +398,9 @@ LatestBedrockModelNames = Literal[
     # Moonshot AI Kimi
     'moonshot.kimi-k2-thinking',
     'moonshotai.kimi-k2.5',
+    # xAI Grok (require a cross-region inference profile)
+    'us.xai.grok-4.6',
+    'global.xai.grok-4.6',
 ]
 """Latest Bedrock models."""
 
@@ -979,7 +982,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_details=provider_details,
         )
 
-    def _build_additional_model_request_fields(
+    def _build_additional_model_request_fields(  # noqa: C901
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -1042,6 +1045,20 @@ class BedrockConverseModel(Model[BaseClient]):
                     'xhigh': 'high',
                 }
                 existing['reasoning_config'] = level_map[thinking]
+        elif variant == 'xai' and 'reasoning' not in existing:
+            # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss).
+            if thinking is not False:
+                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low`;
+                # `True` picks `medium` like the other always-on effort-based variants.
+                effort_map: dict[ThinkingLevel, str] = {
+                    True: 'medium',
+                    'minimal': 'low',
+                    'low': 'low',
+                    'medium': 'medium',
+                    'high': 'high',
+                    'xhigh': 'xhigh',
+                }
+                existing['reasoning'] = {'effort': effort_map[thinking]}
 
         return existing or None
 
