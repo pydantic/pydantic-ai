@@ -100,6 +100,22 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
 
+### Thinking and structured output
+
+For Claude models that support adaptive thinking and forced tool choice, `model_settings={'thinking': True}`
+works with both ordinary structured output (`output_type=MyModel`) and explicit
+[`ToolOutput`][pydantic_ai.output.ToolOutput]. Pydantic AI keeps using tool output instead of switching to native or
+prompted output. This also applies when adaptive thinking is the model's default.
+
+Forced tool responses may omit visible thinking blocks. Use [`PromptedOutput`][pydantic_ai.output.PromptedOutput],
+or [`NativeOutput`][pydantic_ai.output.NativeOutput] when the model supports it, to avoid forcing an output tool.
+
+Manual extended thinking (`bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', ...}}`)
+remains incompatible with forced tools: ordinary structured output falls back to native or prompted output,
+and explicit `ToolOutput` raises a `UserError`. Models that do not support forced tool choice retain this
+restriction with adaptive thinking too. See AWS's [adaptive thinking documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html)
+and [forced tool use restrictions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-tool-use.html#model-parameters-anthropic-claude-forced-tool-use).
+
 ### Custom HTTP headers
 
 Use [`ModelSettings.extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] to add HTTP headers to

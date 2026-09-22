@@ -1,6 +1,7 @@
 from importlib.metadata import version as _metadata_version
 
 from ._cancel import CancellationToken
+from ._json_schema import UseEnumMemberDocstrings
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -153,7 +154,7 @@ from .native_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
-from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .output import Choice, Choices, NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
@@ -344,6 +345,7 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    'UseEnumMemberDocstrings',
     # toolsets
     'AbstractToolset',
     'AgentToolset',
@@ -382,6 +384,8 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    'Choice',
+    'Choices',
     # template
     'TemplateStr',
     # format_prompt

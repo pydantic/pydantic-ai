@@ -14,6 +14,7 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     CachePoint,
+    Choices,
     CompactionPart,
     FilePart,
     ModelAPIError,
@@ -32,15 +33,19 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolOutput,
     ToolReturnPart,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     WebSearchTool,
 )
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -64,7 +69,9 @@ pytestmark = [
 ]
 
 
-class Verdict(str, Enum):
+# Opted in, and the cassettes were recorded with the described options in the request, so Jev answered
+# knowing what each verdict means.
+class Verdict(UseEnumMemberDocstrings, str, Enum):
     """How to handle this command."""
 
     run = 'run'
@@ -176,9 +183,9 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
                 'verdict': {
                     'type': 'choice',
                     'criteria': {
-                        'ask': None,
-                        'reject': None,
-                        'run': None,
+                        'ask': 'Legitimate but consequential enough that a human should confirm.',
+                        'reject': 'Destroys data, rewrites shared history, or sends secrets over the network.',
+                        'run': 'Reads, builds, tests or edits inside the project. Reversible.',
                     },
                     'instructions': {
                         'field': 'verdict',
@@ -376,7 +383,9 @@ async def test_fallback_on_low_confidence(allow_model_requests: None, noul: floa
         pytest.param(str, 'Text output is not supported', id='text'),
         pytest.param([Handling, str], 'Text output is not supported', id='text-in-union'),
         pytest.param(
-            [Handling, EnumAndProbability], 'Multiple output types with fields are not supported.*got 2', id='union'
+            [Handling, EnumAndProbability],
+            "'final_result_EnumAndProbability' says nothing about itself",
+            id='a union member with no docstring',
         ),
         pytest.param(NativeOutput(Handling), 'Native structured output is not supported', id='native'),
         pytest.param(PromptedOutput(Handling), 'Text output is not supported', id='prompted'),
@@ -537,7 +546,7 @@ def tool_answers(choice: str, probability: float) -> httpx2.Response:
 async def test_a_tool_is_proposed_not_called(
     allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
 ):
-    """With a tool attached Jev is asked which tool the text calls for, the output tool first, and proposes one."""
+    """Jev proposes a selected tool whose unbounded numeric argument it cannot fill."""
     agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
     with pytest.raises(ToolCallProposed) as exc_info:
         await agent.run('You charged my card twice for the same month. Put the second one back.')
@@ -575,6 +584,314 @@ async def test_a_fallback_model_takes_the_proposed_step(allow_model_requests: No
         'jev-latest',
     ]
     assert result.output == Ticket(urgent=True)
+
+
+class ContactPreference(BaseModel):
+    method: Literal['email', 'phone']
+    urgent_only: bool = Field(description='Should contact be limited to urgent updates?')
+
+
+async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model_requests: None):
+    """The first request picks the tool and the second asks only its arguments using the output-field mapping."""
+    seen: list[dict[str, Any]] = []
+    called: list[dict[str, Any]] = []
+
+    def configure_contact(
+        team: Literal['billing', 'technical'],
+        urgent: bool,
+        risk: Annotated[float, Field(ge=0, le=1)],
+        channels: list[Literal['email', 'sms']],
+        window: Literal['morning', 'evening'] | None,
+        contact: ContactPreference,
+    ) -> str:
+        """Configure how the support team should handle this ticket.
+
+        Args:
+            team: Which team should handle this ticket?
+            urgent: Does this ticket need urgent handling?
+            risk: Is this ticket likely to cause customer harm?
+            channels: Which channels should receive updates?
+            window: Which contact window did the customer request, if any?
+            contact: The customer's contact preference.
+        """
+        called.append(
+            {
+                'team': team,
+                'urgent': urgent,
+                'risk': risk,
+                'channels': channels,
+                'window': window,
+                'contact': contact,
+            }
+        )
+        return 'Configured.'
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        if len(seen) == 1:
+            return answers(
+                urgent={'type': 'noul', 'noul': 0.9},
+                tool={
+                    'type': 'choice',
+                    'choice': 'configure_contact',
+                    'confidence': 0.9,
+                    'probabilities': {'final_result': 0.05, 'configure_contact': 0.95},
+                },
+            )
+        if len(seen) == 2:
+            nested: dict[str, dict[str, object]] = {
+                'channels.email': {'type': 'noul', 'noul': 0.9},
+                'channels.sms': {'type': 'noul', 'noul': 0.1},
+                'window': {
+                    'type': 'choice',
+                    'choice': 'none',
+                    'confidence': 0.8,
+                    'probabilities': {'morning': 0.1, 'evening': 0.1, 'none': 0.8},
+                },
+                'contact.method': {
+                    'type': 'choice',
+                    'choice': 'email',
+                    'confidence': 0.9,
+                    'probabilities': {'email': 0.9, 'phone': 0.1},
+                },
+                'contact.urgent_only': {'type': 'noul', 'noul': 0.9},
+            }
+            return answers(
+                team={
+                    'type': 'choice',
+                    'choice': 'technical',
+                    'confidence': 0.9,
+                    'probabilities': {'billing': 0.1, 'technical': 0.9},
+                },
+                urgent={'type': 'noul', 'noul': 0.95},
+                risk={'type': 'noul', 'noul': 0.8},
+                **nested,
+            )
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(
+        mock_model(record),
+        output_type=Ticket,
+        tools=[configure_contact],
+        instructions='Handle the customer request as written.',
+    )
+    result = await agent.run('Technical support should email me about urgent updates. No contact window specified.')
+
+    assert result.output == Ticket(urgent=True)
+    assert called == snapshot(
+        [
+            {
+                'team': 'technical',
+                'urgent': True,
+                'risk': 0.8,
+                'channels': ['email'],
+                'window': None,
+                'contact': ContactPreference(method='email', urgent_only=True),
+            }
+        ]
+    )
+    responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    assert responses[0].usage == RequestUsage(input_tokens=20)
+    assert responses[0].provider_details == snapshot(
+        {
+            'confidence': {
+                'team': 0.9,
+                'urgent': 0.8999999999999999,
+                'channels': 0.8,
+                'window': 0.8,
+                'contact.method': 0.9,
+                'contact.urgent_only': 0.8,
+            },
+            'probabilities': {
+                'team': {'billing': 0.1, 'technical': 0.9},
+                'channels': {'email': 0.9, 'sms': 0.1},
+                'window': {'morning': 0.1, 'evening': 0.1, 'none': 0.8},
+                'contact.method': {'email': 0.9, 'phone': 0.1},
+            },
+            'scores': {},
+            'tool': {
+                'choice': 'configure_contact',
+                'probabilities': {'final_result': 0.05, 'configure_contact': 0.95},
+                'offered': ['configure_contact'],
+            },
+            'requests': 2,
+        }
+    )
+    assert list(seen[0]['questions']) == ['urgent', 'tool']
+    assert seen[1]['questions'] == snapshot(
+        {
+            'team': {
+                'type': 'choice',
+                'criteria': {'billing': None, 'technical': None},
+                'instructions': {
+                    'field': 'team',
+                    'question': 'Which team should handle this ticket?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'urgent': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'urgent',
+                    'question': 'Does this ticket need urgent handling?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'risk': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'risk',
+                    'question': 'Is this ticket likely to cause customer harm?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'channels.email': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'channels',
+                    'question': 'Which channels should receive updates?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                    'option': 'email',
+                },
+            },
+            'channels.sms': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'channels',
+                    'question': 'Which channels should receive updates?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                    'option': 'sms',
+                },
+            },
+            'window': {
+                'type': 'choice',
+                'criteria': {'morning': None, 'evening': None, 'none': 'None of these.'},
+                'instructions': {
+                    'field': 'window',
+                    'question': 'Which contact window did the customer request, if any?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'contact.method': {
+                'type': 'choice',
+                'criteria': {'email': None, 'phone': None},
+                'instructions': {
+                    'field': 'contact.method',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+            'contact.urgent_only': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'contact.urgent_only',
+                    'question': 'Should contact be limited to urgent updates?',
+                    'goal': 'Configure how the support team should handle this ticket.',
+                    'instructions': 'Handle the customer request as written.',
+                },
+            },
+        }
+    )
+    assert list(seen[2]['questions']) == ['urgent']
+
+
+async def test_a_selected_tool_fill_failure_does_not_fall_back_to_another_route(allow_model_requests: None):
+    """Once Jev selected a tool, a failed fill is terminal rather than replaying the whole step on the fallback."""
+    seen = 0
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        nonlocal seen
+        seen += 1
+        if seen == 1:
+            return answers(
+                urgent={'type': 'noul', 'noul': 0.9},
+                tool={
+                    'type': 'choice',
+                    'choice': 'set_direction',
+                    'confidence': 0.9,
+                    'probabilities': {'final_result': 0.05, 'set_direction': 0.95},
+                },
+            )
+        return httpx2.Response(503, json={'detail': 'temporarily unavailable'})
+
+    def set_direction(direction: Literal['left', 'right']) -> None:
+        """Set the direction to take.
+
+        Args:
+            direction: Which direction should be taken?
+        """
+
+    agent = Agent(FallbackModel(mock_model(record), TestModel()), output_type=Ticket, tools=[set_direction])
+    with pytest.raises(UnexpectedModelBehavior, match=r"selected 'set_direction'.*failed while filling"):
+        await agent.run('Go left.')
+    assert seen == 2
+
+
+@pytest.mark.vcr
+async def test_tool_arguments_live(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """The live API selects an argument-taking tool, then fills its supported argument."""
+    output_tool = ToolDefinition(
+        name='final_result',
+        description='Classify a message that does not request a navigation action.',
+        kind='output',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'urgent': {'type': 'boolean', 'description': 'Is this message urgent?'}},
+            'required': ['urgent'],
+        },
+    )
+    function_tool = ToolDefinition(
+        name='set_direction',
+        description='Set the navigation direction requested in the message.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'direction': {
+                    'type': 'string',
+                    'enum': ['left', 'right'],
+                    'description': 'Which direction should be taken?',
+                }
+            },
+            'required': ['direction'],
+        },
+    )
+    response = await model_request(
+        typesafe_model,
+        [ModelRequest(parts=[UserPromptPart('At the fork, take the left path. Set our direction accordingly.')])],
+        model_request_parameters=ModelRequestParameters(
+            output_mode='tool',
+            output_tools=[output_tool],
+            function_tools=[function_tool],
+            allow_text_output=False,
+        ),
+    )
+
+    assert response.parts == [ToolCallPart('set_direction', {'direction': 'left'}, tool_call_id=IsStr())]
+    assert response.provider_details == snapshot(
+        {
+            'confidence': {'direction': 1.0},
+            'probabilities': {'direction': {'left': 1.0, 'right': 0.0}},
+            'scores': {},
+            'tool': {
+                'choice': 'set_direction',
+                'probabilities': {'final_result': 0.0, 'set_direction': 1.0},
+                'offered': ['set_direction'],
+            },
+            'requests': 2,
+        }
+    )
+    first, second = request_capture.bodies('/v1/systemone')
+    assert list(cast(dict[str, Any], first['questions'])) == ['urgent', 'tool']
+    assert list(cast(dict[str, Any], second['questions'])) == ['direction']
 
 
 @pytest.mark.parametrize(
@@ -698,6 +1015,88 @@ async def test_a_threshold_outside_zero_to_one_is_refused_before_the_request(
     agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
     with pytest.raises(UserError, match='`typesafe_tool_call_threshold` must be between 0 and 1'):
         await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_tool_call_threshold=threshold))
+
+
+@pytest.mark.parametrize('threshold', [-0.1, 1.5, float('nan')])
+async def test_a_boolean_threshold_outside_zero_to_one_is_refused_before_the_request(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, threshold: float
+):
+    agent = Agent(typesafe_model, output_type=Ticket)
+    with pytest.raises(UserError, match='`typesafe_boolean_threshold` must be between 0 and 1'):
+        await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=threshold))
+
+
+@pytest.mark.parametrize(
+    'threshold,expected,expected_confidence',
+    [
+        pytest.param(None, True, 0.3999999999999999, id='the default rounds a 0.7 to yes'),
+        pytest.param(0.5, True, 0.3999999999999999, id='the default, passed explicitly'),
+        pytest.param(0.75, False, 0.06666666666666672, id='a raised bar turns the same answer into a no'),
+        pytest.param(0.7, True, 0.0, id='an answer exactly at the bar is a yes, and the least sure one'),
+        pytest.param(0.0, True, 0.7, id='a bar of zero takes every answer as a yes'),
+        pytest.param(1.0, False, 0.30000000000000004, id='a bar of one takes nothing short of certainty'),
+    ],
+)
+async def test_the_boolean_threshold_decides_what_a_probability_of_yes_rounds_to(
+    allow_model_requests: None, threshold: float | None, expected: bool, expected_confidence: float
+):
+    """What `True` has to mean is the user's to choose, and confidence is the distance from their bar."""
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(urgent={'type': 'noul', 'noul': 0.7})
+
+    settings = None if threshold is None else TypeSafeModelSettings(typesafe_boolean_threshold=threshold)
+    agent = Agent(mock_model(record), output_type=Ticket)
+    result = await agent.run('Is this urgent?', model_settings=settings)
+
+    assert result.output == Ticket(urgent=expected)
+    assert result.response.provider_details == {
+        'confidence': {'urgent': expected_confidence},
+        'probabilities': {},
+        'scores': {},
+    }
+
+
+async def test_the_boolean_threshold_applies_to_each_option_of_a_list(allow_model_requests: None):
+    """A list of options is one yes/no per option, so the same bar decides each of them."""
+
+    class Routing(BaseModel):
+        """Route a support ticket."""
+
+        channels: list[Literal['email', 'sms']] = Field(description='Which channels should receive updates?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        options: dict[str, dict[str, object]] = {
+            'channels.email': {'type': 'noul', 'noul': 0.7},
+            'channels.sms': {'type': 'noul', 'noul': 0.6},
+        }
+        return answers(**options)
+
+    agent = Agent(mock_model(record), output_type=Routing)
+    assert (await agent.run('x')).output == Routing(channels=['email', 'sms'])
+
+    result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.65))
+    assert result.output == Routing(channels=['email'])
+    # The field is as sure as its least sure option, which is the `sms` that only just missed the bar.
+    assert (result.response.provider_details or {})['confidence'] == {'channels': snapshot(0.07692307692307698)}
+
+
+async def test_the_boolean_threshold_leaves_a_probability_field_alone(allow_model_requests: None):
+    """A `float` bounded 0 to 1 asks for the probability itself, so there is nothing to round."""
+
+    class Scored(BaseModel):
+        """Score a support ticket."""
+
+        risk: float = Field(ge=0, le=1, description='Is this ticket likely to cause customer harm?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(risk={'type': 'noul', 'noul': 0.7})
+
+    agent = Agent(mock_model(record), output_type=Scored)
+    result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.95))
+
+    assert result.output == Scored(risk=0.7)
+    assert (result.response.provider_details or {})['confidence'] == {}
 
 
 async def test_an_output_type_with_nothing_said_about_it_cannot_be_weighed_against_tools(
@@ -856,6 +1255,38 @@ async def test_an_output_function_is_a_hand_off_jev_picks(
     )
 
 
+def route_to_team(team: Literal['billing', 'legal', 'technical'], urgent: bool) -> str:
+    """Hand the ticket to the specialist team that handles it."""
+    return f'routed to {team}, urgent={urgent}'
+
+
+@pytest.mark.vcr
+async def test_an_output_functions_arguments_are_filled_like_an_output_types_fields(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """An output function that takes arguments is a route Jev fills, not only one it hands off to."""
+    agent = Agent(typesafe_model, output_type=[Ticket, route_to_team])
+    result = await agent.run(
+        'I have contacted you four times about being double charged and I am about to call my lawyer.'
+    )
+    assert result.output == snapshot('routed to billing, urgent=True')
+    assert (result.response.provider_details or {})['tool']['choice'] == snapshot('final_result_route_to_team')
+    # The route is picked first, then its arguments go out as their own questions in a second request.
+    assert cast(dict[str, Any], request_capture.bodies('/v1/systemone')[-1]['questions']) == snapshot(
+        {
+            'team': {
+                'type': 'choice',
+                'criteria': {'billing': None, 'legal': None, 'technical': None},
+                'instructions': {'field': 'team', 'goal': 'Hand the ticket to the specialist team that handles it.'},
+            },
+            'urgent': {
+                'type': 'noul',
+                'instructions': {'field': 'urgent', 'goal': 'Hand the ticket to the specialist team that handles it.'},
+            },
+        }
+    )
+
+
 async def test_an_arg_less_tool_is_called_by_jev_itself(allow_model_requests: None):
     """A tool with no arguments has nothing for Jev to write, so Jev calls it and judges the result next request."""
     seen: list[dict[str, Any]] = []
@@ -917,8 +1348,8 @@ async def test_with_nothing_to_fill_the_pick_is_the_answer(allow_model_requests:
     assert result.output == 'approved'
 
 
-async def test_the_last_route_left_is_proposed_when_it_needs_arguments(allow_model_requests: None):
-    """The one route left is taken without a question; needing arguments, it is proposed rather than called."""
+async def test_the_last_route_left_is_proposed_when_its_arguments_are_unsupported(allow_model_requests: None):
+    """The forced route still becomes a proposal when its argument schema cannot be expressed."""
 
     def unasked(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('Jev was asked a question when there was nothing left to ask about.')
@@ -934,6 +1365,84 @@ async def test_the_last_route_left_is_proposed_when_it_needs_arguments(allow_mod
     with pytest.raises(ToolCallProposed) as exc_info:
         await agent.run(message_history=history)
     assert (exc_info.value.tool_name, exc_info.value.probability) == ('refund', 1.0)
+
+
+async def test_the_last_route_left_has_its_supported_arguments_filled(allow_model_requests: None):
+    """Skipping a choice request still leaves one argument request for the forced route."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            direction={
+                'type': 'choice',
+                'choice': 'left',
+                'confidence': 0.9,
+                'probabilities': {'left': 0.9, 'right': 0.1},
+            }
+        )
+
+    output_tool = ToolDefinition(name='final_result', description='Finish.', kind='output')
+    function_tool = ToolDefinition(
+        name='set_direction',
+        description='Set the direction to take.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'direction': {
+                    'type': 'string',
+                    'enum': ['left', 'right'],
+                    'description': 'Which direction should be taken?',
+                }
+            },
+            'required': ['direction'],
+        },
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go left.')]),
+        ModelResponse(parts=[ToolCallPart('final_result', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('final_result', 'Returned.', 'call_1')]),
+    ]
+
+    response = await model_request(
+        mock_model(record),
+        messages,
+        model_request_parameters=ModelRequestParameters(
+            output_mode='tool',
+            output_tools=[output_tool],
+            function_tools=[function_tool],
+            allow_text_output=False,
+        ),
+    )
+
+    assert response.parts == [ToolCallPart('set_direction', {'direction': 'left'}, tool_call_id=IsStr())]
+    assert response.usage == RequestUsage(input_tokens=10)
+    assert response.provider_details == snapshot(
+        {
+            'tool': {
+                'choice': 'set_direction',
+                'probabilities': {'set_direction': 1.0},
+                'offered': ['set_direction'],
+            },
+            'confidence': {'direction': 0.9},
+            'probabilities': {'direction': {'left': 0.9, 'right': 0.1}},
+            'scores': {},
+        }
+    )
+    assert len(seen) == 1
+    assert seen[0]['questions'] == snapshot(
+        {
+            'direction': {
+                'type': 'choice',
+                'criteria': {'left': None, 'right': None},
+                'instructions': {
+                    'field': 'direction',
+                    'question': 'Which direction should be taken?',
+                    'goal': 'Set the direction to take.',
+                },
+            }
+        }
+    )
 
 
 async def test_below_the_threshold_with_no_hand_off_left_the_pick_stands(allow_model_requests: None):
@@ -959,7 +1468,54 @@ async def test_below_the_threshold_with_no_hand_off_left_the_pick_stands(allow_m
     assert (exc_info.value.tool_name, exc_info.value.probability) == ('refund', 0.55)
 
 
-async def test_a_tool_with_arguments_is_proposed_even_with_nothing_to_fill(allow_model_requests: None):
+async def test_a_field_with_more_options_than_jev_picks_from_is_refused(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """Jev takes at most 255 options in one question; a 256th is a 400, so it is refused before the request."""
+
+    class Routed(BaseModel):
+        """Route the ticket."""
+
+        area: Literal[tuple(f'area_{i:03d}' for i in range(256))] = Field(description='Which team owns it?')  # type: ignore[valid-type]
+
+    with pytest.raises(UserError, match='picks from at most 255 options, and this one has 256'):
+        await Agent(typesafe_model, output_type=Routed).run('anything')
+
+
+async def test_a_rubric_with_more_levels_than_jev_scores_against_is_refused(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """Jev scores against at most 10 levels; an 11th is a 400, so it is refused before the request."""
+
+    class Rated(BaseModel):
+        """Rate the ticket."""
+
+        severity: Annotated[
+            Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            rubric(*((level, f'Level {level}.') for level in range(11))),
+        ] = Field(description='How severe is it?')
+
+    with pytest.raises(UserError, match='scores against at most 10 levels, and this rubric has 11'):
+        await Agent(typesafe_model, output_type=Rated).run('anything')
+
+
+async def test_more_routes_than_jev_picks_from_are_refused(allow_model_requests: None, typesafe_model: TypeSafeModel):
+    """The output type is one route beside the tools, so 255 tools is already one too many."""
+    tools = [_named_tool(f'tool_{i:03d}') for i in range(255)]
+    with pytest.raises(UserError, match='being offered 256 routes'):
+        await Agent(typesafe_model, output_type=Ticket, tools=tools).run('anything')
+
+
+def _named_tool(name: str) -> Callable[[], str]:
+    def tool() -> str:
+        return 'done'  # pragma: no cover
+
+    tool.__name__ = name
+    tool.__doc__ = f'Handle {name}.'
+    return tool
+
+
+async def test_a_tool_with_unsupported_arguments_is_proposed_even_with_nothing_to_fill(allow_model_requests: None):
     jev = mock_model(
         lambda _: answers(
             tool={
@@ -981,7 +1537,8 @@ class Customer(BaseModel):
     angry: bool = Field(description='Is the customer angry?')
 
 
-class Area(str, Enum):
+# Opted in, and the cassette was recorded with the description on the `billing` option.
+class Area(UseEnumMemberDocstrings, str, Enum):
     billing = 'billing'
     """Money already owed, charged or refunded."""
     account = 'account'
@@ -1032,7 +1589,7 @@ async def test_nested_fields_lists_and_optionals(
                     'field': 'areas',
                     'question': 'Which teams does this touch?',
                     'goal': 'Triage a support ticket.',
-                    'option': 'billing',
+                    'option': 'billing: Money already owed, charged or refunded.',
                 },
             },
             'areas.account': {
@@ -1645,3 +2202,512 @@ rm -rf ./build
             },
         ]
     )
+
+
+class Escalation(BaseModel):
+    """Hand the ticket to a human specialist."""
+
+    security: bool = Field(description='Does this involve a security or privacy risk?')
+
+
+class DraftedReply(BaseModel):
+    """Write the customer a reply."""
+
+    ok: bool
+    body: str
+
+
+def _route(choice: str, probabilities: dict[str, float]) -> dict[str, object]:
+    return {'type': 'choice', 'choice': choice, 'confidence': 0.9, 'probabilities': probabilities}
+
+
+async def test_a_union_picks_the_type_then_fills_only_that_one(allow_model_requests: None):
+    """Several output types are routes: one request picks, a second asks only the chosen type's fields."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route(
+                    'final_result_Escalation',
+                    {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8},
+                )
+            )
+        return answers(security={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation])
+    result = await agent.run('Someone else can see my invoices.')
+
+    assert result.output == Escalation(security=True)
+    # The first request asks nothing but the route; the second asks nothing but the chosen type's fields.
+    assert list(seen[0]['questions']) == ['tool']
+    assert list(seen[1]['questions']) == ['security']
+    assert result.response.provider_details == snapshot(
+        {
+            'confidence': {'security': 0.8},
+            'probabilities': {},
+            'scores': {},
+            'tool': {
+                'choice': 'final_result_Escalation',
+                'probabilities': {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8},
+                'offered': [],
+            },
+            'requests': 2,
+        }
+    )
+
+
+async def test_a_union_member_jev_cannot_express_is_offered_and_hands_off_when_picked(allow_model_requests: None):
+    """A union is the route set, so a member beyond Jev is a hand-off rather than a refusal.
+
+    With one output type there is no other route the run could take, so an unfillable one still raises up front.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            tool=_route(
+                'final_result_DraftedReply',
+                {'final_result_Ticket': 0.1, 'final_result_DraftedReply': 0.9},
+            )
+        )
+
+    agent = Agent(mock_model(record), output_type=[Ticket, DraftedReply])
+    with pytest.raises(ToolCallProposed) as exc_info:
+        await agent.run('Write back and say sorry.')
+
+    assert (exc_info.value.tool_name, exc_info.value.probability) == ('final_result_DraftedReply', 0.9)
+    # The choice call happened; only the fill was beyond Jev.
+    assert len(seen) == 1
+
+
+async def test_a_union_member_jev_cannot_express_is_filled_by_the_model_behind_it(allow_model_requests: None):
+    """`ToolCallProposed` is a `ModelAPIError`, so `FallbackModel` gives the whole step to a language model."""
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            tool=_route(
+                'final_result_DraftedReply',
+                {'final_result_Ticket': 0.1, 'final_result_DraftedReply': 0.9},
+            )
+        )
+
+    agent = Agent(FallbackModel(mock_model(record), TestModel()), output_type=[Ticket, DraftedReply])
+    result = await agent.run('Write back and say sorry.')
+
+    # The step is handed over whole, so the model behind Jev picks the route and fills it.
+    assert result.response.model_name == 'test'
+    assert isinstance(result.output, (Ticket, DraftedReply))
+
+
+async def test_one_output_type_jev_cannot_express_is_still_refused_before_any_request(allow_model_requests: None):
+    """Alone, an unfillable output type can only ever fail, so it is a coding error rather than a hand-off."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a lone unfillable output type must not reach a request')
+
+    with pytest.raises(UserError, match="Output field 'summary' is not supported"):
+        await Agent(mock_model(unreachable), output_type=WithText).run('anything')
+
+
+async def test_a_union_below_the_threshold_fills_the_likeliest_output_type(allow_model_requests: None):
+    """The threshold gates tools, not output types: an unsure tool pick falls back to the likeliest result."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route(
+                    'refund',
+                    {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.5, 'refund': 0.3},
+                )
+            )
+        return answers(security={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation], tools=[refund])
+    result = await agent.run('Someone else can see my invoices.')
+
+    assert result.output == Escalation(security=True)
+    assert list(seen[1]['questions']) == ['security']
+
+
+async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None):
+    """One instruction cannot describe two different routes, so each member says what it is for itself."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a union member without a docstring must be refused before any request')
+
+    agent = Agent(mock_model(unreachable), output_type=[Ticket, WithOptional], instructions='Handle the ticket.')
+    with pytest.raises(UserError, match="'final_result_WithOptional' says nothing about itself"):
+        await agent.run('anything')
+
+
+async def test_none_is_a_route_the_library_describes_itself(allow_model_requests: None):
+    """`None` cannot carry a docstring, so the library says what it means, as it does for an optional field.
+
+    Pydantic AI wraps a bare `None` output type in an object with one `null` property. There is only one value
+    that property could take, so there is nothing to ask: the route is taken on the pick alone and the `None`
+    is written for Jev, which is why this costs one request and not two.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.2},
+            tool=_route(
+                'final_result_None',
+                {'final_result_Ticket': 0.1, 'final_result_None': 0.9},
+            ),
+        )
+
+    # `None` in an `output_type` list is not spelled out in the overloads, so the output type is named here;
+    # it runs on every model.
+    agent: Agent[None, Ticket | None] = Agent(mock_model(record), output_type=[Ticket, None])  # type: ignore[arg-type]
+    result = await agent.run('Nothing here needs handling.')
+
+    assert result.output is None
+    # One output type is left once `None` becomes a route, so its fields ride along with the route question
+    # and declining costs one request, not two.
+    assert len(seen) == 1
+    assert sorted(seen[0]['questions']) == snapshot(['tool', 'urgent'])
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_Ticket': 'Triage a support ticket.', 'final_result_None': 'None of these.'}
+    )
+    # The `None` is written into the wrapper Pydantic AI put around it, not asked for and not left out.
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
+
+
+async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_requests: None):
+    """`ToolOutput(type_=None, description=...)` is the user saying what declining means here, so it wins."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.1},
+            tool=_route('nothing', {'final_result_Ticket': 0.05, 'nothing': 0.95}),
+        )
+
+    agent = Agent(
+        mock_model(record),
+        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],  # type: ignore[arg-type]
+    )
+    result = await agent.run('Thanks, all sorted.')
+
+    assert result.output is None
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_Ticket': 'Triage a support ticket.', 'nothing': 'Nothing needs doing here.'}
+    )
+
+
+async def test_a_choices_route_is_described_by_what_the_set_says_about_itself(allow_model_requests: None):
+    """A `Choices` set is not object-like, so what it is for is written on the property it is wrapped in.
+
+    `Choices(description=...)` describes the set, not the tool around it — `ToolOutput` is what describes the
+    tool — so the route question has to read it where it actually landed, or a described set looks to Jev like
+    a route that says nothing about itself.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(tool=_route('final_result_triage', {'final_result_triage': 0.9, 'final_result_Ticket': 0.1}))
+        # The set is the picked route's one field, so it is asked on its own in the second request.
+        return answers(response=_route('urgent', {'urgent': 0.8, 'normal': 0.2}))
+
+    triage = Choices(
+        {'urgent': 'Needs a reply within the hour.', 'normal': 'Can wait until Monday.'},
+        name='triage',
+        description='Triage the ticket.',
+    )
+    agent = Agent(mock_model(record), output_type=[triage, Ticket])
+    result = await agent.run('My card was charged twice again.')
+
+    assert result.output == snapshot('urgent')
+
+    assert seen[0]['questions']['tool']['criteria'] == snapshot(
+        {'final_result_triage': 'Triage the ticket.', 'final_result_Ticket': 'Triage a support ticket.'}
+    )
+
+
+async def test_a_route_that_says_nothing_anywhere_is_still_refused(allow_model_requests: None):
+    """A bare `Literal` has no docstring, no `ToolOutput` and no description on what it is wrapped in."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a route that describes itself nowhere must be refused before any request')
+
+    # A bare `Literal` beside another type is not spelled out in the overloads; it is refused at run time
+    # for a different reason, which is what this asserts.
+    agent: Agent[None, Any] = Agent(mock_model(unreachable), output_type=[Literal['urgent', 'normal'], Ticket])  # type: ignore[arg-type]
+    with pytest.raises(UserError, match="'final_result_Literal' says nothing about itself"):
+        await agent.run('anything')
+
+
+async def test_the_fill_repeats_the_state_and_carries_the_picked_routes_purpose(allow_model_requests: None):
+    """The two requests of a union are one question each, not a conversation.
+
+    Jev is not told what it picked: the route was decided here, and putting it back in front of a request that
+    only fills fields would be a second decision. What does travel is what the chosen route is *for*, as each
+    field question's `goal`, so the fields are answered for the route they belong to.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route('final_result_Escalation', {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8})
+            )
+        return answers(security={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation])
+    await agent.run('Someone else can see my invoices when they log in.')
+
+    assert seen[0]['state'] == seen[1]['state'] == snapshot('Someone else can see my invoices when they log in.')
+    assert 'tool' not in seen[1]['questions']
+    assert seen[1]['questions']['security']['instructions'] == snapshot(
+        {
+            'field': 'security',
+            'question': 'Does this involve a security or privacy risk?',
+            'goal': 'Hand the ticket to a human specialist.',
+        }
+    )
+
+
+async def test_a_proposed_tool_call_hands_the_whole_step_over_and_jev_judges_the_result(
+    allow_model_requests: None,
+):
+    """What the model behind Jev is handed, and what Jev sees once that model's tool call has run.
+
+    The step is handed over whole, so the model gets the prompt and the tools and decides for itself: none of
+    Jev's work reaches it, not the route it picked nor how sure it was. That request is paid for and its answer
+    thrown away, which is the cost of the hand-off and the reason to watch the rate.
+    """
+    seen: list[dict[str, Any]] = []
+    handed: list[tuple[list[str], list[str], list[str]]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        questions = seen[-1]['questions']
+        if 'tool' in questions:
+            # `refund` takes a `float`, which Jev cannot write, so picking it proposes the call.
+            return answers(
+                urgent={'type': 'noul', 'noul': 0.9},
+                tool=_route('refund', {'final_result': 0.05, 'refund': 0.95}),
+            )
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    def behind(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        handed.append(
+            (
+                [type(part).__name__ for message in messages for part in message.parts],
+                [tool.name for tool in info.function_tools],
+                [tool.name for tool in info.output_tools or []],
+            )
+        )
+        return ModelResponse(parts=[ToolCallPart('refund', {'amount': 40.0})])
+
+    agent = Agent(FallbackModel(mock_model(record), FunctionModel(behind)), output_type=Ticket, tools=[refund])
+    result = await agent.run('You charged me 40 dollars twice, please refund one.')
+
+    assert result.output == Ticket(urgent=True)
+    # The model behind Jev is handed the step as if Jev had never run: the prompt and the tools, nothing else.
+    assert handed == snapshot([(['UserPromptPart'], ['refund'], ['final_result'])])
+    # Jev is asked again with the call and its result in the state, and `refund` is no longer a route, so
+    # there is nothing left to choose between and no route question at all.
+    assert seen[1]['state'] == snapshot(
+        {
+            'history': [
+                {'user': 'You charged me 40 dollars twice, please refund one.'},
+                {'tool_call': {'name': 'refund', 'args': {'amount': 40.0}}},
+                {'tool_return': {'name': 'refund', 'content': 'Refunded 40.0'}},
+            ]
+        }
+    )
+    assert list(seen[1]['questions']) == snapshot(['urgent'])
+
+
+async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_model_requests: None):
+    """`None` is offered as a hand-off but weighed as a result, so the fallback ranks it with the output types.
+
+    A tool picked below the threshold falls back to the likeliest *result*. `None` is one, so ranking it with
+    the hand-offs instead would return a `Ticket` Jev thought a good deal less likely than nothing at all.
+    """
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.9},
+            tool={
+                'type': 'choice',
+                'choice': 'refund',
+                'confidence': 0.4,
+                'probabilities': {'final_result_Ticket': 0.1, 'final_result_None': 0.5, 'refund': 0.4},
+            },
+        )
+
+    agent: Agent[None, Ticket | None] = Agent(
+        mock_model(record),
+        output_type=[Ticket, None],  # type: ignore[arg-type]
+        tools=[refund],
+    )
+    result = await agent.run('Refund me maybe.')
+
+    assert result.output is None
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
+
+
+async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_requests: None):
+    """Every other route has returned this turn, so the `None` one is taken without a request.
+
+    A route with nothing to fill is called on the pick alone, and with only one left there is no pick to make
+    either. A `None` route carries the property it is wrapped in, so the guard has to recognise it rather than
+    ask whether the schema has properties, or it goes off to have its `null` filled and proposes the call.
+    """
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the only route left needs no question asked about it')
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Sort this out.')]),
+        ModelResponse(parts=[ToolCallPart('refund', {'amount': 1.0}, 'c1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='refund', content='Refunded 1.0', tool_call_id='c1')]),
+        ModelResponse(parts=[ToolCallPart('final_result_approve', {}, 'c2')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='final_result_approve', content='approved', tool_call_id='c2')]),
+    ]
+    agent: Agent[None, str | None] = Agent(
+        mock_model(unreachable),
+        output_type=[approve, None],  # type: ignore[arg-type]
+        tools=[refund],
+    )
+    result: AgentRunResult[str | None] = await agent.run(None, message_history=history)
+
+    assert result.output is None
+    call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
+    assert (call.tool_name, call.args) == snapshot(('final_result_None', {'response': None}))
+
+
+async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: None):
+    """`_tool_call` falls back to the likeliest output type without requiring Jev to have priced it.
+
+    Jev is not obliged to report a probability for every option it was offered, so the route that comes back
+    is not necessarily one that appears in `probabilities`. Reading it as a plain index raised `KeyError`.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            # A below-threshold tool pick, with neither output type priced.
+            return answers(tool=_route('refund', {'refund': 0.3}))
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, Escalation], tools=[refund])
+    result = await agent.run('You charged me twice.')
+
+    assert result.output == Ticket(urgent=True)
+    details = result.response.provider_details or {}
+    assert details['tool']['probabilities'] == {'refund': 0.3}
+    assert details['requests'] == 2
+
+
+async def test_a_union_no_member_of_which_jev_can_fill_is_refused_before_any_request(allow_model_requests: None):
+    """A hand-off is worth building only while some other route is a real alternative.
+
+    With every member beyond Jev the choice is decided before it is asked: each answer hands off, so the
+    request that asks which one buys nothing and every run pays for Jev on top of the model behind it.
+    """
+
+    class DraftedReply(BaseModel):
+        """Write the customer a reply."""
+
+        body: str
+
+    class Summary(BaseModel):
+        """Summarise the thread."""
+
+        text: str
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a union with nothing fillable must be refused before any request')
+
+    agent = Agent(mock_model(unreachable), output_type=[DraftedReply, Summary])
+    with pytest.raises(UserError, match='None of the output types can be filled by this model'):
+        await agent.run('Write back.')
+
+
+async def test_a_union_with_one_fillable_member_is_still_offered(allow_model_requests: None):
+    """One real alternative is enough: the hand-off then depends on the text rather than on the types."""
+
+    class DraftedReply(BaseModel):
+        """Write the customer a reply."""
+
+        body: str
+
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        if len(seen) == 1:
+            return answers(
+                tool=_route('final_result_Ticket', {'final_result_Ticket': 0.9, 'final_result_DraftedReply': 0.1})
+            )
+        return answers(urgent={'type': 'noul', 'noul': 0.9})
+
+    agent = Agent(mock_model(record), output_type=[Ticket, DraftedReply])
+    result = await agent.run('Is this urgent?')
+
+    assert result.output == Ticket(urgent=True)
+    # Both were offered: the hand-off now depends on which one the text calls for.
+    assert set(seen[0]['questions']['tool']['criteria']) == {'final_result_Ticket', 'final_result_DraftedReply'}
+
+
+@pytest.mark.parametrize('setting', ['typesafe_tool_call_threshold', 'typesafe_boolean_threshold'])
+async def test_a_bad_threshold_is_refused_before_the_forced_route_spends_a_request(
+    allow_model_requests: None, setting: str
+):
+    """The forced-fill path takes no choice question, so its bars are checked before it sends anything.
+
+    Reading them only while handling the answer would mean paying for the request that carried the prompt and
+    the whole history before saying the settings were wrong.
+    """
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('a threshold outside 0 to 1 must be refused before any request')
+
+    def set_direction(direction: Literal['left', 'right']) -> str:
+        """Set the direction to take.
+
+        Args:
+            direction: Which direction should be taken?
+        """
+        return direction  # pragma: no cover
+
+    # No output type to fill, and `approve` already returned this turn, so `set_direction` is the one route
+    # left: it is filled without a choice question, which is the path that used to validate too late.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go left.')]),
+        ModelResponse(parts=[ToolCallPart('final_result', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('final_result', 'approved', 'call_1')]),
+    ]
+    agent = Agent(mock_model(unreachable), output_type=[approve], tools=[set_direction])
+    with pytest.raises(UserError, match=f'`{setting}` must be between 0 and 1'):
+        await agent.run(message_history=history, model_settings=cast(TypeSafeModelSettings, {setting: 1.5}))
+
+
+@pytest.mark.parametrize('noul', [-0.1, 1.5])
+async def test_a_probability_outside_zero_to_one_is_a_model_error_not_a_crash(allow_model_requests: None, noul: float):
+    """Both confidence scalings divide by the room left on their side of the bar, which can be zero.
+
+    At a threshold of 0 a negative probability used to reach `(0 - noul) / 0`. A malformed answer is
+    something the model reports, like every other unexpected answer, rather than a `ZeroDivisionError`.
+    """
+    agent = Agent(mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': noul})), output_type=Ticket)
+    with pytest.raises(UnexpectedModelBehavior, match=f'Unexpected probability from TypeSafe: {noul}'):
+        await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0))

@@ -1,0 +1,57 @@
+name: Harness Navigation
+
+# Which Pydantic AI Harness pages are published is decided in this repository,
+# by the `source: "harness"` entries in docs/navigation.yml, while the pages
+# themselves live in pydantic/pydantic-ai-harness. Nothing else connects the
+# two, so both sides can drift.
+#
+# An entry whose page does not exist fails the unified-docs build at config
+# load — that is the deploy, not a check, so it takes the docs site down rather
+# than reddening a pull request. This runs the same comparison here, where the
+# entry is written, and against the harness release unified-docs actually
+# builds (`refPattern: 'latest:v0.*'`).
+#
+# Unlike "Docs Navigation Check", this needs no label: the twelve navigation
+# pull requests that sat approved and unmergeable were never labelled.
+
+on:
+  pull_request:
+    # `ready_for_review` is not one of the default activity types, and it is the
+    # moment this check exists for: a navigation entry waits in draft until the
+    # harness release that ships its page, and marking it ready is when someone
+    # asks whether that release has happened.
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'docs/navigation.yml'
+      - '.github/harness-navigation-allowlist.json'
+      - '.github/scripts/check_harness_navigation.py'
+      - '.github/workflows/harness-navigation.yml'
+  # The harness releases independently of this repository, so a page can become
+  # published-but-unlinked without any pull request here to catch it.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-navigation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Check navigation against the released harness
+        env:
+          # Only to lift the anonymous API rate limit; the harness is public.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run python .github/scripts/check_harness_navigation.py --verbose

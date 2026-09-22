@@ -59,6 +59,7 @@ try:
         NoulAnswer,
         Score,
         ScoreAnswer,
+        SystemOneResponse,
         TypeSafeAPIConnectionError,
         TypeSafeAPIError,
         TypeSafeAPIResponseValidationError,
@@ -87,6 +88,14 @@ threshold has been tuned against one. https://docs.typesafe.ai/models"""
 TypeSafeModelName = str | LatestTypeSafeModelNames
 """Possible TypeSafe model names."""
 
+# Jev picks from at most this many options in one question; a 256th is a 400 from the API.
+# https://docs.typesafe.ai/model-jaggedness/jev-1.13
+_MAX_CHOICE_OPTIONS = 255
+
+# Jev scores against at most this many rubric levels; an 11th is a 400 from the API.
+# https://docs.typesafe.ai/primitives/score
+_MAX_SCORE_LEVELS = 10
+
 _UNSUPPORTED_FIELD_HINT = (
     'Use `bool`, a `Literal` or `Enum` of two or more strings, a `float` bounded with `ge=0` and `le=1`, a `list` of '
     'a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its schema, or a model '
@@ -99,19 +108,34 @@ class TypeSafeModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `typesafe_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
+    typesafe_boolean_threshold: float
+    """How likely a yes has to be before a `bool` field is `True`, from 0 to 1. Default: 0.5.
+
+    Jev answers a yes/no with the probability of yes, and the default rounds it: what the framework cannot know is
+    what `True` has to mean for you. Raise it where a false positive is the expensive mistake and a `True` should
+    be earned, lower it where a false negative is. It applies to every `bool` field and to each option of a `list`
+    of a `Literal` or `Enum`, which is one yes/no per option; a `float` bounded with `ge=0` and `le=1` returns the
+    probability itself and is not thresholded.
+
+    Reported confidence is the distance from the threshold rather than from the probability, scaled to run from 0
+    at the threshold to 1 at certainty, so a yes at 0.8 under a threshold of 0.75 reports the narrow margin it is.
+    """
+
     typesafe_tool_call_threshold: float
     """How likely Jev has to find a tool call before it is proposed, from 0 to 1. Default: 0.6.
 
     With tools attached, one more question asks which tool the text calls for, the output tool among them. A tool
-    picked below this probability is a lean, and the output is filled as usual; one at or above it is raised as
-    [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] for a model behind Jev to call. At 0.6, on
-    labelled support tickets, Jev's picks agree with a frontier model as often as two frontier models agree with each
-    other; higher hands off less, and is right more often when it does. Tune it on labelled examples of your own.
+    picked below this probability is a lean, and the output is filled as usual; one at or above it is called, after
+    Jev fills any supported arguments, or raised as
+    [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] when its arguments are unsupported. At 0.6,
+    on labelled support tickets, Jev's picks agree with a frontier model as often as two frontier models agree with
+    each other; higher takes fewer tools, and is right more often when it does. Tune it on labelled examples of your
+    own.
     """
 
 
 class ToolCallProposed(ModelAPIError):
-    """Jev found that the text calls for a tool, which it cannot call itself.
+    """Jev found that the text calls for a tool whose arguments it cannot fill.
 
     A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands it the
@@ -139,7 +163,7 @@ class ToolCallProposed(ModelAPIError):
 
 @dataclass(init=False)
 class TypeSafeModel(Model[AsyncTypeSafeClient]):
-    """A model that fills a structured `output_type` with one request to a TypeSafe Jev model.
+    """A model that fills a structured `output_type`, and supported tool arguments after choosing a tool.
 
     Jev does not generate text. It answers typed questions about a text, each with a confidence. This model
     turns the output type's fields into those questions and the user prompt into the text, so an agent whose
@@ -187,14 +211,20 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     the message history, from any model, goes along beside it as `history`: user prompts, answers, tool calls
     and their results, and retry prompts.
 
-    Jev cannot write a tool's arguments, but it can tell which tool the text calls for. With tools attached, one
-    more question asks which, the output type first among the options, described by its docstring or the agent's
-    instructions. A tool that takes no arguments, or an output function that takes nothing but the run context,
-    is called on Jev's pick, so it can run a loop of such tools and hand a run off to an output function on its
-    own. A tool with arguments, picked at or above
-    `typesafe_tool_call_threshold`, is raised as [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed],
-    which a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands
-    that model, tools and all.
+    An `output_type` of several structured types is a union, and a route rather than a field: one question picks
+    which type the text calls for, described by each type's own docstring, and a second request asks only that
+    type's fields. A member whose fields Jev cannot express is still offered, and picking it raises
+    [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed]; a lone `output_type` it cannot express is
+    refused before any request instead, since no other route could have been taken. A model *field* typed as a
+    union of structured types is not supported.
+
+    With tools attached, one more question asks which, the output types first among the options, described by their
+    docstrings or the agent's instructions. A tool that takes no arguments, or an output function that takes nothing
+    but the run context, is called on Jev's pick. When a picked tool's arguments use the field types above, a second
+    request asks only those arguments and Jev returns the filled call. If any argument is unsupported, the call is
+    raised as [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed], which a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands that model,
+    tools and all.
 
     Jev answers in one piece, so a streamed run gets the whole answer as one event rather than failing.
 
@@ -261,7 +291,11 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     ) -> ModelResponse:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
-        output_tool, hand_offs = _output_tools(model_request_parameters)
+        output_tools, hand_offs = _output_tools(model_request_parameters)
+        # One output type is filled in the same request that picks a route; several are a union, so the first
+        # request only picks, and the chosen type's fields are asked in the second — the same two steps a
+        # selected tool's arguments take, through the same helper.
+        output_tool = output_tools[0] if len(output_tools) == 1 else None
         # A withheld tool is not on any wire; one revealed through the history is, and Jev sees the whole history.
         function_tools = [
             tool
@@ -270,23 +304,88 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         ]
         offered = [*hand_offs, *function_tools]
         tools = _tools_left(messages, offered)
-        if output_tool is None and len(tools) == 1 and len(offered) > 1:
-            # Every other route has returned this turn, so the one left is taken without a question.
-            return self._forced(tools[0])
+        forced_tool = tools[0] if not output_tools and len(tools) == 1 and len(offered) > 1 else None
+        if forced_tool is not None and (
+            _none_route(forced_tool) or not _properties(forced_tool.parameters_json_schema)
+        ):
+            # Preserve the no-request path: there is no state or question to build when no arguments need filling.
+            return self._forced(forced_tool)
         properties = _fields(output_tool) if output_tool else {}
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
-        questions = _questions(properties, output_tool, instructions) if output_tool else {}
-        tool_key = _tool_question(questions, output_tool, tools, instructions)
         settings = cast(TypeSafeModelSettings, model_settings or {})
-        threshold = settings.get('typesafe_tool_call_threshold', 0.6)
-        if not 0 <= threshold <= 1:
-            raise UserError(f'`typesafe_tool_call_threshold` must be between 0 and 1; got {threshold!r}.')
+        # Both bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding
+        # out from a rejected answer would mean paying for the request that carried the prompt and history.
+        threshold = _threshold(settings, 'typesafe_tool_call_threshold', 0.6)
+        boolean_threshold = _threshold(settings, 'typesafe_boolean_threshold', 0.5)
+        if forced_tool is not None:
+            # Every other route has returned this turn, so the one left is taken without a choice question.
+            return await self._forced_with_arguments(forced_tool, state, instructions, settings, boolean_threshold)
+        if len(output_tools) > 1 and not any(_expressible(tool, instructions) for tool in output_tools):
+            # A member Jev cannot fill is a hand-off, but only while some other member is a real alternative.
+            # With none of them fillable the choice is decided before it is asked: every answer hands off, so
+            # the request that asks it buys nothing and every run pays for Jev on top of the model behind it.
+            raise UserError(
+                'None of the output types can be filled by this model, so every answer would be handed off and '
+                'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
+                'it from this model.'
+            )
+        questions = _questions(properties, output_tool, instructions) if output_tool else {}
+        tool_key = _tool_question(questions, output_tools, tools, instructions)
 
+        response = await self._system_one(state, questions, settings)
+        response_usage = _request_usage(response)
+        args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
+        parts: list[ModelResponsePart] = []
+        if output_tool:
+            parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
+        if tool_key is not None:
+            picked = _tool_call(
+                response.answers.get(tool_key),
+                output_tools,
+                tools,
+                {tool.name for tool in hand_offs},
+                threshold,
+                provider_details,
+            )
+            if isinstance(picked, ToolCallPart):
+                parts = [picked]
+            elif picked is not None and picked is not output_tool:
+                # `_tool_call` tolerates an offered route missing from `probabilities` when it falls back to
+                # the likeliest one, so the route it returns is not necessarily one Jev priced.
+                probability = provider_details['tool']['probabilities'].get(picked.name, 0.0)
+                response, args, argument_details = await self._fill(
+                    picked, probability, state, instructions, settings, boolean_threshold
+                )
+                response_usage += _request_usage(response)
+                provider_details.update(argument_details)
+                # `RequestUsage.requests` is fixed at 1, so usage cannot say that this turn asked twice: the
+                # choice and the fill are two requests inside one step. The count is reported here, and only
+                # here, so it appears exactly when it differs from what usage reports. See #8498.
+                provider_details['requests'] = 2
+                parts = [ToolCallPart(picked.name, args, _utils.generate_tool_call_id())]
+
+        return ModelResponse(
+            parts=parts,
+            usage=response_usage,
+            model_name=response.model,
+            provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
+            provider_details=provider_details,
+            finish_reason='tool_call',
+        )
+
+    async def _system_one(
+        self,
+        state: JSONContent,
+        questions: dict[str, Noul | Choice | Score],
+        settings: TypeSafeModelSettings,
+    ) -> SystemOneResponse:
+        """Send one Jev request, translating SDK failures into model errors."""
         timeout = settings.get('timeout')
         try:
-            response = await self.client.system_one(
+            return await self.client.system_one(
                 state,
                 questions,
                 model=self._model_name,
@@ -307,42 +406,70 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             # not encode as JSON. That is the caller's to fix, not the model's.
             raise UserError(f'TypeSafe could not send this request: {e}') from e
 
-        args, provider_details = _answers(response.answers, properties, questions)
-        parts: list[ModelResponsePart] = []
-        if output_tool:
-            parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
-        if tool_key is not None:
-            hand_off_names = {tool.name for tool in hand_offs}
-            if call := _tool_call(
-                self._model_name,
-                response.answers.get(tool_key),
-                output_tool,
-                tools,
-                hand_off_names,
-                threshold,
-                provider_details,
-            ):
-                parts = [call]
+    async def _fill(
+        self,
+        tool: ToolDefinition,
+        probability: float,
+        state: JSONContent,
+        instructions: str | None,
+        settings: TypeSafeModelSettings,
+        boolean_threshold: float,
+    ) -> tuple[SystemOneResponse, dict[str, Any], dict[str, Any]]:
+        """Ask a selected route's fields in a second request, or hand it off when Jev cannot express them.
 
+        One helper for both routes Jev picks and then fills: a tool's arguments, and a union member's fields.
+        They are the same two steps, and a route whose fields Jev cannot express is the same hand-off either
+        way — [`ToolCallProposed`][pydantic_ai.models.typesafe.ToolCallProposed] is a `ModelAPIError`, so a
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] gives a language model the whole step.
+
+        This is why a union may hold a member Jev cannot express while a lone `output_type` may not: with one
+        output type there is no other route the run could have taken, so an unfillable one can only ever fail,
+        and it is refused before any request. Offered beside others, it is a route like any other.
+        """
+        try:
+            properties = _fields(tool)
+            questions = _questions(properties, tool, instructions)
+        except UserError:
+            raise ToolCallProposed(self._model_name, tool.name, probability) from None
+
+        try:
+            response = await self._system_one(state, questions, settings)
+            args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
+        except (ModelAPIError, UnexpectedModelBehavior) as e:
+            # The first request committed to this route. Letting a fallback model rerun the whole original step
+            # could silently choose another route, so a failure while filling is terminal and names that route.
+            raise UnexpectedModelBehavior(
+                f'TypeSafe selected {tool.name!r}, but failed while filling its fields: {e}'
+            ) from e
+        return response, args, provider_details
+
+    async def _forced_with_arguments(
+        self,
+        tool: ToolDefinition,
+        state: JSONContent,
+        instructions: str | None,
+        settings: TypeSafeModelSettings,
+        boolean_threshold: float,
+    ) -> ModelResponse:
+        """Fill the arguments of the one route left, without a choice request."""
+        details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
+        response, args, argument_details = await self._fill(tool, 1.0, state, instructions, settings, boolean_threshold)
+        details.update(argument_details)
         return ModelResponse(
-            parts=parts,
-            usage=usage.RequestUsage(
-                input_tokens=response.usage.input_tokens or 0, output_tokens=response.usage.output_tokens or 0
-            ),
+            parts=[ToolCallPart(tool.name, args, _utils.generate_tool_call_id())],
+            usage=_request_usage(response),
             model_name=response.model,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
-            provider_details=provider_details,
+            provider_details=details,
             finish_reason='tool_call',
         )
 
     def _forced(self, tool: ToolDefinition) -> ModelResponse:
-        """The response when one route is left and there is nothing to fill: that route, without asking Jev."""
+        """Call the one argumentless route left, without asking Jev."""
         details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
-        if tool.parameters_json_schema.get('properties'):
-            raise ToolCallProposed(self._model_name, tool.name, 1.0)
         return ModelResponse(
-            parts=[ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())],
+            parts=[ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(),
             model_name=self._model_name,
             provider_name=self._provider.name,
@@ -406,8 +533,37 @@ class TypeSafeStreamedResponse(StreamedResponse):
         return self._response.timestamp
 
 
+def _threshold(settings: TypeSafeModelSettings, name: str, default: float) -> float:
+    """A probability setting, which is only meaningful inside the range Jev answers in."""
+    threshold = cast(float, settings.get(name, default))
+    if not 0 <= threshold <= 1:
+        raise UserError(f'`{name}` must be between 0 and 1; got {threshold!r}.')
+    return threshold
+
+
+def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
+    """Whether Jev's probability of yes clears the bar, and how far from the bar it landed.
+
+    Jev reports no confidence for a yes/no: `noul` is the probability of yes, and what is lost in rounding it to
+    an answer is how sure that answer is. That is the distance from the bar, scaled to run 0 to 1 on whichever
+    side of it the answer fell — like the confidence Jev reports for the other two kinds of question. Under the
+    default bar of 0.5 this is the distance from the coin flip, doubled: a no returned at 0.01 reports 0.98.
+    """
+    if not 0 <= probability <= 1:
+        # Both scalings divide by the room left on their side of the bar, which a probability outside the
+        # range Jev answers in can make zero. A malformed answer is the model's to report, not a crash.
+        raise UnexpectedModelBehavior(f'Unexpected probability from TypeSafe: {probability!r}')
+    if probability >= threshold:
+        # An answer exactly at the bar is the least sure one there is, including when the bar is certainty.
+        return True, (probability - threshold) / (1 - threshold) if threshold < 1 else 0.0
+    return False, (threshold - probability) / threshold
+
+
 def _answers(
-    answers: Mapping[str, object], properties: dict[str, dict[str, Any]], questions: dict[str, Noul | Choice | Score]
+    answers: Mapping[str, object],
+    properties: dict[str, dict[str, Any]],
+    questions: dict[str, Noul | Choice | Score],
+    boolean_threshold: float,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The output's arguments and `provider_details` from Jev's answers to the field questions."""
     args: dict[str, Any] = {}
@@ -426,8 +582,9 @@ def _answers(
                         f'Unexpected answer from TypeSafe for output field {name!r}, option {option!r}: {answer!r}'
                     )
                 labelled[option] = answer.noul
-            _set(args, name, [option for option, p in labelled.items() if p >= 0.5])
-            confidence[name] = min(abs(p - 0.5) * 2 for p in labelled.values())
+            verdicts = {option: _verdict(p, boolean_threshold) for option, p in labelled.items()}
+            _set(args, name, [option for option, (chosen, _) in verdicts.items() if chosen])
+            confidence[name] = min(sureness for _, sureness in verdicts.values())
             probabilities[name] = labelled
             continue
         answer = answers.get(name)
@@ -437,12 +594,9 @@ def _answers(
                 # that asks for the number would otherwise get it back twice under two names.
                 _set(args, name, answer.noul)
             else:
-                # Jev reports no confidence for a yes/no: `noul` is the probability of yes, and what is
-                # lost in rounding it to an answer is how sure that answer is. That is the distance from
-                # the coin flip, doubled so it runs 0 to 1 like the confidence Jev reports for the other
-                # two kinds of question — a no returned at 0.01 is a confident no, and reports 0.98.
-                _set(args, name, answer.noul >= 0.5)
-                confidence[name] = abs(answer.noul - 0.5) * 2
+                chosen, sureness = _verdict(answer.noul, boolean_threshold)
+                _set(args, name, chosen)
+                confidence[name] = sureness
         elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
             _set(args, name, None if answer.choice == none_key else answer.choice)
             confidence[name] = answer.confidence
@@ -460,20 +614,29 @@ def _answers(
     return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
 
 
+def _request_usage(response: SystemOneResponse) -> usage.RequestUsage:
+    """Usage for one Jev request."""
+    return usage.RequestUsage(
+        input_tokens=response.usage.input_tokens or 0, output_tokens=response.usage.output_tokens or 0
+    )
+
+
 def _tool_call(
-    model_name: str,
     answer: object,
-    output_tool: ToolDefinition | None,
+    output_tools: list[ToolDefinition],
     tools: list[ToolDefinition],
     hand_offs: set[str],
     threshold: float,
     provider_details: dict[str, Any],
-) -> ToolCallPart | None:
-    """The tool call Jev makes itself from its answer to the tool question, if it takes one it can make.
+) -> ToolDefinition | ToolCallPart | None:
+    """The output or tool call Jev takes from its answer to the tool question.
 
-    A tool picked below the threshold is a lean: the output is filled, or with no output type to fill, the
-    likeliest output function is taken instead. A tool taken that needs arguments is raised as
-    `ToolCallProposed` for a model behind Jev.
+    A tool picked below the threshold is a lean: the likeliest output type is filled, or with none to fill, the
+    likeliest output function is taken instead. A selected route with fields is returned for a second request.
+
+    The threshold gates tools, not output types. Picking an output type is Jev saying which result to fill, not
+    proposing that something else be done; there is nothing to hand off to and nothing to be unsure about beyond
+    the pick itself, whose confidence is reported either way.
     """
     if (
         not isinstance(answer, ChoiceAnswer)
@@ -489,14 +652,25 @@ def _tool_call(
         'probabilities': answer.probabilities,
         'offered': [tool.name for tool in tools],
     }
-    if output_tool is not None and answer.choice == output_tool.name:
-        return None
+    picked_output = next((tool for tool in output_tools if tool.name == answer.choice), None)
+    if picked_output is not None:
+        return picked_output
     tool = next((tool for tool in tools if tool.name == answer.choice), None)
     if tool is None:
         raise UnexpectedModelBehavior(f'TypeSafe picked a tool it was not offered: {answer.choice!r}')
     if tool.name not in hand_offs and probability < threshold:
-        if output_tool is not None:
-            return None
+        # A `None` route is a result to take, not something else to be done, so it is weighed here with the
+        # output types rather than below with the hand-offs, even though it is offered as one of those.
+        results = [*output_tools, *(candidate for candidate in tools if _none_route(candidate))]
+        if likeliest_output := max(
+            results, key=lambda candidate: answer.probabilities.get(candidate.name, 0.0), default=None
+        ):
+            if _none_route(likeliest_output):
+                # Nothing to fill, so it is called on the fallback itself rather than asked about again.
+                return ToolCallPart(
+                    likeliest_output.name, _route_args(likeliest_output), _utils.generate_tool_call_id()
+                )
+            return likeliest_output
         likeliest = max(
             (candidate for candidate in tools if candidate.name in hand_offs),
             key=lambda candidate: answer.probabilities.get(candidate.name, 0.0),
@@ -505,37 +679,102 @@ def _tool_call(
         if likeliest is not None:
             provider_details['tool']['taken'] = likeliest.name
             tool = likeliest
-    if tool.parameters_json_schema.get('properties'):
-        raise ToolCallProposed(model_name, tool.name, probability)
+    if not _none_route(tool) and tool.parameters_json_schema.get('properties'):
+        return tool
     # Nothing to write, so the call is made on Jev's pick.
-    return ToolCallPart(tool.name, {}, _utils.generate_tool_call_id())
+    return ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())
+
+
+def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
+    """Whether Jev could fill this route's fields, asked without sending anything."""
+    try:
+        _questions(_fields(tool), tool, instructions)
+    except UserError:
+        return False
+    return True
+
+
+_NONE_OF_THESE = 'None of these.'
+
+
+def _null(schema: dict[str, Any]) -> bool:
+    """Whether a schema is `None`, whatever else the user wrote about it.
+
+    Pydantic renders a bare `None` as `{'type': 'null'}`, but `Annotated[None, Field(description=...)]` — how a
+    user says what returning nothing means — renders the description beside it. The type is what makes it `None`;
+    the rest is the user's own words, and a route or a field is no less `None` for having some.
+    """
+    return schema.get('type') == 'null'
+
+
+def _none_route(tool: ToolDefinition) -> bool:
+    """Whether this output tool is the `None` member of a union: a route that returns nothing.
+
+    Pydantic AI wraps a bare `None` output type in an object with one `null` property, so the route has a field
+    in its schema and yet only one value that field could ever take. There is nothing to ask about it: to Jev it
+    is one more option to pick, the same thing `_optional` makes of an `X | None` field one level down.
+    """
+    properties = list(_properties(tool.parameters_json_schema).values())
+    return tool.kind == 'output' and len(properties) == 1 and _null(properties[0])
+
+
+def _route_args(tool: ToolDefinition) -> dict[str, Any]:
+    """The arguments to call a route with when Jev writes nothing: none, or the `None` a `None` route wraps."""
+    return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
+
+
+def _wrapped(tool: ToolDefinition) -> dict[str, Any] | None:
+    """The single property Pydantic AI wraps an output type that is not object-like in, if this is one.
+
+    A `Literal`, an `Enum`, a `Choices` set and a bare `None` all reach a model as one property of an object,
+    because only an object can be a tool's arguments. What such a type says about itself is written on that
+    property, since there is no class for it to be a docstring on. `outer_typed_dict_key` is the wrapping,
+    named by whoever did it, so it is read rather than guessed back out of the schema's shape.
+    """
+    key = tool.outer_typed_dict_key
+    return _properties(tool.parameters_json_schema).get(key) if key else None
+
+
+def _purpose(tool: ToolDefinition) -> str | None:
+    """What a route says about itself, wherever it managed to say it.
+
+    An output type says this in its docstring, and `ToolOutput(description=...)` says it for a type that has
+    no docstring to write it in. A type that is not object-like has neither: `Choices(description=...)`
+    describes the set it wraps, which lands on the wrapped property rather than on the tool. It is the same
+    sentence either way, so the route question reads it from there too.
+    """
+    if described := _described(tool):
+        return described
+    wrapped = _wrapped(tool)
+    return wrapped.get('description') if wrapped else None
+
+
+def _route_description(tool: ToolDefinition) -> str | None:
+    """What a route says about itself on the route question.
+
+    A `None` route can say nothing anywhere, so the library supplies the phrase — unless the user named the
+    route themselves, which says more about what declining means on this agent than the stock phrase does.
+    """
+    if _none_route(tool):
+        return _purpose(tool) or _NONE_OF_THESE
+    return _purpose(tool) or tool.description
 
 
 def _output_tools(
     model_request_parameters: ModelRequestParameters,
-) -> tuple[ToolDefinition | None, list[ToolDefinition]]:
-    """The output tool with fields for Jev to fill, if there is one, and the ones that take no arguments.
+) -> tuple[list[ToolDefinition], list[ToolDefinition]]:
+    """The output tools with fields for Jev to fill, and the ones that take no arguments.
 
     An output function that takes nothing, or only the run context, is a hand-off Jev can pick without writing
-    anything, so any number of them can sit beside the one output type it fills. A second output type with fields
-    would be a second set of questions with no way to choose between them, and is a `UserError`, like everything
-    else this agent could ask for that Jev cannot do.
+    anything. Several output types with fields are a union: Jev picks which one the text calls for, then fills
+    that one's fields in a second request, the same two steps a selected tool's arguments take. Text output is
+    refused earlier, by the shared request preparation, on the profile's `supports_text_output`.
     """
-    if model_request_parameters.allow_text_output:
-        raise UserError(
-            'Text output is not supported by this model. Give the agent one structured `output_type`, '
-            'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
-        )
     with_fields: list[ToolDefinition] = []
     hand_offs: list[ToolDefinition] = []
     for tool in model_request_parameters.output_tools:
-        (with_fields if _properties(tool.parameters_json_schema) else hand_offs).append(tool)
-    if len(with_fields) > 1:
-        raise UserError(
-            f'Multiple output types with fields are not supported by this model; got {len(with_fields)}. '
-            'Give the agent one structured `output_type`, beside any output functions that take no arguments.'
-        )
-    return (with_fields[0] if with_fields else None), hand_offs
+        (hand_offs if _none_route(tool) or not _properties(tool.parameters_json_schema) else with_fields).append(tool)
+    return with_fields, hand_offs
 
 
 def _properties(schema: dict[str, Any]) -> dict[str, Any]:
@@ -563,7 +802,7 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
             prop = {**prop, 'anyOf': [resolve(option) for option in prop['anyOf']]}
         return prop
 
-    def flatten(properties: dict[str, Any], prefix: str) -> dict[str, dict[str, Any]]:
+    def flatten(properties: dict[str, Any], prefix: str, seen: frozenset[str]) -> dict[str, dict[str, Any]]:
         fields: dict[str, dict[str, Any]] = {}
         for name, prop in properties.items():
             if '.' in name:
@@ -571,14 +810,24 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
                     f'Output field {prefix + name!r} is not supported by this model: a dot in a field name is how '
                     'a nested field is named. Rename it.'
                 )
+            ref = prop.get('$ref')
             prop = resolve(prop)
             if prop.get('type') == 'object' and prop.get('properties'):
-                fields.update(flatten(prop['properties'], f'{prefix}{name}.'))
+                if ref is not None and ref in seen:
+                    # A model that contains itself with no way out is infinitely many questions, so there is no
+                    # depth at which to stop asking. An optional or list self-reference is refused on the field
+                    # itself before the walk gets here.
+                    raise UserError(
+                        f'Output field {prefix + name!r} is not supported by this model: a model that contains '
+                        'itself has no end to fill, and Jev asks a fixed set of questions. Give the field a type '
+                        'that does not contain itself.'
+                    )
+                fields.update(flatten(prop['properties'], f'{prefix}{name}.', seen | {ref} if ref else seen))
             else:
                 fields[f'{prefix}{name}'] = prop
         return fields
 
-    return flatten(_properties(schema), '')
+    return flatten(_properties(schema), '', frozenset())
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
@@ -595,9 +844,12 @@ def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     Measured on labelled tickets, an explicit option is as accurate as an `other` member the user wrote and more
     accurate than reading `None` off low confidence, which is what the field's confidence is for.
     """
-    if 'anyOf' not in prop or len(prop['anyOf']) != 2 or {'type': 'null'} not in prop['anyOf']:
+    options = prop.get('anyOf')
+    # Exactly one of the two has to be `None`, and the other one has to be something: a union of nothing but
+    # `None`s has no `X` to ask about, and is refused as the unsupported field it is rather than crashing here.
+    if not options or len(options) != 2 or sum(_null(option) for option in options) != 1:
         return prop, None
-    inner = next(option for option in prop['anyOf'] if option != {'type': 'null'})
+    inner = next(option for option in options if not _null(option))
     prop = {**inner, **{k: v for k, v in prop.items() if k not in ('anyOf', 'default')}}
     key = 'none'
     while key in (_options(prop) or {}):
@@ -653,7 +905,7 @@ def _questions(
                     f'Output field {name!r} is not supported by this model: only a `Literal` or `Enum` of strings can '
                     f'be optional, since `None` is one more option to pick. {_UNSUPPORTED_FIELD_HINT}'
                 )
-            options = {**options, none_key: 'None of these.'}
+            options = {**options, none_key: _NONE_OF_THESE}
 
         # A single value needs no labelling, and TypeSafe's advice is to start with a string; the object
         # form earns its keys only once there is more than one thing in it.
@@ -662,7 +914,7 @@ def _questions(
         if prop.get('type') == 'array':
             # Several options at once is one yes/no per option, all in the same request, which TypeSafe call
             # fanning out: does this option apply, asked with the field's question and the option's description.
-            labels = _options(prop['items'])
+            labels = _options(prop['items']) if 'items' in prop else None
             if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: a list must be of two or more string '
@@ -679,6 +931,11 @@ def _questions(
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: its options are not two or more strings. '
                     f'{_UNSUPPORTED_FIELD_HINT}'
+                )
+            elif len(options) > _MAX_CHOICE_OPTIONS:
+                raise UserError(
+                    f'Output field {name!r} is not supported by this model: Jev picks from at most '
+                    f'{_MAX_CHOICE_OPTIONS} options, and this one has {len(options)}.'
                 )
             else:
                 questions[name] = Choice(instructions=asked, criteria=cast('dict[str, str | None]', options))
@@ -700,10 +957,10 @@ def _questions(
     return questions
 
 
-def _described(output_tool: ToolDefinition) -> str | None:
-    """What the user wrote about the output, if anything: the stock output tool description says nothing."""
-    description = output_tool.description
-    if not description or description.endswith(DEFAULT_OUTPUT_TOOL_DESCRIPTION):
+def _described(tool: ToolDefinition) -> str | None:
+    """What the user wrote about a tool, without the stock description generated for an output tool."""
+    description = tool.description
+    if not description or (tool.kind == 'output' and description.endswith(DEFAULT_OUTPUT_TOOL_DESCRIPTION)):
         return None
     return description
 
@@ -734,39 +991,48 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> li
 
 def _tool_question(
     questions: dict[str, Noul | Choice | Score],
-    output_tool: ToolDefinition | None,
+    output_tools: list[ToolDefinition],
     tools: list[ToolDefinition],
     instructions: str | None,
 ) -> str | None:
     """With tools attached, one more question: which tool the text calls for, the output tool among them.
 
-    Jev cannot write a tool's arguments, but it can tell which tool the text calls for, and either call it itself
-    when there are none to write or leave the call to a model behind it. The output tool is the first option,
+    Jev first tells which tool the text calls for, then fills a selected tool's arguments in a separate request when
+    their schema maps to questions. An unsupported argument leaves the call to a model behind it. The output tool is the first option,
     described by what the agent is for, so that filling the output is an action weighed against the others. Asked
     instead whether it *can* answer, Jev hands off nearly everything: that is a question about the question, not
     about the text. Only what the user wrote describes the output: the output type's docstring, or failing that the
     agent's instructions; the stock output tool description says nothing Jev could weigh a tool against.
     """
-    if output_tool is None and len(tools) < 2:
+    if not output_tools and len(tools) < 2:
         raise UserError(
             'An `output_type` with no fields is not supported by this model; there is nothing to ask Jev. '
             'Give it fields, or more than one tool to pick between.'
         )
-    if not tools:
+    if not tools and len(output_tools) < 2:
         return None
     key = 'tool'
     while key in questions:
         key += '_'
     criteria: dict[str, str | None] = {}
-    if output_tool:
-        described = _described(output_tool)
-        if not (described or instructions):
+    for output_tool in output_tools:
+        described = _purpose(output_tool)
+        if not (described or (instructions and len(output_tools) == 1)):
+            # With one output type the agent's instructions can say what filling it is for. With several, only
+            # each type's own docstring can tell them apart: one instruction cannot describe two different routes.
             raise UserError(
-                'With tools attached, Jev weighs filling the output type against calling a tool by what each is '
-                'for. Give the output type a docstring that says what filling it does, or the agent `instructions`.'
+                'Jev weighs each route by what it is for, and '
+                f'{output_tool.name!r} says nothing about itself. Give the output type a docstring that says what '
+                'filling it does' + ('.' if len(output_tools) > 1 else ', or the agent `instructions`.')
             )
         criteria[output_tool.name] = described or instructions
-    criteria.update((tool.name, tool.description) for tool in tools)
+    criteria.update((tool.name, _route_description(tool)) for tool in tools)
+    if len(criteria) > _MAX_CHOICE_OPTIONS:
+        raise UserError(
+            f'Jev picks from at most {_MAX_CHOICE_OPTIONS} options, and it is being offered {len(criteria)} routes: '
+            f'each output type counts as one beside the tools. Attach fewer tools, or withhold some of them until '
+            f'they are needed.'
+        )
     questions[key] = Choice(instructions='Which of these does this call for?', criteria=criteria)
     return key
 
@@ -782,6 +1048,11 @@ def _score_question(name: str, options: dict[int, str | None], asked: JSONConten
         raise UserError(
             f'Output field {name!r} is not supported by this model: a rubric must be the whole numbers from 0 '
             f'upwards, in order, and there must be at least two of them. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    if len(levels) > _MAX_SCORE_LEVELS:
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: Jev scores against at most '
+            f'{_MAX_SCORE_LEVELS} levels, and this rubric has {len(levels)}.'
         )
     criteria = [options[level] for level in levels]
     if not all(criteria):

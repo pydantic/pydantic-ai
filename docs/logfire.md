@@ -245,7 +245,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
 - [Patronus AI](https://docs.patronus.ai/docs/percival/integrations/pydantic)
 - [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
-- [mlflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
+- [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
 - [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
 - [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
 - [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
