@@ -51,7 +51,7 @@ async def test_suite_failures_quote_the_rule() -> None:
     suite = WorkspaceBackendSuite()
     with pytest.raises(AssertionError, match='Rule: “Structural protocol:'):
         await suite.test_required_members(cast(WorkspaceBackend, object()))
-    with pytest.raises(AssertionError, match='Rule: “The workspace.*default working directory'):
+    with pytest.raises(AssertionError, match=r'Rule: “The workspace.*default working directory'):
         await suite.test_default_working_dir_is_canonical(_BrokenWorkingDir('broken'))
 
     await suite.test_filesystem_exists_is_truthful(_CleanupFake(FileNotFoundError('already removed')))
