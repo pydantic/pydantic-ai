@@ -16,15 +16,22 @@ export OPENAI_API_KEY=your-api-key
 import asyncio
 from pathlib import Path
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 agent = Agent('openai:gpt-5.6-sol', output_type=[str, DeferredToolRequests])
+completed_refunds: dict[str, str] = {}
 
 
-@agent.tool_plain(requires_approval=True)
-def refund_payment(payment_id: str, amount_cents: int) -> str:
-    return f'Refunded {amount_cents} cents from {payment_id}'
+@agent.tool(requires_approval=True)
+def refund_payment(ctx: RunContext, payment_id: str, amount_cents: int) -> str:
+    # Use the tool-call ID as the idempotency key at the payment boundary.
+    assert ctx.tool_call_id is not None
+    if previous := completed_refunds.get(ctx.tool_call_id):
+        return previous
+    outcome = f'Refunded {amount_cents} cents from {payment_id}'
+    completed_refunds[ctx.tool_call_id] = outcome
+    return outcome
 
 
 async def request_refund() -> str:
@@ -41,15 +48,36 @@ async def request_refund() -> str:
 
 
 async def approve_refund(tool_call_id: str) -> None:
-    expected_call_id = Path('pending-call.txt').read_text()
-    if tool_call_id != expected_call_id:
-        raise ValueError('This tool call is not awaiting approval.')
+    # Creating this directory atomically claims the one pending approval.
+    claim = Path('refund-claim')
+    try:
+        claim.mkdir()
+    except FileExistsError:
+        raise ValueError('This approval is already being processed.') from None
 
-    history = ModelMessagesTypeAdapter.validate_json(Path('refund-history.json').read_bytes())
-    approvals = DeferredToolResults(approvals={tool_call_id: True})
-    result = await agent.run(message_history=history, deferred_tool_results=approvals)
-    print(result.output)
-    #> The $49.99 refund for payment pay_123 was completed.
+    pending = Path('pending-call.txt')
+    claimed = claim / 'pending-call.txt'
+    claimed_pending = False
+    try:
+        pending.replace(claimed)
+        claimed_pending = True
+        if tool_call_id != claimed.read_text():
+            raise ValueError('This tool call is not awaiting approval.')
+
+        history_path = Path('refund-history.json')
+        history = ModelMessagesTypeAdapter.validate_json(history_path.read_bytes())
+        approvals = DeferredToolResults(approvals={tool_call_id: True})
+        result = await agent.run(message_history=history, deferred_tool_results=approvals)
+        claimed.unlink()
+        history_path.unlink()
+        print(result.output)
+        #> The $49.99 refund for payment pay_123 was completed.
+    except Exception:
+        if claimed_pending and claimed.exists():
+            claimed.replace(pending)
+        raise
+    finally:
+        claim.rmdir()
 
 
 async def main() -> None:
@@ -66,7 +94,7 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-Store the pending call and history under an authenticated tenant and verify the submitted call ID against that server-side record. Authorization belongs in the tool as well; approval confirms intent but does not grant the caller new permissions.
+Store the pending call and history under an authenticated tenant, atomically claim the approval before resuming, and consume it after success. The in-memory dictionary illustrates the required idempotency key; use the tool-call ID with an atomic uniqueness constraint at the real payment boundary. Authorization belongs in the tool as well; approval confirms intent but does not grant the caller new permissions.
 
 ## Related
 

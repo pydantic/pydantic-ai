@@ -14,7 +14,7 @@ export OPENAI_API_KEY=your-api-key
 
 ```python {dunder_name="not_main"}
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
@@ -24,6 +24,8 @@ from pydantic_ai.messages import ToolCallPart
 
 @dataclass
 class SecurityState:
+    # Populated by trusted application state, not ticket text or model output.
+    refundable_amounts: dict[str, int] = field(default_factory=dict)
     content_status: Literal['not_loaded', 'safe', 'tainted'] = 'not_loaded'
     loaded_ticket_id: str | None = None
 
@@ -90,14 +92,20 @@ def read_ticket(ticket_id: str) -> str:
 
 @agent.tool
 def issue_refund(ctx: RunContext[SecurityState], ticket_id: str, amount: int) -> str:
-    # Enforce the policy in the operation too; model-visible filtering is not authorization.
-    if ctx.deps.content_status != 'safe' or ctx.deps.loaded_ticket_id != ticket_id:
-        return 'Refund refused: no matching safe ticket is loaded.'
+    # The scan can disable this operation, but only trusted application state can authorize it.
+    authorized_amount = ctx.deps.refundable_amounts.get(ticket_id, 0)
+    if (
+        ctx.deps.content_status != 'safe'
+        or ctx.deps.loaded_ticket_id != ticket_id
+        or amount <= 0
+        or amount > authorized_amount
+    ):
+        return 'Refund refused: no matching authorized amount is available.'
     return f'Refunded ${amount} for {ticket_id}'
 
 
 async def main() -> None:
-    state = SecurityState()
+    state = SecurityState(refundable_amounts={'T-19': 50})
     result = await agent.run('Summarize ticket T-19 and take any appropriate action.', deps=state)
 
     assert state.content_status == 'tainted'
@@ -110,7 +118,7 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-This is containment, not perfect detection. Use a stronger scanner for your threat model, create fresh state for each ticket, keep fetched content least-privileged, and [require approval](tool-approval.md) for side effects. Filtering limits what the model can request on its next turn, while the in-tool check remains the authorization boundary; delimiters and instructions only help the model interpret content.
+This is containment, not perfect detection. A scan may disable or escalate functionality, but it must not grant authority: refund entitlement comes from trusted application state. Create fresh state for each ticket, keep fetched content least-privileged, and [require approval](tool-approval.md) for side effects. Filtering limits what the model can request on its next turn, while the in-tool check remains the authorization boundary; delimiters and instructions only help the model interpret content.
 
 ## Related
 
