@@ -2445,7 +2445,7 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
 
     # `None` in an `output_type` list is not spelled out in the overloads, so the output type is named here;
     # it runs on every model.
-    agent: Agent[None, Ticket | None] = Agent(mock_model(record), output_type=[Ticket, None])  # type: ignore[arg-type]
+    agent: Agent[None, Ticket | None] = Agent(mock_model(record), output_type=[Ticket, None])
     result = await agent.run('Nothing here needs handling.')
 
     assert result.output is None
@@ -2634,7 +2634,7 @@ async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_m
 
     agent: Agent[None, Ticket | None] = Agent(
         mock_model(record),
-        output_type=[Ticket, None],  # type: ignore[arg-type]
+        output_type=[Ticket, None],
         tools=[refund],
     )
     result = await agent.run('Refund me maybe.')
@@ -2664,7 +2664,7 @@ async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_
     ]
     agent: Agent[None, str | None] = Agent(
         mock_model(unreachable),
-        output_type=[approve, None],  # type: ignore[arg-type]
+        output_type=[approve, None],
         tools=[refund],
     )
     result: AgentRunResult[str | None] = await agent.run(None, message_history=history)

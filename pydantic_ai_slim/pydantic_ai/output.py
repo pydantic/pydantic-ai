@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, Literal, overload
+from typing import Any, ClassVar, Generic, Literal, Protocol, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -64,6 +64,20 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+
+class _NoneOutput(Protocol[T_co]):
+    """The type of a bare `None` in a sequence of output types, as seen by a type checker.
+
+    `None` in `output_type=[Foo, None]` is a value, not a type, so `type[T]` cannot match it and would not add
+    `None` to the output type if it did. Matching `None` structurally binds `T` to `None` through `__class__`,
+    while `__bool__` returning `Literal[False]` keeps any other value out.
+    """
+
+    @property
+    def __class__(self) -> type[T_co]: ...  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    def __bool__(self) -> Literal[False]: ...
 
 
 TextOutputFunc = TypeAliasType(
@@ -179,7 +193,7 @@ class NativeOutput(Generic[OutputDataT]):
     ```
     """
 
-    outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]]
+    outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT]]
     """The output types or functions."""
     name: str | None
     """The name of the structured output that will be passed to the model. If not specified and only one output is provided, the name of the output type or function will be used."""
@@ -196,7 +210,8 @@ class NativeOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
@@ -253,7 +268,7 @@ class PromptedOutput(Generic[OutputDataT]):
     ```
     """
 
-    outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]]
+    outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT]]
     """The output types or functions."""
     name: str | None
     """The name of the structured output that will be passed to the model. If not specified and only one output is provided, the name of the output type or function will be used."""
@@ -268,7 +283,8 @@ class PromptedOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
@@ -666,12 +682,12 @@ _OutputSpecItem = TypeAliasType(
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
-    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co]'],
+    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co] | _NoneOutput[T_co]'],
     type_params=(T_co,),
 )
 """Specification of the agent's output data.
 
-This can be a single type, a function, a sequence of types and/or functions, or an instance of one of the output mode marker classes:
+This can be a single type, a function, a sequence of types and/or functions (which can include `None` to allow no output), or an instance of one of the output mode marker classes:
 - [`ToolOutput`][pydantic_ai.output.ToolOutput]
 - [`NativeOutput`][pydantic_ai.output.NativeOutput]
 - [`PromptedOutput`][pydantic_ai.output.PromptedOutput]

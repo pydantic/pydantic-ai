@@ -14,7 +14,7 @@ from typing_extensions import assert_type
 from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import PrepareTools, Thinking, WebSearch
-from pydantic_ai.output import Choice, Choices, StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.output import Choice, Choices, NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -238,6 +238,9 @@ MyUnion: TypeAlias = 'Foo | Bar'
 union_agent2: Agent[object, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
 assert_type(union_agent2, Agent[object, MyUnion])
 
+# `None` is only an output type alongside another one: on its own, it raises a `UserError`
+Agent(output_type=None)  # type: ignore[call-overload]
+
 structured_dict = StructuredDict(
     {
         'type': 'object',
@@ -333,6 +336,9 @@ if MYPY:
     two_scalars_output_agent = Agent[object, int | str](output_type=[int, str])
     assert_type(two_scalars_output_agent, Agent[object, int | str])
 
+    none_output_agent = Agent[object, Foo | Bar | None](output_type=[Foo, Bar, None])
+    assert_type(none_output_agent, Agent[object, Foo | Bar | None])
+
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
     complex_output_agent = Agent[object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]](
         output_type=[str, Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker, TextOutput(str_to_regex)]
@@ -360,6 +366,19 @@ else:
 
     two_scalars_output_agent = Agent(output_type=[int, str])
     assert_type(two_scalars_output_agent, Agent[object, int | str])
+
+    # `None` in a sequence of output types adds `None` to the output type, however the sequence is built
+    none_output_agent = Agent(output_type=[Foo, Bar, None])
+    assert_type(none_output_agent, Agent[object, Foo | Bar | None])
+    assert_type(none_output_agent.run_sync('x').output, Foo | Bar | None)
+    assert_type(Agent(output_type=[Foo, None]), Agent[object, Foo | None])
+    assert_type(Agent(output_type=[str, Foo, None]), Agent[object, str | Foo | None])
+    assert_type(Agent(output_type=[ToolOutput(Foo), None]), Agent[object, Foo | None])
+    assert_type(Agent(output_type=NativeOutput([Foo, None])), Agent[object, Foo | None])
+    assert_type(Agent(output_type=PromptedOutput([Foo, None])), Agent[object, Foo | None])
+    assert_type(Agent(output_type=[[Foo, None], Bar]), Agent[object, Foo | None | Bar])
+    assert_type(Agent(output_type=Foo | None), Agent[object, Foo | None])
+    assert_type(typed_agent.run_sync('x', deps=MyDeps(foo=1, bar=2), output_type=[Foo, None]).output, Foo | None)
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
     complex_output_agent = Agent(
