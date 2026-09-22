@@ -78,6 +78,12 @@ Until then, for that id: `ModelResponse.cost()` raises `LookupError`, `RunContex
 is `None`, and a `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end
 instead. Open the genai-prices PR alongside the model add and link the two.
 
+For OpenAI, compare the new price entry's `match` with adjacent model families. Their entries
+usually match both the base id and a strictly date-suffixed snapshot (`-YYYY-MM-DD`), so a later
+snapshot gets the same price and context data. Test both forms, including the canonical model id;
+this match rule does not add a speculative id to Pydantic AI's model-name literals. Its profile
+prefix should resolve the same capabilities for either form.
+
 ## Step 4 — SDK pin check
 
 Snapshot/enumeration tests in this repo often tie `KnownModelName` to a literal set defined in the provider SDK. **The provider SDK frequently lags the model release by days.**

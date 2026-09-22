@@ -164,8 +164,9 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
 prefix (e.g. `'gpt-5.3-chat'`) must be listed before the broader one it would otherwise match
 (e.g. `'gpt-5.3'`), and every newer family before the plain `'gpt-5'` catch-all.
 Models that don't match any prefix don't reason. Every cell was verified against the live
-Responses API (2026-07) except the GPT-6 family, which is pinned from its published model guide
-pending API access. The full resolved matrix is pinned in `tests/profiles/test_openai.py`."""
+Responses API (2026-07) except the GPT-6 family, which is pinned from its published model guide;
+Sol/Luna reasoning and tool requests were also verified live (2026-09). The full resolved matrix
+is pinned in `tests/profiles/test_openai.py`."""
 
 
 def _reasoning_support(model_name: str) -> _ReasoningSupport:

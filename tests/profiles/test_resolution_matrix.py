@@ -381,9 +381,12 @@ def test_openai_gpt_6_astra():
     )
 
 
-@pytest.mark.parametrize('model_name', ['gpt-6-sol', 'gpt-6-luna'])
+@pytest.mark.parametrize(
+    'model_name',
+    ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-sol-2026-09-22', 'gpt-6-luna-2026-09-22'],
+)
 def test_openai_gpt_6_sol_luna(model_name: str):
-    """Pin the published GPT-6 Sol/Luna capabilities until live API access is available."""
+    """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots."""
     from pydantic_ai.providers.openai import OpenAIProvider
 
     profile = OpenAIProvider.model_profile(model_name)
