@@ -4270,7 +4270,8 @@ def test_load_messages_legacy_binary_content(image_content: BinaryContent, docum
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(content=[document_content], timestamp=IsDatetime()),
-                ]
+                ],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg6'}},
             )
         ]
     )
@@ -4380,7 +4381,7 @@ async def test_messages() -> None:
                         timestamp=IsDatetime(),
                     ),
                 ],
-                metadata={'__pydantic_ai__': {'ui_message_id': 'msg6'}},
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_4'}},
             ),
             ModelResponse(
                 parts=[
