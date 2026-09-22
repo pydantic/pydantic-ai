@@ -364,10 +364,11 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-AnthropicModelName = LatestAnthropicModelNames
+AnthropicModelName = LatestAnthropicModelNames | Literal['claude-opus-5-5']
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
+`claude-opus-5-5` is listed locally until the `anthropic` floor is bumped to 1.8.0, the first release that includes it.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
@@ -411,8 +412,8 @@ AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 class AnthropicStaleThinkingBlockWarning(Warning):
     """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
 
-    Claude Fable 5.1 binds each thinking block to the conversation prefix that produced it and
-    rejects a replay once that prefix changes — which a dynamic
+    Claude Fable 5.1 and Claude Opus 5.5 bind each thinking block to the conversation prefix that
+    produced it and reject a replay once that prefix changes — which a dynamic
     [instructions][pydantic_ai.Agent.instructions] function and a
     [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
     check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
@@ -4147,7 +4148,7 @@ def _support_tool_forcing(
     """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
     Extended thinking rejects forcing (adaptive thinking does not), and some models
-    (Claude Fable 5.1, Claude Mythos 5.1) reject it unconditionally.
+    (Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5) reject it unconditionally.
     We only raise an error if the user explicitly set a forcing value; a forcing value that came
     from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use

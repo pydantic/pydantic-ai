@@ -986,6 +986,7 @@ async def test_anthropic_single_tool_forcing_under_unified_thinking(
 NO_FORCING_ANTHROPIC_MODELS = [
     'claude-fable-5-1',
     'claude-mythos-5-1',
+    'claude-opus-5-5',
 ]
 
 
