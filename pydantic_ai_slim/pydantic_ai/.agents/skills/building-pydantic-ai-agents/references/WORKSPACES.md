@@ -19,8 +19,11 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
 `working_dir` is only the default directory and the base for relative paths, not a jail. Use it only
 for trusted work. `working_dir` is required and must be absolute (a leading `~` is expanded); the
 caller owns that directory. `read_only=True` wraps it in `ReadOnlyWorkspace`. It has the default id
-`local_workspace`, so a second one replaces the first unless it gets its own `id`, and it never
-claims a `WorkspaceRef`. For a single run, pass the backend instead:
+`local_workspace`, so a second one replaces the first unless it gets its own `id`. Its ref is
+`WorkspaceRef(provider='local', id=<working_dir, ~ expanded>)`, and the capability claims only that
+exact ref: a foreign ref, or a local ref for another directory, gets `None`, so message history
+cannot redirect the agent to another host directory (pass `workspace='new'` to start over in the
+configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('/absolute/path'))`.
 Without an attached workspace, operations raise `UserError`. `Workspace` offers the same run,
 file, and bounded-read methods for every backend; wrappers can override primitives and

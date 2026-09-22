@@ -13,7 +13,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, WorkspaceRef
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, UnavailableWorkspace, WorkspaceRef
 
 from .workspace_fakes import ConnectOnlyWorkspaceCapability, FakeWorkspace, WorkspaceCapability
 
@@ -96,7 +96,6 @@ async def test_first_workspace_capability_wins(tmp_path: Path, local_first: bool
 
 @pytest.mark.parametrize('source', ['explicit', 'history'])
 async def test_foreign_ref_is_declined_so_a_later_capability_can_claim_it(tmp_path: Path, source: str) -> None:
-    """A local workspace has no ref of its own, so any ref belongs to another provider."""
     provider = ConnectOnlyWorkspaceCapability()
     agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path), provider])
     ref = WorkspaceRef(provider='fake', id='remote')
@@ -115,6 +114,45 @@ async def test_foreign_ref_without_another_capability_raises(tmp_path: Path) -> 
 
     with pytest.raises(UserError, match="No capability can supply workspace 'remote'"):
         await agent.run('go', workspace=WorkspaceRef(provider='fake', id='remote'))
+
+
+async def test_responses_carry_the_local_ref_and_the_next_run_continues_in_the_same_directory(tmp_path: Path) -> None:
+    ref = WorkspaceRef(provider='local', id=str(tmp_path))
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path)])
+
+    first = await agent.run('go')
+    second = await agent.run('again', message_history=first.all_messages())
+
+    assert [m.workspace_ref for m in second.all_messages() if isinstance(m, ModelResponse)] == [ref, ref]
+    assert isinstance(second.workspace.backend, LocalWorkspaceBackend)
+    assert second.workspace.ref == ref
+
+
+async def test_own_ref_is_claimed_whatever_the_spelling_of_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv('HOME', str(tmp_path))
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace('~/project')])
+
+    result = await agent.run('go', workspace=WorkspaceRef(provider='local', id=f'{tmp_path}/project'))
+
+    assert isinstance(result.workspace.backend, LocalWorkspaceBackend)
+
+
+async def test_local_ref_for_another_directory_is_never_followed(tmp_path: Path) -> None:
+    """A ref in message history must not be able to point the agent at an arbitrary host directory."""
+    elsewhere = WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere'))
+    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=elsewhere)
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path / 'configured')])
+
+    with pytest.raises(UserError, match='No capability can supply workspace'):
+        await agent.run('go', workspace=elsewhere)
+
+    continued = await agent.run('go', message_history=[historical])
+    assert isinstance(continued.workspace.backend, UnavailableWorkspace)
+
+    fresh = await agent.run('go', message_history=[historical], workspace='new')
+    assert fresh.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path / 'configured'))
 
 
 async def test_new_workspace_ignores_a_foreign_ref_in_history(tmp_path: Path) -> None:

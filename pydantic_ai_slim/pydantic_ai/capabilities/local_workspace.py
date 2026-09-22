@@ -25,10 +25,12 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     ```
 
     Each run gets a [`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend] for
-    `working_dir`. A local workspace has no [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef],
-    so this capability never claims one: list it after the capabilities of providers whose
-    environments the agent should be able to continue in, and it supplies the workspace when there is
-    no reference to continue from.
+    `working_dir`, whose [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is
+    `WorkspaceRef(provider='local', id=<working_dir>)`. This capability supplies the workspace when
+    there is no reference to continue from, or when the reference names its own `working_dir`. It
+    declines every other reference, including a local one for a different directory, so a reference
+    in message history cannot point the agent at an arbitrary directory on the host. Other workspace
+    capabilities can be listed before or after it to continue in their providers' environments.
     """
 
     working_dir: str | Path
@@ -62,7 +64,9 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         LocalWorkspaceBackend(self.working_dir)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        if ref is not None:
-            return None
         backend = LocalWorkspaceBackend(self.working_dir)
+        if ref is not None and ref != backend.ref:
+            # Another provider's environment, or a local directory other than the configured one:
+            # a ref from message history must never redirect the agent to an arbitrary host directory.
+            return None
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend

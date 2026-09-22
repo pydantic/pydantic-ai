@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -2703,10 +2704,16 @@ def _workspace_context(workspace: Workspace) -> RunContext[None]:
     return RunContext(deps=None, model=TestModel(), usage=RunUsage(), workspace=workspace)
 
 
-def test_temporal_run_context_omits_ref_for_local_workspace():
-    workspace = Workspace(LocalWorkspaceBackend(os.getcwd()))
+def test_temporal_run_context_omits_ref_until_the_workspace_has_one():
+    workspace = Workspace(FakeWorkspace('not-created-yet'))
     serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
     assert 'workspace_ref' not in serialized
+
+
+def test_temporal_run_context_serializes_the_local_workspace_ref(tmp_path: Path):
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert serialized['workspace_ref'] == WorkspaceRef(provider='local', id=str(tmp_path))
 
 
 async def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():

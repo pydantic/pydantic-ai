@@ -24,6 +24,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceRef,
     WorkspaceTimeoutError,
 )
 
@@ -91,7 +92,23 @@ async def test_local_workspace_conforms_to_the_protocol(tmp_path: Path):
     assert isinstance(workspace, WorkspaceBackend)
     assert isinstance(workspace, SupportsFilesystem)
     typed: WorkspaceBackend = workspace  # static conformance, checked because tests are type-checked
-    assert typed.ref is None
+    assert typed.ref == WorkspaceRef(provider='local', id=str(tmp_path))
+
+
+async def test_ref_names_the_configured_working_dir_without_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The ref is the `~`-expanded spelling the backend was given, available before any operation.
+
+    Symlinks are not resolved for it, unlike `working_dir()`, because reading a ref does no I/O.
+    """
+    monkeypatch.setenv('HOME', str(tmp_path))
+    (tmp_path / 'target').mkdir()
+    (tmp_path / 'link').symlink_to(tmp_path / 'target')
+
+    workspace = LocalWorkspaceBackend('~/link/')
+
+    assert workspace.ref == WorkspaceRef(provider='local', id=f'{tmp_path}/link')
+    assert await workspace.working_dir() == str((tmp_path / 'target').resolve())
+    assert workspace.ref == WorkspaceRef(provider='local', id=f'{tmp_path}/link')
 
 
 @pytest.mark.parametrize('operation', ['working_dir', 'cwd', 'fs'])

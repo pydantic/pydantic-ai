@@ -335,7 +335,7 @@ async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_
     payload = bytes(range(256)) * 800
     filename = "nested/weird '\n blob.bin"
 
-    assert backend.ref is None
+    assert backend.ref == WorkspaceRef(provider='local', id=str(tmp_path))
     await workspace.write_bytes(filename, payload)
 
     assert await workspace.read_bytes(filename) == payload
@@ -971,7 +971,8 @@ async def test_explicit_workspace_facade_wins_over_historical_ref_without_mutati
         await result.workspace.run(['true'])
 
 
-async def test_latest_none_workspace_ref_suppresses_an_older_historical_ref(tmp_path: Path) -> None:
+async def test_latest_none_workspace_ref_suppresses_an_older_historical_ref() -> None:
+    """A backend that has no environment yet stamps `None`, which is newer than the older ref."""
     seen: list[WorkspaceRef | None] = []
 
     class HistoryCapability(AbstractCapability[Any]):
@@ -982,7 +983,7 @@ async def test_latest_none_workspace_ref_suppresses_an_older_historical_ref(tmp_
     agent = Agent(TestModel(custom_output_text='done'), deps_type=type(None), capabilities=[HistoryCapability()])
 
     older = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='fake', id='old'))
-    first = await agent.run('first', message_history=[older], workspace=LocalWorkspaceBackend(tmp_path))
+    first = await agent.run('first', message_history=[older], workspace=FakeWorkspace('not-created-yet'))
     await agent.run('new', message_history=first.all_messages())
 
     assert seen == [None]

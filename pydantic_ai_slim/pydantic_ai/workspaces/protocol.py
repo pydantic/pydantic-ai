@@ -275,9 +275,11 @@ class WorkspaceBackend(Protocol):
     def ref(self) -> WorkspaceRef | None:
         """Identity of the environment this backend is bound to, or `None` before it has one.
 
-        A backend built to attach to an existing remote environment reports its ref straight away.
-        A backend that creates a fresh environment reports `None` until its provider assigns an
-        identity. Local and other non-reconnectable backends may remain `None` for their lifetime.
+        `None` means only that there is no environment yet. A backend built to attach to an existing
+        environment, or whose identity is known from its configuration (such as a local directory),
+        reports its ref straight away. A backend that creates a fresh environment reports `None`
+        until its provider assigns an identity, and a ref from then on. Every ref names its
+        `provider`, so an identity always says where it came from.
         """
         ...
 

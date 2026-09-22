@@ -180,10 +180,14 @@ selected workspace.
 
 `get_workspace` is synchronous and must have no side effects.
 
-[`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] never claims a reference, because a
-local workspace has none. List it after provider capabilities to make it the fallback when there is
-no environment to continue in. To supply workspaces from your own capability, implement
-`get_workspace`; see [Durable execution](#durable-execution) for an example.
+A local workspace's reference is `WorkspaceRef(provider='local', id=...)`, where `id` is its
+`working_dir` with `~` expanded, so responses from a local run record which directory they worked
+in. [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] claims that reference only when it
+names its own `working_dir`, which is how a run continued from message history lands in the same
+directory. It declines a local reference for any other directory, so message history can never point
+the agent at an arbitrary directory on the host; that run gets no workspace unless you pass
+`workspace='new'`. To supply workspaces from your own capability, implement `get_workspace`; see
+[Durable execution](#durable-execution) for an example.
 
 To disable workspace access explicitly, pass an
 [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace] as `workspace=`:

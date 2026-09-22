@@ -30,6 +30,7 @@ from .protocol import (
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
+    WorkspaceRef,
     WorkspaceTimeoutError,
 )
 
@@ -98,10 +99,17 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             )
         self._working_dir = expanded
         self._canonical_working_dir: Path | None = None
+        self._ref = WorkspaceRef(provider='local', id=expanded.as_posix())
 
     @property
-    def ref(self) -> None:
-        return None
+    def ref(self) -> WorkspaceRef:
+        """`WorkspaceRef(provider='local', id=...)` naming `working_dir` as given, with `~` expanded.
+
+        It is available from construction and involves no I/O, so symlinks are not resolved: it
+        says which directory on this host the workspace was configured with, and means nothing on
+        another machine.
+        """
+        return self._ref
 
     async def _get_working_dir(self) -> Path:
         if self._canonical_working_dir is None:
