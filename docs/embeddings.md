@@ -655,7 +655,10 @@ Set [`bedrock_inference_profile`][pydantic_ai.embeddings.bedrock.BedrockEmbeddin
 
 ```python {title="bedrock_inference_profile.py"}
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.embeddings.bedrock import (
+    BedrockEmbeddingModel,
+    BedrockEmbeddingSettings,
+)
 from pydantic_ai.providers.bedrock import BedrockProvider
 
 provider = BedrockProvider(region_name='us-east-1')
@@ -663,9 +666,9 @@ provider = BedrockProvider(region_name='us-east-1')
 model = BedrockEmbeddingModel(
     'amazon.titan-embed-text-v2:0',
     provider=provider,
-    settings={
-        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
-    },
+    settings=BedrockEmbeddingSettings(
+        bedrock_inference_profile='arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
+    ),
 )
 embedder = Embedder(model)
 ```

@@ -471,9 +471,10 @@ Test queries incrementally:
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
+from pydantic_evals.otel import SpanQuery
 
 # Start simple
-query = {'name_contains': 'tool'}
+query: SpanQuery = {'name_contains': 'tool'}
 
 # Add conditions gradually
 query = {'and_': [

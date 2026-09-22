@@ -437,11 +437,13 @@ agent = Agent('google:gemini-3.7-flash', capabilities=[Thinking(effort='medium')
 For advanced usage, you can pass Google's native thinking config through [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config]:
 
 ```python
+from google.genai.types import ThinkingLevel
+
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 model = GoogleModel('gemini-3.7-flash')
-model_settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': 'MEDIUM'})
+model_settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': ThinkingLevel.MEDIUM})
 agent = Agent(model, model_settings=model_settings)
 ...
 ```

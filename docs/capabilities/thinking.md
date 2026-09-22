@@ -167,11 +167,13 @@ Thinking tokens count against Anthropic's loop-wide [task budgets](../models/ant
 For advanced usage, use the [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config] [model setting](../agent.md#model-run-settings).
 
 ```python {title="google_thinking_part.py"}
+from google.genai.types import ThinkingLevel
+
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 model = GoogleModel('gemini-3.5-flash')
-settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': 'MEDIUM'})
+settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': ThinkingLevel.MEDIUM})
 agent = Agent(model, model_settings=settings)
 ...
 ```
