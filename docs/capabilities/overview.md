@@ -110,7 +110,6 @@ Bounding what the agent may do, and keeping it on-instructions.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Repair Tool Arguments](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/) | Harness | Repair malformed JSON tool arguments before schema validation |
 | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
 | [Prompt Injection Defender](https://pydantic.dev/docs/ai/harness/prompt-injection-defender/) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
 | [Spend Limits](https://pydantic.dev/docs/ai/harness/spend/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
@@ -137,6 +136,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Step Persistence](https://pydantic.dev/docs/ai/harness/step-persistence/) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Instrumentation](instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Managed Prompt](https://pydantic.dev/docs/ai/harness/managed-prompt/) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
+| [Repair Tool Arguments](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/) | Harness | Repair malformed JSON tool arguments before schema validation |
 | [Thread Executor](thread-executor.md) | Core | Run sync tools on a shared thread pool |
 
 ### Loop customization
