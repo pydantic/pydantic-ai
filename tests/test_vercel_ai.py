@@ -6840,13 +6840,13 @@ async def test_adapter_load_dump_preserves_ui_message_id():
     assert custom.id == 'custom-0'
 
 
-async def test_adapter_load_dump_ui_message_id_follows_message_metadata():
-    """A merged or split `UIMessage` keeps its id where its metadata lands.
+async def test_adapter_load_dump_ui_message_id_on_merged_and_split_messages():
+    """A `UIMessage.id` is kept per `ModelMessage`, so it follows how messages merge and split.
 
-    A system + user pair merges into one `ModelRequest`, so the id is restored on the trailing user
-    `UIMessage`. An assistant message with a tool call followed by text splits into two
-    `ModelResponse`s, so the id is restored on the leading assistant `UIMessage`. The other
-    `UIMessage` in each pair keeps a generated id.
+    A system + user pair merges into one `ModelRequest`, which keeps the last id written and dumps it
+    on both `UIMessage`s, as the `run_id` derived id already does for a split request. An assistant
+    message with a tool call followed by text splits into two `ModelResponse`s, so its id is kept on
+    the leading one and the trailing `UIMessage` gets a generated id.
     """
     ui_messages = [
         UIMessage(id='sys-1', role='system', parts=[TextUIPart(text='Be brief.')]),
@@ -6870,13 +6870,12 @@ async def test_adapter_load_dump_ui_message_id_follows_message_metadata():
     dumped = VercelAIAdapter.dump_messages(VercelAIAdapter.load_messages(ui_messages))
 
     assert [(m.role, m.id) for m in dumped] == [
-        ('system', IsStr()),
+        ('system', 'usr-1'),
         ('user', 'usr-1'),
         ('assistant', 'asst-1'),
         ('assistant', IsStr()),
     ]
-    for generated in (dumped[0].id, dumped[3].id):
-        uuid.UUID(generated)
+    uuid.UUID(dumped[3].id)
 
 
 async def test_event_stream_server_message_id():

@@ -171,26 +171,21 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
         message.timestamp = pydantic_metadata.timestamp
 
 
-def store_ui_message_id(message: ModelMessage, ui_message_id: str) -> None:
-    """Keep the inbound `UIMessage.id` on `message` so `dump_messages` can restore it.
+def set_ui_message_id(message: ModelMessage, ui_message_id: str) -> None:
+    """Keep the `UIMessage.id` that `message` was loaded from, for `get_ui_message_id` to restore.
 
-    It lives under the reserved `__pydantic_ai__` namespace, which `dump_message_metadata` never
-    writes to `UIMessage.metadata` and `apply_message_metadata` never reads from it, so the only
-    way the id gets back to the client is as `UIMessage.id`.
+    It lives under the reserved `__pydantic_ai__` namespace, which never crosses into `UIMessage.metadata`.
     """
     metadata = message.metadata or {}
     namespace = metadata.get(_INTERNAL_METADATA_KEY)
     message.metadata = {
         **metadata,
-        _INTERNAL_METADATA_KEY: {
-            **(namespace if is_str_dict(namespace) else {}),
-            _UI_MESSAGE_ID_KEY: ui_message_id,
-        },
+        _INTERNAL_METADATA_KEY: {**(namespace if is_str_dict(namespace) else {}), _UI_MESSAGE_ID_KEY: ui_message_id},
     }
 
 
-def stored_ui_message_id(message: ModelMessage) -> str | None:
-    """Return the `UIMessage.id` kept by `store_ui_message_id`, if any."""
+def get_ui_message_id(message: ModelMessage) -> str | None:
+    """Return the `UIMessage.id` kept by `set_ui_message_id`, if any."""
     namespace = (message.metadata or {}).get(_INTERNAL_METADATA_KEY)
     ui_message_id = namespace.get(_UI_MESSAGE_ID_KEY) if is_str_dict(namespace) else None
     return ui_message_id if isinstance(ui_message_id, str) else None
