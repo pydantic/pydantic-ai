@@ -43,12 +43,10 @@ These recipes form a progressive introduction to the core agent loop:
 
 ## Go further with Pydantic AI Harness
 
-For longer-running agents that need several Harness capabilities to work together, use these tested application examples:
+These recipes compose several Harness capabilities for longer-running agents. Their agents are constructed in this documentation suite, while their deterministic end-to-end behavior is tested in the Harness repository.
 
-- [Keep a tool-heavy run within its context window](https://pydantic.dev/docs/ai/harness/examples/#keep-a-tool-heavy-run-within-its-context-window)
-- [Keep host secrets out of a coding agent](https://pydantic.dev/docs/ai/harness/examples/#keep-host-secrets-out-of-a-coding-agent)
-- [Recover a partially applied migration](https://pydantic.dev/docs/ai/harness/examples/#recover-a-partially-applied-migration)
+- [Keep a tool-heavy run within its context window](manage-long-context.md)
+- [Keep host secrets out of a coding agent](protect-coding-agent-secrets.md)
+- [Recover a partially applied file migration](recover-file-migration.md)
 
-These examples live in the Pydantic AI Harness repository so their capability imports and composition tests run against the package that owns them.
-
-Each core recipe recommends one bounded pattern. It deliberately links to the relevant guide or Harness example instead of duplicating every configuration option or provider variation.
+Each recipe recommends one bounded pattern. It deliberately links to the relevant guide instead of duplicating every configuration option or provider variation.

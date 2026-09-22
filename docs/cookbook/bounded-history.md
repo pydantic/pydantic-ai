@@ -59,4 +59,4 @@ A history processor replaces the history inside that run. Extending a separately
 
 ## Related
 
-See [Process History](../capabilities/process-history.md) for safe trimming rules and summarization options. For long tool-using runs, see the Harness example for [keeping a tool-heavy run within its context window](https://pydantic.dev/docs/ai/harness/examples/#keep-a-tool-heavy-run-within-its-context-window).
+See [Process History](../capabilities/process-history.md) for safe trimming rules and summarization options. For long tool-using runs, see [Keep a tool-heavy run within its context window](manage-long-context.md).

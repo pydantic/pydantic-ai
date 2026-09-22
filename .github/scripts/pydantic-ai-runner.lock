@@ -14,6 +14,7 @@ exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 listentome = false
+typesafe-sdk = false
 logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
@@ -22,13 +23,14 @@ anthropic = "2026-09-01T17:37:11Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
+openai = "2026-09-03T19:51:09Z"
 logfire-api = false
 
 [manifest]
 requirements = [
     { name = "logfire" },
     { name = "opentelemetry-instrumentation-httpx" },
-    { name = "pydantic-ai-harness", specifier = "==0.7.0" },
+    { name = "pydantic-ai-harness", specifier = "==0.31.0" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "mcp"], directory = "../../pydantic_ai_slim" },
 ]
 
@@ -1106,15 +1108,16 @@ email = [
 
 [[package]]
 name = "pydantic-ai-harness"
-version = "0.7.0"
+version = "0.31.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "genai-prices" },
     { name = "httpx" },
     { name = "pydantic-ai-slim" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/a9/43f9f227bc8e8bb821e491bd9a3681e92aa11e60e7ee6e5589928efa7708/pydantic_ai_harness-0.7.0.tar.gz", hash = "sha256:b0255a347c346696f951cedef6e9664a04ce6672afe9cf4736435cc9c705a2ab", size = 1020449, upload-time = "2026-07-14T03:01:46.136Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/00/cebf7d148d1a1250645e06a4bbf09dc5d3754ec141fdb6cfbf00c6bdad50/pydantic_ai_harness-0.31.0.tar.gz", hash = "sha256:a8763f3bfa62a2c261c4c753270cd14ae774e7941a2e7184da3b776ac46db2be", size = 2608680, upload-time = "2026-09-12T01:07:06.526Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/27/2dd853791bbcc9ce687c072a81adfde16576bb99aebd426c27f40812d3bd/pydantic_ai_harness-0.7.0-py3-none-any.whl", hash = "sha256:1895d7ac1fa101621294505387bccdceedd1e1b67b1caaa7777e7a7d0a4de8b7", size = 313712, upload-time = "2026-07-14T03:01:44.204Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/1d/57f35d88568b9e463cf85cb04b56bbaa490072ac97090333dea314f12e91/pydantic_ai_harness-0.31.0-py3-none-any.whl", hash = "sha256:80ba336ad0c9fc2e38b90b1dbe729f7c51e4ffd7ee71ce6c1c470f25f03c3414", size = 823313, upload-time = "2026-09-12T01:07:04.722Z" },
 ]
 
 [[package]]
@@ -1167,15 +1170,15 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.9.2" },
-    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.0.0" },
-    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.0.0" },
-    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.0.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.0.0" },
-    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.0.0" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.0.0" },
-    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.0.0" },
-    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.0.0" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.0.0" },
+    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.8.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
@@ -1193,11 +1196,12 @@ requires-dist = [
     { name = "starlette", marker = "extra == 'ui'", specifier = ">=0.46.2" },
     { name = "starlette", marker = "extra == 'web'", specifier = ">=1.3.1" },
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
-    { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.24.0" },
+    { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.27.0" },
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai-realtime'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'xai-realtime'", specifier = ">=0.12.0" },
+    { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.6.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
@@ -1205,10 +1209,10 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'openai-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'xai-realtime'", specifier = ">=14.0" },
-    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
-    { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.14.0" },
+    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
+    { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.16.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-core"

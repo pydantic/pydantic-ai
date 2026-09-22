@@ -11,7 +11,7 @@ install: .uv ## Install the package, dependencies, and pre-commit for local deve
 	# harness is kept out of the lock (its pydantic-ai-slim dep collides with the
 	# workspace member under lowest-direct), so install it out-of-band; --no-deps
 	# because pydantic-ai-slim is already present. See .github/workflows/ci.yml.
-	uv pip install --no-deps "pydantic-ai-harness==0.7.0"
+	uv pip install --no-deps "pydantic-ai-harness==0.31.0"
 	@if command -v pre-commit >/dev/null 2>&1; then \
 		pre-commit install --install-hooks; \
 	else \

@@ -867,6 +867,18 @@ navigation:
           - page: "Authorize a refund during a realtime call"
             path: "cookbook/realtime-refund-policy.md"
             slug: "cookbook/realtime-refund-policy"
+      - section: "Pydantic AI Harness"
+        slug: ""
+        contents:
+          - page: "Keep a tool-heavy run within its context window"
+            path: "cookbook/manage-long-context.md"
+            slug: "cookbook/manage-long-context"
+          - page: "Keep host secrets out of a coding agent"
+            path: "cookbook/protect-coding-agent-secrets.md"
+            slug: "cookbook/protect-coding-agent-secrets"
+          - page: "Recover a partially applied file migration"
+            path: "cookbook/recover-file-migration.md"
+            slug: "cookbook/recover-file-migration"
   - section: "Examples"
     slug: ""
     contents:
