@@ -154,7 +154,7 @@ Each field of the output type is a question, and all of them go out in a single 
 |---|---|---|
 | `bool`, or `Literal[True, False]` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
-| `float` with `ge=0` and an upper bound | the probability of yes | Jev's probability, unrounded, in the field's own units |
+| `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | Jev's probability, unrounded, in the field's own units |
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
 | `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer |
@@ -760,6 +760,8 @@ result = agent.run_sync('The onboarding wizard is stuck; please move it on.')
 print(result.output)
 #> urgent=False
 ```
+
+An `Args:` entry describes the *argument*, not its options: a `Literal` argument's options go out named and nothing more, the same as [a `Literal` output field](#where-the-wording-comes-from). Where the difference between two of them needs explaining, make the argument an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] with a docstring under each member, or a [`Choices`][pydantic_ai.output.Choices] set built from a mapping of option to meaning — either puts a description on each option in the schema, which is what Jev weighs them by. `Choices` built from a bare sequence of names describes nothing, and leaves Jev weighing the names alone like a `Literal` does.
 
 The response sums the input and output tokens from both calls, but [`RequestUsage.requests`][pydantic_ai.usage.RequestUsage.requests] is fixed at one request per model step and cannot carry the real count, so `provider_details['requests']` is `2` when Jev chose and then filled.
 

@@ -264,6 +264,53 @@ def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
     raise AssertionError('a refused output type must not reach a request')
 
 
+# The refused rows that every other model takes. Being here is not a bug — Jev answers questions rather than
+# writing values, and most of these are things only a model that writes can do. It is a list to decide against
+# on purpose: `None` as a route was on it, and was worth closing. Anything joining it is worth the same look.
+GAPS = [
+    'field: IntEnum of codes',
+    'field: None | None',
+    'field: bounded int',
+    'field: list with a size limit',
+    'field: list | None',
+    'field: mapping of anything',
+    'field: mapping of free keys',
+    'field: model | None',
+    'field: pick-one of ints',
+    'field: pick-one of mixed types',
+    'field: pick-one of one option',
+    'field: stepped number',
+    'field: tuple of pick-ones',
+    'field: union of models',
+    'list of models',
+    'mapping of text',
+    'pick-one | None',
+    'union with a pick-one',
+]
+
+
+async def test_which_refusals_are_gaps_with_the_rest_of_the_library(allow_model_requests: None):
+    """Which refusals above are Jev's own limits, and which are output types every other model takes.
+
+    The table says what Jev does. It cannot say whether a refusal is a deliberate limit or a hole, and the two
+    look identical in it — which is why `None` as a route sat here looking like the first kind. Running each
+    refused type against a model with no such limits separates them: a row that answers there is a gap with
+    the rest of the library, and a row that does not is Jev's own.
+
+    A row moving between the two lists is the point of this test. Adding a refusal the rest of the library
+    accepts is a decision worth making on purpose rather than noticing later.
+    """
+    gaps: list[str] = []
+    for case in REFUSED:
+        try:
+            await Agent(TestModel(), output_type=case.output_type).run('anything')
+        except Exception:
+            continue
+        gaps.append(case.id)
+
+    assert sorted(gaps) == GAPS
+
+
 @pytest.mark.parametrize('behind_a_model', [False, True], ids=['jev alone', 'with a model behind it'])
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REFUSED])
 async def test_a_refused_output_type_costs_no_request(allow_model_requests: None, case: Refused, behind_a_model: bool):
