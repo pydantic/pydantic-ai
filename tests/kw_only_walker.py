@@ -14,6 +14,7 @@ import dataclasses
 import importlib
 import inspect
 import pkgutil
+from typing import Any
 
 import pytest
 from coverage import Coverage
@@ -102,4 +103,16 @@ def public_dataclasses() -> dict[str, list[str]]:
         return {'offenders': sorted(offenders), 'skipped': sorted(skipped), 'unreadable': sorted(unreadable)}
     finally:
         if collector is not None:
+            # Pausing frees the tracer's `sys.monitoring` tool id (the default core on Python 3.12+),
+            # dropping the per-code-object events it had installed. Resuming reinstalls them lazily,
+            # but only for code objects the tracer hasn't seen yet, so every function that already
+            # ran stays unmonitored for the rest of the process: lines it reaches for the first time
+            # after the walk are silently reported as uncovered. Dropping the tracer's per-code cache
+            # makes it re-arm each code object on its next call. Cleared before resuming, while the
+            # tracer is still detached: clearing afterwards could drop an entry a callback had just
+            # installed, and coverage's line callback looks entries up without a fallback.
+            for tracer in collector.tracers:
+                code_infos: dict[int, Any] | None = getattr(tracer, 'code_infos', None)
+                if code_infos is not None:
+                    code_infos.clear()
             collector.resume()

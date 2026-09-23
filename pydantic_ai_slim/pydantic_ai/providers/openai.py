@@ -26,7 +26,13 @@ from ._openai_compatible import (
 
 
 class OpenAIProvider(_OpenAICompatibleProvider):
-    """Provider for OpenAI API."""
+    """Provider for OpenAI API.
+
+    Changing `base_url` does not change the OpenAI model profile selection. For another service,
+    use its dedicated provider when available. For a custom gateway, subclass this provider and
+    override `model_profile`, or configure the model's `profile` explicitly.
+    See [OpenAI-compatible models](https://pydantic.dev/docs/ai/models/openai/#openai-compatible-models).
+    """
 
     @property
     def name(self) -> str:

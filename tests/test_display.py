@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import importlib.util
 import os
 import signal
@@ -22,12 +23,21 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
 from ._inline_snapshot import snapshot
+from .conftest import try_import
 from .continuation_utils import ScriptedContinuationModel, scripted_response
+
+with try_import() as imports_successful:
+    # What it takes to build a terminal of a known width, which only a POSIX platform has.
+    import fcntl
+    import struct
+    import termios
 
 _find_spec = importlib.util.find_spec
 
 
 _CODING_AGENTS = _display._CODING_AGENTS  # pyright: ignore[reportPrivateUsage]
+_MIN_TEXT_WIDTH = _display._MIN_TEXT_WIDTH  # pyright: ignore[reportPrivateUsage]
+_MIN_WIDTH_FOR_LOGO = _display._MIN_WIDTH_FOR_LOGO  # pyright: ignore[reportPrivateUsage]
 
 
 def _agent_env_vars_in_scope() -> set[str]:
@@ -77,6 +87,8 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     # This suite is the one place a test run may show a banner, and the only place that decides
     # whether an agent is watching — the agent running the suite doesn't get to answer that.
     monkeypatch.delenv('PYTEST_VERSION', raising=False)
+    # Left in place, the width of the pane the suite happens to run in would decide the layout.
+    monkeypatch.delenv('COLUMNS', raising=False)
     for agent_var in _agent_env_vars_in_scope():
         monkeypatch.delenv(agent_var, raising=False)
     # Colour is asserted on its own; everywhere else it would only obscure what's being asserted.
@@ -247,20 +259,92 @@ def test_render_banner_leaves_out_a_tool_count_the_caller_could_not_take(render:
     assert 'tools' not in banner
 
 
-def test_the_observability_links_each_survive_on_one_line():
+def test_the_observability_links_each_survive_on_one_line(render: Callable[..., str]):
     """A URL `textwrap` splits stops being clickable, which is the only reason it's in the banner."""
-    lines = _display._observability_lines()  # pyright: ignore[reportPrivateUsage]
+    lines = _display._observability_lines(_MIN_TEXT_WIDTH)  # pyright: ignore[reportPrivateUsage]
     urls = [word for line in lines for word in line.split() if word.startswith('http')]
 
     assert urls == snapshot(['https://pydantic.dev/ai-setup.md', 'https://pydantic.dev/docs/ai/logfire/#otel'])
-    # One line per link: a wrapped URL would leave its tail on a line of its own.
-    assert [line for line in lines if 'http' in line] == snapshot(
-        [
-            '  set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md',
-            '  or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel',
-        ]
-    )
-    assert max(map(len, lines)) <= _display._TEXT_WIDTH  # pyright: ignore[reportPrivateUsage]
+    assert max(map(len, lines)) <= _MIN_TEXT_WIDTH
+    # Whole, on one line, at every width the banner lays itself out for — which is the whole job of
+    # a floor under the text column measured from the copy rather than written down beside it.
+    for width in range(_MIN_TEXT_WIDTH, 121):
+        rendered = render(width=width).splitlines()
+        for url in urls:
+            assert sum(url in line for line in rendered) == 1, f'{url} was broken at {width} columns'
+
+
+def test_the_narrowest_widths_the_banner_lays_itself_out_in():
+    """Pinned so that rewording a line into a longer one shows up as the cost in room that it is."""
+    assert (_MIN_TEXT_WIDTH, _MIN_WIDTH_FOR_LOGO) == snapshot((44, 61))
+
+
+def test_render_banner_wraps_the_text_column_to_a_narrow_terminal(render: Callable[..., str]):
+    """80 columns is what a split `tmux` pane leaves, and the logo stays where it is beside it."""
+    banner = render(width=80)
+
+    assert banner == snapshot("""\
+                 HEADING
+
+                 agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
+      / \\          capabilities: 0
+     /   \\
+   /___.___\\     observability: off — see every model and tool call live, with
+  /    |    \\      cost
+/      |      \\    set it up free with Logfire and a GitHub login:
+`---.._|_..---'    https://pydantic.dev/ai-setup.md
+                   or use any OpenTelemetry backend:
+                   https://pydantic.dev/docs/ai/logfire/#otel
+
+                 goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
+""")
+    assert max(map(len, banner.splitlines())) <= 80
+
+
+def test_render_banner_drops_the_logo_for_a_terminal_with_no_room_for_both(render: Callable[..., str]):
+    """Under the floor the words get the whole width: the logo is what the reader can spare."""
+    banner = render(width=_MIN_WIDTH_FOR_LOGO - 1)
+
+    assert banner == snapshot("""\
+HEADING
+
+agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
+  capabilities: 0
+
+observability: off — see every model and tool call live,
+  with cost
+  set it up free with Logfire and a GitHub login:
+  https://pydantic.dev/ai-setup.md
+  or use any OpenTelemetry backend:
+  https://pydantic.dev/docs/ai/logfire/#otel
+
+goes away once observability is on — or
+  PYDANTIC_AI_NO_BANNER=1\
+""")
+    assert _display._LOGO_LINES[-1] not in banner  # pyright: ignore[reportPrivateUsage]
+    assert max(map(len, banner.splitlines())) <= _MIN_WIDTH_FOR_LOGO - 1
+
+
+def test_no_banner_line_outruns_the_terminal_it_was_rendered_for(render: Callable[..., str]):
+    """The one thing every width has to deliver: nothing for the terminal itself to break.
+
+    A line the terminal wraps drops its tail in column zero, straight through the logo — which is
+    what a banner laid out to a width the user doesn't have does at every size but that one.
+    """
+    for width in range(_MIN_TEXT_WIDTH, 121):
+        banner = render(
+            width=width,
+            name='the-agent-that-has-a-rather-long-name',
+            model='bedrock:us.anthropic.claude-fable-5-20260101-v1:0',
+            output_type=list[str],
+            capabilities=3,
+        )
+        assert max(map(len, banner.splitlines())) <= width, f'overflowed at {width} columns'
+
+
+def test_a_terminal_wider_than_the_banner_has_anything_to_say_reads_the_same(render: Callable[..., str]):
+    """Growing the column doesn't grow the copy, so nobody with room to spare sees a change."""
+    assert render(width=200) == render(width=None)
 
 
 def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPatch, render: Callable[..., str]):
@@ -465,6 +549,81 @@ def test_the_banner_an_agent_reads_is_the_one_a_person_would_have(monkeypatch: p
     display_banner()
 
     assert for_an_agent.getvalue() == for_a_terminal.getvalue()
+
+
+def test_the_banner_is_laid_out_for_the_terminal_it_is_written_to(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """`COLUMNS` is the override `shutil` and `rich` both honour, so the banner honours it too."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('COLUMNS', '70')
+
+    display_banner()
+
+    assert max(map(len, stderr.getvalue().splitlines())) <= 70
+
+
+@pytest.mark.parametrize('columns', ['²', '⅓', '', '0', 'eighty', '-1', ' 70 '])
+def test_a_columns_that_is_not_a_width_costs_only_the_measurement(
+    columns: str, monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """`'²'.isdigit()` is True and `int('²')` is not, and the banner is what a raise here would cost.
+
+    A failed measurement lands in the `except` around the whole display, so the user would lose the
+    banner outright over a `COLUMNS` nobody can read — rather than get it at the default width.
+    """
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('COLUMNS', columns)
+
+    display_banner()
+
+    assert 'agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0' in stderr.getvalue()
+
+
+@pytest.mark.skipif(not imports_successful(), reason='pseudo-terminals are POSIX-only')
+def test_the_banner_asks_the_terminal_itself_how_wide_it_is(monkeypatch: pytest.MonkeyPatch):
+    """`COLUMNS` is unset in most shells, so the size has to come from the terminal on the far end.
+
+    The one that matters for a `tmux` pane: nothing in the environment says how wide it is, and the
+    banner has to ask the stream it's writing to rather than assume the width it was designed for.
+    """
+    reader, terminal = os.openpty()
+    try:
+        with open(terminal, 'w', encoding='utf-8') as stderr:
+            fcntl.ioctl(stderr, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 70, 0, 0))
+            monkeypatch.setattr(sys, 'stderr', stderr)
+            display_banner()
+
+        chunks: list[bytes] = []
+        while True:
+            try:
+                chunk = os.read(reader, 1 << 16)
+            except OSError as e:
+                if e.errno != errno.EIO:
+                    raise
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+        output = b''.join(chunks).decode()
+    finally:
+        os.close(reader)
+
+    # Laid out for the pane it was written to, rather than for the 100 columns nobody promised.
+    assert max(map(len, output.splitlines())) <= 70
+    assert _display._LOGO_LINES[-1] in output  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_banner_with_no_terminal_to_measure_keeps_the_width_it_was_designed_for(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A pipe has no width to report, and the banner guesses at neither a narrow one nor a wide one."""
+    stderr = StringIO()
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setenv('AI_AGENT', 'some-harness')
+
+    display_banner()
+
+    # A narrower layout would have wrapped this, and a wider one would have taken the next line up.
+    assert 'agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0' in stderr.getvalue()
 
 
 def test_an_agent_is_not_written_the_colour_codes_a_terminal_gets(monkeypatch: pytest.MonkeyPatch):
