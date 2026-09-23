@@ -14,6 +14,7 @@ These pages put Pydantic AI side by side with the frameworks people ask us about
 - [vs Google ADK](vs-google-adk.md)
 - [vs Mastra](vs-mastra.md)
 - [vs LiveKit Agents](vs-livekit.md)
+- [vs Pipecat](vs-pipecat.md)
 - [vs Pi](vs-pi.md)
 - [vs Agno](vs-agno.md)
 - [vs CrewAI](vs-crewai.md)

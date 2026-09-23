@@ -974,6 +974,33 @@ async def test_a_nested_model_with_a_default_of_its_own_is_left_out_like_any_oth
     assert result.response.parts == snapshot([ToolCallPart('final_result', {}, tool_call_id=IsStr())])
 
 
+async def test_a_nested_model_with_a_default_is_left_out_when_its_only_text_field_has_no_candidate(
+    allow_model_requests: None,
+):
+    """With nothing extracted for the one field under it, the nested model gets its own default.
+
+    The field is left out for its default like a pick-one's "None of these", and the model holding it, having
+    a default and nothing answered under it, is left out too, rather than rebuilt from the field's default.
+    """
+
+    class Details(BaseModel):
+        identifier: CaseId | None = Field(default=None, description='Which case is open?')
+
+    class Report(BaseModel):
+        """Summarise what was filed."""
+
+        urgent: bool = Field(description='Is it urgent?')
+        details: Details = Details(identifier='nothing filed')
+
+    model = mock_model(
+        lambda _: answers(urgent={'type': 'noul', 'noul': 0.9}), text_extractors={'cases': extract_cases}
+    )
+    result = await Agent(model, output_type=Report).run('Nothing was filed, but it is urgent.')
+
+    assert result.output == snapshot(Report(urgent=True, details=Details(identifier='nothing filed')))
+    assert result.response.parts == snapshot([ToolCallPart('final_result', {'urgent': True}, tool_call_id=IsStr())])
+
+
 @pytest.mark.parametrize('optional', [False, True])
 async def test_the_no_match_option_never_becomes_an_invented_value(allow_model_requests: None, optional: bool):
     # The marker on the union rather than on its `str`, which puts it beside `anyOf` in the schema.
@@ -3060,6 +3087,75 @@ async def test_none_of_these_is_none_for_a_key_that_may_be_left_out(allow_model_
 
     result = await Agent(mock_model(none_of_these), output_type=Routed).run('Hello.')
     assert result.output == {'team': None}
+
+
+class Filed(BaseModel):
+    area: Literal['billing', 'shipping'] | None = 'billing'
+
+
+class Queued(BaseModel):
+    area: Literal['billing', 'shipping'] | None = 'billing'
+    queue: Literal['billing', 'shipping'] = 'shipping'
+
+
+class Nested(BaseModel):
+    filed: Filed
+
+
+class NestedWithDefault(BaseModel):
+    filed: Filed = Filed(area='shipping')
+
+
+class Escalated(BaseModel):
+    """Escalate a support ticket."""
+
+    filed: Filed = Filed(area='shipping')
+    queued: Queued = Queued(area='shipping', queue='shipping')
+    nested: Nested = Nested(filed=Filed(area='shipping'))
+    placed: NestedWithDefault
+    placement: Placement
+
+
+async def test_none_of_these_leaves_a_nested_model_default_to_apply(allow_model_requests: None):
+    """A nested model with a default that nothing under it was answered for is left out too, at any depth.
+
+    Its default says what to use when there is nothing to fill it with, where an empty model would apply the
+    defaults inside it instead. A model with an answer under it is filled, and one without a default of its own
+    is still put in place, empty, for the defaults inside it to apply.
+    """
+    result = await Agent(mock_model(none_of_these), output_type=Escalated).run('Hello.')
+    assert result.output == Escalated(
+        filed=Filed(area='shipping'),
+        queued=Queued(area='billing', queue='billing'),
+        nested=Nested(filed=Filed(area='shipping')),
+        placed=NestedWithDefault(filed=Filed(area='shipping')),
+        placement=Placement(area='shipping'),
+    )
+    assert result.response.parts == [
+        ToolCallPart(
+            'final_result',
+            {'queued': {'queue': 'billing'}, 'placed': {}, 'placement': {}},
+            tool_call_id=IsStr(),
+        )
+    ]
+
+
+async def test_none_of_these_leaves_a_nested_model_default_to_apply_in_a_union_member(allow_model_requests: None):
+    """The fill of a union member Jev picked leaves out a nested model's default the same way."""
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        if list(json.loads(request.content)['questions']) == ['tool']:
+            return tool_answers('final_result_Escalated', 0.9)
+        return none_of_these(request)
+
+    result = await Agent(mock_model(handle), output_type=[Escalation, Escalated]).run('Hello.')
+    assert result.response.parts == [
+        ToolCallPart(
+            'final_result_Escalated',
+            {'queued': {'queue': 'billing'}, 'placed': {}, 'placement': {}},
+            tool_call_id=IsStr(),
+        )
+    ]
 
 
 async def test_none_of_these_leaves_a_tool_argument_default_to_apply(allow_model_requests: None):

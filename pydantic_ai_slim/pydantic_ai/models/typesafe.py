@@ -721,6 +721,7 @@ def _answers(
     questions: dict[str, Noul | Choice | Score],
     candidates: Mapping[str, _TextCandidates],
     boolean_threshold: float,
+    defaulted: frozenset[str],
 ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     """The arguments, `provider_details` and unanswered required fields from Jev's answers to the field questions.
 
@@ -742,10 +743,12 @@ def _answers(
                 _set(args, name, value)
             elif extracted.required:
                 unanswered.append(name)
-            # No value and a default, as for a pick-one's "None of these": the field is left out for Pydantic to
-            # fill in, which for a `str` is also the only thing a missing value can be, since it rejects `None`.
-            # The model holding it is not put in place here: a required one is by the `_nest` below, and an
-            # optional one left out keeps a default of its own rather than being rebuilt from its fields'.
+            else:
+                # No value and a default, as for a pick-one's "None of these": the field is left out for Pydantic
+                # to fill in, which for a `str` is also the only thing a missing value can be, since it rejects
+                # `None`. The model holding it is put in place like a pick-one's, and `_leave_out_unanswered`
+                # takes it out again when it has a default of its own and nothing under it was answered.
+                _slot(args, name)
             continue
         if keys := _mapping_options(prop):
             # A mapping keeps every option with the answer it got, unlike a list.
@@ -781,7 +784,7 @@ def _answers(
             elif 'default' in properties[name]:
                 # "None of these" is the absence of an answer, and a default says what to use when there is
                 # none, so the field is left out for Pydantic to fill in. The model it belongs to is still put
-                # in place, to apply the default in.
+                # in place, to apply the default in, unless that model has a default of its own to apply instead.
                 _slot(args, name)
             else:
                 _set(args, name, None)
@@ -797,6 +800,7 @@ def _answers(
             scores[name] = answer.score
         else:
             raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
+    _leave_out_unanswered(args, properties, defaulted)
     for name in sorted(set(required) - properties.keys()):
         # A required nested model every one of whose fields was left out for its default: the fields are
         # Pydantic's to fill, but the model itself has to be there for it to fill them into.
@@ -1009,7 +1013,7 @@ def _properties(schema: dict[str, Any]) -> dict[str, Any]:
     return _object_schema(schema).get('properties', {})
 
 
-def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set[str]]:
+def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set[str], frozenset[str]]:
     """The output schema's fields, flattened, with `$ref`s to `$defs` (how Pydantic renders an `Enum` or a model) resolved.
 
     A nested model is its fields, named `outer.inner`: Jev answers questions, and a field of a field is still one
@@ -1019,6 +1023,8 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set
     required, and leaving it out of the arguments is what lets Pydantic apply that default. A required nested
     model is in that set under its own name, beside the fields under it, because an absent model is a missing
     field rather than an empty one Pydantic fills from the defaults inside it.
+
+    The nested models with a default in the schema come back too, by the same names, for `_leave_out_unanswered`.
     """
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
@@ -1060,6 +1066,8 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set
                     )
                 if here:
                     required.add(f'{prefix}{name}')
+                if 'default' in prop:
+                    defaulted.add(f'{prefix}{name}')
                 flatten(prop, f'{prefix}{name}.', here, seen | {ref} if ref else seen)
             else:
                 fields[f'{prefix}{name}'] = prop
@@ -1068,8 +1076,9 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set
 
     fields: dict[str, dict[str, Any]] = {}
     required: set[str] = set()
+    defaulted: set[str] = set()
     flatten(_object_schema(schema), '', True, frozenset())
-    return fields, required
+    return fields, required, frozenset(defaulted)
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
@@ -1090,6 +1099,27 @@ def _nest(args: dict[str, Any], name: str) -> None:
     """Put a nested model into the arguments without answering anything under it, leaving what is there alone."""
     for part in name.split('.'):
         args = args.setdefault(part, {})
+
+
+def _leave_out_unanswered(
+    args: dict[str, Any], properties: dict[str, dict[str, Any]], defaulted: frozenset[str], prefix: str = ''
+) -> bool:
+    """Leave out a nested model with a default when nothing under it was answered, and say if `args` holds an answer.
+
+    Every field under such a model was left out for its own default to apply, and the model's default says what to
+    use when there is nothing to fill it with. An empty model put in place would apply the defaults inside it
+    instead. One without a default of its own stays, empty, for those inner defaults to apply in.
+    """
+    answered = False
+    for name, value in list(args.items()):
+        path = f'{prefix}{name}'
+        if path in properties:
+            answered = True
+        elif _leave_out_unanswered(value, properties, defaulted, f'{path}.'):
+            answered = True
+        elif path in defaulted:
+            del args[name]
+    return answered
 
 
 def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
@@ -1467,6 +1497,7 @@ class _Ask:
     required: set[str]
     questions: dict[str, Noul | Choice | Score]
     candidates: Mapping[str, _TextCandidates]
+    defaulted: frozenset[str]
 
     @classmethod
     def about(
@@ -1487,20 +1518,28 @@ class _Ask:
         own: a `format` on the field supplies an extractor by itself. A route being filled is past the point
         where a candidate could be offered, so `_fill` leaves it out and a string field there is a hand-off.
         """
-        properties, required = _fields(tool)
+        properties, required, defaulted = _fields(tool)
         candidates = _text_candidates(properties, required, *extract) if extract else {}
         questions = _questions(properties, tool, instructions, candidates, picked=picked)
-        return cls(properties, required, questions, candidates)
+        return cls(properties, required, questions, candidates, defaulted)
 
     @classmethod
     def nothing(cls) -> _Ask:
         """No fields to fill: a turn that only picks a route still reports the same empty details."""
-        return cls({}, set(), {}, {})
+        return cls({}, set(), {}, {}, frozenset())
 
     def answers(
         self, answers: Mapping[str, object], boolean_threshold: float
     ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
-        return _answers(answers, self.properties, self.required, self.questions, self.candidates, boolean_threshold)
+        return _answers(
+            answers,
+            self.properties,
+            self.required,
+            self.questions,
+            self.candidates,
+            boolean_threshold,
+            self.defaulted,
+        )
 
 
 def _field_options(
