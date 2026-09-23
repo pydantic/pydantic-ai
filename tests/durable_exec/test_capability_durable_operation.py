@@ -48,7 +48,6 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     StreamedResponse,
 )
-from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -56,12 +55,8 @@ from pydantic_ai.usage import RunUsage
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
-with try_import() as otel_sdk_installed:
-    # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
-    # `pydantic-ai-slim` install group.
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+with try_import() as logfire_installed:
+    from logfire.testing import CaptureLogfire
 
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -1159,24 +1154,18 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
     assert capability.calls == 1
 
 
-@pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed')
-async def test_replayed_usage_delta_of_an_uninstrumented_delegate_is_not_credited_to_its_caller() -> None:
+@pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
+async def test_replayed_usage_delta_of_an_uninstrumented_delegate_is_not_credited_to_its_caller(
+    capfire: CaptureLogfire,
+) -> None:
     """A delegate without a span doesn't report the usage its replayed operation folds in on the caller's.
 
     On replay the operation's body doesn't run: its recorded usage delta is folded into the delegate's
     usage from inside the delegate's run, which must not credit the instrumented run that started it.
     """
-    exporter = InMemorySpanExporter()
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-
     capability = UsageOperation()
     delegate = Agent(TestModel(), name='delegate', capabilities=[capability, ReplayingDurability()])
-    parent = Agent(
-        TestModel(),
-        name='parent',
-        capabilities=[Instrumentation(InstrumentationSettings(tracer_provider=tracer_provider))],
-    )
+    parent = Agent(TestModel(), name='parent', capabilities=[Instrumentation()])
 
     @parent.tool_plain
     async def ask_delegate() -> str:
@@ -1186,9 +1175,9 @@ async def test_replayed_usage_delta_of_an_uninstrumented_delegate_is_not_credite
     assert capability.calls == 1
 
     reported = [
-        {key: value for key, value in (span.attributes or {}).items() if key.startswith('gen_ai.aggregated_usage.')}
-        for span in exporter.get_finished_spans()
-        if span.name == 'invoke_agent parent'
+        {key: value for key, value in span['attributes'].items() if key.startswith('gen_ai.aggregated_usage.')}
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['name'] == 'invoke_agent parent'
     ]
     # What each parent run spent itself, on both the first run and the replayed one.
     assert reported == [
