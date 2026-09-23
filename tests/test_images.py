@@ -2262,6 +2262,73 @@ async def test_google_cloud_image_edit_vcr(
     assert result.provider_response_id
 
 
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    'image',
+    [
+        pytest.param(ImageUrl('gs://cloud-samples-data/generative-ai/image/scones.jpg'), id='image-url'),
+        pytest.param(
+            UploadedFile(
+                file_id='gs://cloud-samples-data/generative-ai/image/scones.jpg',
+                provider_name='google-cloud',
+                media_type='image/jpeg',
+            ),
+            id='uploaded-file',
+        ),
+    ],
+)
+async def test_google_cloud_gcs_image_edit_vcr(
+    google_cloud_capture_provider: GoogleCloudProvider,
+    request_capture: RequestCapture,
+    image: ImageUrl | UploadedFile,
+):
+    """Vertex reads a public GCS reference server-side for both input types."""
+    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=google_cloud_capture_provider)
+
+    result = await model.generate(
+        'Turn this photograph of scones into a watercolor painting.',
+        images=[image],
+        settings=GoogleImageGenerationSettings(dimensions=(512, 512)),
+    )
+
+    # Capture the current request too: VCR's default matchers do not compare bodies.
+    assert request_capture.bodies() == snapshot(
+        [
+            {
+                'contents': [
+                    {
+                        'parts': [
+                            {'text': 'Turn this photograph of scones into a watercolor painting.'},
+                            {
+                                'fileData': {
+                                    'file_uri': 'gs://cloud-samples-data/generative-ai/image/scones.jpg',
+                                    'mime_type': 'image/jpeg',
+                                }
+                            },
+                        ],
+                        'role': 'user',
+                    }
+                ],
+                'generationConfig': {
+                    'responseModalities': ['IMAGE'],
+                    'imageConfig': {'aspectRatio': '1:1', 'imageSize': '512'},
+                },
+            }
+        ]
+    )
+
+    assert len(result.images) == 1
+    edited_image = result.images[0]
+    assert edited_image.content.data[:8] == b'\x89PNG\r\n\x1a\n'
+    assert edited_image.content.media_type == 'image/png'
+    assert edited_image.output_format == 'png'
+    assert result.model_name == 'gemini-3.1-flash-image'
+    assert result.provider_name == 'google-cloud'
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens > 0
+
+
 def _xai_image_responses(*data: bytes, respect_moderation: bool = True) -> list[XaiImageResponse]:
     proto = xai_image_pb2.ImageResponse(
         images=[
