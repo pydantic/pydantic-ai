@@ -503,15 +503,16 @@ async def test_handle_barge_in_over_live_speech(
 ) -> None:
     """`handle_barge_in=True` against Gemini Live: only the local flush is left to do.
 
-    Gemini reports no speech onset; it interrupts its own generation when the user speaks over it
-    and says so with `RealtimeResponseInterruptedEvent`. The session's half is purely local —
+    Gemini reports no speech onset; it interrupts its own reply when the user speaks over it and
+    says so with `RealtimeResponseInterruptedEvent`. The session's half is purely local —
     flushing buffered playback audio — so nothing barge-in-related goes out on the wire, and the
     barged-in utterance still gets a reply.
     """
     provider, _ = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)
-    # A long reply keeps the model mid-generation when the user speaks over it, so the recording
-    # actually captures the provider interrupting itself.
+    # A long reply is still playing when the user speaks over it, so the recording actually captures
+    # the provider interrupting itself. Gemini generates faster than real time, so the cassette has
+    # `generationComplete` before `interrupted`: the interruption lands during playback.
     agent = Agent(instructions='Reply with several full sentences; be expansive.')
     pcm = assets_path.joinpath('marcelo_16khz.pcm').read_bytes()
 
