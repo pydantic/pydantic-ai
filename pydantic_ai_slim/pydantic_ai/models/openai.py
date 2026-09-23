@@ -3057,9 +3057,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         has_image_generating_tool = False
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                web_search_tool = responses.WebSearchToolParam(
-                    type='web_search', search_context_size=tool.search_context_size
-                )
+                web_search_tool = responses.WebSearchToolParam(type='web_search')
+                if self.profile.get('openai_responses_supports_web_search_context_size', True):
+                    web_search_tool['search_context_size'] = tool.search_context_size
                 if tool.user_location:
                     web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
                         type='approximate', **tool.user_location

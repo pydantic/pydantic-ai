@@ -3120,6 +3120,26 @@ def test_model_profile_strict_not_supported():
     )
 
 
+@pytest.mark.parametrize('supported', [True, False])
+def test_web_search_context_size_profile(supported: bool):
+    """OpenAI-compatible endpoints (e.g. Kimi Code) reject `search_context_size` with a 400."""
+    m = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=OpenAIProvider(api_key='foobar'),
+        profile=merge_profile(
+            openai_model_profile('gpt-4o'),
+            OpenAIModelProfile(openai_responses_supports_web_search_context_size=supported),
+        ),
+    )
+    params = ModelRequestParameters(native_tools=[WebSearchTool(search_context_size='high')])
+    tools = m._get_native_tools(params)  # type: ignore[reportPrivateUsage]
+
+    expected: dict[str, Any] = {'type': 'web_search'}
+    if supported:
+        expected['search_context_size'] = 'high'
+    assert tools == [expected]
+
+
 async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIResponsesModelSettings(temperature=0.5))

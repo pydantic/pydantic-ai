@@ -252,6 +252,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
 
+    openai_responses_supports_web_search_context_size: bool
+    """Whether the Responses API `web_search` tool accepts the `search_context_size` field. Default: `True`.
+
+    When `False`, [`WebSearchTool.search_context_size`][pydantic_ai.native_tools.WebSearchTool.search_context_size]
+    is omitted from the request. Set for OpenAI-compatible endpoints that reject the field (e.g. Kimi Code).
+    """
+
     openai_chat_audio_input_encoding: Literal['base64', 'uri']
     """The encoding to use for audio input in Chat Completions requests. Default: `'base64'`.
 
