@@ -58,7 +58,7 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` passes through on the models whose profile supports it (the same ones as the direct Anthropic API, e.g. Opus 4.7+ and Sonnet 5) and maps to `max` on the others (Opus 4.6 and Sonnet 4.6 reject `xhigh`) |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI GPT-OSS) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
-| Bedrock (OpenAI GPT-5.6) | Not mapped | Not mapped | No verified unified-thinking mapping on Converse |
+| Bedrock (OpenAI GPT-5.6 and GPT-6) | Not mapped | Not mapped | No verified unified-thinking mapping on Converse |
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 | Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
 
