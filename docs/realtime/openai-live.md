@@ -177,7 +177,10 @@ only happens once audio is flowing.
     [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] running for the life of the
     call, streaming silence if the user is not speaking. That is why a text-driven session with no
     audio input, the shape the [text-to-audio example](../examples/realtime-text-to-audio.md) uses,
-    does not work on Live.
+    does not work on Live. It is also why
+    [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] after a `send()` waits
+    until audio is flowing, and, since Live can take text as context without answering it, bound
+    that wait with a timeout rather than relying on a reply always following.
 
 Seeding is text-only in the same spirit: [`message_history=`](history.md#seeding-a-session) replays
 text, transcripts, and thinking text, with tool rounds rendered as readable text because the protocol
