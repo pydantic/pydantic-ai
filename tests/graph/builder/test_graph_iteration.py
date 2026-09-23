@@ -598,67 +598,36 @@ async def test_iter_error_caught_without_override_re_raises_on_continue():
             await run.next()
 
 
-async def test_stream_node_error_surfaces_in_context_before_first_yield():
-    """Test that a stream node raising before its first yield surfaces the original exception in-context."""
-    g = GraphBuilder(state_type=IterState, output_type=list[int])
+@pytest.mark.parametrize('yield_first', [False, True], ids=['before-first-yield', 'after-first-yield'])
+@pytest.mark.parametrize('use_next', [False, True], ids=['async-for', 'next'])
+async def test_stream_node_error_surfaces_in_context(yield_first: bool, use_next: bool):
+    """Stream errors reach the caller inside the graph context, before or after yielding."""
+    g = GraphBuilder(output_type=list[int])
+    error = RuntimeError('stream node failed')
 
     @g.stream()
-    async def stream_fail(ctx: StepContext[IterState, None, None]) -> AsyncIterator[int]:
-        raise RuntimeError('stream node failed before first yield')
-        yield 0  # pragma: no cover
-
-    @g.step
-    async def process(ctx: StepContext[IterState, None, int]) -> int:
-        ctx.state.counter += 1
-        return ctx.inputs
+    async def stream_fail(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        if yield_first:
+            yield 1
+        raise error
 
     collect = g.join(reduce_list_append, initial_factory=list[int])
     g.add(
         g.edge_from(g.start_node).to(stream_fail),
-        g.edge_from(stream_fail).map().to(process),
-        g.edge_from(process).to(collect),
+        g.edge_from(stream_fail).map().to(collect),
         g.edge_from(collect).to(g.end_node),
     )
     graph = g.build()
-    state = IterState()
 
-    with pytest.raises(RuntimeError, match='stream node failed before first yield'):
-        async with graph.iter(state=state) as run:
-            async for _event in run:
-                pass
-
-    assert state.counter == 0
-
-
-async def test_stream_node_error_surfaces_in_context_after_first_yield():
-    """Test that a stream node raising after yielding items surfaces the original exception in-context."""
-    g = GraphBuilder(state_type=IterState, output_type=list[int])
-
-    @g.stream()
-    async def stream_fail(ctx: StepContext[IterState, None, None]) -> AsyncIterator[int]:
-        yield 1
-        yield 2
-        raise RuntimeError('stream node failed after first yield')
-
-    @g.step
-    async def process(ctx: StepContext[IterState, None, int]) -> int:
-        ctx.state.counter += 1
-        return ctx.inputs
-
-    collect = g.join(reduce_list_append, initial_factory=list[int])
-    g.add(
-        g.edge_from(g.start_node).to(stream_fail),
-        g.edge_from(stream_fail).map().to(process),
-        g.edge_from(process).to(collect),
-        g.edge_from(collect).to(g.end_node),
-    )
-    graph = g.build()
-    state = IterState()
-
-    with pytest.raises(RuntimeError, match='stream node failed after first yield'):
-        async with graph.iter(state=state) as run:
-            async for _event in run:
-                pass
+    async with graph.iter() as run:
+        with pytest.raises(RuntimeError, match='stream node failed') as exc_info:
+            if use_next:
+                while True:
+                    await run.next()
+            else:
+                async for _event in run:
+                    pass
+        assert exc_info.value is error
 
 
 async def test_stream_node_error_recoverable_via_override_next():
@@ -671,7 +640,7 @@ async def test_stream_node_error_recoverable_via_override_next():
         yield 0  # pragma: no cover
 
     @g.step
-    async def fallback_step(ctx: StepContext[IterState, None, None]) -> int:
+    async def fallback_step(ctx: StepContext[IterState, None, int]) -> int:
         ctx.state.counter = 99
         return ctx.state.counter
 
@@ -692,7 +661,7 @@ async def test_stream_node_error_recoverable_via_override_next():
                 event = await run.next()
             except RuntimeError:
                 # Recover from the stream-node failure by redirecting to the fallback node.
-                fallback_task = GraphTaskRequest(node_id=NodeID('fallback_step'), inputs=None, fork_stack=())
+                fallback_task = GraphTaskRequest(node_id=NodeID('fallback_step'), inputs=0, fork_stack=())
                 run.override_next([fallback_task])
                 continue
             if isinstance(event, EndMarker):
