@@ -405,6 +405,8 @@ else:
     assert_type(typed_agent.run_sync('x', deps=MyDeps(foo=1, bar=2), output_type=Confidence).output, float)
     assert_type(Agent(output_type=Literal['a', 'b']), Agent[object, Literal['a', 'b']])
     assert_type(Agent(output_type=Foo | Bar), Agent[object, Foo | Bar])
+    assert_type(Agent(output_type=Annotated[Foo, 'meta'] | Bar), Agent[object, Foo | Bar])
+    assert_type(Agent(output_type=Confidence | None), Agent[object, float | None])
     assert_type(ToolOutput(bool | tuple[str, int]), ToolOutput[bool | tuple[str, int]])
     # A value that isn't a type form is still refused
     Agent(output_type=5)  # pyright: ignore[reportArgumentType,reportCallIssue]
