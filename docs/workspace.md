@@ -289,7 +289,9 @@ class TestMyBackend(WorkspaceBackendSuite):
         return MyBackend()
 ```
 
-The fixture can be synchronous or asynchronous. The suite checks these rules. Command and
+The fixture can be synchronous or asynchronous. It can also be class-scoped, so a remote backend
+does not start a sandbox per rule: the ref rule accepts a ref that already exists, and the destroy
+rule runs last. The suite checks these rules. Command and
 filesystem rules skip when the backend does not implement
 the corresponding optional protocol; reattachment rules skip until their fixtures are provided.
 
