@@ -158,7 +158,7 @@ Each field of the output type is a question, and all of them go out in a single 
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
 | `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer |
-| `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or `None` |
+| `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or the field's default, or `None` |
 | a nested model of these | its fields, asked as `outer.inner` | the model |
 
 A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type Jev is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-jev-picks-and-calls-what-it-can) Jev cannot fill is not an error — it is still offered as a route, and picking it hands the step to the model behind Jev.
@@ -180,7 +180,7 @@ Unless the schema describes an option, Jev sees it by its name alone, so name `L
 
 The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as Jev gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones Jev said yes to.
 
-An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
+An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, including one from a `default_factory`, and a field without one gets `None`. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
 
 A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them and at most ten, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 

@@ -1745,6 +1745,75 @@ async def test_the_none_option_stays_clear_of_an_option_named_none(allow_model_r
     assert list(seen[0]['questions']['plan']['criteria']) == ['none', 'some', 'none_']
 
 
+def none_of_these(request: httpx2.Request) -> httpx2.Response:
+    """Jev answering "None of these." to every question that offers it, and the first option to any other."""
+    questions: dict[str, dict[str, Any]] = json.loads(request.content)['questions']
+    return answers(
+        **{
+            name: tool_answers_for('none' if 'none' in question['criteria'] else next(iter(question['criteria'])))
+            for name, question in questions.items()
+        }
+    )
+
+
+class Placement(BaseModel):
+    area: Literal['billing', 'shipping'] | None = 'shipping'
+
+
+class Routing(BaseModel):
+    """Route a support ticket."""
+
+    team: Literal['billing', 'shipping'] | None = Field('shipping', description='Which team, if any?')
+    named: Literal['billing', 'shipping'] | None = Field(description='Which team is named, if any?')
+    unset: Literal['billing', 'shipping'] | None = Field(None, description='Which team is asked for, if any?')
+    fallback: Literal['billing', 'shipping'] | None = Field(
+        default_factory=lambda: 'billing', description='Which team is next, if any?'
+    )
+    queue: Literal['billing', 'shipping'] = Field('shipping', description='Which queue?')
+    placement: Placement
+
+
+async def test_none_of_these_leaves_a_default_to_apply(allow_model_requests: None):
+    """ "None of these." is the absence of an answer: a field with a default gets it, and one without gets `None`."""
+    result = await Agent(mock_model(none_of_these), output_type=Routing).run('Hello.')
+    assert result.output == Routing(
+        team='shipping',
+        named=None,
+        unset=None,
+        fallback='billing',
+        queue='billing',
+        placement=Placement(area='shipping'),
+    )
+    assert result.response.parts == [
+        ToolCallPart('final_result', {'named': None, 'queue': 'billing', 'placement': {}}, tool_call_id=IsStr())
+    ]
+
+
+async def test_none_of_these_leaves_a_tool_argument_default_to_apply(allow_model_requests: None):
+    """An argument Jev fills for a tool gets its default the same way a field of the output does."""
+    called: list[str | None] = []
+    requests = 0
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 2:
+            # The second request fills `assign`, which Jev picked in the first.
+            return none_of_these(request)
+        return tool_answers('assign' if requests == 1 else 'final_result', 0.9)
+
+    def assign(team: Literal['billing', 'shipping'] | None = 'shipping') -> None:
+        """Assign the ticket.
+
+        Args:
+            team: Which team should take it, if any?
+        """
+        called.append(team)
+
+    await Agent(mock_model(handle), output_type=Ticket, tools=[assign]).run('Charged twice.')
+    assert called == ['shipping']
+
+
 async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
     class Touches(BaseModel):
         areas: list[Literal['billing', 'bug']] = Field(description='Which teams?')

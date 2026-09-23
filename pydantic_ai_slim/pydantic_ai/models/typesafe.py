@@ -578,6 +578,7 @@ def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
 def _answers(
     answers: Mapping[str, object],
     properties: dict[str, dict[str, Any]],
+    defaulted: frozenset[str],
     questions: dict[str, Noul | Choice | Score],
     boolean_threshold: float,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -614,7 +615,15 @@ def _answers(
                 _set(args, name, chosen)
                 confidence[name] = sureness
         elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
-            _set(args, name, None if answer.choice == none_key else answer.choice)
+            if answer.choice != none_key:
+                _set(args, name, answer.choice)
+            elif name in defaulted:
+                # "None of these" is the absence of an answer, and a default says what to use when there is
+                # none, so the field is left out for Pydantic to fill in. The model it belongs to is still put
+                # in place, to apply the default in.
+                _slot(args, name)
+            else:
+                _set(args, name, None)
             confidence[name] = answer.confidence
             probabilities[name] = answer.probabilities
         elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
@@ -800,14 +809,18 @@ def _properties(schema: dict[str, Any]) -> dict[str, Any]:
     return schema.get('properties', {})
 
 
-def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
+def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], frozenset[str]]:
     """The output schema's fields, flattened, with `$ref`s to `$defs` (how Pydantic renders an `Enum` or a model) resolved.
 
     A nested model is its fields, named `outer.inner`: Jev answers questions, and a field of a field is still one
     question. The answers are nested back into place by `_set`.
+
+    Alongside them, the fields that have a default, which the schema says by leaving them out of `required`: a
+    `default_factory` renders no `default`, but is one all the same.
     """
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
+    defaulted: set[str] = set()
 
     def resolve(prop: dict[str, Any]) -> dict[str, Any]:
         if ref := prop.get('$ref'):
@@ -821,9 +834,10 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
             prop = {**prop, 'propertyNames': resolve(prop['propertyNames'])}
         return prop
 
-    def flatten(properties: dict[str, Any], prefix: str, seen: frozenset[str]) -> dict[str, dict[str, Any]]:
+    def flatten(model: dict[str, Any], prefix: str, seen: frozenset[str]) -> dict[str, dict[str, Any]]:
         fields: dict[str, dict[str, Any]] = {}
-        for name, prop in properties.items():
+        required = model.get('required', ())
+        for name, prop in model.get('properties', {}).items():
             if '.' in name:
                 raise UserError(
                     f'Output field {prefix + name!r} is not supported by this model: a dot in a field name is how '
@@ -841,20 +855,28 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
                         'itself has no end to fill, and Jev asks a fixed set of questions. Give the field a type '
                         'that does not contain itself.'
                     )
-                fields.update(flatten(prop['properties'], f'{prefix}{name}.', seen | {ref} if ref else seen))
+                fields.update(flatten(prop, f'{prefix}{name}.', seen | {ref} if ref else seen))
             else:
                 fields[f'{prefix}{name}'] = prop
+                if name not in required:
+                    defaulted.add(f'{prefix}{name}')
         return fields
 
-    return flatten(_properties(schema), '', frozenset())
+    return flatten(resolve(schema), '', frozenset()), frozenset(defaulted)
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
     """Put a flattened field's answer back where it belongs, `outer.inner` under `outer`."""
+    parent, leaf = _slot(args, name)
+    parent[leaf] = value
+
+
+def _slot(args: dict[str, Any], name: str) -> tuple[dict[str, Any], str]:
+    """Where a flattened field's answer goes: the arguments of the model it belongs to, put in place, and its name there."""
     *path, leaf = name.split('.')
     for part in path:
         args = args.setdefault(part, {})
-    args[leaf] = value
+    return args, leaf
 
 
 def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
@@ -995,6 +1017,7 @@ class _Ask:
     """
 
     properties: dict[str, dict[str, Any]]
+    defaulted: frozenset[str]
     questions: dict[str, Noul | Choice | Score]
 
     @classmethod
@@ -1004,16 +1027,16 @@ class _Ask:
         `picked` is for the second request of a turn that chose a route first: those questions name the
         route they belong to, which the first request's questions have no reason to.
         """
-        properties = _fields(tool)
-        return cls(properties, _questions(properties, tool, instructions, picked=picked))
+        properties, defaulted = _fields(tool)
+        return cls(properties, defaulted, _questions(properties, tool, instructions, picked=picked))
 
     @classmethod
     def nothing(cls) -> _Ask:
         """No fields to fill: a turn that only picks a route still reports the same empty details."""
-        return cls({}, {})
+        return cls({}, frozenset(), {})
 
     def answers(self, response: SystemOneResponse, boolean_threshold: float) -> tuple[dict[str, Any], dict[str, Any]]:
-        return _answers(response.answers, self.properties, self.questions, boolean_threshold)
+        return _answers(response.answers, self.properties, self.defaulted, self.questions, boolean_threshold)
 
 
 def _questions(
