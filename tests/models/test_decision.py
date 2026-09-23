@@ -280,6 +280,7 @@ async def test_mapping_needs_two_options(allow_model_requests: None):
         )
 
 
+@pytest.mark.anyio
 async def test_text_output_is_refused(allow_model_requests: None):
     """A decision model cannot write text, so a `str` branch is refused rather than silently never taken."""
     model = InMemoryDecisionModel()
