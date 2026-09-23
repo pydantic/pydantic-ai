@@ -3156,6 +3156,10 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         for key in _COMPACTION_TOKEN_KEYS:
             if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
                 details[f'compaction_{key}'] = compaction_total
+        if compaction_ephemeral_1h_input_tokens := sum(
+            it.cache_creation.ephemeral_1h_input_tokens for it in compaction_iterations if it.cache_creation is not None
+        ):
+            details['compaction_ephemeral_1h_input_tokens'] = compaction_ephemeral_1h_input_tokens
 
     if advisor_iterations:
         details['advisor_iterations'] = len(advisor_iterations)
@@ -3205,8 +3209,11 @@ def _map_usage(
     # genai-prices reads the web search count from Anthropic's nested wire shape and maps it to `web_searches`.
     if web_search_requests := details.get('web_search_requests'):
         usage_for_extraction['server_tool_use'] = {'web_search_requests': web_search_requests}
-    # Likewise the one-hour cache write count, which it maps to `cache_write_1h_tokens`.
-    if ephemeral_1h_input_tokens := details.get('ephemeral_1h_input_tokens'):
+    # Likewise the one-hour cache write count, which it maps to `cache_write_1h_tokens`. Compaction iterations write
+    # to the cache with the request's TTL, so their one-hour writes are summed back in like the totals above.
+    if ephemeral_1h_input_tokens := details.get('ephemeral_1h_input_tokens', 0) + details.get(
+        'compaction_ephemeral_1h_input_tokens', 0
+    ):
         usage_for_extraction['cache_creation'] = {'ephemeral_1h_input_tokens': ephemeral_1h_input_tokens}
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
