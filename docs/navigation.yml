@@ -17,6 +17,7 @@ navigation:
         aliases:
           - "installation"
           - "install"
+          - "quickstart"
       - page: "Coding Agent Skills"
         path: "coding-agent-skills.md"
         slug: "overview/coding-agent-skills"

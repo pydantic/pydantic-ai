@@ -4,7 +4,7 @@ title: Pydantic Evals
 
 # Pydantic Evals
 
-**Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications.
+**Pydantic Evals** is a powerful evaluation framework for systematically testing and evaluating AI systems, from simple LLM calls to complex multi-agent applications. It grades an agent's final outputs and its [trajectory](evals/evaluators/agentic.md) (the sequence and arguments of its tool calls), against datasets in code or, with [online evaluation](evals/online-evaluation.md), against a sample of live production traffic.
 
 ## Design Philosophy
 
