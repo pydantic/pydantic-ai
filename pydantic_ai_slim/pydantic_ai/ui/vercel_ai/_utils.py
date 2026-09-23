@@ -186,12 +186,15 @@ _METADATA_CHUNK_TA: TypeAdapter[MetadataChunk] = TypeAdapter(MetadataChunk)
 def _as_metadata_chunk(value: object, *, allow_dict: bool) -> MetadataChunk | None:
     """Restore a supported chunk, rehydrating dictionaries only when they came from metadata.
 
-    Tool content is model-facing output that may legitimately contain a chunk-shaped
-    mapping, and its existing meaning must not change.
+    `ToolReturnPart.metadata` is typed `Any`, so persisting message history or a durable
+    tool result turns a chunk into a plain dict. A serialized chunk always carries its
+    `type`, which keeps an unrelated metadata dict like `{'url': ..., 'media_type': ...}`
+    from matching a chunk whose `type` has a default. Tool content is model-facing output
+    that may legitimately contain a chunk-shaped mapping, so it is never rehydrated.
     """
     if isinstance(value, DATA_CHUNK_TYPES):
         return value
-    if allow_dict and is_str_dict(value):
+    if allow_dict and is_str_dict(value) and 'type' in value:
         try:
             return _METADATA_CHUNK_TA.validate_python(value)
         except ValidationError:
