@@ -4928,11 +4928,17 @@ async def test_adapter_dump_messages():
 
 def test_adapter_dump_messages_omits_null_provider_metadata():
     """AI SDK optional providerMetadata must be absent, not JSON null."""
-    messages = [ModelResponse(parts=[TextPart(content='Hello')])]
-    serialized = VercelAIAdapter.dump_messages(messages)[0].model_dump(by_alias=True)
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart(content='Hi')]),
+    ]
+    for ui_message in VercelAIAdapter.dump_messages(messages):
+        serialized = ui_message.model_dump(by_alias=True)
+        wire = json.loads(ui_message.model_dump_json(by_alias=True))
 
-    assert serialized['parts'][0]['type'] == 'text'
-    assert 'providerMetadata' not in serialized['parts'][0]
+        assert serialized['parts'][0]['type'] == 'text'
+        assert 'providerMetadata' not in serialized['parts'][0]
+        assert 'providerMetadata' not in wire['parts'][0]
 
     with_metadata = TextUIPart(text='Hello', provider_metadata={'pydantic_ai': {'id': 'text-part-id'}}).model_dump(
         by_alias=True
