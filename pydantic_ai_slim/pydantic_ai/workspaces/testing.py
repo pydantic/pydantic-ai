@@ -19,6 +19,7 @@ from .protocol import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from .workspace import Workspace
 
 __all__ = ('WorkspaceBackendSuite',)
 
@@ -36,9 +37,13 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
 
 
 def _filesystem(backend: WorkspaceBackend) -> SupportsFilesystem:
-    if not isinstance(backend, SupportsFilesystem):
-        pytest.skip('backend does not implement SupportsFilesystem')
-    return backend
+    if isinstance(backend, SupportsFilesystem):
+        return backend
+    if isinstance(backend, SupportsCommands):
+        # A command-only backend gets its file operations derived through the shell; certify
+        # those, since they are the file operations its users actually get.
+        return Workspace(backend)
+    pytest.skip('backend implements neither SupportsFilesystem nor SupportsCommands')
 
 
 async def _caught(action: Callable[[], Awaitable[object]]) -> Exception | None:
@@ -78,7 +83,9 @@ class WorkspaceBackendSuite:
 
     Each test is one rule from the backend contract; its name states the rule and its
     assertion message quotes it. Command rules skip when the backend does not implement
-    `SupportsCommands`; filesystem rules skip when it does not implement `SupportsFilesystem`.
+    `SupportsCommands`. Filesystem rules run against the native methods of a `SupportsFilesystem`
+    backend, or against the operations [`Workspace`][pydantic_ai.workspaces.Workspace] derives through
+    the shell for a command-only backend; they skip only when the backend implements neither.
     Lifecycle rules need the optional fixtures below and skip without them.
     """
 

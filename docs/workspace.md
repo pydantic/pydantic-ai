@@ -344,8 +344,10 @@ fixture means a remote backend does not start a sandbox per rule. Write it as a 
 above: pytest requires that for class-scoped fixtures on a class. The ref rule accepts a ref that
 already exists, and the destroy rule runs last.
 
-The suite checks these rules. Command and filesystem rules skip when the backend does not implement
-the corresponding optional protocol; reattachment rules skip until their fixtures are provided.
+The suite checks these rules. Command rules skip when the backend does not implement
+`SupportsCommands`. Filesystem rules run against the file operations `Workspace` derives through
+the shell when the backend only implements `SupportsCommands`, and skip only when it implements
+neither protocol. Reattachment rules skip until their fixtures are provided.
 
 - `test_required_members`: The backend provides the structural `WorkspaceBackend` members.
 - `test_string_command_requires_shell`: A string command without `shell=True` raises `TypeError`.

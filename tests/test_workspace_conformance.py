@@ -60,6 +60,20 @@ async def test_suite_failures_quote_the_rule() -> None:
         await suite.test_filesystem_exists_is_truthful(_CleanupFake(RuntimeError('cleanup failed')))
 
 
+class _IdentityOnlyBackend:
+    @property
+    def ref(self) -> WorkspaceRef | None:
+        return None
+
+    async def working_dir(self) -> str:
+        return '/'
+
+
+async def test_filesystem_rules_skip_without_commands_or_filesystem() -> None:
+    with pytest.raises(pytest.skip.Exception, match='neither SupportsFilesystem nor SupportsCommands'):
+        await WorkspaceBackendSuite().test_filesystem_exists_is_truthful(_IdentityOnlyBackend())
+
+
 class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self, tmp_path: Path) -> LocalWorkspaceBackend:
@@ -97,9 +111,22 @@ class TestFilesystemOnlyWorkspaceBackend(WorkspaceBackendSuite):
 
 
 class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
+    """Certifies the file operations `Workspace` derives through the shell for a command-only backend."""
+
     @pytest.fixture
     def backend(self, tmp_path: Path) -> RunOnlyWorkspaceBackend:
         return RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
+
+    @pytest.fixture
+    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
+        return lambda ref: RunOnlyWorkspaceBackend(LocalWorkspaceBackend(ref.id))
+
+    @pytest.fixture
+    def destroy_environment(self, tmp_path: Path) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+        async def destroy(backend: WorkspaceBackend) -> None:
+            await anyio.to_thread.run_sync(shutil.rmtree, tmp_path)
+
+        return destroy
 
 
 class TestProviderBackend(WorkspaceBackendSuite):
