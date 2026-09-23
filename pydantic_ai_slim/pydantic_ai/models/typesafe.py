@@ -1082,7 +1082,12 @@ def _questions(
             # between that a yes/no does not ask, and the schema says `boolean` too, so it is one.
             options = None
         if none_key is not None:
-            if options is None or not _pickable(options) or _rubric(options) is not None:
+            if options is not None and _rubric(options) is not None:
+                raise UserError(
+                    f'Output field {name!r} is not supported by this model: it is a rubric, and a rubric cannot be '
+                    f'optional, since its levels are ordered and `None` is not one of them. {_UNSUPPORTED_FIELD_HINT}'
+                )
+            if options is None or not _pickable(options):
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: only a pick-one of strings or whole '
                     f'numbers can be optional, since `None` is one more option to pick. {_UNSUPPORTED_FIELD_HINT}'

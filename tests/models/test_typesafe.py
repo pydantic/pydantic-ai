@@ -1872,9 +1872,7 @@ async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
             'bool | None', 'only a pick-one of strings or whole numbers can be optional', id='optional yes/no'
         ),
         # A rubric's levels are ordered, and `None` has no place among them.
-        pytest.param(
-            'Clarity | None', 'only a pick-one of strings or whole numbers can be optional', id='optional rubric'
-        ),
+        pytest.param('Clarity | None', 'a rubric cannot be optional', id='optional rubric'),
         pytest.param('Customer | None', 'is not supported by this model', id='optional model'),
     ],
 )
