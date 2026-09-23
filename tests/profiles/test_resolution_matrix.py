@@ -1071,6 +1071,47 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
     )
 
 
+def test_openrouter_anthropic_claude_opus_5_5():
+    """Anthropic via OpenRouter on a model that rejects a forced `tool_choice` outright."""
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    profile = OpenRouterProvider.model_profile('anthropic/claude-opus-5.5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'supports_json_schema_output': True,
+            'anthropic_supports_fast_speed': True,
+            'supports_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_xhigh_effort': True,
+            'anthropic_disallows_budget_thinking': True,
+            'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_task_budgets': True,
+            'anthropic_supports_forced_tool_choice': False,
+            'anthropic_binds_thinking_blocks': True,
+            'tool_deferral_mode': 'standalone',
+            'openai_supports_tool_choice_required': False,
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_supports_cache_control': True,
+            'openrouter_supports_cache_ttl': True,
+            'openrouter_supports_tool_cache': True,
+            'openrouter_supports_dynamic_instruction_cache': True,
+            'openrouter_max_cache_points': 4,
+            'openrouter_supports_forced_tool_choice_with_thinking': False,
+        }
+    )
+
+
 def test_openrouter_openai_gpt_5_4():
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 

@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import re
 from collections.abc import AsyncIterable, Sequence
 from copy import deepcopy
 from decimal import Decimal
@@ -1504,6 +1505,28 @@ async def test_openrouter_inferred_forcing_on_model_that_rejects_forced_tool_cho
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['tool_choice'] == expected_tool_choice
     assert [tool['function']['name'] for tool in kwargs['tools']] == ['get_weather', 'final_result']
+
+
+async def test_openrouter_explicit_forced_tool_choice_on_model_that_rejects_it_errors(
+    allow_model_requests: None,
+) -> None:
+    """An explicitly forced `tool_choice` raises instead of reaching a model that would reject it with a 400."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('anthropic/claude-opus-5.5', provider=OpenRouterProvider(openai_client=mock_client))
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "tool_choice='required' is not supported by model 'anthropic/claude-opus-5.5'. "
+            'This model does not support forcing tool use.'
+        ),
+    ):
+        await model_request(
+            model,
+            [ModelRequest.user_text_prompt('hello')],
+            model_settings=OpenRouterModelSettings(tool_choice='required'),
+            model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+        )
 
 
 @pytest.mark.parametrize(
