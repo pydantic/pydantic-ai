@@ -226,9 +226,19 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     )
 
 
-@pytest.mark.parametrize('model_name', ['us.openai.gpt-5.6-sol', 'us.openai.gpt-5.6-luna', 'us.openai.gpt-5.6-terra'])
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'us.openai.gpt-5.6-sol',
+        'us.openai.gpt-5.6-luna',
+        'us.openai.gpt-5.6-terra',
+        'global.openai.gpt-6-sol',
+        'global.openai.gpt-6-luna',
+        'global.openai.gpt-6-astra',
+    ],
+)
 @pytest.mark.vcr(additional_matchers=['body'])
-async def test_bedrock_gpt_5_6_converse(
+async def test_bedrock_openai_converse(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
     model_name: str,
