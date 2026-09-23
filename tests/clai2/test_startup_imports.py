@@ -39,13 +39,17 @@ def test_prompt_ready_without_provider_or_model_menu_imports(tmp_path: Path) -> 
     script = """
 import sys
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.document import Document
 from pydantic_ai import models
 from pydantic_clai2.__main__ import main
 models.ALLOW_MODEL_REQUESTS = False
 async def read(self, *args, **kwargs):
+    completions = self.completer.get_completions(Document('/login ', 7), CompleteEvent())
+    assert {item.text for item in completions} == {'openai-codex', 'github-copilot'}
     for name in (
         'openai', 'anthropic', 'pydantic_clai2.auth', 'pydantic_clai2.openrouter',
-        'pydantic_clai2.vllm', 'pydantic_clai2.model_menu',
+        'pydantic_clai2.vllm', 'pydantic_clai2.github_copilot', 'pydantic_clai2.model_menu',
         'pydantic_clai2.model_settings', 'pydantic_clai2.headless',
     ):
         assert name not in sys.modules, name

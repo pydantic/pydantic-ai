@@ -3,6 +3,7 @@
 import asyncio
 import io
 import signal
+import threading
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -114,8 +115,10 @@ async def test_model_string_and_non_command_plugin(tmp_path: Path, monkeypatch: 
 @pytest.mark.parametrize('provider', ['openrouter', 'vllm', 'github-copilot'])
 async def test_connected_provider_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
     inputs(monkeypatch, ['hello', '/exit'])
+    loop_thread = threading.get_ident()
 
     def model(name: str) -> TestModel:
+        assert threading.get_ident() != loop_thread
         assert name == f'{provider}:test'
         return TestModel(custom_output_text='Connected response')
 

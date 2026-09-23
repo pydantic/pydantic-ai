@@ -203,7 +203,9 @@ class _ModelResolver:
         return self._auth
 
     async def login(self, args: list[str]) -> str:
-        return await self.codex_auth().login(args)
+        from .auth import login_command  # noqa: PLC0415
+
+        return await login_command(args, codex=self.codex_auth())
 
     async def resolve(self, name: str) -> Model | str:
         if name.startswith('openrouter:'):
@@ -214,6 +216,10 @@ class _ModelResolver:
             from . import vllm  # noqa: PLC0415
 
             return await asyncio.to_thread(vllm.model, name)
+        if name.startswith('github-copilot:'):
+            from . import github_copilot  # noqa: PLC0415
+
+            return await asyncio.to_thread(github_copilot.model, name)
         return self.codex_auth().model(name) if name.startswith('openai-codex:') else name
 
 
@@ -291,9 +297,9 @@ def create_shell(
     commands.register(
         Command(
             name='login',
-            description='Connect your ChatGPT/Codex subscription',
+            description='Connect your ChatGPT/Codex or GitHub Copilot subscription',
             handler=models.login,
-            complete=lambda _: ('openai-codex',),
+            complete=lambda _: ('openai-codex', 'github-copilot'),
         )
     )
     commands.register(
