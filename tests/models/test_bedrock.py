@@ -7308,19 +7308,30 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     assert sent['additionalModelRequestFields'] == snapshot({'top_k': 5})
 
 
-def test_bedrock_openai_gpt_5_6_api_rejects_sampling_settings(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
+BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS = [
+    'us.openai.gpt-5.6-sol',
+    'us.openai.gpt-5.6-luna',
+    'us.openai.gpt-5.6-terra',
+    'global.openai.gpt-6-sol',
+    'global.openai.gpt-6-luna',
+    'global.openai.gpt-6-astra',
+]
+
+
+@pytest.mark.parametrize('model_name', BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS)
+def test_bedrock_openai_api_rejects_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: str
 ):
-    """Bedrock rejects `temperature` on the OpenAI GPT-5.6 models it serves on Converse.
+    """Bedrock rejects `temperature` on the OpenAI GPT-5.6 and GPT-6 models it serves on Converse.
 
     Sent through the raw client for the same reason as `test_bedrock_anthropic_5_api_rejects_sampling_settings`:
     it records the API's own behavior, which a recording made through the model could not.
     """
-    model = BedrockConverseModel('us.openai.gpt-5.6-sol', provider=bedrock_provider)
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
 
     with pytest.raises(ClientError) as exc_info:
         model.client.converse(
-            modelId='us.openai.gpt-5.6-sol',
+            modelId=model_name,
             messages=[{'role': 'user', 'content': [{'text': 'What is 2+2?'}]}],
             inferenceConfig={'maxTokens': 64, 'temperature': 0.2},
         )
@@ -7332,17 +7343,18 @@ def test_bedrock_openai_gpt_5_6_api_rejects_sampling_settings(
     )
 
 
+@pytest.mark.parametrize('model_name', BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS)
 @pytest.mark.vcr(additional_matchers=['body'])
-async def test_bedrock_openai_gpt_5_6_drops_sampling_settings(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+async def test_bedrock_openai_drops_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette, model_name: str
 ):
-    """An OpenAI GPT-5.6 model on Converse warns and drops the sampling settings instead of failing with a 400.
+    """An OpenAI GPT-5.6 or GPT-6 model on Converse warns and drops the sampling settings instead of failing with a 400.
 
     Same drop as `test_bedrock_anthropic_5_drops_sampling_settings`, gated on
     `bedrock_disallows_sampling_settings` instead of the Anthropic flag.
     """
     settings = BedrockModelSettings(max_tokens=64, temperature=0.2, top_p=0.3, top_k=5)
-    model = BedrockConverseModel('us.openai.gpt-5.6-sol', provider=bedrock_provider)
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
     agent = Agent(model, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters') as recorded:
@@ -7350,16 +7362,34 @@ async def test_bedrock_openai_gpt_5_6_drops_sampling_settings(
 
     assert result.output.strip() == snapshot('4')
     sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
-    assert sampling_warnings == snapshot(
-        [
-            "Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
-            "'us.openai.gpt-5.6-sol'. These settings will be ignored."
-        ]
-    )
+    assert sampling_warnings == [
+        f"Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
+        f"'{model_name}'. These settings will be ignored."
+    ]
 
     sent = single_request_body(vcr)
     assert sent['inferenceConfig'] == snapshot({'maxTokens': 64})
     assert 'additionalModelRequestFields' not in sent
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_openai_gpt_oss_keeps_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`gpt-oss` accepts `temperature` and `top_p` on Converse, so it is left out of `bedrock_disallows_sampling_settings`.
+
+    Guards against the flag over-reaching to the other OpenAI models served on Converse, where dropping a
+    supported setting would silently change the model's behavior.
+    """
+    settings = BedrockModelSettings(max_tokens=256, temperature=0.2, top_p=0.3)
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 256, 'temperature': 0.2, 'topP': 0.3})
 
 
 class _CountTokensCapturingClient:

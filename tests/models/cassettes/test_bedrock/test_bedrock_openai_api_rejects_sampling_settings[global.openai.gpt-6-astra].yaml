@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        NDcyMDI3ZmEtOGI0MS00ZmQxLTlkMmYtOGIzZjQyYzZlZTU4
+        ZDI5ZTkzZmEtZTI4NC00OTMxLThjYzgtNTFmZGUzYTA4NmMw
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -15,7 +15,7 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.openai.gpt-5.6-sol/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/global.openai.gpt-6-astra/converse
   response:
     headers:
       connection:
