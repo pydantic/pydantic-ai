@@ -46,22 +46,33 @@ pytestmark = [
 _FAST_TURN = OpenAILiveModelSettings(openai_live_turn_silence_ms=1000)
 
 
-# Live's session timeline advances with the audio it receives, so a clip that simply stops leaves the
-# model with nothing to react to. A real microphone keeps sending silence; these tests send a fixed
-# amount of it, which is also what keeps the outbound frame count deterministic for cassette replay.
-_TRAILING_SILENCE_FRAMES = 120
+# Live's session timeline advances with the audio it receives, and the model can only speak onto that
+# timeline. A clip that simply stops leaves it nothing to speak into; a real microphone keeps sending
+# silence, so these tests send a fixed amount of it, which also keeps the outbound frame count
+# deterministic for cassette replay. It has to cover the delegated answer, which Live speaks several
+# seconds after the question.
+_TRAILING_SILENCE_FRAMES = 150
 
 
-async def _stream(session: Any, pcm: bytes) -> None:
-    """Feed a clip, then a fixed tail of silence, in the ~100 ms frames a microphone would produce."""
-    for start in range(0, len(pcm), 4800):
-        await session.send_audio(pcm[start : start + 4800])
-    for _ in range(_TRAILING_SILENCE_FRAMES):
-        await session.send_audio(b'\x00' * 4800)
+async def _stream(session: Any, pcm: bytes, cassette: RealtimeCassette, *, paced: bool) -> None:
+    """Feed a clip, then a fixed tail of silence, in the ~100 ms frames a microphone would produce.
+
+    `paced` sends them at a microphone's pace. Sent in one burst, the whole tail lands at once, Live's
+    timeline runs ahead of the conversation and then stops, and the model never gets to voice a
+    delegated answer — so a recording made that way captures no reply at all. Replay sends as fast as
+    it can instead, letting each frame wait for its recorded turn among the session's own sends.
+    """
+    frames = [pcm[start : start + 4800] for start in range(0, len(pcm), 4800)]
+    frames += [b'\x00' * 4800] * _TRAILING_SILENCE_FRAMES
+    for frame in frames:
+        await cassette.before_audio_send()
+        await session.send_audio(frame)
+        if paced:  # pragma: no branch
+            await anyio.sleep(0.1)  # pragma: no cover  # only while recording
 
 
 async def test_audio_in_delegated_tool_round(
-    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
 ) -> None:
     """A spoken request is delegated to the Responses backend, which calls the agent's tool.
 
@@ -69,7 +80,7 @@ async def test_audio_in_delegated_tool_round(
     executes locally through the ordinary `ToolManager`, so the round lands in history in exactly the
     four-message shape a standard run produces.
     """
-    provider, _ = openai_live_ws_cassette
+    provider, cassette = openai_live_ws_cassette
     model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
     agent = Agent(instructions='You answer weather questions. Use the `lookup_forecast` tool.')
 
@@ -81,7 +92,7 @@ async def test_audio_in_delegated_tool_round(
     pcm = assets_path.joinpath('weather_question_24khz.pcm').read_bytes()
     events: list[Any] = []
     async with agent.realtime(model).session() as session:
-        await _stream(session, pcm)
+        await _stream(session, pcm, cassette, paced=realtime_recording)
         with anyio.fail_after(60):
             async for event in session:  # pragma: no branch
                 events.append(event)
@@ -104,18 +115,22 @@ async def test_audio_in_delegated_tool_round(
     # The delegated call and its result are ordinary parts, not provider-specific ones.
     assert any(isinstance(part, ToolCallPart) for part in messages[1].parts)
     assert any(isinstance(part, ToolReturnPart) for part in messages[2].parts)
-    # The delegated backend's tokens are recorded. Live's own audio seconds are not, because it
-    # reports them on a timer and this exchange finishes before the first tick: see the caveat on
-    # `docs/realtime/openai-live.md`.
+    # Both meters are recorded: the delegated backend's tokens, and Live's own audio seconds, which it
+    # reports on a timer (see the caveat on `docs/realtime/openai-live.md`).
     assert session.usage.input_tokens > 0
     assert session.usage.output_tokens > 0
-    assert 'billable_audio_seconds' not in session.usage.details
-    # Those tokens belong to the backend response that asked for the tool, so they land on the
-    # tool-call `ModelResponse` — as in a standard run — not on the spoken reply that follows it.
+    assert session.usage.details['billable_audio_seconds'] > 0
+    # Each backend response's tokens land on the `ModelResponse` it produced, as in a standard run: the
+    # one that asked for the tool on the tool-call response, the continuation on the spoken answer.
     tool_call_response, spoken_reply = messages[1], messages[3]
     assert isinstance(tool_call_response, ModelResponse) and isinstance(spoken_reply, ModelResponse)
-    assert tool_call_response.usage.input_tokens == session.usage.input_tokens
-    assert spoken_reply.usage.input_tokens == 0
+    assert tool_call_response.usage.input_tokens > 0
+    assert spoken_reply.usage.input_tokens > 0
+    assert tool_call_response.usage.input_tokens + spoken_reply.usage.input_tokens == session.usage.input_tokens
+    # And Live speaks the backend's answer, which is the point of delegating.
+    answer = spoken_reply.parts[0]
+    assert isinstance(answer, SpeechPart) and answer.speaker == 'assistant'
+    assert 'fourteen' in (answer.transcript or '').lower() or '14' in (answer.transcript or '')
 
 
 async def test_text_reaches_the_model_as_context(
@@ -142,7 +157,8 @@ async def test_text_reaches_the_model_as_context(
     async with agent.realtime(model).session() as session:
         await silence(20)
         await session.send('Tell the user their package arrives on Friday.')
-        await silence(_TRAILING_SILENCE_FRAMES)
+        # Enough for the relayed sentence, which needs no delegated round-trip first.
+        await silence(120)
         with anyio.fail_after(60):
             async for event in session:  # pragma: no branch
                 if isinstance(event, RealtimeTurnCompleteEvent):
@@ -159,10 +175,10 @@ async def test_text_reaches_the_model_as_context(
 
 
 async def test_history_seeding(
-    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
 ) -> None:
     """Prior text history is seeded into the session and is still present in `all_messages()`."""
-    provider, _ = openai_live_ws_cassette
+    provider, cassette = openai_live_ws_cassette
     model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
     agent = Agent(instructions='Answer in a few words.')
     history = [
@@ -172,10 +188,16 @@ async def test_history_seeding(
 
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
     async with agent.realtime(model, message_history=history).session() as session:
-        await _stream(session, pcm)
+        await _stream(session, pcm, cassette, paced=realtime_recording)
         with anyio.fail_after(60):
             async for event in session:  # pragma: no branch
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
-    assert session.all_messages()[:2] == history
+    messages = session.all_messages()
+    assert messages[:2] == history
+    # The live exchange follows the seeded one: the user's words, then a spoken reply to them.
+    assert [type(message).__name__ for message in messages[2:]] == snapshot(['ModelRequest', 'ModelResponse'])
+    user_speech, reply = messages[2].parts[0], messages[3].parts[0]
+    assert isinstance(user_speech, SpeechPart) and 'Marcelo' in (user_speech.transcript or '')
+    assert isinstance(reply, SpeechPart) and reply.speaker == 'assistant' and reply.transcript

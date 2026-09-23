@@ -365,7 +365,9 @@ async def test_history_seeding_parity(
 
 @pytest.mark.parametrize('parity_ws_cassette', _AUDIO_CASES, indirect=True)
 async def test_audio_tool_round_parity(
-    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette], assets_path: Path
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
 ) -> None:
     """A spoken turn executes a local tool and records the same normalized four-message round.
 
@@ -373,7 +375,7 @@ async def test_audio_tool_round_parity(
     portable scenario for *voice*, which is the whole point of the surface, and it is the only one a
     model like GPT-Live can run at all. Both must produce the same history.
     """
-    case, provider, _ = parity_ws_cassette
+    case, provider, cassette = parity_ws_cassette
     model = _model(case, provider)
     profile = model.profile
     assert profile.get('synthesizes_turn_boundary', False) is case.synthesizes_turn_boundary
@@ -389,14 +391,15 @@ async def test_audio_tool_round_parity(
 
     pcm = assets_path.joinpath(f'weather_question_{rate // 1000}khz.pcm').read_bytes()
     frame = rate // 10 * 2  # 100 ms of 16-bit mono audio
+    silence_frames = _INFERRED_BOUNDARY_SILENCE_FRAMES if case.synthesizes_turn_boundary else _TRAILING_SILENCE_FRAMES
+    frames = [pcm[start : start + frame] for start in range(0, len(pcm), frame)] + [b'\x00' * frame] * silence_frames
     async with agent.realtime(model).session() as session:
-        for start in range(0, len(pcm), frame):
-            await session.send_audio(pcm[start : start + frame])
-        silence_frames = (
-            _INFERRED_BOUNDARY_SILENCE_FRAMES if case.synthesizes_turn_boundary else _TRAILING_SILENCE_FRAMES
-        )
-        for _ in range(silence_frames):
-            await session.send_audio(b'\x00' * frame)
+        for chunk in frames:
+            await cassette.before_audio_send()
+            await session.send_audio(chunk)
+            if realtime_recording:  # pragma: no branch
+                # At a microphone's pace while recording: see `realtime_recording`.
+                await anyio.sleep(0.1)  # pragma: no cover  # only while recording
         events = await _collect_complete_turn(session, after_tool_result=True)
 
     assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)

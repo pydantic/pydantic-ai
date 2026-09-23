@@ -409,6 +409,17 @@ def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
 
 
 @pytest.fixture
+def realtime_recording(request: pytest.FixtureRequest) -> bool:
+    """Whether this run dials providers for real, rather than replaying recorded frames.
+
+    Audio-driven tests pace their microphone in real time only then: a provider hears a burst of audio
+    very differently from a live microphone, so a burst records behavior no real call has. Replay
+    keeps sending instantly, since the recorded frame order is what drives it.
+    """
+    return realtime_cassette_plan(cassette_exists=True, record_mode=_record_mode(request)) == 'record'
+
+
+@pytest.fixture
 def parity_ws_cassette(
     request: pytest.FixtureRequest,
     openai_api_key: str,

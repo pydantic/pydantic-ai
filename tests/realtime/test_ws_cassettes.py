@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from ..conftest import try_import
+from . import ws_cassettes
 from .ws_cassettes import (
     CassetteClose,
     CassetteMessage,
@@ -344,8 +345,9 @@ def test_load_round_trips_close_frame(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_replay_rejects_unexpected_outbound_frame() -> None:
+async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unit test: replay asserts outbound frames match the recording, catching silent wire drift."""
+    monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
     # No recorded send at this position (the next interaction is inbound) → the send is unexpected.
     no_send = RealtimeCassette(interactions=[CassetteMessage(direction='received', data={'type': 'server.event'})])
     with pytest.raises(AssertionError, match='no matching recorded send'):
@@ -354,6 +356,88 @@ async def test_replay_rejects_unexpected_outbound_frame() -> None:
     wrong_content = RealtimeCassette(interactions=[CassetteMessage(direction='sent', data={'type': 'client.expected'})])
     with pytest.raises(AssertionError, match='did not match cassette'):
         await ReplayWebSocket(wrong_content).send(json.dumps({'type': 'client.unexpected'}))
+
+
+_AUDIO = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
+_TOOL_RESULT = {'type': 'response.create'}
+
+
+@pytest.mark.anyio
+async def test_replay_waits_for_a_direct_recv_reader() -> None:
+    """A send behind recorded inbound frames waits for a reader that calls `recv()` itself.
+
+    GPT-Live keeps one read in flight as its own task rather than iterating the socket, so it never
+    counts as an iterating reader; its progress is the only sign the frames are being consumed.
+    """
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data={'type': 'client.event'}),
+        ]
+    )
+    replay = ReplayWebSocket(cassette)
+    send = asyncio.ensure_future(replay.send(json.dumps({'type': 'client.event'})))
+    await asyncio.sleep(0)
+    assert json.loads(await replay.recv()) == {'type': 'server.event'}
+    await send
+
+
+@pytest.mark.anyio
+async def test_audio_waits_for_its_recorded_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A microphone frame yields to a frame another sender was recorded sending before it.
+
+    Recording paces the microphone, so the session's own sends land between its frames; replay streams
+    as fast as it can and would otherwise take their slot.
+    """
+    monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='sent', data=_TOOL_RESULT),
+            CassetteMessage(direction='sent', data=_AUDIO),
+        ]
+    )
+    replay = ReplayWebSocket(cassette)
+    waiting = asyncio.ensure_future(cassette.before_audio_send())
+    await asyncio.sleep(0)
+    assert not waiting.done()
+    await replay.send(json.dumps(_TOOL_RESULT))
+    await waiting
+    # Its turn now: nothing to wait for.
+    await cassette.before_audio_send()
+    await replay.send(json.dumps(_AUDIO))
+    # Past the end of the recording there is no turn to wait for either; `send()` reports the excess.
+    await cassette.before_audio_send()
+
+
+@pytest.mark.anyio
+async def test_audio_turn_wait_gives_up_without_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the frame recorded ahead never comes, the wait ends and the send reports the mismatch."""
+    monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
+    cassette = RealtimeCassette(interactions=[CassetteMessage(direction='sent', data=_TOOL_RESULT)])
+    replay = ReplayWebSocket(cassette)
+    await cassette.before_audio_send()
+    with pytest.raises(AssertionError, match='did not match cassette'):
+        await replay.send(json.dumps(_AUDIO))
+
+
+@pytest.mark.anyio
+async def test_audio_turn_wait_is_a_no_op_while_recording() -> None:
+    """Recording sends in real time, so there is no recorded order to wait for."""
+    await RealtimeCassette().before_audio_send()
+
+
+@pytest.mark.parametrize(
+    ('frame', 'is_audio'),
+    [
+        (_AUDIO, True),
+        ({'type': 'input_audio_buffer.append', 'audio': 'AAAA'}, True),
+        ({'realtime_input': {'audio': {'data': 'AAAA'}}}, True),
+        ({'realtime_input': {'text': 'hi'}}, False),
+        (_TOOL_RESULT, False),
+    ],
+)
+def test_is_audio_send(frame: dict[str, object], is_audio: bool) -> None:
+    assert ws_cassettes._is_audio_send(frame) is is_audio  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio

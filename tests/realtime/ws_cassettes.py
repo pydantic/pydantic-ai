@@ -25,7 +25,7 @@ import json
 import os
 import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -61,6 +61,15 @@ _OPENAI_AUDIO_DELTA_TYPES = frozenset(
 )
 # GPT-Live's outbound audio event, the counterpart of OpenAI Realtime's `input_audio_buffer.append`.
 _AUDIO_APPEND_TYPES = frozenset({'input_audio_buffer.append', 'session.input_audio.append'})
+
+
+def _is_audio_send(frame: dict[str, Any]) -> bool:
+    """Whether an outbound frame is microphone audio, on the OpenAI, GPT-Live, or Gemini protocol."""
+    if frame.get('type') in _AUDIO_APPEND_TYPES:
+        return True
+    realtime_input = frame.get('realtime_input')
+    return isinstance(realtime_input, dict) and 'audio' in realtime_input
+
 
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
 # keys travel in connection headers / the URL, not in frames, but a provider could echo one back.
@@ -133,12 +142,22 @@ class RealtimeCassette:
     version: int = 1
     interactions: list[RealtimeCassetteInteraction] = field(default_factory=list['RealtimeCassetteInteraction'])
     _disconnect: Callable[[], Awaitable[None]] | None = field(default=None, init=False, repr=False, compare=False)
+    _replay: ReplayWebSocket | None = field(default=None, init=False, repr=False, compare=False)
 
     async def disconnect(self) -> None:
         """Force the active recorded connection to drop; replay consumes the recorded close next."""
         if self._disconnect is None:
             raise RuntimeError('The realtime cassette has no active WebSocket connection.')
         await self._disconnect()
+
+    async def before_audio_send(self) -> None:
+        """Hold a microphone frame until it is the next thing the recording sends. A no-op when recording.
+
+        Call it before each `send_audio()` in a test that streams a microphone alongside other sends:
+        see `ReplayWebSocket.wait_for_audio_send_turn`.
+        """
+        if self._replay is not None:
+            await self._replay.wait_for_audio_send_turn()
 
     def bind_disconnect(self, disconnect: Callable[[], Awaitable[None]]) -> None:
         """Bind the active transport's test-only disconnect operation."""
@@ -265,6 +284,13 @@ class _SentFrameNormalizer:
         return value
 
 
+# How long replay waits for someone else's move (a direct `recv()` caller consuming a recorded inbound
+# frame, or another sender sending the frame recorded before a microphone frame) before concluding it
+# won't come. Generous, because it only bounds how long a real mismatch takes to report; replay that is
+# making progress never comes near it.
+_REPLAY_PROGRESS_GRACE = 2.0
+
+
 class ReplayWebSocket:
     """Replay a recorded WebSocket conversation, validating outbound frames as they are sent.
 
@@ -276,6 +302,7 @@ class ReplayWebSocket:
     def __init__(self, cassette: RealtimeCassette) -> None:
         self._interactions = cassette.interactions
         self._position = 0
+        cassette._replay = self  # pyright: ignore[reportPrivateUsage]
         self._normalizer = _SentFrameNormalizer()
         self._condition = asyncio.Condition()
         self._readers = 0
@@ -291,10 +318,15 @@ class ReplayWebSocket:
             interaction = self._peek()
             # A caller that keeps sending (streaming a microphone) runs ahead of the recorded inbound
             # frames sitting between its sends. Let the reader drain those first rather than failing the
-            # send that follows them — but only while a reader is actually parked in `recv()`, since with
-            # nobody to consume them this is the genuine "sent a frame the recording doesn't have" case.
-            while self._readers and isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
-                await self._condition.wait()
+            # send that follows them. A reader iterating the socket is known to be draining them; one
+            # that calls `recv()` directly (GPT-Live keeps a single read in flight as its own task) is
+            # only visible by the frames it consumes, so wait while it keeps consuming them. With nobody
+            # consuming them at all, this is the genuine "sent a frame the recording doesn't have" case.
+            while isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
+                if self._readers:
+                    await self._condition.wait()
+                elif not await self._progressed():
+                    break
                 interaction = self._peek()
             if not isinstance(interaction, CassetteMessage) or interaction.direction != 'sent':
                 raise AssertionError(
@@ -307,6 +339,34 @@ class ReplayWebSocket:
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
             f'expected={interaction.data!r}\nactual={actual!r}'
         )
+
+    async def wait_for_audio_send_turn(self) -> None:
+        """Wait until the recording's next outbound frame is microphone audio.
+
+        A microphone task and the session's own sends (a tool result, say) are separate senders, and a
+        recording made at a microphone's pace interleaves them. Replay streams the microphone as fast as
+        it can, so without this it would take the slot of a frame another sender was recorded sending.
+        The wait has to happen here, before the audio send, because the session holds its send lock for
+        the whole of a send: an audio send waiting inside `send()` would block the very frame it waits
+        for. Returns once no progress is being made, leaving `send()` to report the mismatch.
+        """
+        async with self._condition:
+            while (upcoming := self._next_send()) is not None and not _is_audio_send(upcoming.data):
+                if not await self._progressed():
+                    return
+
+    def _next_send(self) -> CassetteMessage | None:
+        for interaction in self._interactions[self._position :]:
+            if isinstance(interaction, CassetteMessage) and interaction.direction == 'sent':
+                return interaction
+        return None
+
+    async def _progressed(self) -> bool:
+        """Wait for the replay position to move, reporting whether it did within the grace period."""
+        position = self._position
+        with suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._condition.wait(), timeout=_REPLAY_PROGRESS_GRACE)
+        return self._position != position
 
     async def recv(self, *, decode: bool | None = None) -> str | bytes:
         async with self._condition:
