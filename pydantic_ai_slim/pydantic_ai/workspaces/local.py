@@ -33,6 +33,7 @@ from .protocol import (
     WorkspaceError,
     WorkspaceRef,
     WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
 )
 
 __all__ = ('LocalWorkspaceBackend',)
@@ -89,6 +90,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     It supports POSIX platforms only. A command that calls `setsid` can move its own processes
     outside the process group that this workspace kills on cancellation or timeout.
 
+    The directory is the environment: [`ref`][pydantic_ai.workspaces.LocalWorkspaceBackend.ref]
+    names it from construction, and the first operation that needs it raises
+    [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] when it does
+    not exist, the way a provider backend does for a sandbox that is gone. Nothing creates it.
+
     Args:
         working_dir: The default working directory for commands and the base for relative
             workspace paths. It must be absolute; a leading `~` is expanded to the user's home
@@ -120,18 +126,32 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     def ref(self) -> WorkspaceRef:
         """`WorkspaceRef(provider='local', id=...)` naming `working_dir` as given, with `~` expanded.
 
-        It is available from construction and involves no I/O, so symlinks are not resolved: it
-        says which directory on this host the workspace was configured with, and means nothing on
-        another machine.
+        The directory is the environment, so this is the one backend whose ref precedes its first
+        operation: it is available from construction and involves no I/O, so symlinks are not
+        resolved. It says which directory on this host the workspace was configured with, and means
+        nothing on another machine. Whether the directory exists is checked by the first operation,
+        like [`working_dir()`][pydantic_ai.workspaces.WorkspaceBackend.working_dir], which raises
+        [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] when it
+        is missing.
         """
         return self._ref
 
     async def _get_working_dir(self) -> Path:
         if self._canonical_working_dir is None:
-            # Canonicalization keeps macOS `/var` symlinks and spellings such as `link/..` aligned
-            # with the directory the kernel uses for the command's working directory.
+
+            def resolve() -> Path:
+                # Canonicalization keeps macOS `/var` symlinks and spellings such as `link/..` aligned
+                # with the directory the kernel uses for the command's working directory.
+                resolved = self._working_dir.resolve()
+                if not resolved.is_dir():
+                    raise WorkspaceUnavailableError(
+                        f'local workspace directory {self._working_dir.as_posix()!r} does not exist; the '
+                        'caller creates the directory before the run, and nothing recreates a removed one'
+                    )
+                return resolved
+
             # `resolve()` is idempotent, so concurrent first calls may safely compute it twice.
-            self._canonical_working_dir = await run_in_executor(self._working_dir.resolve)
+            self._canonical_working_dir = await run_in_executor(resolve)
         return self._canonical_working_dir
 
     async def working_dir(self) -> str:

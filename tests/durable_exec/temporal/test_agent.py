@@ -2718,7 +2718,7 @@ def test_temporal_run_context_serializes_the_local_workspace_ref(tmp_path: Path)
 
 
 async def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
-    workspace = Workspace(RecordingWorkspaceBackend('preprovisioned'))
+    workspace = Workspace(RecordingWorkspaceBackend(WorkspaceRef(provider='fake', id='preprovisioned')))
     serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
     assert serialized['workspace_ref'] == WorkspaceRef(provider='fake', id='preprovisioned')
 
@@ -2736,7 +2736,7 @@ async def test_temporal_application_deserializer_restores_validated_workspace_re
         @classmethod
         def deserialize_run_context(cls, ctx: dict[str, Any], deps: None) -> TemporalRunContext[None]:
             ref = TypeAdapter(WorkspaceRef).validate_python(ctx['workspace_ref'])
-            workspace = ReadOnlyWorkspace(Workspace(RecordingWorkspaceBackend(ref.id, ref=ref)))
+            workspace = ReadOnlyWorkspace(Workspace(RecordingWorkspaceBackend(ref)))
             return cls(**{**ctx, 'workspace': workspace}, deps=deps)
 
     restored = deserialize_run_context(

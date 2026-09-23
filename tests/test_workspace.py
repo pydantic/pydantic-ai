@@ -54,7 +54,6 @@ from .workspace_fakes import (
     FakeWorkspace,
     FakeWorkspaceResult,
     FilesystemOnlyWorkspaceBackend,
-    RecordingWorkspaceBackend,
     RunOnlyWorkspaceBackend,
     WorkspaceCapability,
 )
@@ -1065,7 +1064,7 @@ class ProviderWorkspaceCapability(AbstractCapability[Any]):
         self.refs.append(ref)
         if ref is not None and ref.provider != self.provider:
             return None
-        backend = RecordingWorkspaceBackend('fresh', ref=ref)
+        backend = FakeWorkspace('fresh', ref=ref)
         self.supplied.append(backend)
         return backend
 

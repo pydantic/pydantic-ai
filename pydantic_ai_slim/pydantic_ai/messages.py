@@ -2765,7 +2765,16 @@ ModelResponsePart = Annotated[
 
 @dataclass(frozen=True, kw_only=True)
 class WorkspaceRef:
-    """Serializable identity of a workspace environment, without credentials."""
+    """Serializable identity of a workspace environment, without credentials.
+
+    A ref exists only once an environment does: a [workspace backend][pydantic_ai.workspaces.WorkspaceBackend]
+    reports `None` until its first operation has created one, and a ref from then on. Handing a ref
+    to a later run, through `workspace=` or the `workspace_ref` recorded on a
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse], makes a capability's `get_workspace`
+    attach to that environment, and raises
+    [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] on first use if
+    it is gone; a ref never causes a replacement environment to be created.
+    """
 
     provider: str
     """Provider that owns the environment."""
@@ -2842,7 +2851,14 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     workspace_ref: WorkspaceRef | None = None
-    """Reference to the workspace selected for this model response, if any."""
+    """Identity of the environment the run that produced this response worked in, if any.
+
+    Set on the run's last response when the run ends, from the workspace's
+    [`ref`][pydantic_ai.workspaces.Workspace.ref] at that point: `None` when the run had no
+    workspace, or when its backend never created an environment because nothing used it. The most
+    recent value in `message_history` is offered to `get_workspace` on the next run, so a
+    continued conversation attaches to the same environment. Not sent to the model.
+    """
 
     state: ModelResponseState = 'complete'
     """The state of this response, indicating whether it is final or requires further action.

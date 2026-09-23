@@ -26,6 +26,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceRef,
     WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
     local as local_module,
 )
 
@@ -110,6 +111,25 @@ async def test_ref_names_the_configured_working_dir_without_io(tmp_path: Path, m
     assert workspace.ref == WorkspaceRef(provider='local', id=f'{tmp_path}/link')
     assert await workspace.working_dir() == str((tmp_path / 'target').resolve())
     assert workspace.ref == WorkspaceRef(provider='local', id=f'{tmp_path}/link')
+
+
+async def test_missing_working_dir_is_unavailable_until_it_exists(tmp_path: Path):
+    """The directory is the environment: the ref names it up front, and the first operation checks it is there."""
+    workspace = LocalWorkspaceBackend(tmp_path / 'missing')
+
+    assert workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path / 'missing'))
+    with pytest.raises(WorkspaceUnavailableError, match='does not exist'):
+        await workspace.working_dir()
+    with pytest.raises(WorkspaceUnavailableError, match='does not exist'):
+        await workspace.run(['pwd'])
+    (tmp_path / 'missing').write_text('a file, not a directory')
+    with pytest.raises(WorkspaceUnavailableError, match='does not exist'):
+        await workspace.working_dir()
+
+    # Nothing was cached by the failed checks, so a directory created afterwards is picked up.
+    (tmp_path / 'missing').unlink()
+    (tmp_path / 'missing').mkdir()
+    assert await workspace.working_dir() == str((tmp_path / 'missing').resolve())
 
 
 @pytest.mark.parametrize('operation', ['working_dir', 'cwd', 'fs'])

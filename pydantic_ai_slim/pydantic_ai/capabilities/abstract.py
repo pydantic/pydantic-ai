@@ -592,12 +592,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         It must have no side effects, including bookkeeping: return a backend configured from this
         capability's own settings, carrying `ref` when one was recovered or passed in. The backend
-        creates or attaches on its first operation, so nothing here reaches the network.
+        creates or attaches on its first operation, so nothing here reaches the network. This is
+        the only place a ref is turned back into a workspace, so a capability that creates
+        environments must also recognize the refs it hands out.
 
         `ref` is the identity of an environment the run should continue in when the caller passed
-        a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] through `workspace=`. `None` means the
-        backend should create a fresh environment. When continuing from message history, the latest
-        response's `workspace_ref` is used unless the caller passes an explicit backend, facade, or ref.
+        a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] through `workspace=`. The backend
+        attaches to it on first use and raises
+        [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is
+        gone; it never creates a replacement for a ref. `None` means the backend should create a
+        fresh environment on first use and report its identity as its `ref` from then on. When
+        continuing from message history, the latest response's `workspace_ref` is used unless the
+        caller passes an explicit backend, facade, or ref.
         """
         return None
 

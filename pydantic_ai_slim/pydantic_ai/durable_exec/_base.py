@@ -239,11 +239,18 @@ def _supplies_workspace(capability: AbstractCapability[Any]) -> bool:
         return type(capability).get_workspace is not AbstractCapability.get_workspace
 
 
-def _wrapper_chain(workspace: Workspace) -> list[type[Workspace]]:
-    """The facade classes from the outside in, which is where workspace policy lives."""
-    chain: list[type[Workspace]] = []
+def _policy_chain(workspace: Workspace) -> list[tuple[type[Workspace], dict[str, Any]]]:
+    """Each facade layer from the outside in, with its own state, which is where workspace policy lives.
+
+    A layer's state is its instance attributes other than the wrapped workspace, compared with
+    `==`, so two `ReadOnlyWorkspace`s match while two allowlisting wrappers with different lists do
+    not. The innermost backend is left out: both sides are built from the same ref, so they name
+    the same environment, and a backend's configuration has no general comparison.
+    """
+    chain: list[tuple[type[Workspace], dict[str, Any]]] = []
     while True:
-        chain.append(type(workspace))
+        state = {name: value for name, value in vars(workspace).items() if name != '_backend'}
+        chain.append((type(workspace), state))
         if not isinstance(workspace, WrapperWorkspace):
             return chain
         workspace = workspace.wrapped
@@ -536,23 +543,35 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         A unit that runs in another process rebuilds `ctx.workspace` from the construction-time
         capabilities and the serialized ref, without re-running `for_run`. A `for_run` replacement
-        that changes the wrapper chain (say, adds a `ReadOnlyWorkspace`) would then be enforced in
-        workflow code only, and silently not inside the units doing the I/O.
+        that changes the wrapper chain (say, adds a `ReadOnlyWorkspace`), or keeps the same wrappers
+        with different state (a tenant's allowlist, a flag on a custom wrapper), would then be
+        enforced in workflow code only, and silently not inside the units doing the I/O.
         """
         assert self._agent is not None
         construction = resolve_run_workspace(self._agent.root_capability, ctx, workspace.ref)
-        if construction is not None and _wrapper_chain(construction) == _wrapper_chain(workspace):
+        run_chain = _policy_chain(workspace)
+        construction_chain = _policy_chain(construction) if construction is not None else None
+        if construction_chain == run_chain:
             return
-        run_chain = ', '.join(cls.__name__ for cls in _wrapper_chain(workspace))
-        construction_chain = (
-            ', '.join(cls.__name__ for cls in _wrapper_chain(construction)) if construction is not None else 'none'
-        )
+        run_layers = ', '.join(cls.__name__ for cls, _ in run_chain)
+        if construction_chain is not None and [cls for cls, _ in construction_chain] == [cls for cls, _ in run_chain]:
+            difference = (
+                f'The workspace this run selected ({run_layers}) is configured differently from what the '
+                "agent's construction-time capabilities supply, although the wrappers are the same."
+            )
+        else:
+            construction_layers = (
+                ', '.join(cls.__name__ for cls, _ in construction_chain) if construction_chain is not None else 'none'
+            )
+            difference = (
+                f"The workspace this run selected ({run_layers}) differs from what the agent's construction-time "
+                f'capabilities supply ({construction_layers}).'
+            )
         raise UserError(
-            f"The workspace this run selected ({run_chain}) differs from what the agent's construction-time "
-            f'capabilities supply ({construction_chain}). Every {self.engine_name} {self.durable_unit_noun} '
-            'rebuilds `ctx.workspace` from the construction-time capabilities and the serialized `WorkspaceRef`, '
-            'without re-running `for_run`, so a per-run replacement would only apply in workflow code. Apply '
-            'workspace policy on the capability the agent is constructed with.'
+            f'{difference} Every {self.engine_name} {self.durable_unit_noun} rebuilds `ctx.workspace` from the '
+            'construction-time capabilities and the serialized `WorkspaceRef`, without re-running `for_run`, so a '
+            'per-run replacement would only apply in workflow code. Apply workspace policy on the capability the '
+            'agent is constructed with.'
         )
 
     def _bind_capability_operations(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:

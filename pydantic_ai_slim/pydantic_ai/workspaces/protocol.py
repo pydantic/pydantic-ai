@@ -19,6 +19,33 @@ Contracts every implementation must honor (the rest are on the relevant members)
 - **Results are honest.** `exit_code` is the real process exit code; a non-zero exit is a
   normal result, not an exception. Infrastructure failures raise; they are never disguised as
   fake exit codes or empty output.
+- **A ref names an environment that exists.** A backend built without a
+  [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] reports `ref` as `None`, creates a fresh
+  environment on its first operation, and sets `ref` to that environment's identity as soon as the
+  creation call returns. A backend built with a ref is bound to that environment: its first
+  operation attaches, and if the environment is gone the operation raises
+  [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] instead of
+  creating a replacement. A ref is never a label assigned ahead of the environment it names.
+- **Failures are typed.** The exception a backend raises tells consumers whether the environment
+  is still usable:
+    - [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] when the
+      environment is gone or cannot be reached from this process, including a ref that cannot be
+      attached. Retrying cannot succeed, and the run cannot continue in this environment.
+    - [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] when a command
+      exceeds its `timeout=`.
+    - The builtin file errors (`FileNotFoundError`, `IsADirectoryError`, `NotADirectoryError`,
+      `PermissionError`, `FileExistsError`) for a path-level failure, translated from the
+      platform's own exceptions; the environment itself is fine.
+    - [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] for any other failure the
+      workspace layer refuses deliberately, such as output exceeding a limit.
+    - `TypeError` and `ValueError` for invalid arguments, such as a relative `cwd`.
+
+  Anything else, such as a provider SDK's own connection or rate-limit error, propagates as is
+  and is treated as a transient infrastructure failure that durable engines retry. A backend whose
+  platform reports a dead environment and a failed operation with the same exception should
+  probe, for example with `working_dir()`, and raise `WorkspaceUnavailableError` when the
+  environment is gone. [`UserError`][pydantic_ai.exceptions.UserError] is reserved for the facade
+  and policy wrappers, such as a read-only refusal or an unattached workspace.
 """
 
 from __future__ import annotations as _annotations
@@ -71,8 +98,11 @@ class WorkspaceUnavailableError(WorkspaceError):
 
     Backends raise this (or a subclass) when the environment was terminated, expired at its
     platform-side lifetime, cannot be found, or rejected the process's credentials — any
-    failure where retrying the same operation cannot succeed. Consumers use it to stop using
-    the workspace instead of retrying; other exceptions from a backend may be transient.
+    failure where retrying the same operation cannot succeed. In particular, a backend built with
+    a [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] whose environment no longer exists
+    raises it from the first operation rather than creating a replacement. Consumers use it to
+    stop using the workspace instead of retrying: a tool cannot recover from it, so it ends the
+    agent run. Other exceptions from a backend may be transient.
     """
 
 
@@ -278,19 +308,26 @@ class WorkspaceBackend(Protocol):
     implementations must honor, and the [workspace documentation](../workspace.md) for lifecycle
     rules: this protocol has no create, connect or destroy member. A backend is built from
     configuration plus an optional [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] and does no
-    I/O until its first operation, which creates or attaches as needed. Pydantic AI does not
-    automatically provision or tear down an environment at run boundaries.
+    I/O until its first operation: without a ref that operation creates a fresh environment, whose
+    identity the backend reports from then on; with a ref it attaches to the named environment,
+    raising [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] rather
+    than creating another when it is gone. Pydantic AI does not automatically provision or tear
+    down an environment at run boundaries.
     """
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        """Identity of the environment this backend is bound to, or `None` before it has one.
+        """Identity of the environment this backend is bound to, or `None` while there is none.
 
-        `None` means only that there is no environment yet. A backend built to attach to an existing
-        environment, or whose identity is known from its configuration (such as a local directory),
-        reports its ref straight away. A backend that creates a fresh environment reports `None`
-        until its provider assigns an identity, and a ref from then on. Every ref names its
-        `provider`, so an identity always says where it came from.
+        A ref exists only once an environment does. A backend that creates a fresh environment
+        reports `None` until the creation call returns, and must set its ref then, so a consumer
+        that reads a ref after an operation can hand it to another process to attach with. A backend
+        built to attach to an existing environment reports the ref it was given straight away, and a
+        backend whose environment is its configuration, such as
+        [`LocalWorkspaceBackend`][pydantic_ai.workspaces.LocalWorkspaceBackend] and its directory,
+        reports it from construction; in both cases the first operation verifies the environment
+        and raises [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError]
+        if it is gone. Every ref names its `provider`, so an identity always says where it came from.
         """
         ...
 
