@@ -171,6 +171,7 @@ A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] b
 | the goal, on every question | the output type's docstring, or a tool's description |
 | shared framing, on every question | the agent's `instructions` |
 | each option's meaning | a description on that option in the schema |
+| what "none of these" means | a description on the `None` itself, `Annotated[None, Field(description=...)]` |
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the [confidence example below](#confidence-and-thresholds).
 
@@ -180,7 +181,68 @@ Unless the schema describes an option, Jev sees it by its name alone, so name `L
 
 The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as Jev gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones Jev said yes to.
 
-An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, and a field without one gets `None`. A `default_factory` is not in the schema, which is all Jev's answers are read against, so it counts as no default. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
+An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, and a field without one gets `None`. A `default_factory` is not in the schema, which is all Jev's answers are read against, so it counts as no default. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick. To say what picking nothing means on this field rather than take the stock phrase, describe the `None` itself: `Area | Annotated[None, Field(description='Nothing here needs routing.')]` makes that description the option's meaning.
+
+A yes/no is a `bool`, which says what is being asked but nothing about what a yes or a no would mean. That is the one place Jev is asked to judge without being told what it is judging against: a `Choice` carries a description per option and a `Score` one per level, while a `Noul` has only the question unless the two answers are spelled out. [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells them out as `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime:
+
+```python {title="describe_what_yes_and_no_mean.py"}
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, BoolCriteria
+
+
+class Settled(BaseModel):
+    """Review the transcript."""
+
+    refunded: Annotated[
+        bool,
+        BoolCriteria(true='Money was returned to the customer.', false='No refund was issued.'),
+    ] = Field(description='Was a refund issued?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=Settled)
+result = agent.run_sync('We have sent the 40 pounds back to your card.')
+print(result.output.refunded)
+#> True
+```
+
+The two descriptions become the question's `criteria`, which is what Jev weighs the text against, so a field that has them is answering a sharper question than the same field without. They are enough on their own, so unlike a bare `bool` such a field needs no description of its own.
+
+Where the answer should be a named thing rather than `True` or `False` — because it is stored, or branched on by name — an `Enum` of `True` and `False` mixing in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] asks exactly the same question, and the field's value is the member Jev's answer picks:
+
+```python {title="say_what_yes_and_no_mean.py"}
+from enum import Enum
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, UseEnumMemberDocstrings
+
+
+class Refunded(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back to the customer."""
+
+    yes = True
+    """Money was returned to the customer."""
+
+    no = False
+    """No refund was issued."""
+
+
+class Settled(BaseModel):
+    """Review the transcript."""
+
+    refunded: Refunded = Field(description='Was a refund issued?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=Settled)
+result = agent.run_sync('We have sent the 40 pounds back to your card.')
+print(result.output.refunded)
+#> Refunded.yes
+```
+
+A `Literal[True, False]` has nowhere to write the two meanings at all, and asks exactly what a bare `bool` asks.
 
 A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them and at most ten, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 
