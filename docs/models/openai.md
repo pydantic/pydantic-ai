@@ -1160,6 +1160,40 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+### Opper
+
+[Opper](https://opper.ai) is an EU-hosted gateway: one API key reaches models from OpenAI, Anthropic, Google, Mistral, DeepSeek, Moonshot and open-weight vendors. Create a key in the [Opper console](https://platform.opper.ai).
+
+Model ids are bare pool names such as `claude-sonnet-4-6`, where a pool is every provider serving that model and Opper picks the route per request. A `provider/model` id such as `azure/gpt-5.5` pins one provider or region instead. Browse the [catalog](https://opper.ai/models) for the available names.
+
+You can set the `OPPER_API_KEY` environment variable and use [`OpperProvider`][pydantic_ai.providers.opper.OpperProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('opper:claude-sonnet-4-6')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+If you need to configure the provider, you can use the [`OpperProvider`][pydantic_ai.providers.opper.OpperProvider] class:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.opper import OpperProvider
+
+model = OpenAIChatModel(
+    'claude-sonnet-4-6',
+    provider=OpperProvider(api_key='your-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
 ### OVHcloud AI Endpoints
 
 To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to the [OVHcloud manager](https://ovh.com/manager), then in Public Cloud > AI Endpoints > API keys. Click on `Create a new API key` and copy your new key.
