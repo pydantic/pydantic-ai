@@ -243,6 +243,19 @@ async def test_empty_replay_closes_cleanly_and_disconnect_requires_binding() -> 
 
 
 @pytest.mark.anyio
+async def test_replay_can_hold_open_after_last_frame_until_client_closes() -> None:
+    replay = ReplayWebSocket(RealtimeCassette(), hold_open=True)
+
+    receive_task = asyncio.create_task(replay.recv())
+    await asyncio.sleep(0)
+    assert not receive_task.done()
+
+    await replay.close()
+    with pytest.raises(ConnectionClosedOK):
+        await receive_task
+
+
+@pytest.mark.anyio
 async def test_disconnect_delegates_to_the_bound_connection() -> None:
     """Once bound, `disconnect()` drops the active transport so replay reaches the recorded close.
 
