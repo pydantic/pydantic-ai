@@ -155,8 +155,11 @@ class ScoreAnswer:
     """Confidence in the score."""
     probabilities: dict[int, float]
     """Probability for each level."""
-    legend: dict[int, JsonValue]
-    """Descriptions of the score levels."""
+    legend: dict[int, JsonValue] = field(default_factory=dict[int, JsonValue])
+    """The descriptions of the levels, as the backend echoes them back, if it does.
+
+    Not read to build the output, which comes from `score` alone; kept so the answer is recorded as it was received.
+    """
     type: Literal['score'] = 'score'
     """The Decisions protocol answer type."""
 

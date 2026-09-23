@@ -960,7 +960,6 @@ class UndecidedModel(DecisionModel[None]):
                     score=(len(levels) - 1) / 2,
                     confidence=0.0,
                     probabilities={level: 1 / len(levels) for level in levels},
-                    legend=dict(enumerate(question.criteria)),
                 )
         return DecisionResponse(answers=answers, model_name=self.model_name)
 
