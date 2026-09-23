@@ -278,7 +278,7 @@ The following example changes the `name` parameter's description based on the va
 
 For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.tools.Tool] dataclass.
 
-```python {title="customize_name.py" typecheck="skip - deps_type=Literal needs TypeForm, see #8690"}
+```python {title="customize_name.py"}
 from __future__ import annotations
 
 from typing import Literal
