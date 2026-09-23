@@ -4144,6 +4144,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         """Hook that generates the provider details from chunk content.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
+        Overrides should call `super()` to keep `logprobs` accumulated across chunks.
         """
         provider_details = _map_provider_details(chunk.choices[0])
         if provider_details and (logprobs := provider_details.get('logprobs')):
