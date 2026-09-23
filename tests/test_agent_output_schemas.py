@@ -923,6 +923,7 @@ def require_urgent(ticket: Ticket) -> Ticket:
 UrgentTicket = Annotated[Ticket, AfterValidator(require_urgent), Field(description='An urgent ticket.')]
 DescribedNone = Annotated[None, Field(description='Nothing needs doing.')]
 TicketOrEscalation = TypeAliasType('TicketOrEscalation', UrgentTicket | Escalation)
+Answer = Annotated[str, Field(description='A plain answer.', min_length=5)]
 
 
 def urgent_on_retry(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -933,16 +934,38 @@ def urgent_on_retry(messages: list[ModelMessage], info: AgentInfo) -> ModelRespo
 
 # Type checkers read an `Annotated[...]` expression as the `Annotated` special form rather than a type, hence `Any`.
 UNION_SPELLINGS: list[Any] = [
-    pytest.param([UrgentTicket, Escalation], UrgentTicket | Escalation, id='union'),
-    pytest.param([UrgentTicket, Escalation], TicketOrEscalation, id='alias'),
-    pytest.param([UrgentTicket, None], Optional[UrgentTicket], id='optional'),  # noqa: UP045
-    pytest.param([Ticket, DescribedNone], Ticket | DescribedNone, id='described_none'),
+    pytest.param(
+        [UrgentTicket, Escalation],
+        UrgentTicket | Escalation,
+        ['final_result_Ticket', 'final_result_Escalation'],
+        id='union',
+    ),
+    pytest.param(
+        [UrgentTicket, Escalation],
+        TicketOrEscalation,
+        ['final_result_Ticket', 'final_result_Escalation'],
+        id='alias',
+    ),
+    pytest.param(
+        [UrgentTicket, None],
+        Optional[UrgentTicket],  # noqa: UP045
+        ['final_result_Ticket', 'final_result_None'],
+        id='optional',
+    ),
+    pytest.param(
+        [Ticket, DescribedNone],
+        Ticket | DescribedNone,
+        ['final_result_Ticket', 'final_result_None'],
+        id='described_none',
+    ),
+    # An annotated `str` is a value to validate, so it gets an output tool rather than the plain text a bare `str` allows.
+    pytest.param([Ticket, Answer], Ticket | Answer, ['final_result_Ticket', 'final_result_str'], id='annotated_str'),
 ]
 
 
-@pytest.mark.parametrize('listed, union', UNION_SPELLINGS)
-async def test_annotated_union_member_matches_list(listed: Any, union: Any):
-    """`X | Y` offers the model the same output tools as `[X, Y]`, with each `Annotated` member's metadata intact.
+@pytest.mark.parametrize('listed, union, names', UNION_SPELLINGS)
+async def test_annotated_union_member_matches_list(listed: Any, union: Any, names: list[str]):
+    """`X | Y` offers the model exactly the output tools `[X, Y]` does, `Annotated` metadata included.
 
     Not a VCR test: the output tool definitions are built before any request is sent.
     """
@@ -950,11 +973,12 @@ async def test_annotated_union_member_matches_list(listed: Any, union: Any):
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         tools.append(info.output_tools)
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'urgent': True})])
+        return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': True})])
 
     for output_type in (listed, union):
         await Agent(FunctionModel(respond), output_type=output_type).run('Triage this ticket.')
     assert tools[0] == tools[1]
+    assert [tool.name for tool in tools[1]] == names
     assert (
         Agent('test', output_type=listed).output_json_schema() == Agent('test', output_type=union).output_json_schema()
     )
