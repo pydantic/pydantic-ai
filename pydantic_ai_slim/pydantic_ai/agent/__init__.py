@@ -3649,9 +3649,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         yielded = False
         async with AsyncExitStack() as session_stack:
-            # As for a classic run: nothing the session records is credited to an enclosing run's span.
-            session_stack.enter_context(_usage_attribution.accumulate(None))
             if lifecycle_state is not None:
+                # As for a classic run: nothing the session records is credited to an enclosing run's span.
+                session_stack.enter_context(_usage_attribution.accumulate(None))
                 assert cancellation is not None
                 # Setup-time `for_run` callbacks have the same context contract as a classic run:
                 # cancellation becomes available only once the run lifecycle has an owning task.
