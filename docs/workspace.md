@@ -168,9 +168,9 @@ environment from any of them: each returns `None` for a reference it does not ow
 that recognizes the reference supplies the workspace. Without a reference, the first workspace
 capability in the list creates the fresh environment.
 
-This ordering supports provider migration. Listing `E2BSandbox(), ModalSandbox()` sends new runs to
-E2B while a history carrying a Modal ref is still claimed by the Modal capability. A capability only
-answers for refs whose `provider` it owns. This mirrors
+This ordering supports provider migration. Listing the new provider's capability before the old
+one's sends new runs to the new provider, while a history carrying an old ref is still claimed by the
+old provider's capability. A capability only answers for refs whose `provider` it owns. This mirrors
 [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model].
 
 Pass `workspace='new'` to start in a fresh environment: like `conversation_id='new'`, it ignores any
