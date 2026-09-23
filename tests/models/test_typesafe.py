@@ -5,6 +5,7 @@ import pickle
 import re
 import time
 from collections.abc import Callable
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
@@ -204,7 +205,9 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
     assert result.response.provider_name == 'typesafe'
     assert result.response.provider_url == 'https://api.typesafe.ai'
     assert result.response.finish_reason == 'tool_call'
-    assert result.response.usage == snapshot(RequestUsage(input_tokens=474, output_tokens=58))
+    assert result.response.usage == snapshot(
+        RequestUsage(input_tokens=474, output_tokens=58, cost=Decimal('0.000019908'))
+    )
     assert result.response.provider_details == snapshot(
         {
             'confidence': {'verdict': 0.55, 'irreversible': 0.10000000000000009},
@@ -1459,7 +1462,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
         ]
     )
     responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
-    assert responses[0].usage == RequestUsage(input_tokens=20)
+    assert responses[0].usage == RequestUsage(input_tokens=20, cost=Decimal('8.4E-7'))
     assert responses[0].provider_details == snapshot(
         {
             'confidence': {
@@ -2794,7 +2797,7 @@ async def test_streaming_gives_the_whole_answer_as_one_event(allow_model_request
     response = stream.response
     assert response.model_name == 'jev-latest'
     assert response.provider_details == {'confidence': {'response': 0.8}, 'probabilities': {}, 'scores': {}}
-    assert response.usage == RequestUsage(input_tokens=10)
+    assert response.usage == RequestUsage(input_tokens=10, cost=Decimal('4.2E-7'))
 
 
 async def test_a_streamed_fallback_takes_the_proposed_step(allow_model_requests: None):
@@ -2897,7 +2900,7 @@ async def test_settings_forwarded(allow_model_requests: None):
     result = await agent.run('anything')
 
     assert result.output is True
-    assert result.response.usage == RequestUsage(input_tokens=10)
+    assert result.response.usage == RequestUsage(input_tokens=10, cost=Decimal('4.2E-7'))
     [request] = seen
     assert request.headers['x-probe'] == '1'
     assert request.extensions['timeout'] == {'connect': 7.0, 'read': 7.0, 'write': 7.0, 'pool': 7.0}
@@ -3153,9 +3156,7 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
             ),
         )
 
-    # `None` in an `output_type` list is not spelled out in the overloads, so the output type is named here;
-    # it runs on every model.
-    agent: Agent[None, Ticket | None] = Agent(mock_model(record), output_type=[Ticket, None])  # type: ignore[arg-type]
+    agent = Agent(mock_model(record), output_type=[Ticket, None])
     result = await agent.run('Nothing here needs handling.')
 
     assert result.output is None
@@ -3184,7 +3185,7 @@ async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_
 
     agent = Agent(
         mock_model(record),
-        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],  # type: ignore[arg-type]
+        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],
     )
     result = await agent.run('Thanks, all sorted.')
 
@@ -3344,7 +3345,7 @@ async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_m
 
     agent: Agent[None, Ticket | None] = Agent(
         mock_model(record),
-        output_type=[Ticket, None],  # type: ignore[arg-type]
+        output_type=[Ticket, None],
         tools=[refund],
     )
     result = await agent.run('Refund me maybe.')
@@ -3374,7 +3375,7 @@ async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_
     ]
     agent: Agent[None, str | None] = Agent(
         mock_model(unreachable),
-        output_type=[approve, None],  # type: ignore[arg-type]
+        output_type=[approve, None],
         tools=[refund],
     )
     result: AgentRunResult[str | None] = await agent.run(None, message_history=history)

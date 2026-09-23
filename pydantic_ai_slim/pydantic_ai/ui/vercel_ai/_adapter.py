@@ -59,6 +59,7 @@ from .._adapter import (
     resolve_allow_uploaded_files,
     tool_availability_delta_from_payload,
 )
+from .._utils import get_ui_message_id, set_ui_message_id
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     COMPACTION_DATA_TYPE,
@@ -129,13 +130,16 @@ _MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl]] = {
 def _generate_message_id(
     msg: ModelRequest | ModelResponse, role: Literal['system', 'user', 'assistant'], message_index: int
 ) -> str:
-    """Generate a deterministic message ID based on message content and position.
+    """Return the `UIMessage.id` the message was loaded from, else a deterministic ID from content and position.
 
     Priority order:
-    1. For `ModelResponse` with `provider_response_id` set, use '{provider_response_id}-{message_index}'.
-    2. For any message with run_id set, use '{run_id}-{message_index}'.
-    3. Fallback: UUID5 from 'timestamp-kind-role-message_index'.
+    1. The `UIMessage.id` kept by `load_messages`, so a history the client sent comes back with its own ids.
+    2. For `ModelResponse` with `provider_response_id` set, use '{provider_response_id}-{message_index}'.
+    3. For any message with run_id set, use '{run_id}-{message_index}'.
+    4. Fallback: UUID5 from 'timestamp-kind-role-message_index'.
     """
+    if (ui_message_id := get_ui_message_id(msg)) is not None:
+        return ui_message_id
     if isinstance(msg, ModelResponse) and msg.provider_response_id:
         return f'{msg.provider_response_id}-{message_index}'
     if msg.run_id:
@@ -612,12 +616,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             else:
                 assert_never(msg.role)
 
-            # Apply metadata to the role-corresponding `ModelMessage`: assistant UIMessages
-            # may also append a synthetic `ModelRequest` carrying tool-return parts, which we
-            # skip via the type filter so metadata lands on the response, not the tool returns.
+            # Apply metadata and the id to the role-corresponding `ModelMessage`: assistant UIMessages
+            # may also append a synthetic `ModelRequest` carrying tool-return parts, which we skip
+            # via the type filter so they land on the response, not the tool returns.
             target_type = ModelResponse if msg.role == 'assistant' else ModelRequest
             if (target := builder.last_modified(checkpoint, of_type=target_type)) is not None:
                 apply_message_metadata(target, msg.metadata)
+                set_ui_message_id(target, msg.id)
 
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
@@ -991,7 +996,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         Application keys in `ModelRequest.metadata` round-trip, but the reserved `__pydantic_ai__`
         namespace and top-level `ModelResponse.provider_details` do not. `UIMessage.metadata` is
         client-controlled, so framework and provider response state is not exposed or restored through
-        it; see `_PydanticAIMessageMetadata`.
+        it; see `_PydanticAIMessageMetadata`. The `UIMessage.id` that `load_messages` keeps in that
+        namespace is the exception: the default `generate_message_id` restores it.
 
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the

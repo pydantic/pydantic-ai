@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, Literal, overload
+from typing import Any, ClassVar, Generic, Literal, Protocol, cast, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -64,6 +64,21 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+
+class _NoneOutput(Protocol[T_co]):
+    """The type of a bare `None` output type, as seen by a type checker.
+
+    `None` in `output_type=[Foo, None]` or `ToolOutput(None)` is a value, not a type, so `type[T]` cannot match it
+    and would not add `None` to the output type if it did. Matching `None` structurally binds `T` to `None` through
+    `__class__`, while `__bool__` returning `Literal[False]` keeps other values out (a class annotating its own
+    `__bool__` that way would also match). A list of only `None` still type-checks, though it is refused at run time.
+    """
+
+    @property
+    def __class__(self) -> type[T_co]: ...  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    def __bool__(self) -> Literal[False]: ...
 
 
 TextOutputFunc = TypeAliasType(
@@ -137,7 +152,7 @@ class ToolOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        type_: OutputTypeOrFunction[OutputDataT],
+        type_: OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT],
         *,
         name: str | None = None,
         description: str | None = None,
@@ -147,7 +162,8 @@ class ToolOutput(Generic[OutputDataT]):
     ):
         if max_retries is not None and max_retries < 0:
             raise exceptions.UserError(f'max_retries must be >= 0, got {max_retries}')
-        self.output = type_
+        # A bare `None` is kept as is: the output schema treats it as the `None` output type.
+        self.output = cast(OutputTypeOrFunction[OutputDataT], type_)
         self.name = name
         self.description = description
         self.max_retries = max_retries
@@ -196,14 +212,16 @@ class NativeOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
         template: str | Literal[False] | None = None,
     ):
-        self.outputs = outputs
+        # A bare `None` item stays in the list: the output schema treats it as the `None` output type.
+        self.outputs = cast(OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]], outputs)
         self.name = name
         self.description = description
         self.strict = strict
@@ -268,13 +286,15 @@ class PromptedOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
         template: str | Literal[False] | None = None,
     ):
-        self.outputs = outputs
+        # A bare `None` item stays in the list: the output schema treats it as the `None` output type.
+        self.outputs = cast(OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]], outputs)
         self.name = name
         self.description = description
         self.template = template
@@ -666,12 +686,12 @@ _OutputSpecItem = TypeAliasType(
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
-    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co]'],
+    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co] | _NoneOutput[T_co]'],
     type_params=(T_co,),
 )
 """Specification of the agent's output data.
 
-This can be a single type, a function, a sequence of types and/or functions, or an instance of one of the output mode marker classes:
+This can be a single type, a function, a sequence of types and/or functions (which can include `None` to allow no output), or an instance of one of the output mode marker classes:
 - [`ToolOutput`][pydantic_ai.output.ToolOutput]
 - [`NativeOutput`][pydantic_ai.output.NativeOutput]
 - [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
