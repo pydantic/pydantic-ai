@@ -444,6 +444,7 @@ CodedArea = probe('area', Codes, description='Which area?')
 Mixed = probe('which', Literal['a', 1], description='Which?')
 Described = probe('status', Statuses, description='Which status?')
 OptionalStatus = probe('status', Literal[200, 404] | None, description='Which status, if any?')
+DefaultedStatus = probe('status', Literal[200, 404] | None, default=200, description='Which status, if any?')
 DescribedNoneStatus = probe(
     'status',
     Literal[200, 404] | Annotated[None, Field(description='The service did not answer.')],
@@ -588,6 +589,10 @@ ACCEPTED = [
                 }
             }
         ),
+    ),
+    # "None of these" on a field with a default leaves it to the default, a number as much as a string.
+    Accepted(
+        'field: optional pick-one of ints with a default', DefaultedStatus, DefaultedStatus(status=200), picks='none'
     ),
     # What the user wrote about `None` describes the extra option on a pick-one of numbers as on one of strings.
     Accepted(

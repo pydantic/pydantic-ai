@@ -623,10 +623,18 @@ def _answers(
                 _set(args, name, chosen)
                 confidence[name] = sureness
         elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
-            # The option itself is written back, looked up by its label rather than parsed out of it: `1` and
-            # `'1'` are two options, and only the lookup knows which one the label stood for.
-            labelled = _labelled(_options(prop) or {})
-            _set(args, name, None if answer.choice in none_option else labelled.get(answer.choice, answer.choice))
+            if answer.choice not in none_option:
+                # The option itself is written back, looked up by its label rather than parsed out of it: `1`
+                # and `'1'` are two options, and only the lookup knows which one the label stood for.
+                labelled = _labelled(_options(prop) or {})
+                _set(args, name, labelled.get(answer.choice, answer.choice))
+            elif 'default' in properties[name]:
+                # "None of these" is the absence of an answer, and a default says what to use when there is
+                # none, so the field is left out for Pydantic to fill in. The model it belongs to is still put
+                # in place, to apply the default in.
+                _slot(args, name)
+            else:
+                _set(args, name, None)
             confidence[name] = answer.confidence
             probabilities[name] = answer.probabilities
         elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
@@ -863,10 +871,16 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
     """Put a flattened field's answer back where it belongs, `outer.inner` under `outer`."""
+    parent, leaf = _slot(args, name)
+    parent[leaf] = value
+
+
+def _slot(args: dict[str, Any], name: str) -> tuple[dict[str, Any], str]:
+    """Where a flattened field's answer goes: the arguments of the model it belongs to, put in place, and its name there."""
     *path, leaf = name.split('.')
     for part in path:
         args = args.setdefault(part, {})
-    args[leaf] = value
+    return args, leaf
 
 
 def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:

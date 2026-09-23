@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal, cast
 import httpx2
 import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -2090,6 +2091,99 @@ async def test_the_none_option_stays_clear_of_an_option_named_none(allow_model_r
     result = await Agent(mock_model(record), output_type=Named).run('Hello.')
     assert result.output == Named(plan=None)
     assert list(seen[0]['questions']['plan']['criteria']) == ['none', 'some', 'none_']
+
+
+def none_of_these(request: httpx2.Request) -> httpx2.Response:
+    """Jev answering "None of these." to every question that offers it, and the first option to any other."""
+    questions: dict[str, dict[str, Any]] = json.loads(request.content)['questions']
+    return answers(
+        **{
+            name: tool_answers_for('none' if 'none' in question['criteria'] else next(iter(question['criteria'])))
+            for name, question in questions.items()
+        }
+    )
+
+
+class Placement(BaseModel):
+    area: Literal['billing', 'shipping'] | None = 'shipping'
+
+
+class Routing(BaseModel):
+    """Route a support ticket."""
+
+    team: Literal['billing', 'shipping'] | None = Field('shipping', description='Which team, if any?')
+    owner: Literal['billing', 'shipping'] | Annotated[None, Field(description='Nobody owns it yet.')] = Field(
+        'billing', description='Which team owns it?'
+    )
+    named: Literal['billing', 'shipping'] | None = Field(description='Which team is named, if any?')
+    unset: Literal['billing', 'shipping'] | None = Field(None, description='Which team is asked for, if any?')
+    fallback: Literal['billing', 'shipping'] | None = Field(
+        default_factory=lambda: 'billing', description='Which team is next, if any?'
+    )
+    queue: Literal['billing', 'shipping'] = Field('shipping', description='Which queue?')
+    placement: Placement
+
+
+async def test_none_of_these_leaves_a_default_to_apply(allow_model_requests: None):
+    """ "None of these." is the absence of an answer: a field with a default gets it, and one without gets `None`.
+
+    A described `None` is the same option under the user's wording, so it leaves the default to apply too. A
+    `default_factory` renders no default in the schema, which is all the model sees, so it is a field without one.
+    """
+    result = await Agent(mock_model(none_of_these), output_type=Routing).run('Hello.')
+    assert result.output == Routing(
+        team='shipping',
+        owner='billing',
+        named=None,
+        unset=None,
+        fallback=None,
+        queue='billing',
+        placement=Placement(area='shipping'),
+    )
+    assert result.response.parts == [
+        ToolCallPart(
+            'final_result',
+            {'named': None, 'fallback': None, 'queue': 'billing', 'placement': {}},
+            tool_call_id=IsStr(),
+        )
+    ]
+
+
+async def test_none_of_these_is_none_for_a_key_that_may_be_left_out(allow_model_requests: None):
+    """A `NotRequired` key has no default to apply, so it gets `None` rather than being left out."""
+
+    class Routed(TypedDict):
+        """Route a support ticket."""
+
+        team: NotRequired[Literal['billing', 'shipping'] | None]
+
+    result = await Agent(mock_model(none_of_these), output_type=Routed).run('Hello.')
+    assert result.output == {'team': None}
+
+
+async def test_none_of_these_leaves_a_tool_argument_default_to_apply(allow_model_requests: None):
+    """An argument Jev fills for a tool gets its default the same way a field of the output does."""
+    called: list[str | None] = []
+    requests = 0
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 2:
+            # The second request fills `assign`, which Jev picked in the first.
+            return none_of_these(request)
+        return tool_answers('assign' if requests == 1 else 'final_result', 0.9)
+
+    def assign(team: Literal['billing', 'shipping'] | None = 'shipping') -> None:
+        """Assign the ticket.
+
+        Args:
+            team: Which team should take it, if any?
+        """
+        called.append(team)
+
+    await Agent(mock_model(handle), output_type=Ticket, tools=[assign]).run('Charged twice.')
+    assert called == ['shipping']
 
 
 async def test_the_none_option_says_what_the_user_wrote_about_none(allow_model_requests: None):
