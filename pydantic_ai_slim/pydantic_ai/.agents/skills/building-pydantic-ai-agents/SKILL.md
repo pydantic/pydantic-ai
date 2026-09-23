@@ -330,16 +330,17 @@ Key facts for building realtime agents:
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
   `google_async_tool_calls=True` on a native-audio model). An unhandled tool exception is raised
-  from session iteration; when only `stream_audio()` or `stream_transcripts()` is consumed, it ends
-  those views and is raised when the session context closes. Its call is recorded with
-  `outcome='failed'`, leaving history valid for a standard-agent handoff. An
-  `on_tool_execute_error` capability can return a replacement result or raise `ModelRetry` to keep
+  from session iteration while it is active; otherwise it ends `stream_audio()` and
+  `stream_transcripts()` and is raised when the session context closes. The next outbound method
+  raises an already-ended receive side's failure instead, and every failure is delivered only once.
+  Its call is recorded with `outcome='failed'`, leaving history valid for a standard-agent handoff.
+  An `on_tool_execute_error` capability can return a replacement result or raise `ModelRetry` to keep
   the session running. To end the call from a tool, await `ctx.realtime_session.close()` for a clean
-  hang-up (the tool does not resume and its call is recorded as interrupted), or call `ctx.cancel()`
-  to make the session context raise `RunCancelled`. A watchdog can also await `session.close()`
-  safely: cancelling the watchdog does not interrupt teardown, and the session context waits for
-  teardown before exiting. While iteration is running the loop ends cleanly and `session.result` is
-  settled.
+  hang-up (the tool does not resume, its call is recorded as interrupted, and a concurrent
+  `send_audio()` async iterable returns cleanly at its next chunk), or call `ctx.cancel()` to make
+  the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely:
+  cancelling the watchdog does not interrupt teardown, and the session context waits for teardown
+  before exiting. While iteration is running the loop ends cleanly and `session.result` is settled.
 - **Late event consumption is bounded**: while nothing is iterating the session, it retains only the
   most recent 512 `PartDeltaEvent`s and the most recent 512 structural events, so a long call that
   nobody iterates cannot grow without bound. Parts are dropped whole, so a late iterator never sees a
