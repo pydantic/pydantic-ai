@@ -264,6 +264,33 @@ def test_shared_context_setup_is_scoped_and_uses_runtime_paths():
     assert '$GITHUB_WORKSPACE/.review-context/' in shim.INSTRUCTIONS
 
 
+def test_prewarm_leaves_the_runner_lock_as_checked_out(tmp_path: Path):
+    """CI Review's `git checkout --detach` of the PR head aborts if the pre-warm left the lock dirty."""
+    workspace = tmp_path / 'workspace'
+    lock = workspace / '.github' / 'scripts' / 'pydantic-ai-runner.lock'
+    lock.parent.mkdir(parents=True)
+    lock.write_text('checked out\n', encoding='utf-8')
+    git = ['git', '-C', str(workspace), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
+    subprocess.run([*git, 'init', '-q'], check=True)
+    subprocess.run([*git, 'add', '.'], check=True)
+    subprocess.run([*git, 'commit', '-q', '-m', 'init'], check=True)
+
+    # `uv sync --script` rewrites the adjacent lock when it is stale.
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    fake_uv = bin_dir / 'uv'
+    fake_uv.write_text('#!/bin/sh\necho relocked > "$3.lock"\n', encoding='utf-8')
+    fake_uv.chmod(0o755)
+
+    env = {**os.environ, 'PATH': f'{bin_dir}:{os.environ["PATH"]}', 'GITHUB_WORKSPACE': str(workspace)}
+    script = Path(__file__).with_name('prewarm-pydantic-ai-runner.sh')
+    result = subprocess.run(['bash', script], text=True, capture_output=True, check=False, env=env)
+
+    assert result.returncode == 0
+    assert f'using uv={fake_uv}' in result.stdout
+    assert lock.read_text(encoding='utf-8') == 'checked out\n'
+
+
 @pytest.mark.parametrize(
     'prompt_name',
     [
