@@ -4036,6 +4036,8 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if self._logprobs:
+                self.provider_details = {**(self.provider_details or {}), 'logprobs': self._logprobs}
             if (
                 self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
                 and not self._has_finish_reason
@@ -4144,15 +4146,14 @@ class OpenAIStreamedResponse(StreamedResponse):
         """Hook that generates the provider details from chunk content.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
-        Overrides should call `super()` to keep `logprobs` accumulated across chunks.
+        Overrides should call `super()` so `logprobs` are collected across chunks.
         """
         provider_details = _map_provider_details(chunk.choices[0])
-        if provider_details and (logprobs := provider_details.get('logprobs')):
+        if provider_details and (logprobs := provider_details.pop('logprobs', None)):
+            # Each chunk carries only its own tokens' logprobs, so collect them and publish the full list
+            # once the stream ends.
             self._logprobs.extend(logprobs)
-            # Each chunk carries only its own tokens' logprobs and provider details are shallow-merged
-            # across chunks, so publish the running list.
-            provider_details['logprobs'] = list(self._logprobs)
-        return provider_details
+        return provider_details or None
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
