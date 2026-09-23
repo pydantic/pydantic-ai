@@ -61,6 +61,9 @@ anyio.run(main)
 
 [`GitHubCopilotOAuthFlow`][pydantic_ai.providers.github_copilot.GitHubCopilotOAuthFlow] implements GitHub.com's [device authorization flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow). Register an OAuth application and enable device flow in its settings. `GITHUB_OAUTH_CLIENT_ID` is application configuration used by this example, not a variable Pydantic AI reads automatically.
 
+!!! warning "Only approve device codes from your own login attempt"
+    Use device flow for constrained clients such as CLI or headless applications. Applications that can receive browser redirects should use authorization code with PKCE instead. Anyone can initiate a device grant with a public client ID; entering a code supplied by an attacker authorizes their client, not yours. Tell users to approve only codes shown by the application they are signing into, not codes received in messages. See [RFC 8628's phishing guidance](https://www.rfc-editor.org/rfc/rfc8628.html#section-5.4).
+
 The helper requires your application's `client_id`; it does not borrow another application's identity. It requests no scopes by default. Pass `scope=` if your application needs GitHub permissions.
 
 !!! warning "GitHub authorization does not establish Copilot access"
