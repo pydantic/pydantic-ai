@@ -3492,6 +3492,42 @@ def test_file_part_dropped_by_default() -> None:
     assert not any(isinstance(part, FilePart) for msg in reloaded for part in msg.parts)
 
 
+@pytest.mark.parametrize(
+    'texts,expected',
+    [
+        (['a', 'b', 'c'], 'abc'),
+        (['a\n', 'b'], 'a\nb'),
+        (['', 'a', '', 'b', ''], 'ab'),
+    ],
+)
+def test_dump_messages_adjacent_text_parts(texts: list[str], expected: str) -> None:
+    """Pin serialization of adjacent text parts directly, independent of provider chunking."""
+    response = ModelResponse(parts=[TextPart(content=text) for text in texts])
+
+    assert response.text == expected
+    result = AGUIAdapter.dump_messages([response])
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == [
+        {'role': 'assistant', 'content': expected}
+    ]
+
+
+@pytest.mark.parametrize(
+    'separator',
+    [
+        ThinkingPart(content='Thinking'),
+        FilePart(content=BinaryImage(data=b'image data', media_type='image/png')),
+    ],
+)
+def test_dump_messages_text_separated_by_dropped_part(separator: ThinkingPart | FilePart) -> None:
+    """Dropping a non-text part must not make its surrounding text parts adjacent."""
+    response = ModelResponse(parts=[TextPart('a'), TextPart('b'), separator, TextPart('c'), TextPart('d')])
+
+    result = AGUIAdapter.dump_messages([response], ag_ui_version='0.1.10')
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in result] == snapshot(
+        [{'role': 'assistant', 'content': 'ab\ncd'}]
+    )
+
+
 def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
     """Test round-trip for response with text interleaved around tool calls.
 
@@ -3502,9 +3538,11 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
         ModelRequest(parts=[UserPromptPart(content='Do things')]),
         ModelResponse(
             parts=[
-                TextPart(content='Before tools'),
+                TextPart(content='Before '),
+                TextPart(content='tools'),
                 ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
-                TextPart(content='After tools'),
+                TextPart(content='After '),
+                TextPart(content='tools'),
             ]
         ),
     ]
