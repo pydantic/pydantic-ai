@@ -2864,12 +2864,20 @@ async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_
     )
 
 
-async def test_a_described_none_route_keeps_what_the_user_said_about_it(allow_model_requests: None):
+DESCRIBED_NONE = Annotated[None, Field(description='Nothing needs doing here.')]
+
+
+@pytest.mark.parametrize(
+    'output_type',
+    [pytest.param([Ticket, DESCRIBED_NONE], id='list'), pytest.param(Ticket | DESCRIBED_NONE, id='union')],
+)
+async def test_a_described_none_route_keeps_what_the_user_said_about_it(allow_model_requests: None, output_type: Any):
     """`Annotated[None, Field(description=...)]` in the union says the same thing `ToolOutput` does.
 
     The description lands on the `null` property Pydantic AI wraps `None` in rather than on the tool, and the
     route question reads it from there, as it does for any wrapped output type. `OutputSpec` does not accept an
-    `Annotated` member, which is why the documented spelling is `ToolOutput`, but this one reaches Jev too.
+    `Annotated` member, which is why the documented spelling is `ToolOutput`, but this one reaches Jev too,
+    whether the union is written as a list or with `|`.
     """
     seen: list[dict[str, Any]] = []
 
@@ -2880,8 +2888,7 @@ async def test_a_described_none_route_keeps_what_the_user_said_about_it(allow_mo
             tool=_route('final_result_None', {'final_result_Ticket': 0.05, 'final_result_None': 0.95}),
         )
 
-    output_type: list[Any] = [Ticket, Annotated[None, Field(description='Nothing needs doing here.')]]
-    agent = Agent(mock_model(record), output_type=output_type)
+    agent: Agent[None, Any] = Agent(mock_model(record), output_type=output_type)
     result = await agent.run('Thanks, all sorted.')
 
     assert result.output is None
