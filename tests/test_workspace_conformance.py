@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import cast
 
+import anyio.to_thread
 import pytest
 
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
@@ -65,8 +67,15 @@ class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
         return LocalWorkspaceBackend(tmp_path)
 
     @pytest.fixture
-    def attach_backend(self, tmp_path: Path) -> Callable[[WorkspaceRef], WorkspaceBackend]:
-        return lambda ref: LocalWorkspaceBackend(tmp_path)
+    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
+        return lambda ref: LocalWorkspaceBackend(ref.id)
+
+    @pytest.fixture
+    def destroy_environment(self, tmp_path: Path) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+        async def destroy(backend: WorkspaceBackend) -> None:
+            await anyio.to_thread.run_sync(shutil.rmtree, tmp_path)
+
+        return destroy
 
 
 class TestClassScopedLocalWorkspaceBackend(WorkspaceBackendSuite):
