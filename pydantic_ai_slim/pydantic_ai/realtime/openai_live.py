@@ -28,8 +28,10 @@ shape the adapter:
 
 from __future__ import annotations as _annotations
 
+import array
 import asyncio
 import base64
+import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
@@ -145,6 +147,10 @@ DEFAULT_BACKEND_MODEL = 'gpt-5.6-sol'
 
 _LIVE_WEBSOCKET_PATH = 'live/sessions'
 _SESSION_STARTED_EVENT = 'session.started'
+#: The loudest 16-bit sample an output frame can hold and still count as the idle track (about
+#: -54 dBFS). Live's idle track is not always exact zeros: every session opens with a frame or two of
+#: dither peaking around 20, and treating that as speech would open a reply nobody is giving.
+_VOICE_FLOOR = 64
 
 _server_event_adapter: TypeAdapter[ServerEvent] = TypeAdapter(ServerEvent)
 _responses_adapter: TypeAdapter[Response] = TypeAdapter(Response)
@@ -579,13 +585,14 @@ class OpenAILiveConnection(RealtimeConnection):
     def _map_output_audio(self, pcm: bytes) -> list[RealtimeCodecEvent]:
         """Forward model audio, ignoring the idle track between replies.
 
-        `strip` tests for *digital* silence rather than measuring loudness, so this drops only frames
-        the model filled with zeros. Frames inside a reply are forwarded whether or not they are
-        silent, which keeps a pause mid-sentence from arriving as a gap in playback.
+        Only a frame louder than the idle floor is evidence that the model is speaking. Quieter frames
+        inside a reply are still forwarded, which keeps a pause mid-sentence from arriving as a gap in
+        playback — but not while the user is talking, because an assistant frame marks the end of the
+        user's turn, and the idle track between their words would cut one utterance into many.
         """
-        if pcm.strip(b'\x00'):
+        if _is_voiced(pcm):
             return [*self._open_response(), AudioDelta(data=pcm)]
-        if self._response_open:
+        if self._response_open and not self._input_open:
             return [AudioDelta(data=pcm)]
         return []
 
@@ -724,6 +731,14 @@ async def _recv(ws: ClientConnection) -> str | bytes:
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
+
+
+def _is_voiced(pcm: bytes) -> bool:
+    """Whether a little-endian PCM16 frame is louder than the idle track."""
+    samples = array.array('h', pcm[: len(pcm) - len(pcm) % 2])
+    if sys.byteorder == 'big':  # pragma: no cover
+        samples.byteswap()
+    return any(abs(sample) > _VOICE_FLOOR for sample in samples)
 
 
 def _b64decode(data: str) -> bytes:

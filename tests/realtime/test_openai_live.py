@@ -289,6 +289,35 @@ def test_idle_output_audio_is_dropped_but_speech_passes() -> None:
     assert [type(e).__name__ for e in connection._map_event(_event(silence))] == ['AudioDelta']  # pyright: ignore[reportPrivateUsage]
 
 
+def test_start_of_stream_dither_is_not_speech() -> None:
+    """Every Live session opens with a frame or two of dither peaking around 20.
+
+    Counting any non-zero sample as speech opened a reply before the user had said anything, and
+    every idle frame after it then reached the session as assistant audio.
+    """
+    connection = _connection()
+    dither = {'type': 'session.output_audio.delta', 'delta': 'EwD0/wcAAAD9/wEAAAAAAA=='}
+
+    assert connection._map_event(_event(dither)) == []  # pyright: ignore[reportPrivateUsage]
+    assert not connection._response_open  # pyright: ignore[reportPrivateUsage]
+
+
+def test_idle_audio_is_held_back_while_the_user_speaks() -> None:
+    """An assistant frame ends the user's turn, so the idle track must not reach it mid-utterance.
+
+    Otherwise each gap between the user's words arrives as model audio and one sentence is recorded
+    as a turn per word.
+    """
+    connection = _connection()
+    silence = {'type': 'session.output_audio.delta', 'delta': 'AAAAAAAAAAA='}
+    voice = {'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='}
+    words = {'type': 'session.input_transcript.delta', 'delta': 'and', 'start_ms': 0, 'end_ms': 1, 'event_id': 'e1'}
+
+    connection._map_event(_event(voice))  # pyright: ignore[reportPrivateUsage]
+    connection._map_event(_event(words))  # pyright: ignore[reportPrivateUsage]
+    assert connection._map_event(_event(silence)) == []  # pyright: ignore[reportPrivateUsage]
+
+
 def test_output_transcript_closes_the_user_turn() -> None:
     """Live marks neither turn as finished, so the model replying is what ends the user's."""
     connection = _connection()
