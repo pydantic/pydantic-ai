@@ -10,7 +10,11 @@ You send and receive raw audio samples; there is no container or codec in the li
 [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] accepts raw, signed 16-bit
 little-endian mono PCM — a single chunk, or an async iterable of chunks (a microphone stream, a
 WebSocket receive loop) that it forwards until the iterable ends, so a whole capture loop can be
-one task. [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
+one task. If the session is closed while consuming the iterable, that task returns cleanly as soon
+as the source yields again, without sending that chunk. Cancel the task in application code if the
+source can stall indefinitely. Sending a single chunk after close still raises
+[`UserError`][pydantic_ai.exceptions.UserError].
+[`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
 returns the same format. Capture at
 [`session.audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 and play at
