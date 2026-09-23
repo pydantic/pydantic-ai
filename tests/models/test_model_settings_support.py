@@ -709,8 +709,10 @@ def test_every_api_backed_model_class_is_probed():
             # are screened out before the base-class question is asked.
             if not isinstance(obj, type) or isinstance(obj, types.GenericAlias):
                 continue
+            if obj.__module__ != module_info.name or not issubclass(obj, Model):
+                continue
             # An abstract base such as `DecisionModel` has no wire of its own; its concrete subclasses are probed.
-            if obj.__module__ == module_info.name and issubclass(obj, Model) and not inspect.isabstract(obj):
+            if not inspect.isabstract(cast('type[Model[Any]]', obj)):
                 discovered.add(name)
 
     unprobed = discovered - _NOT_API_BACKED - {case.id for case in CASES}

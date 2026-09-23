@@ -4258,7 +4258,7 @@ def test_run_span_reports_the_runs_own_usage_not_the_conversations(capfire: Capt
     assert second.usage.input_tokens == snapshot(103)
 
 
-async def _run_delegating_agent(*, share_usage: bool, sequential: bool) -> None:
+async def _run_delegating_agent(*, share_usage: bool, sequential: bool, instrument_delegate: bool = True) -> None:
     """Run a parent agent whose tool delegates to a second agent, once per tool call."""
 
     async def delegate_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4266,7 +4266,9 @@ async def _run_delegating_agent(*, share_usage: bool, sequential: bool) -> None:
         await asyncio.sleep(0.05)
         return ModelResponse(parts=[TextPart('joke')], usage=RequestUsage(input_tokens=10, output_tokens=1))
 
-    delegate = Agent(FunctionModel(delegate_fn), name='delegate', capabilities=[Instrumentation()])
+    delegate = Agent(
+        FunctionModel(delegate_fn), name='delegate', capabilities=[Instrumentation()] if instrument_delegate else []
+    )
 
     async def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         usage = RequestUsage(input_tokens=1000, output_tokens=5)
@@ -4311,6 +4313,30 @@ async def test_run_span_reports_its_own_usage_under_concurrent_delegation(
     # The delegates' tokens are reported once, on the delegates, so summing every agent-run span
     # gives the run's total rather than counting them again on the parent containing them.
     assert sum(tokens for _, tokens in agent_spans) == snapshot(2020)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('share_usage', [True, False])
+@pytest.mark.parametrize('sequential', [True, False])
+@pytest.mark.anyio
+async def test_run_span_excludes_an_uninstrumented_delegates_usage(
+    capfire: CaptureLogfire, share_usage: bool, sequential: bool
+) -> None:
+    """A delegate without a span of its own doesn't report its usage on the caller's.
+
+    The caller's span reports what the caller spent whether or not the runs it starts are
+    instrumented: crediting an unspanned delegate's tokens to the nearest instrumented run would
+    make that run's span disagree with its own `result.usage`, and look no different from a run
+    that really spent that much.
+    """
+    await _run_delegating_agent(share_usage=share_usage, sequential=sequential, instrument_delegate=False)
+
+    agent_spans = [
+        (span['name'], span['attributes']['gen_ai.aggregated_usage.input_tokens'])
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+    ]
+    assert agent_spans == snapshot([('invoke_agent parent', 2000)])
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
