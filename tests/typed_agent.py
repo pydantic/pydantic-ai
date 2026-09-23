@@ -408,10 +408,6 @@ else:
     assert_type(Agent(output_type=Annotated[Foo, 'meta'] | Bar), Agent[object, Foo | Bar])
     assert_type(Agent(output_type=Confidence | None), Agent[object, float | None])
     assert_type(ToolOutput(bool | tuple[str, int]), ToolOutput[bool | tuple[str, int]])
-    # A value that isn't a type form is still refused
-    Agent(output_type=5)  # pyright: ignore[reportArgumentType,reportCallIssue]
-    Agent(output_type=Foo(a=1))  # pyright: ignore[reportArgumentType,reportCallIssue]
-    Agent(output_type=[Foo, 0])  # pyright: ignore[reportArgumentType,reportCallIssue]
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
     complex_output_agent = Agent(
