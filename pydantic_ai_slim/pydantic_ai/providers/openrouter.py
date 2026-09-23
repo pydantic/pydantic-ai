@@ -190,9 +190,18 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
         #    accepts the older `max_tokens` field, so `openai_chat_supports_max_completion_tokens=False`.
         #    It also silently transforms mid-conversation system messages rather than handling them natively,
         #    so `supports_inline_system_prompts=False` selects the deliberate `<system>`-wrapped fallback.
+        # Anthropic models that reject a forced `tool_choice` outright (e.g. Claude Opus 5.5) reject it through
+        # OpenRouter too, so the Anthropic flag is carried over to the OpenAI-compatible one this model reads. It is
+        # only set when forcing is unsupported, so it never overrides another upstream profile's own value.
+        forcing_unsupported = (
+            OpenAIModelProfile(openai_supports_tool_choice_required=False)
+            if profile is not None and profile.get('anthropic_supports_forced_tool_choice', True) is False
+            else None
+        )
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
+            forcing_unsupported,
             OpenRouterModelProfile(
                 openai_chat_send_back_thinking_parts='field',
                 openai_chat_thinking_field='reasoning',

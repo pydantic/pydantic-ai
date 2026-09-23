@@ -102,6 +102,8 @@ Pydantic AI treats a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.t
 - An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; disable thinking or use `tool_choice='auto'`.
 - A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, so thinking is preserved. If the resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
 
+Models that reject a forced tool choice unconditionally on [the direct Anthropic API](anthropic.md#forced-tool-choice), such as **Claude Fable 5.1** and **Claude Opus 5.5**, reject it through OpenRouter too, which passes the error back. Pydantic AI carries their [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice] over to the OpenRouter route, so for these models the rules above apply with or without thinking.
+
 ## Prompt Caching
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it. Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpoints for Anthropic and Gemini models:

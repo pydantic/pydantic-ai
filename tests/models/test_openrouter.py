@@ -1478,6 +1478,35 @@ async def test_openrouter_forced_tool_choice_with_thinking(
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'expected_tool_choice'),
+    [
+        pytest.param('anthropic/claude-opus-5.5', 'auto', id='rejects-forcing'),
+        pytest.param('anthropic/claude-opus-5', 'required', id='accepts-forcing'),
+    ],
+)
+async def test_openrouter_inferred_forcing_on_model_that_rejects_forced_tool_choice(
+    allow_model_requests: None, model_name: str, expected_tool_choice: str
+) -> None:
+    """Structured output doesn't force the output tool on an Anthropic model that rejects a forced `tool_choice`.
+
+    Without thinking, the thinking-based fallback doesn't apply, so this is the only thing standing
+    between a bare structured `output_type` and a 400 from the downstream model.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tool_choice'] == expected_tool_choice
+    assert [tool['function']['name'] for tool in kwargs['tools']] == ['get_weather', 'final_result']
+
+
+@pytest.mark.parametrize(
     ('tool_choice', 'expected_error'),
     [
         pytest.param(

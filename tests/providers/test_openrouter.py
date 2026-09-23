@@ -304,6 +304,26 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
     assert profile.get('openrouter_supports_forced_tool_choice_with_thinking') is expected
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        # These reject a forced `tool_choice` outright, with or without thinking.
+        ('anthropic/claude-opus-5.5', False),
+        ('~anthropic/claude-opus-5.5', False),
+        ('anthropic/claude-fable-5.1', False),
+        ('anthropic/claude-opus-5', True),
+        ('anthropic/claude-sonnet-4.6', True),
+        ('openai/gpt-5-mini', True),
+    ],
+)
+def test_openrouter_model_profile_forced_tool_choice_unsupported(model_name: str, expected: bool) -> None:
+    """The upstream Anthropic model's forced-`tool_choice` support reaches the OpenAI-compatible flag."""
+    provider = OpenRouterProvider(api_key='api-key')
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_supports_tool_choice_required', True) is expected
+
+
 def test_openrouter_model_profile_requires_provider_prefix() -> None:
     provider = OpenRouterProvider(api_key='api-key')
     with pytest.raises(UserError, match=re.escape("e.g. 'openai/gpt-4o', not 'gpt-4o'")):
