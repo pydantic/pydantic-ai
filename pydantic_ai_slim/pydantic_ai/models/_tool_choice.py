@@ -146,11 +146,44 @@ def resolve_tool_choice(  # noqa: C901
     # list[str]: required, restricted to these tools
     elif isinstance(function_tool_choice, list):
         chosen_set = set(function_tool_choice)
-        _check_invalid_tools(chosen_set, known_tool_names, known_label='Known tools')
+        output_tool_names = {t.name for t in model_request_parameters.output_tools}
+        chosen_output_names = chosen_set & output_tool_names
+        chosen_non_output = chosen_set - output_tool_names
+
+        # A list naming output tools only is a deliberate "force one of these output tools" choice.
+        # Validate against every known name (so a pure typo is still caught) and keep the names:
+        # collapsing to a bare `'required'` would also let function tools satisfy the call, the
+        # opposite of what an output-only choice asked for.
+        if not chosen_non_output:
+            _check_invalid_tools(chosen_set, known_tool_names, known_label='Known tools')
+            chosen_set = _filter_withheld_tools(chosen_set)
+            return 'required' if chosen_set == known_tool_names else ('required', chosen_set)
+
+        # Otherwise the list names at least one function (or dynamically-available) tool, so it is a
+        # function-only choice -- validated against the function tools alone, the same basis as
+        # `ToolOrOutput.function_tools` below.
+        known_function_tool_names = {t.name for t in model_request_parameters.function_tools}
+        _check_invalid_tools(chosen_non_output, known_function_tool_names, known_label='Known tools')
+        # An output tool name mixed into a function-only choice would still be sent as an allowed
+        # tool, letting the model satisfy the choice with the output tool. Warn (a silent drop would
+        # hide a likely mistake) and drop it; unknown names stay, as the dynamic-availability case
+        # `_check_invalid_tools` deliberately allows.
+        if chosen_output_names:
+            warnings.warn(
+                f'Output tool names in `tool_choice` are ignored for a function-tool choice and '
+                f'will be dropped: {sorted(chosen_output_names)}.',
+                UserWarning,
+                stacklevel=3,
+            )
+        chosen_set = chosen_non_output
         # A deferred declaration or a tool-addition definition is already on the wire and remains
         # callable; only tools absent from the wire cannot be forced by name.
         chosen_set = _filter_withheld_tools(chosen_set)
 
+        # Dropping the name list is only equivalent to keeping it when nothing else is on the wire.
+        # With output tools present a bare `'required'` would also let the model satisfy the call
+        # with an output tool -- the opposite of what a function-only choice asked for -- so the
+        # explicit set is preserved in that case.
         if chosen_set == known_tool_names:
             return 'required'
 
