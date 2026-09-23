@@ -118,7 +118,7 @@ realtime WebSocket session and the WebRTC signaling — with a bearer token for 
 plane (scope `https://ai.azure.com/.default`), which requires the **Cognitive Services User** role on
 the resource:
 
-```python {test="skip" typecheck="skip - azure-identity is not installed in the test environment"}
+```python {test="skip"}
 from azure.identity import DefaultAzureCredential
 
 from pydantic_ai.providers.azure import AzureProvider

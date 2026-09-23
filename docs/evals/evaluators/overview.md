@@ -91,7 +91,7 @@ see [Standard Quality Metrics](standard-quality-metrics.md): the
 Custom evaluators can be useful if you want to make use of any evaluation logic we don't provide with the framework.
 They are frequently useful for domain-specific logic:
 
-```python {typecheck="skip - sqlparse is not installed in the test environment"}
+```python
 from dataclasses import dataclass
 
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
