@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import pickle
 from collections.abc import Callable
+from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
@@ -164,7 +165,9 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
     assert result.response.provider_name == 'typesafe'
     assert result.response.provider_url == 'https://api.typesafe.ai'
     assert result.response.finish_reason == 'tool_call'
-    assert result.response.usage == snapshot(RequestUsage(input_tokens=474, output_tokens=58))
+    assert result.response.usage == snapshot(
+        RequestUsage(input_tokens=474, output_tokens=58, cost=Decimal('0.000019908'))
+    )
     assert result.response.provider_details == snapshot(
         {
             'confidence': {'verdict': 0.55, 'irreversible': 0.10000000000000009},
@@ -754,7 +757,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
         ]
     )
     responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
-    assert responses[0].usage == RequestUsage(input_tokens=20)
+    assert responses[0].usage == RequestUsage(input_tokens=20, cost=Decimal('8.4E-7'))
     assert responses[0].provider_details == snapshot(
         {
             'confidence': {
@@ -2084,7 +2087,7 @@ async def test_streaming_gives_the_whole_answer_as_one_event(allow_model_request
     response = stream.response
     assert response.model_name == 'jev-latest'
     assert response.provider_details == {'confidence': {'response': 0.8}, 'probabilities': {}, 'scores': {}}
-    assert response.usage == RequestUsage(input_tokens=10)
+    assert response.usage == RequestUsage(input_tokens=10, cost=Decimal('4.2E-7'))
 
 
 async def test_a_streamed_fallback_takes_the_proposed_step(allow_model_requests: None):
@@ -2187,7 +2190,7 @@ async def test_settings_forwarded(allow_model_requests: None):
     result = await agent.run('anything')
 
     assert result.output is True
-    assert result.response.usage == RequestUsage(input_tokens=10)
+    assert result.response.usage == RequestUsage(input_tokens=10, cost=Decimal('4.2E-7'))
     [request] = seen
     assert request.headers['x-probe'] == '1'
     assert request.extensions['timeout'] == {'connect': 7.0, 'read': 7.0, 'write': 7.0, 'pool': 7.0}

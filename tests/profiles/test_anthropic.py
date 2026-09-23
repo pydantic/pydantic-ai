@@ -363,15 +363,17 @@ def test_model_profile_fable_5():
         ('claude-fable-5', True),
         ('claude-mythos-5', True),
         ('claude-mythos-preview', True),
+        ('claude-opus-5-5', False),
         ('claude-opus-5', True),
     ],
 )
 def test_model_profile_forced_tool_choice(model_name: str, supports_forcing: bool):
-    """Only the 5.1 generation rejects a forced `tool_choice` outright.
+    """The 5.1 generation and Opus 5.5 reject a forced `tool_choice` outright.
 
-    Anthropic's forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1 and no other
-    model. Verified live: `claude-fable-5-1` returns a 400 for `{'type': 'any'}` and
-    `{'type': 'tool'}` while `claude-fable-5` returns 200 for both, on the GA and beta endpoints.
+    Anthropic's forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1, and the Opus 5.5
+    migration guide lists forced tool use among its breaking changes. Verified live: `claude-fable-5-1`
+    and `claude-opus-5-5` return a 400 for `{'type': 'any'}` and `{'type': 'tool'}` while
+    `claude-fable-5` and `claude-opus-5` return 200 for both.
     The Mythos ids are Project Glasswing-only and unreachable with our credentials, so they follow
     the table.
     """
@@ -521,6 +523,33 @@ def test_model_profile_opus_5():
     opus_4_8 = anthropic_model_profile('claude-opus-4-8')
     assert opus_4_8 is not None
     assert opus_4_8.get('anthropic_disallows_top_effort_when_thinking_disabled') is not True
+
+
+def test_model_profile_opus_5_5():
+    """Claude Opus 5.5 carries Opus 5's capability surface plus Fable 5.1's two breaking changes.
+
+    Verified live against the Anthropic API by probing `claude-opus-5-5` side by side with
+    `claude-opus-5`: both reject sampling settings and budget-based thinking, and both accept adaptive
+    thinking, `low`/`xhigh`/`max` effort, task budgets, json-schema output, strict tools, tool search,
+    the advisor tool, code execution `20260120`, web search/fetch `20260209`, a mid-conversation
+    `system` entry, and `tool_addition` by reference. Both return the same fast-mode quota error for
+    `anthropic_speed='fast'`, and Anthropic documents fast mode for Opus 5.5.
+
+    Where Opus 5.5 diverges from Opus 5, it matches Fable 5.1: it returns a 400 for a forced
+    `tool_choice` and for a thinking block replayed after the `system` prompt changes (with an explicit
+    `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` at every
+    effort level, so the `xhigh`/`max`-specific guard Opus 5 carries doesn't apply.
+    """
+    profile = anthropic_model_profile('claude-opus-5-5')
+    opus_5 = anthropic_model_profile('claude-opus-5')
+    assert profile is not None
+    assert opus_5 is not None
+    assert profile == {
+        **opus_5,
+        'anthropic_disallows_top_effort_when_thinking_disabled': False,
+        'anthropic_supports_forced_tool_choice': False,
+        'anthropic_binds_thinking_blocks': True,
+    }
 
 
 @pytest.mark.parametrize(

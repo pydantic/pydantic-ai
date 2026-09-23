@@ -381,6 +381,40 @@ def test_openai_gpt_6_astra():
     )
 
 
+@pytest.mark.parametrize(
+    'model_name',
+    ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-sol-2026-09-22', 'gpt-6-luna-2026-09-22'],
+)
+def test_openai_gpt_6_sol_luna(model_name: str):
+    """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots."""
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-5.6-sol'))
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'openai/gpt-6-sol',
+        'openai/gpt-6-sol-pro',
+        'openai/gpt-6-sol-20260922',
+        'openai/gpt-6-luna',
+        'openai/gpt-6-luna-pro',
+        'openai/gpt-6-luna-20260922',
+    ],
+)
+def test_openrouter_gpt_6_sol_luna(model_name: str):
+    """OpenRouter's published GPT-6 routes retain the OpenAI reasoning capabilities."""
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_supports_reasoning_effort_none') is True
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
 def test_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
