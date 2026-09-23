@@ -386,9 +386,9 @@ GEval(
 
 **Returns:** `EvaluationReason` with the integer score and the judge's reasoning
 
-When the judge model cannot generate text, like TypeSafe's Jev, the score keeps the requested integer
-scale and the reason is `None`. Scoring becomes one question with a level per score, so `score_range`
-may contain at most 20 levels.
+When the judge model cannot generate text, like [TypeSafe's Jev](../../models/typesafe.md), the
+score keeps the requested integer scale and the reason is `None`. Scoring becomes one question with
+a level per score, so `score_range` may contain at most 20 levels.
 
 **See Also:** [Standard Quality Metrics](standard-quality-metrics.md)
 
@@ -398,7 +398,7 @@ may contain at most 20 levels.
 
 ### HasMatchingSpan
 
-Check if OpenTelemetry spans match a query (requires Logfire configuration).
+Check if OpenTelemetry spans match a query (requires the `logfire` SDK to be configured; no Pydantic Logfire account is needed).
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan

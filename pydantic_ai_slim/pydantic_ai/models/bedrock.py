@@ -335,6 +335,8 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-opus-4-8',
     'us.anthropic.claude-opus-5',
     'global.anthropic.claude-opus-5',
+    'us.anthropic.claude-opus-5-5',
+    'global.anthropic.claude-opus-5-5',
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
     'us.anthropic.claude-fable-5',
@@ -742,7 +744,10 @@ class BedrockConverseModel(Model[BaseClient]):
             )
         # Pass unmerged model_settings; base class does its own merge
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if self.profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
+        if prepared_settings and (
+            self.profile.get('anthropic_disallows_sampling_settings', False)
+            or self.profile.get('bedrock_disallows_sampling_settings', False)
+        ):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
@@ -753,7 +758,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         `temperature` and `top_p` would reach `inferenceConfig` and unified `top_k` would reach
         `additionalModelRequestFields`; all three are rejected with a 400 by the models that set
-        `anthropic_disallows_sampling_settings`. A user's own
+        `anthropic_disallows_sampling_settings` or `bedrock_disallows_sampling_settings`. A user's own
         `bedrock_additional_model_requests_fields` is deliberately left alone: it is the raw
         escape hatch, so a value placed there is addressed to Bedrock directly.
         """
