@@ -43,12 +43,13 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UseEnumMemberDocstrings,
     UserError,
     UserPromptPart,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.capabilities import NativeTool, ToolSearch
+from pydantic_ai.capabilities import NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import (
@@ -73,7 +74,7 @@ from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, message, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, RequestCapture, TestEnv, message, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -92,6 +93,7 @@ with try_import() as imports_successful:
         ChoiceDelta,
         ChoiceDeltaToolCall,
         ChoiceDeltaToolCallFunction,
+        ChoiceLogprobs as ChunkChoiceLogprobs,
     )
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
@@ -3834,6 +3836,44 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
     ]
 
 
+async def test_openai_logprobs_streaming(allow_model_requests: None):
+    """Each streamed chunk carries only its own tokens' logprobs, so they must accumulate across chunks.
+
+    Mock stream rather than VCR: the test pins how per-chunk logprobs are combined, independent of what a recording holds.
+    """
+
+    def logprob_chunk(token: str) -> chat.ChatCompletionChunk:
+        c = text_chunk(token)
+        c.choices[0].logprobs = ChunkChoiceLogprobs(
+            content=[ChatCompletionTokenLogprob(token=token, logprob=-0.5, top_logprobs=[], bytes=list(token.encode()))]
+        )
+        return c
+
+    stream = [
+        logprob_chunk('Hello'),
+        logprob_chunk(' world'),
+        logprob_chunk('!'),
+        chunk([ChoiceDelta()], finish_reason='stop'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    async with agent.run_stream('', model_settings=OpenAIChatModelSettings(openai_logprobs=True)) as result:
+        await result.get_output()
+
+    assert result.response.provider_details == snapshot(
+        {
+            'timestamp': IsDatetime(),
+            'logprobs': [
+                {'token': 'Hello', 'logprob': -0.5, 'bytes': [72, 101, 108, 108, 111], 'top_logprobs': []},
+                {'token': ' world', 'logprob': -0.5, 'bytes': [32, 119, 111, 114, 108, 100], 'top_logprobs': []},
+                {'token': '!', 'logprob': -0.5, 'bytes': [33], 'top_logprobs': []},
+            ],
+            'finish_reason': 'stop',
+        }
+    )
+
+
 async def test_openai_instructions_with_responses_logprobs(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel(
         'gpt-4o-mini',
@@ -5026,6 +5066,29 @@ async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_re
     with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
         result = await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.0))
     assert result.output == snapshot('Paris.')
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+async def test_openai_gateway_prefix_preserves_sampling(allow_model_requests: None):
+    """Capture the outgoing body: the prefix collision happens before the gateway receives the request."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        assert {k: v for k, v in body.items() if k in ('model', 'temperature', 'reasoning_effort')} == snapshot(
+            {'model': 'openrouter/moonshotai/kimi-k2', 'temperature': 0.5}
+        )
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'openrouter/moonshotai/kimi-k2',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+        )
+        agent = Agent(model, capabilities=[Thinking(effort='low')], model_settings=ModelSettings(temperature=0.5))
+        await agent.run('hello')
 
 
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
@@ -6481,3 +6544,58 @@ def test_model_construction_preloads_lazy_dependencies():
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
     process = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120, env=env)
     assert process.returncode == 0, f'lazy-dependency preload check failed:\n{process.stderr}'
+
+
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@pytest.mark.vcr()
+async def test_openai_enum_member_docstrings_reach_the_wire(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """A documented enum goes to OpenAI as `anyOf` of `const`s with descriptions, and the model calls with one."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(
+        OpenAIResponsesModel('gpt-5.6-luna', provider=provider), instructions='Set the priority of the ticket.'
+    )
+
+    @agent.tool_plain
+    def set_priority(priority: TicketPriority) -> str:
+        return f'Priority set to {priority.value}.'
+
+    result = await agent.run('Production is down for every customer.')
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert calls[0].args_as_dict() == {'priority': 'high'}
+    body = request_capture.body('/responses')
+    assert cast(list[dict[str, Any]], body['tools'])[0]['parameters'] == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
+            'required': ['priority'],
+            'type': 'object',
+            '$defs': {
+                'TicketPriority': {
+                    'anyOf': [
+                        {'const': 'low', 'description': 'Can wait a week.'},
+                        {'const': 'high', 'description': 'Needs attention today.'},
+                    ],
+                    'description': 'How urgent the ticket is.',
+                    'type': 'string',
+                }
+            },
+        }
+    )

@@ -1,0 +1,97 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '748'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: The blender arrived smashed. Please send me a replacement unit.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: The final response which ends this conversation
+        input_schema:
+          properties:
+            response:
+              anyOf:
+              - const: refund
+                description: The customer wants their money back.
+              - const: replace
+                description: The customer wants a working unit instead.
+              - const: escalate
+                description: Nobody on this tier can resolve it.
+              description: What the customer is asking for.
+              type: string
+          required:
+          - response
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '634'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=1088
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d8326b8e4c02681b4038cb9d1eaae43e-f87654beb11aca54-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - caller:
+          type: direct
+        id: toolu_01LXiEbYh2eFmBX49ogaVHjJ
+        input:
+          response: replace
+        name: final_result
+        type: tool_use
+      id: msg_011CfBw7AS9vFYDsmFcmY71B
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 739
+        output_tokens: 38
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

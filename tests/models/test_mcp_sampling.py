@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import timezone
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,6 +15,17 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import (
+    FilePart,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    RetryPromptPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
+)
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
@@ -181,3 +192,155 @@ def test_assistant_text_history_complex():
         isinstance(message.content, TextContent) and message.content.text == '<system>system content</system>'
         for message in sampling_messages
     )
+
+
+@pytest.mark.parametrize('outcome', ['success', 'failed'])
+def test_tool_history(outcome: Literal['success', 'failed']):
+    """Inspect the actual sampling payload: mock responses cannot detect lost history."""
+    history = [
+        ModelRequest(parts=[UserPromptPart('Look up both cities')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart('Hidden'),
+                TextPart('Checking.'),
+                ToolCallPart('weather', '{"city":"London"}', tool_call_id='one'),
+                ToolCallPart('weather', {'city': 'Paris'}, tool_call_id='two'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('weather', {'temperature': 20}, tool_call_id='one', outcome=outcome),
+                RetryPromptPart('Unavailable', tool_name='weather', tool_call_id='two'),
+            ]
+        ),
+    ]
+    create_message = AsyncMock(
+        return_value=CreateMessageResult(role='assistant', content=TextContent(type='text', text='Done'), model='test')
+    )
+    result = Agent(MCPSamplingModel(fake_session(create_message))).run_sync('Thanks', message_history=history)
+    assert result.output == 'Done'
+    payload = [msg.model_dump(by_alias=True, exclude_none=True) for msg in create_message.call_args.args[0]]
+    expected = [
+        {'role': 'user', 'content': {'type': 'text', 'text': 'Look up both cities'}},
+        {
+            'role': 'assistant',
+            'content': [
+                {'type': 'text', 'text': 'Checking.'},
+                {'type': 'tool_use', 'id': 'one', 'name': 'weather', 'input': {'city': 'London'}},
+                {'type': 'tool_use', 'id': 'two', 'name': 'weather', 'input': {'city': 'Paris'}},
+            ],
+        },
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'tool_result',
+                    'toolUseId': 'one',
+                    'content': [{'type': 'text', 'text': '{"temperature":20}'}],
+                    'isError': outcome == 'failed',
+                },
+                {
+                    'type': 'tool_result',
+                    'toolUseId': 'two',
+                    'content': [{'type': 'text', 'text': 'Unavailable\n\nFix the errors and try again.'}],
+                    'isError': True,
+                },
+            ],
+        },
+        {'role': 'user', 'content': {'type': 'text', 'text': 'Thanks'}},
+    ]
+    assert payload == expected
+
+
+def test_output_retry_history():
+    create_message = AsyncMock(
+        return_value=CreateMessageResult(role='assistant', content=TextContent(type='text', text='Done'), model='test')
+    )
+    agent = Agent(MCPSamplingModel(fake_session(create_message)))
+    agent.run_sync(
+        message_history=[
+            ModelRequest(parts=[UserPromptPart('Hello')]),
+            ModelResponse(parts=[TextPart('One'), ThinkingPart('Hidden'), TextPart('Two')]),
+            ModelRequest(parts=[RetryPromptPart('Try again')]),
+        ]
+    )
+    assert [msg.model_dump(by_alias=True, exclude_none=True) for msg in create_message.call_args.args[0]] == snapshot(
+        [
+            {'role': 'user', 'content': {'type': 'text', 'text': 'Hello'}},
+            {'role': 'assistant', 'content': {'type': 'text', 'text': 'OneTwo'}},
+            {
+                'role': 'user',
+                'content': {'type': 'text', 'text': 'Validation feedback:\nTry again\n\nFix the errors and try again.'},
+            },
+        ]
+    )
+
+
+def test_framework_tool_history():
+    """Locally executed framework tools share the ordinary function-tool wire format."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search'),
+                LoadCapabilityCallPart(args={'id': 'forecast'}, tool_call_id='load'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(content={'discovered_tools': [{'name': 'weather'}]}, tool_call_id='search'),
+                LoadCapabilityReturnPart(content={'instructions': 'Use Celsius'}, tool_call_id='load'),
+            ]
+        ),
+    ]
+    create_message = AsyncMock(
+        return_value=CreateMessageResult(role='assistant', content=TextContent(type='text', text='Done'), model='test')
+    )
+    Agent(MCPSamplingModel(fake_session(create_message))).run_sync('Continue', message_history=history)
+    assert [msg.model_dump(by_alias=True, exclude_none=True) for msg in create_message.call_args.args[0]] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {'type': 'tool_use', 'id': 'search', 'name': 'search_tools', 'input': {'queries': ['weather']}},
+                    {'type': 'tool_use', 'id': 'load', 'name': 'load_capability', 'input': {'id': 'forecast'}},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'tool_result',
+                        'toolUseId': 'search',
+                        'content': [{'type': 'text', 'text': '{"discovered_tools":[{"name":"weather"}]}'}],
+                        'isError': False,
+                    },
+                    {
+                        'type': 'tool_result',
+                        'toolUseId': 'load',
+                        'content': [{'type': 'text', 'text': '{"instructions":"Use Celsius"}'}],
+                        'isError': False,
+                    },
+                ],
+            },
+            {'role': 'user', 'content': {'type': 'text', 'text': 'Continue'}},
+        ]
+    )
+
+
+@pytest.mark.parametrize('file_in_result', [True, False])
+def test_unsupported_tool_history(file_in_result: bool):
+    file = BinaryContent(data=b'image', media_type='image/png')
+    call = ToolCallPart('screenshot', {}, tool_call_id='one')
+    response = ModelResponse(parts=[call] if file_in_result else [call, FilePart(file)])
+    history = [
+        ModelRequest(parts=[UserPromptPart('Show me')]),
+        response,
+        ModelRequest(parts=[ToolReturnPart('screenshot', file if file_in_result else 'Done', tool_call_id='one')]),
+    ]
+    agent = Agent(MCPSamplingModel(fake_session(AsyncMock())))
+    if file_in_result:
+        with pytest.raises(NotImplementedError, match='Multimodal tool results'):
+            agent.run_sync('Continue', message_history=history)
+    else:
+        with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: FilePart'):
+            agent.run_sync('Continue', message_history=history)

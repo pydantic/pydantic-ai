@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -51,6 +52,7 @@ from pydantic_ai import (
     ToolFailed,
     ToolReturnPart,
     UsageLimitExceeded,
+    UseEnumMemberDocstrings,
     UserPromptPart,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
@@ -4400,6 +4402,43 @@ async def test_anthropic_opus_5_features(allow_model_requests: None, anthropic_a
         }
     )
     assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_5_5_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.model_name == 'claude-opus-5-5'
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-5-5',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_5_5_thinking_false_omits_thinking(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """Claude Opus 5.5 rejects `thinking: {'type': 'disabled'}`, and unified `thinking=False` never sends it.
+
+    With no `thinking` field the model thinks adaptively at its default effort, so the request succeeds.
+    """
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings={'thinking': False})
+
+    result = await agent.run('What is 2+2?')
+    assert result.output == snapshot('2 + 2 = 4')
+    assert 'thinking' not in single_request_body(vcr)
 
 
 _REFUSAL_CASE_PARAMS = [
@@ -14424,4 +14463,57 @@ How can I help you today?\
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@pytest.mark.vcr()
+async def test_anthropic_enum_member_docstrings_reach_the_wire(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A documented enum goes to Anthropic as `anyOf` of `const`s with descriptions, and the model calls with one."""
+
+    agent = Agent(anthropic_model('claude-haiku-4-5', capture=True), instructions='Set the priority of the ticket.')
+
+    @agent.tool_plain
+    def set_priority(priority: TicketPriority) -> str:
+        return f'Priority set to {priority.value}.'
+
+    result = await agent.run('Production is down for every customer.')
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert calls[0].args_as_dict() == {'priority': 'high'}
+    body = request_capture.body('/v1/messages')
+    assert cast(list[dict[str, Any]], body['tools'])[0]['input_schema'] == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
+            'required': ['priority'],
+            'type': 'object',
+            '$defs': {
+                'TicketPriority': {
+                    'anyOf': [
+                        {'const': 'low', 'description': 'Can wait a week.'},
+                        {'const': 'high', 'description': 'Needs attention today.'},
+                    ],
+                    'description': 'How urgent the ticket is.',
+                    'type': 'string',
+                }
+            },
+        }
     )

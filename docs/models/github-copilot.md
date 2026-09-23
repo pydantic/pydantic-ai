@@ -24,7 +24,61 @@ Copilot authenticates with a bearer token. An OAuth user token — what `gh auth
 | Fine-grained PAT (`github_pat_`) with **Copilot Requests** | Listed by [GitHub's Copilot SDK docs](https://docs.github.com/copilot/how-tos/copilot-sdk/authenticate-copilot-sdk/authenticate-copilot-sdk), but rejected with `401 unauthorized` on the Individual plan we tested. |
 | Classic PAT (`ghp_`) | Not supported by GitHub. |
 
+## Device login
+
+Use [`GitHubCopilotOAuthFlow`][pydantic_ai.providers.github_copilot.GitHubCopilotOAuthFlow] to obtain a token through GitHub's device flow:
+
+```python {test="skip"}
+import os
+import sys
+
+import anyio
+
+from pydantic_ai import Agent
+from pydantic_ai.models.github_copilot import GitHubCopilotModel
+from pydantic_ai.providers.github_copilot import (
+    GitHubCopilotOAuthFlow,
+    GitHubCopilotProvider,
+)
+
+
+async def main() -> None:
+    flow = GitHubCopilotOAuthFlow(client_id=os.environ['GITHUB_OAUTH_CLIENT_ID'])
+    authorization = await flow.start()
+    sys.stdout.write(f'Open {authorization.verification_uri}\nEnter code: {authorization.user_code}\n')
+    sys.stdout.flush()
+    credentials = await flow.wait_for_authorization()
+
+    provider = GitHubCopilotProvider(api_key=credentials.access_token)
+    async with provider:
+        agent = Agent(GitHubCopilotModel('claude-haiku-4.5', provider=provider))
+        result = await agent.run('Explain Python context managers in two sentences.')
+    sys.stdout.write(f'{result.output}\n')
+
+
+anyio.run(main)
+```
+
+[`GitHubCopilotOAuthFlow`][pydantic_ai.providers.github_copilot.GitHubCopilotOAuthFlow] implements GitHub.com's [device authorization flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow). Register an OAuth application and enable device flow in its settings. `GITHUB_OAUTH_CLIENT_ID` is application configuration used by this example, not a variable Pydantic AI reads automatically.
+
+!!! warning "Only approve device codes from your own login attempt"
+    Use device flow for constrained clients such as CLI or headless applications. Applications that can receive browser redirects should use authorization code with PKCE instead. Anyone can initiate a device grant with a public client ID; entering a code supplied by an attacker authorizes their client, not yours. Tell users to approve only codes shown by the application they are signing into, not codes received in messages. See [RFC 8628's phishing guidance](https://www.rfc-editor.org/rfc/rfc8628.html#section-5.4).
+
+The helper requires your application's `client_id`; it does not borrow another application's identity. It requests no scopes by default. Pass `scope=` if your application needs GitHub permissions.
+
+!!! warning "GitHub authorization does not establish Copilot access"
+    A successful login returns a GitHub OAuth token, not proof that Copilot accepts that application's token or that the account has an eligible subscription. Verify both for your application. The existing-token examples below remain available when you already have working credentials.
+
+`start()` returns a [`GitHubCopilotDeviceAuthorization`][pydantic_ai.providers.github_copilot.GitHubCopilotDeviceAuthorization]. Display its `user_code` and `verification_uri`, then await `wait_for_authorization()`. Polling respects GitHub's interval and increases it when GitHub responds with `slow_down`. The local deadline is `expires_in` seconds after the device-code response arrives; time spent displaying the code still counts toward it. Expiry, denial, and invalid responses raise [`UserError`][pydantic_ai.exceptions.UserError]; transport errors propagate unchanged. Cancellation stops polling. Call `start()` again to retry after any outcome, and use a separate flow instance for each concurrent login.
+
+Your application owns browser opening and credential storage. [`GitHubCopilotCredentials`][pydantic_ai.providers.github_copilot.GitHubCopilotCredentials] excludes tokens from `repr`, but serialized credentials still contain secrets. Keep them in your application's credential store, not logs. An injected `http_client` stays caller-owned; without one, the helper closes its temporary clients after each request. OAuth redirects are not followed, and this helper supports GitHub.com, not enterprise authorization hosts.
+
+!!! note "Credential renewal stays application-owned"
+    Some OAuth applications issue expiring access tokens. The result preserves `refresh_token`, `expires_in`, and `refresh_token_expires_in` when GitHub supplies them; durations are seconds from issuance. Persist the issuance time with these values if you save the credentials. `GitHubCopilotProvider(api_key=...)` does not renew tokens. Your application must refresh them through GitHub's documented flow or ask the user to sign in again.
+
 ## Environment variable
+
+If you already have a token, set `GITHUB_COPILOT_API_KEY` before starting your application:
 
 ```bash
 export GITHUB_COPILOT_API_KEY='your-copilot-token'

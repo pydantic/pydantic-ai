@@ -29,6 +29,20 @@ asynchronous tools, and output behavior. Use the
 [official Gemini Live documentation](https://ai.google.dev/gemini-api/docs/live) as the canonical
 model and availability source.
 
+Vertex AI and the [Pydantic AI Gateway](../gateway.md) use different model IDs and locations from
+the Gemini Developer API:
+
+| API | Model ID | Location |
+| --- | --- | --- |
+| Gemini Developer API | `gemini-2.5-flash-native-audio-latest` | n/a (no location) |
+| Gemini Developer API | `gemini-3.1-flash-live-preview` | n/a (no location) |
+| Vertex AI / gateway | `gemini-live-2.5-flash` | `global` |
+| Vertex AI / gateway | `gemini-live-2.5-flash-native-audio` | `us-central1` |
+
+The Developer API IDs are not available on Vertex AI. Configure the matching Vertex location on
+[`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] or in the gateway;
+the gateway example below uses `gemini-live-2.5-flash` and therefore requires `global`.
+
 ## Settings
 
 [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] — the
@@ -55,7 +69,8 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | Setting | Purpose |
 | --- | --- |
 | `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
-| `google_affective_dialog`, `google_proactive_audio` | Emotion-aware delivery and model-decided speech on native-audio models |
+| `google_affective_dialog` | Emotion-aware delivery, on native-audio models |
+| `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below) |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
 | `google_activity_handling`, `google_turn_coverage` | [Interruption](turns.md#barge-in) behavior and which input belongs to a turn |
 | `google_input_transcription`, `google_output_transcription` | Native [transcription](audio.md#input-transcription) switches, enabled by default |
@@ -67,6 +82,33 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 `google_voice` is the provider voice setting. `google_thinking_config` takes precedence over the
 shared [`thinking`](../capabilities/thinking.md) setting when a token budget or other
 Gemini-specific control is needed.
+
+!!! note "`google_proactive_audio` needs a `v1alpha` client"
+    Gemini serves `proactivity` on the Developer API's `v1alpha` only; on any other version the
+    session is closed with `1007 Invalid JSON payload received. Unknown name "proactivity" at
+    'setup'`. The API version belongs to the client, and ordinary
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] requests sharing that client read it too,
+    so build the client for it rather than having a session change it underneath them:
+
+    ```python {title="proactive_audio.py"}
+    from google import genai
+    from google.genai import types
+
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.realtime.google import GoogleRealtimeModel
+
+    client = genai.Client(
+        api_key='your-api-key', http_options=types.HttpOptions(api_version='v1alpha')
+    )
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=client),
+        settings={'google_proactive_audio': True},
+    )
+    ```
+
+    Connecting without it raises [`UserError`][pydantic_ai.exceptions.UserError]. Unavailable on
+    Vertex AI, whose version line has no `v1alpha`.
 
 !!! warning "Keep automatic VAD enabled"
     Pydantic AI does not expose Gemini activity markers or manual turn verbs. Do not set
@@ -101,6 +143,10 @@ facts with [`profile=`](overview.md#provider-support), which resolves like a
 [standard model profile](../models/overview.md#inspecting-a-models-profile), e.g.
 `GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', profile={'supports_text_output': True})`.
 
+The Vertex half-cascade model `gemini-live-2.5-flash` is another exception: it accepts `TEXT`, but
+the built-in speech-to-speech profile rejects `output_modality='text'` before connecting for every
+Gemini ID. Opt in explicitly with `profile={'supports_text_output': True}`.
+
 ## Feature support and limitations
 
 | Feature | Support | Notes |
@@ -130,7 +176,7 @@ realtime = agent.realtime('gateway/google:gemini-live-2.5-flash')
 ```
 
 The gateway proxies Gemini Live through the Vertex upstream, so configure a region that supports
-the Live API. `gateway/google-cloud` is an alias. See
+the selected model as listed in [Model names](#model-names). `gateway/google-cloud` is an alias. See
 [Gateway trace propagation](observability.md#gateway-trace-propagation).
 
 ## Session resumption
@@ -149,6 +195,9 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
 
 ## Provider-specific quirks
 
+- A text turn sent while a reply is in flight is answered in order on Gemini 2.5. On Gemini 3.1 it
+  interrupts the active reply, emits `RealtimeResponseInterruptedEvent`, and records any partial
+  reply as interrupted before answering the text turn.
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
