@@ -1610,7 +1610,7 @@ def test_output_type_tool_output_union():
         c: bool
 
     m = TestModel()
-    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # pyright: ignore[reportArgumentType, reportAssignmentType]
+    marker = ToolOutput(Foo | Bar, strict=False)
     agent = Agent(m, output_type=marker)
     result = agent.run_sync('Hello')
     assert result.output == snapshot(Foo(a=0, b='a'))
@@ -13046,7 +13046,7 @@ async def test_agent_still_fails_if_none_not_allowed():
 def test_agent_output_type_bare_none_error():
     """Test that Agent(output_type=None) raises a clear error."""
     with pytest.raises(UserError, match='At least one output type must be provided other than `None`'):
-        Agent('test', output_type=None)  # type: ignore[arg-type]
+        Agent('test', output_type=None)
 
 
 async def test_agent_allows_none_output_tool_mode_none_via_tool():
@@ -13129,7 +13129,7 @@ async def test_agent_allows_none_output_tool_output_union_null():
             parts=[ToolCallPart(tool_name='final_result', args={'response': None}, tool_call_id='pyd_ai_id')]
         )
 
-    agent = Agent(FunctionModel(function=call_final_result), output_type=ToolOutput(int | None))  # type: ignore[arg-type]
+    agent = Agent(FunctionModel(function=call_final_result), output_type=ToolOutput(int | None))
     result = await agent.run('hello')
     assert result.output is None
 
