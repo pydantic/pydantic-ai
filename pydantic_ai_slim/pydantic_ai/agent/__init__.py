@@ -534,7 +534,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     # `__init__` keeps an overload pair purely so Pyright resolves a class-union `output_type`
     # (`Foo | Bar`) as `type[Foo | Bar]` rather than a bare `UnionType`; on a non-overloaded
     # signature Pyright rejects the union argument. The two overloads are intentionally
-    # identical, so the second one overlaps the first. Pyright 1.1.414 and later matches the
+    # identical, so the second one overlaps the first. Pyright 1.1.412 and later matches the
     # union as a `TypeForm` instead, so this is for older Pyright versions.
     @overload
     def __init__(

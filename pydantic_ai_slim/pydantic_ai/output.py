@@ -77,7 +77,7 @@ class _NoneOutput(Protocol[T_co]):
     `__class__`, while `__bool__` returning `Literal[False]` keeps other values out (a class annotating its own
     `__bool__` that way would also match). A list of only `None` still type-checks, though it is refused at run time.
 
-    Pyright 1.1.414 and later also matches `None` as a `TypeForm`, so this is for older Pyright versions.
+    Pyright 1.1.412 and later also matches `None` as a `TypeForm`, so this is for older Pyright versions.
     """
 
     @property
