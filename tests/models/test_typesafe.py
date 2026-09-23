@@ -1328,14 +1328,11 @@ async def test_a_text_candidates_member_of_an_output_union_is_a_hand_off(allow_m
             }
         )
 
-    # `Any`, because an `Annotated` alias is not something a type checker accepts as an output type expression.
-    case_id: Any = CaseId
-    union: Any = case_id | Escalate
     model = mock_model(record, text_extractors={'cases': extract_cases})
     with pytest.raises(UserError, match="'final_result_str' says nothing about itself"):
-        await Agent(model, output_type=union).run('CASE-1 is open.')
+        await Agent(model, output_type=CaseId | Escalate).run('CASE-1 is open.')
 
-    described: Any = [ToolOutput(case_id, description='Name the open case.'), Escalate]
+    described = [ToolOutput(CaseId, description='Name the open case.'), Escalate]
     with pytest.raises(ToolCallProposed, match="'final_result_str'"):
         await Agent(model, output_type=described).run('CASE-1 is open.')
     assert [sorted(request['questions']) for request in sent] == [['tool']]
