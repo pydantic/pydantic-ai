@@ -213,7 +213,7 @@ def is_model_like(type_: Any) -> bool:
     These should all generate a JSON Schema with `{"type": "object"}` and therefore be usable directly as
     function parameters.
     """
-    return (
+    return (  # pyright: ignore[reportUnknownVariableType]
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
         and (
