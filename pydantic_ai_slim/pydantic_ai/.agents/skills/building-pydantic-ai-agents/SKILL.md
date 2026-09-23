@@ -332,7 +332,8 @@ Key facts for building realtime agents:
   `google_async_tool_calls=True` on a native-audio model, and does it unconditionally on
   `gemini-3.8-live-extended-thinking`, which has no blocking mode and reasons in the background —
   it speaks a filler, runs the tool, and speaks again inside one exchange, so read
-  `RealtimeTurnCompleteEvent` rather than each response to know it's done). An unhandled tool
+  `RealtimeTurnCompleteEvent` or await `session.wait_for_reply()` rather than watching each response
+  to know it's done). An unhandled tool
   exception is raised from session iteration while it is active; otherwise it ends `stream_audio()` and
   `stream_transcripts()` and is raised when the session context closes. The next outbound method
   raises an already-ended receive side's failure instead, and every failure is delivered only once.

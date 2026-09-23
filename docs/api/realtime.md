@@ -76,6 +76,9 @@ audio chunks ready for playback, while
 [`RealtimeSession.stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts]
 yields finalized speech from both speakers or live deltas with `delta=True`. These bounded views can
 run concurrently with each other and with the session's raw event iterator.
+[`RealtimeSession.wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] waits
+until the model has finished the reply it owes, spanning the whole of a tool-calling turn, and runs
+alongside an active event iterator rather than competing with it.
 [`RealtimeSession.wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback]
 waits until the single audio view has accounted for all audio emitted so far, whether it was
 played or discarded.
