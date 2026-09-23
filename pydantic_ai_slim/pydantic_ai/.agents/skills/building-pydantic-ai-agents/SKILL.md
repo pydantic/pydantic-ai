@@ -290,7 +290,8 @@ Key facts for building realtime agents:
   text context. Images are context-only by default; use `respond=True` to ask for a response to an
   image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
   A string sent during a reply queues on OpenAI/Azure/xAI and Gemini 2.5, but interrupts the active
-  reply on Gemini 3.1. Gemini speech models reject text output before connect; the Vertex
+  reply on Gemini 3.1. On OpenAI GPT-Live a string is never a user turn at all: it is context the model
+  relays or answers, and it only lands while audio is flowing. Gemini speech models reject text output before connect; the Vertex
   `gemini-live-2.5-flash` half-cascade can opt in with `profile={'supports_text_output': True}`.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
@@ -308,9 +309,10 @@ Key facts for building realtime agents:
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a
   `RealtimeModelProfile`, the realtime counterpart to `ModelProfile`) reports
   `supports_manual_turn_control`, `supports_interruption`, `supports_image_input`,
-  `supports_output_truncation`, and `supports_session_seeding`. OpenAI and Azure OpenAI support all of these; Gemini
-  Live lacks `supports_manual_turn_control`, `supports_interruption`, and `supports_output_truncation`
-  (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+  `supports_output_truncation`, and `supports_session_seeding`. OpenAI Realtime and Azure OpenAI
+  support all of these; OpenAI GPT-Live supports only `supports_session_seeding` (from text), since it
+  owns turn-taking and takes no images; Gemini Live lacks `supports_manual_turn_control`,
+  `supports_interruption`, and `supports_output_truncation` (automatic VAD only). Calling an unsupported method raises `UserError` up front.
 - **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
   silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or
   `google_vad` only for finer provider-specific control; when present, they fully override the shared

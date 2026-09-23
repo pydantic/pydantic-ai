@@ -166,7 +166,10 @@ async def send_context(session: RealtimeSession) -> None:
 ```
 
 Both forms are capped at 500 tokens by the provider.
-[`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle.
+[`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle. The
+[`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
+was sent and recorded in history, not when the model took it in: as the warning below explains, that
+only happens once audio is flowing.
 
 !!! warning "Text only lands while audio is flowing"
     A Live session's timeline advances with its audio, so text sent to a session whose microphone is

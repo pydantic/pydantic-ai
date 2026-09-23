@@ -95,7 +95,7 @@ interrupted response still draws a boundary, displayed as `model turn complete (
 | `pydantic_ai.realtime` | Spans the session emits itself (session, response, boundary, and `user speech` spans) | Always `True`; marks spans that belong to a realtime session. `execute_tool` spans come from the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability and don't carry it. |
 | `gen_ai.output.type` | Session and response spans | `speech` or `text`. |
 | `pydantic_ai.response.state` | Interrupted response spans | `'interrupted'`. |
-| Response-level usage | OpenAI, Azure OpenAI, and xAI response spans | Tokens attributed to that response. |
+| Response-level usage | OpenAI, Azure OpenAI, xAI, and OpenAI GPT-Live response spans | Tokens attributed to that response. On GPT-Live, those are the delegated backend's; the Live call itself is metered in seconds at the session level. |
 
 Gemini can report usage only on a later completed turn after a function-call response; cumulative
 session usage remains authoritative.
