@@ -6,8 +6,7 @@ output function — because that is the surface a user meets first and the one t
 [docs](../../docs/models/typesafe.md) describe.
 
 **Every refusal below is what the model does today, not what it ought to do.** Several rows are
-candidates to be made to work: `X | None` as an output type, a pick-one of something other than
-strings, a union of models as a field. When one of those changes, its row moves from `REFUSED` to
+candidates to be made to work: `X | None` as an output type, a union of models as a field. When one of those changes, its row moves from `REFUSED` to
 `ACCEPTED`; a row that disappears is a user-facing behaviour that went unnoticed. The refusals that
 are not about a composed shape — `str`, `NativeOutput`, `PromptedOutput`, a field of plain text —
 stay in `test_typesafe.py` beside the rest of the field shapes.
@@ -35,6 +34,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 from .test_typesafe import answers, mock_model
 
@@ -91,6 +91,15 @@ class Codes(IntEnum):
     security = 30
 
 
+class Statuses(UseEnumMemberDocstrings, IntEnum):
+    """Which status the service returned."""
+
+    ok = 200
+    """The request worked."""
+    missing = 404
+    """Nothing is at that address."""
+
+
 def probe(name: str, annotation: Any, **field: Any) -> Any:
     """An output type whose one field carries `annotation`, so a row is the annotation and its message."""
     namespace: dict[str, Any] = {'__annotations__': {name: annotation}, '__doc__': 'Triage the ticket.'}
@@ -101,9 +110,9 @@ def probe(name: str, annotation: Any, **field: Any) -> Any:
 
 # The remedy every "not supported" message ends with, spelled out once: a rewording is one failure, not twenty.
 SUPPORTED_FIELDS = (
-    'Use `bool`, a `Literal` or `Enum` of two or more strings, a `float` bounded with `ge=0` and `le=1`, a `list` of '
-    'a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its schema, or a model '
-    'of these.'
+    'Use `bool`, a `Literal` or `Enum` of two or more strings or whole numbers, a `float` bounded with `ge=0` and '
+    '`le=1`, a `list` of a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its '
+    'schema, or a model of these.'
 )
 
 
@@ -127,10 +136,8 @@ def contains_itself(field: str) -> str:
     )
 
 
-NOT_OPTIONAL = ': only a `Literal` or `Enum` of strings can be optional, since `None` is one more option to pick'
+NOT_OPTIONAL = ': only a pick-one of strings or whole numbers can be optional, since `None` is one more option to pick'
 NOT_A_LIST = ': a list must be of two or more string options'
-NOT_A_RUBRIC = ': a rubric must be the whole numbers from 0 upwards, in order, and there must be at least two of them'
-NOT_STRINGS = ': its options are not two or more strings'
 
 
 class OneArea(str, Enum):
@@ -196,20 +203,6 @@ REFUSED = [
         probe('animal', Annotated[Cat | Dog, Field(discriminator='kind')], description='Which animal?'),
         unsupported('animal'),
     ),
-    # A pick-one is a pick between strings; numbers are read as a rubric's levels instead.
-    Refused(
-        'field: pick-one of ints',
-        probe('status', Literal[200, 404, 500], description='Which?'),
-        unsupported('status', NOT_A_RUBRIC),
-    ),
-    Refused(
-        'field: IntEnum of codes', probe('area', Codes, description='Which area?'), unsupported('area', NOT_A_RUBRIC)
-    ),
-    Refused(
-        'field: pick-one of mixed types',
-        probe('which', Literal['a', 1], description='Which?'),
-        unsupported('which', NOT_STRINGS),
-    ),
     Refused(
         'field: pick-one of one option',
         probe('area', Literal['billing'], description='Which area?'),
@@ -268,7 +261,6 @@ def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
 # writing values, and most of these are things only a model that writes can do. It is a list to decide against
 # on purpose: `None` as a route was on it, and was worth closing. Anything joining it is worth the same look.
 GAPS = [
-    'field: IntEnum of codes',
     'field: None | None',
     'field: bounded int',
     'field: list with a size limit',
@@ -276,8 +268,6 @@ GAPS = [
     'field: mapping of anything',
     'field: mapping of free keys',
     'field: model | None',
-    'field: pick-one of ints',
-    'field: pick-one of mixed types',
     'field: pick-one of one option',
     'field: stepped number',
     'field: tuple of pick-ones',
@@ -434,6 +424,32 @@ class Accepted:
     requests: int = 1
     picks: str | None = None
     """The route Jev takes, where there is one to take: the first on offer unless a row says otherwise."""
+    questions: dict[str, Any] | None = None
+    """What the last request asked, where the shape of the question is the point of the row."""
+
+
+class Status(BaseModel):
+    """Report what the service returned."""
+
+    status: Literal[200, 404, 500] = Field(description='Which status did the service return?')
+
+
+class Checked(BaseModel):
+    """Check the service."""
+
+    check: Status
+
+
+CodedArea = probe('area', Codes, description='Which area?')
+Mixed = probe('which', Literal['a', 1], description='Which?')
+Described = probe('status', Statuses, description='Which status?')
+OptionalStatus = probe('status', Literal[200, 404] | None, description='Which status, if any?')
+DefaultedStatus = probe('status', Literal[200, 404] | None, default=200, description='Which status, if any?')
+DescribedNoneStatus = probe(
+    'status',
+    Literal[200, 404] | Annotated[None, Field(description='The service did not answer.')],
+    description='Which status, if any?',
+)
 
 
 ACCEPTED = [
@@ -492,6 +508,151 @@ ACCEPTED = [
         picks='final_result_None',
     ),
     Accepted('a described `None` option', DescribedNoneArea, DescribedNoneArea(area='billing')),
+    # Whole numbers that are not a rubric -- not 0 upwards, or with nothing said about each -- are labels, so
+    # they are a pick-one of their digits, and the answer is the number itself.
+    Accepted(
+        'field: pick-one of ints',
+        Status,
+        Status(status=200),
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, '500': None},
+                    'instructions': {
+                        'field': 'status',
+                        'question': 'Which status did the service return?',
+                        'goal': 'Report what the service returned.',
+                    },
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: IntEnum of codes',
+        CodedArea,
+        CodedArea(area=Codes.billing),
+        questions=snapshot(
+            {
+                'area': {
+                    'type': 'choice',
+                    'criteria': {'10': None, '20': None, '30': None},
+                    'instructions': {'field': 'area', 'question': 'Which area?', 'goal': 'Triage the ticket.'},
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: pick-one of mixed types',
+        Mixed,
+        Mixed(which=1),
+        picks='1',
+        questions=snapshot(
+            {
+                'which': {
+                    'type': 'choice',
+                    'criteria': {'a': None, '1': None},
+                    'instructions': {'field': 'which', 'question': 'Which?', 'goal': 'Triage the ticket.'},
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: described IntEnum of codes',
+        Described,
+        Described(status=Statuses.ok),
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': 'The request worked.', '404': 'Nothing is at that address.'},
+                    'instructions': {'field': 'status', 'question': 'Which status?', 'goal': 'Triage the ticket.'},
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: optional pick-one of ints',
+        OptionalStatus,
+        OptionalStatus(status=None),
+        picks='none',
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, 'none': 'None of these.'},
+                    'instructions': {
+                        'field': 'status',
+                        'question': 'Which status, if any?',
+                        'goal': 'Triage the ticket.',
+                    },
+                }
+            }
+        ),
+    ),
+    # "None of these" on a field with a default leaves it to the default, a number as much as a string.
+    Accepted(
+        'field: optional pick-one of ints with a default', DefaultedStatus, DefaultedStatus(status=200), picks='none'
+    ),
+    # What the user wrote about `None` describes the extra option on a pick-one of numbers as on one of strings.
+    Accepted(
+        'field: optional pick-one of ints with a described None',
+        DescribedNoneStatus,
+        DescribedNoneStatus(status=None),
+        picks='none',
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, 'none': 'The service did not answer.'},
+                    'instructions': {
+                        'field': 'status',
+                        'question': 'Which status, if any?',
+                        'goal': 'Triage the ticket.',
+                    },
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'field: nested pick-one of ints',
+        Checked,
+        Checked(check=Status(status=200)),
+        questions=snapshot(
+            {
+                'check.status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, '500': None},
+                    'instructions': {
+                        'field': 'check.status',
+                        'question': 'Which status did the service return?',
+                        'goal': 'Check the service.',
+                    },
+                }
+            }
+        ),
+    ),
+    Accepted(
+        'a union member with a pick-one of ints',
+        [Ticket, Status],
+        Status(status=200),
+        requests=2,
+        picks='final_result_Status',
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, '500': None},
+                    'instructions': {
+                        'field': 'status',
+                        'question': 'Which status did the service return?',
+                        'chosen': 'Status',
+                        'goal': 'Report what the service returned.',
+                    },
+                }
+            }
+        ),
+    ),
 ]
 
 
@@ -507,5 +668,7 @@ async def test_an_accepted_output_type_and_what_it_costs(allow_model_requests: N
     result = await Agent(model, output_type=case.output_type).run('anything')
 
     assert result.output == case.output
+    if case.questions is not None:
+        assert sent[-1]['questions'] == case.questions
     assert len(sent) == case.requests
     assert (result.response.provider_details or {}).get('requests') == (case.requests if case.requests > 1 else None)
