@@ -80,7 +80,8 @@ class Coder(CombinedCapability[AgentDepsT]):
             ClearToolResults[AgentDepsT](max_fraction=0.7),
             WarnNearLimits[AgentDepsT](max_context_fraction=0.9),
             _BoundToolOutputs[AgentDepsT](
-                id=None, bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))]
+                id='coder_tool_output_limits',
+                bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))],
             ),
             RepairToolArguments[AgentDepsT](),
         ]

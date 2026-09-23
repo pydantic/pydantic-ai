@@ -64,5 +64,5 @@ def test_coder_members_and_parameters(tmp_path: Path) -> None:
     for text in ('Custom instructions', 'DRY', 'YAGNI', 'SOLID', 'Zen of Python'):
         assert text in instructions
     limits = next(item for item in coder.capabilities if type(item).__name__ == '_BoundToolOutputs')
-    assert limits.id is None
+    assert limits.id == 'coder_tool_output_limits'
     assert isinstance(coder.for_agent(Agent(TestModel())), Coder)

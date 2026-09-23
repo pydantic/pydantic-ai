@@ -68,7 +68,8 @@ Then the plumbing, which the agent never calls directly:
 
 5. [`ClearToolResults`](compaction.md)`(max_fraction=0.7)` and [`WarnNearLimits`](compaction.md)`(max_context_fraction=0.9)`.
 6. A private [`ToolOutputLimits`](tool-output-limits.md) specialization that truncates any tool result over 64,000 characters
-   without adding a spill-retrieval tool.
+   without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
+   capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
 7. [`RepairToolArguments`](repair-tool-arguments.md) repairs malformed JSON tool arguments before normal validation (see below).
 
 Every tool comes from `FileSystem` or `Shell`; those pages document each one in full. Build the same
