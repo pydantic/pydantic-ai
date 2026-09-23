@@ -73,10 +73,18 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
 
         # Only recognized `provider/model` names get a profile; bare names and unknown providers
         # return `None` (no fallback overlay). Recognized providers always advertise inline system
-        # prompt support, even when the upstream profile lookup itself returns `None`.
+        # prompt support, even when the upstream profile lookup itself returns `None`, and never
+        # documents or video, which this adapter's prompt mapping refuses whatever the model is.
         if not recognized:
             return None
-        return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True))
+        return merge_profile(
+            profile,
+            ModelProfile(
+                supports_inline_system_prompts=True,
+                supports_document_input=False,
+                supports_video_input=False,
+            ),
+        )
 
     @overload
     def __init__(self, *, base_url: str, api_key: str | None = None) -> None: ...

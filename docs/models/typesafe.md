@@ -968,13 +968,42 @@ Everything below returns an answer rather than an error, which is what makes it 
 - **Adversarial text.** Jev treats the state as data, not as hostile: text written to steer the answer — an injected instruction, a misleading framing, an argument for its own classification — can move it. TypeSafe say they expect to improve this. A guard built on Jev belongs alongside deterministic checks, not instead of them, and is worth testing against your own adversarial inputs.
 - **Option order.** The order of a `Literal`'s options or an `Enum`'s members is part of what Jev sees, and reordering them can move the answer. If a classification matters, test it with the options in more than one order.
 
+## Files
+
+Jev reads text only. To ask about a document, image or video, add the [File Understanding](../capabilities/file-understanding.md) capability with a model that can read it, and Jev gets a description in the file's place:
+
+```python
+from enum import Enum
+
+from pydantic_ai import Agent, DocumentUrl
+from pydantic_ai.capabilities import FileUnderstanding
+
+
+class DocumentSubject(str, Enum):
+    """What is this document about?"""
+
+    animals = 'animals'
+    vehicles = 'vehicles'
+    other = 'other'
+
+
+agent = Agent(
+    'typesafe:jev-latest',
+    output_type=DocumentSubject,
+    capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6-sol')],
+)
+result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
+print(result.output.value)
+#> animals
+```
+
 ## What Jev cannot do
 
 Jev does not write text or read files, and it only fills tool arguments that map to the [typed questions](#what-jev-can-answer) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be made of the field types above: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-jev-picks-and-calls-what-it-can) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
-- No image, audio, video or document in the prompt or the history.
+- No image, audio, video or document in the prompt or the history, unless [File Understanding](../capabilities/file-understanding.md) has described it first.
 - At most 255 options in one question. A pick-one field counts its own options, and the route question counts every tool plus every output type, so 255 tools is already one too many once the output type is counted beside them.
 - Jev needs something to ask. A run with no user text and no history has nothing to judge, and an `output_type` with no fields to fill — a lone argumentless output function — leaves no question to ask unless there is more than one route to pick between.
 
