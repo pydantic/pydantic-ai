@@ -229,14 +229,17 @@ agent = Agent(
 Hooks can live on deferred capabilities too. They do not run until the model loads the capability that owns them:
 
 ```python {title="deferred_hooks.py"}
+from dataclasses import dataclass
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 
 
+@dataclass
 class AccountSecurityWorkflow(AbstractCapability):
-    id = 'account-security'
-    description = 'Use when the next action may be destructive.'
-    defer_loading = True
+    id: str | None = 'account-security'
+    description: str | None = 'Use when the next action may be destructive.'
+    defer_loading: bool = True
 
     def get_instructions(self) -> str:
         return 'Confirm the customer identity before taking destructive action.'
@@ -321,10 +324,11 @@ def revoke_sessions(ctx: RunContext[Store], account_id: str) -> str:
     return f'Revoked sessions for {account_id}.'
 
 
+@dataclass
 class AccountSecurity(AbstractCapability[Store]):
-    id = 'account-security'
-    description = 'Use for suspicious logins, account takeover, or session revocation.'
-    defer_loading = True
+    id: str | None = 'account-security'
+    description: str | None = 'Use for suspicious logins, account takeover, or session revocation.'
+    defer_loading: bool = True
 
     def get_instructions(self) -> str:
         return 'Confirm the customer identity before revoking sessions.'
