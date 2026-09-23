@@ -220,10 +220,12 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
 
 def test_bedrock_converse_accepts_gpt_5_6_models() -> None:
     # #7793: AWS model cards list GPT-5.6 Sol/Luna/Terra on the Converse API — unlike every other
-    # proprietary GPT model, they construct on `BedrockConverseModel`. No Pydantic AI profile overrides
-    # have been verified for them, so the effective profile keeps the relevant defaults.
+    # proprietary GPT model, they construct on `BedrockConverseModel`. The only verified override is
+    # that Converse rejects `temperature`/`topP`, so the effective profile keeps the other defaults.
     for base_name in ('gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'):
-        assert BedrockProvider.model_profile(f'openai.{base_name}') is None
+        assert BedrockProvider.model_profile(f'openai.{base_name}') == snapshot(
+            {'bedrock_disallows_sampling_settings': True}
+        )
         model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
         assert {
             'supports_json_schema_output': model.profile.get('supports_json_schema_output', False),

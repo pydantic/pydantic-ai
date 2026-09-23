@@ -7298,6 +7298,60 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     assert sent['additionalModelRequestFields'] == snapshot({'top_k': 5})
 
 
+def test_bedrock_openai_gpt_5_6_api_rejects_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Bedrock rejects `temperature` on the OpenAI GPT-5.6 models it serves on Converse.
+
+    Sent through the raw client for the same reason as `test_bedrock_anthropic_5_api_rejects_sampling_settings`:
+    it records the API's own behavior, which a recording made through the model could not.
+    """
+    model = BedrockConverseModel('us.openai.gpt-5.6-sol', provider=bedrock_provider)
+
+    with pytest.raises(ClientError) as exc_info:
+        model.client.converse(
+            modelId='us.openai.gpt-5.6-sol',
+            messages=[{'role': 'user', 'content': [{'text': 'What is 2+2?'}]}],
+            inferenceConfig={'maxTokens': 64, 'temperature': 0.2},
+        )
+
+    response = cast(dict[str, Any], exc_info.value.response)
+    assert response['ResponseMetadata']['HTTPStatusCode'] == 400
+    assert response['Error']['Message'] == snapshot(
+        "This model doesn't support the temperature field. Remove temperature and try again."
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_openai_gpt_5_6_drops_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """An OpenAI GPT-5.6 model on Converse warns and drops the sampling settings instead of failing with a 400.
+
+    Same drop as `test_bedrock_anthropic_5_drops_sampling_settings`, gated on
+    `bedrock_disallows_sampling_settings` instead of the Anthropic flag.
+    """
+    settings = BedrockModelSettings(max_tokens=64, temperature=0.2, top_p=0.3, top_k=5)
+    model = BedrockConverseModel('us.openai.gpt-5.6-sol', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameters') as recorded:
+        result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
+    assert sampling_warnings == snapshot(
+        [
+            "Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
+            "'us.openai.gpt-5.6-sol'. These settings will be ignored."
+        ]
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 64})
+    assert 'additionalModelRequestFields' not in sent
+
+
 class _CountTokensCapturingClient:
     """Records the `count_tokens` params instead of calling Bedrock."""
 
