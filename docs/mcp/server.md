@@ -68,6 +68,11 @@ if __name__ == '__main__':
 
 When Pydantic AI agents are used within MCP servers, they can use sampling via [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel].
 
+You can continue a conversation from another model by passing its `message_history` to the sampling agent.
+Function tool calls, results, and retry feedback in that history are preserved using MCP's native tool content blocks,
+which require a client supporting the 2025-11-25 sampling format or later.
+Multimodal tool results are not yet supported. Replaying tool history does not enable the sampling agent to call new tools.
+
 We can extend the above example to use sampling so instead of connecting directly to the LLM, the agent calls back through the MCP client to make LLM calls.
 
 ```py {title="mcp_server_sampling.py"}

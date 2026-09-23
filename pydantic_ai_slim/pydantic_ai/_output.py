@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
@@ -29,6 +29,8 @@ from .output import (
     TextOutput,
     TextOutputFunc,
     ToolOutput,
+    _ChoicesActions,  # type: ignore[reportPrivateUsage]
+    _NoneOutput,  # type: ignore[reportPrivateUsage]
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
@@ -105,12 +107,13 @@ def _build_output_handlers(
 
 
 def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
-    """`isinstance(value, type_)` that also works for generics like `list[Bar]`.
+    """`isinstance(value, type_)` that also works for generics like `list[Bar]` and for `Annotated[Bar, ...]`.
 
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
     (here `list`), so union output resolution still matches the collection type when the
     element type can't be checked at runtime.
     """
+    type_ = _utils.unwrap_annotated(type_)
     try:
         return isinstance(value, type_)
     except TypeError:
@@ -393,6 +396,18 @@ async def execute_output_function(
             raise ToolRetryError(m) from r
         else:
             raise
+
+
+async def execute_choice_action(action: Callable[[], Any]) -> Any:
+    """Call the action the model picked from a `Choices` set.
+
+    The action takes no arguments and may be async; a plain `def` runs in a thread the way an output
+    function's does, and may still return an awaitable. A `ModelRetry` it raises propagates to the output
+    process hooks, which turn it into a retry prompt exactly as they do for an output function.
+    """
+    if _utils.is_async_callable(action):
+        return await action()
+    return await _utils.await_maybe(await _utils.run_in_executor(action))
 
 
 @dataclass
@@ -831,6 +846,22 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         raise NotImplementedError()
 
 
+def _output_type_name(output: Any) -> str | None:
+    """What to call an output type where its name is shown to the model.
+
+    `NoneType` is Python's name for the type of `None`; `None` is what the user wrote. A model offered
+    `final_result_NoneType` has to know a Python implementation detail to read it as "no answer", so the
+    route is named for the value instead. Both spellings arrive here: `int | None` resolves to the type,
+    while `ToolOutput(None)` and a bare `None` in a list of output types are unwrapped to the value, which
+    has no `__name__` at all and would otherwise leave its route named `final_result_`. An `Annotated[X, ...]`
+    is named for `X`: its own `__name__` is `Annotated`, which every annotated member of a union would share.
+    """
+    output = _utils.unwrap_annotated(output)
+    if output is NoneType or output is None:
+        return 'None'
+    return getattr(output, '__name__', None)
+
+
 @dataclass(kw_only=True)
 class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
     object_def: OutputObjectDefinition
@@ -845,6 +876,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     outer_typed_dict_key: str | None = None
     validator: SchemaValidator
     _function_schema: _function_schema.FunctionSchema | None = None
+    _choice_values: Mapping[str, Any] | None = None
+    """What each key of a `Choices` set with callable values stands for, resolved by `call()`."""
 
     def __init__(
         self,
@@ -855,6 +888,14 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         strict: bool | None = None,
     ):
         self.output_type = None
+
+        if (choices := _ChoicesActions.of(output)) is not None:
+            # A `Choices` set with a callable choice value asks for the picked action to be *called*, the way
+            # an output function is. A Pydantic validator has nowhere to await, and streaming re-validates a
+            # completed value on every later chunk, so the model just picks a key and the value is resolved
+            # and called in `call()`, where the framework awaits it once, for the final output.
+            self._choice_values = choices.values
+            output = choices.keys_type
 
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
@@ -872,7 +913,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             self.output_type = cast(type[Any], output)
             json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
-            if _utils.is_model_like(output):
+            unwrapped_output = _utils.unwrap_annotated(output)
+            if _utils.is_model_like(unwrapped_output):
                 json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
             else:
                 self.outer_typed_dict_key = 'response'
@@ -895,9 +937,17 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
-            json_schema = _utils.check_object_json_schema(
-                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+            raw_json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+            # `Annotated[Model, Field(...)]` renders as a `$ref` to the model with the annotation's own keywords (`title`,
+            # `description`, `examples`, ...) beside it, so keep them when `check_object_json_schema` swaps the `$ref`
+            # for the model's own schema.
+            annotation_keywords = (
+                {k: v for k, v in raw_json_schema.items() if k not in ('$ref', '$defs')}
+                if '$ref' in raw_json_schema
+                else {}
             )
+            json_schema = _utils.check_object_json_schema(raw_json_schema)
+            json_schema.update(annotation_keywords)
 
             if self.outer_typed_dict_key:
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
@@ -914,7 +964,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         super().__init__(
             object_def=OutputObjectDefinition(
-                name=name or getattr(output, '__name__', None),
+                name=name or _output_type_name(output),
                 description=description,
                 json_schema=json_schema,
                 strict=strict,
@@ -957,6 +1007,10 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 args=output,
                 wrap_validation_errors=wrap_validation_errors,
             )
+        elif self._choice_values is not None and not run_context.partial_output:
+            # Until the pick is final the key stands in for itself: an action runs once, for the final output.
+            value = self._choice_values[cast(str, output)]
+            output = await execute_choice_action(value) if callable(value) else value
 
         return output
 
@@ -1543,7 +1597,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 
 
 def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem[T]]:
-    outputs: Sequence[OutputSpec[T]]
+    outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
@@ -1561,7 +1615,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 
 
 def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
-    outputs: Sequence[OutputSpec[T]]
+    outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
@@ -1585,6 +1639,10 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
                 outputs_flat.extend(types_from_output_spec(return_annotation))
             else:
                 outputs_flat.append(str)
+        elif (choices := _ChoicesActions.of(output)) is not None:
+            # What a `Choices` set with callable values asks the model for is a key; what the action it
+            # stands for returns is only known once it has run, so the keys are what a schema can describe.
+            outputs_flat.append(cast(T, choices.keys_type))
         else:
             outputs_flat.append(cast(T, output))
 

@@ -138,9 +138,9 @@ class GoogleModelProfile(ModelProfile, total=False):
     See https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses"""
 
     google_supports_thinking_level: bool
-    """Whether the model uses `thinking_level` (enum: LOW/MEDIUM/HIGH) instead of `thinking_budget` (int). Default: `False`.
+    """Whether the model uses `thinking_level` (enum: LOW/MEDIUM/HIGH) instead of `thinking_budget` (int). Default: `True`.
 
-    Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
+    Gemini 3+ models use `thinking_level`; older models (e.g. Gemini 2.5) use `thinking_budget`.
     """
 
     google_supports_minimal_thinking_level: bool
@@ -201,15 +201,36 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
-    is_3_or_newer = 'gemini-3' in model_name
-    is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
-    # `VALIDATED` function-calling mode is available on Gemini 2.5 and newer (the models targeted by
-    # https://github.com/pydantic/pydantic-ai/issues/5366); image models don't support function tools,
-    # so leave it off there.
-    supports_strict_tool_definition = is_thinking_model and not is_image_model
+
+    # Older models (Gemini 2.5, Gemini 2.0, Gemini 1.x) or non-Gemini models (Gemma)
+    is_gemini_2_5 = 'gemini-2.5' in model_name
+    is_pre_gemini_2_5 = (
+        'gemini-1' in model_name or ('gemini-2.' in model_name and not is_gemini_2_5) or model_name == 'gemini-pro'
+    )
+    is_older_gemini = is_gemini_2_5 or is_pre_gemini_2_5
+    is_gemma = 'gemma' in model_name
+
+    # Thinking support: Gemini 3+ defaults to thinking enabled with thinking_level.
+    # Older models: Gemini 2.5 uses thinking_budget; Gemini 2.0, 1.x, and Gemma do not support thinking.
+    if is_gemma or is_pre_gemini_2_5:
+        supports_thinking = False
+        google_supports_thinking_level = False
+    elif is_gemini_2_5:
+        supports_thinking = True
+        google_supports_thinking_level = False
+    else:
+        # Default Gemini 3+ behaviour
+        supports_thinking = True
+        google_supports_thinking_level = True
+
+    is_modern_gemini = not is_older_gemini and not is_gemma
+
+    # `VALIDATED` function-calling mode is available on thinking-capable Gemini models (2.5 and newer);
+    # image models don't support function tools, so leave it off there.
+    supports_strict_tool_definition = supports_thinking and not is_image_model
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
-    thinking_always_enabled = is_thinking_model and is_pro
+    thinking_always_enabled = supports_thinking and is_pro
     thinking_levels = next(
         (levels for prefix, levels in _MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -217,16 +238,16 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     profile = GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
-        supports_json_schema_output=is_3_or_newer or not is_image_model,
-        supports_json_object_output=is_3_or_newer or not is_image_model,
+        supports_json_schema_output=is_modern_gemini or not is_image_model,
+        supports_json_object_output=is_modern_gemini or not is_image_model,
         supports_tools=not is_image_model,
         supports_tool_return_schema=not is_image_model,
-        supports_thinking=is_thinking_model,
+        supports_thinking=supports_thinking,
         thinking_always_enabled=thinking_always_enabled,
-        google_supports_tool_combination=is_3_or_newer,
-        google_supports_server_side_tool_invocations=is_3_or_newer,
-        google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
-        google_supports_thinking_level=is_3_or_newer,
+        google_supports_tool_combination=is_modern_gemini,
+        google_supports_server_side_tool_invocations=is_modern_gemini,
+        google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_modern_gemini else (),
+        google_supports_thinking_level=google_supports_thinking_level,
         google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
     )
@@ -370,6 +391,7 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
                     schema['type'] = 'number'
         schema.pop('discriminator', None)
         schema.pop('examples', None)
+        _fold_described_options(schema)
 
         # Remove 'title' due to https://github.com/googleapis/python-genai/issues/1732
         schema.pop('title', None)
@@ -458,3 +480,34 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
                 schema.setdefault('maxItems', len(prefix_items))
 
         return schema
+
+
+def _fold_described_options(schema: JsonSchema) -> None:
+    """Fold an `anyOf` of single-value options back into one `enum`, their descriptions into the parent's.
+
+    An `Enum` whose members carry docstrings renders as `anyOf` of `const`s with descriptions, which the `const`
+    handling above has already turned into one-value `enum`s. Gemini takes that shape, but does not hold the
+    model to it the way it holds it to a plain `enum`: recorded against `gemini-2.5-flash`, a tool declared this
+    way was called with a value outside the options. So the options go back into one `enum`, and what each one
+    means goes into the description, where the model still reads it.
+    """
+    options = cast(list[JsonSchema], schema.get('anyOf', []))
+    if not options or not all(
+        isinstance(option, dict)
+        and len(cast(list[Any], option.get('enum', []))) == 1
+        and option.keys() <= {'enum', 'type', 'description'}
+        for option in options
+    ):
+        return
+    types = {option.get('type') for option in options}
+    if len(types) != 1 or 'enum' in schema or schema.get('type', next(iter(types))) != next(iter(types)):
+        # Options of different types, a parent with its own `enum`, or a parent typed differently from its
+        # options are not one described enum, and folding them would widen what the model may answer.
+        return
+    schema.pop('anyOf')
+    schema['enum'] = [option['enum'][0] for option in options]
+    if (type_ := types.pop()) is not None:
+        schema['type'] = type_
+    described = [f'{option["enum"][0]}: {option["description"]}' for option in options if option.get('description')]
+    if described:
+        schema['description'] = '\n'.join([*filter(None, [schema.get('description')]), *described])
