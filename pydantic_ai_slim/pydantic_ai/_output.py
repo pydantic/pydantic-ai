@@ -30,6 +30,7 @@ from .output import (
     TextOutputFunc,
     ToolOutput,
     _ChoicesActions,  # type: ignore[reportPrivateUsage]
+    _NoneOutput,  # type: ignore[reportPrivateUsage]
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
@@ -1596,7 +1597,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 
 
 def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem[T]]:
-    outputs: Sequence[OutputSpec[T]]
+    outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
@@ -1614,7 +1615,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 
 
 def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
-    outputs: Sequence[OutputSpec[T]]
+    outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
