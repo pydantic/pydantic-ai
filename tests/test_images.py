@@ -56,7 +56,6 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .cassette_utils import camelcase_gemini_blob_keys
 from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, try_import
 
 pytestmark = [
@@ -891,26 +890,26 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
     assert request.method == 'POST'
     assert request.url.path == '/v1beta/models/gemini-2.5-flash-image:generateContent'
     assert request.headers['x-test-header'] == 'test-value'
-    assert camelcase_gemini_blob_keys(json.loads(request.content)) == snapshot(
+    assert json.loads(request.content) == snapshot(
         {
             'contents': [
                 {
                     'parts': [
                         {'text': 'replace the subject'},
                         {
-                            'inlineData': {'data': 'Zmlyc3QtaW1hZ2U=', 'mimeType': 'image/png'},
+                            'inlineData': {'data': 'Zmlyc3QtaW1hZ2U=', 'mime_type': 'image/png'},
                             'mediaResolution': {'level': 'MEDIA_RESOLUTION_LOW'},
                         },
                         {
                             'fileData': {
-                                'fileUri': 'https://generativelanguage.googleapis.com/v1beta/files/file-123',
-                                'mimeType': 'image/webp',
+                                'file_uri': 'https://generativelanguage.googleapis.com/v1beta/files/file-123',
+                                'mime_type': 'image/webp',
                             }
                         },
                         {
                             'fileData': {
-                                'fileUri': 'https://generativelanguage.googleapis.com/v1beta/files/file-456',
-                                'mimeType': 'image/jpeg',
+                                'file_uri': 'https://generativelanguage.googleapis.com/v1beta/files/file-456',
+                                'mime_type': 'image/jpeg',
                             }
                         },
                     ],
@@ -1136,8 +1135,8 @@ async def test_google_image_generation_downloads_image_url(monkeypatch: pytest.M
         await model.generate('edit this image', images=[image_url])
 
     download_mock.assert_awaited_once_with(image_url, data_format='bytes')
-    body = camelcase_gemini_blob_keys(json.loads(requests[0].content))
-    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mimeType': 'image/webp'}}
+    body = json.loads(requests[0].content)
+    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mime_type': 'image/webp'}}
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1152,12 +1151,8 @@ async def test_google_cloud_image_generation_downloads_files_api_url(monkeypatch
     `'google'` — so a name-keyed regression fails here. A `GoogleCloudProvider` would agree with its own
     transport and keep passing either way.
 
-    The blob's key spelling is google-genai's serialization rather than ours, and it varies by version:
-    `tests/models/cassettes/test_google/test_google_url_input_force_download.yaml` records a live Vertex
-    200 for a request body carrying `inlineData.mimeType` (recorded when `uv.lock` pinned google-genai
-    1.70.0), while 2.18.0 emits `mime_type` for the same construction. `camelcase_gemini_blob_keys`
-    folds both spellings together; the coverage is that the downloaded `image/webp` wins over the URL's
-    declared `image/png`.
+    The blob's `mime_type` spelling is google-genai's serialization rather than ours; the coverage is
+    that the downloaded `image/webp` wins over the URL's declared `image/png`.
 
     Not a VCR test because `download_item` is monkeypatched, so no fetch reaches the wire.
     """
@@ -1196,8 +1191,8 @@ async def test_google_cloud_image_generation_downloads_files_api_url(monkeypatch
         await model.generate('edit this image', images=[image_url])
 
     download_mock.assert_awaited_once_with(image_url, data_format='bytes')
-    body = camelcase_gemini_blob_keys(json.loads(requests[0].content))
-    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mimeType': 'image/webp'}}
+    body = json.loads(requests[0].content)
+    assert body['contents'][0]['parts'][1] == {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mime_type': 'image/webp'}}
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1241,9 +1236,9 @@ async def test_google_image_generation_force_download_beats_files_api_shortcut(m
         await model.generate('edit this image', images=[image_url])
 
     download_mock.assert_awaited_once_with(image_url, data_format='bytes')
-    body = camelcase_gemini_blob_keys(json.loads(requests[0].content))
+    body = json.loads(requests[0].content)
     assert body['contents'][0]['parts'][1] == snapshot(
-        {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mimeType': 'image/webp'}}
+        {'inlineData': {'data': 'ZG93bmxvYWRlZA==', 'mime_type': 'image/webp'}}
     )
 
 

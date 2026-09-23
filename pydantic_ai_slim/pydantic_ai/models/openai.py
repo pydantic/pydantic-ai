@@ -175,6 +175,7 @@ try:
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
     from openai.types.responses.response_create_params import (
         ContextManagement,
+        PromptCacheOptions as ResponsesPromptCacheOptions,
         ToolChoice as ResponsesToolChoice,
     )
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
@@ -281,20 +282,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = (
-    str
-    | AllModels
-    | Literal[
-        'gpt-audio-mini',
-        'gpt-audio-mini-2025-12-15',
-        'gpt-5.5-2026-04-23',
-        'gpt-5.5-pro',
-        'gpt-5.5-pro-2026-04-23',
-        'gpt-6-luna',
-        'gpt-6-sol',
-        'gpt-rosalind-research',
-    ]
-)
+OpenAIModelName = str | AllModels
 """
 Possible OpenAI model names.
 
@@ -304,11 +292,6 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
-
-These ids are bridged because `AllModels` doesn't list them at the floor the `openai` extra
-declares. The older ids arrived in `openai` 3.1.0
-(https://github.com/openai/openai-python/pull/3617); GPT-6 Sol and Luna arrived in 3.18.0, and
-GPT-Rosalind Research in 3.19.0. Drop them once the floor is bumped past the respective releases.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -2812,6 +2795,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
         prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+        # The SDK's Responses `PromptCacheOptions` has keys ours doesn't expose, so the TypedDicts aren't assignable.
+        prompt_cache_options: ResponsesPromptCacheOptions | Omit = OMIT
+        if (cache_options := model_settings.get('openai_prompt_cache_options')) is not None:
+            prompt_cache_options = ResponsesPromptCacheOptions(**cache_options)
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
@@ -2839,7 +2826,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     include=include or OMIT,
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=prompt_cache_retention,
-                    prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
+                    prompt_cache_options=prompt_cache_options,
                     background=model_settings.get('openai_background', OMIT),
                     moderation=model_settings.get('openai_moderation', OMIT),
                     timeout=timeout,

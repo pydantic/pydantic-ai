@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from unittest import mock
 
-from ..cassette_utils import camelcase_gemini_blob_keys
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -282,7 +281,7 @@ class ReplayWebSocket:
 
     async def send(self, message: str | bytes) -> None:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
-        actual = _truncate_audio(camelcase_gemini_blob_keys(self._normalizer.normalize(_scrub(json.loads(text)))))
+        actual = _truncate_audio(self._normalizer.normalize(_scrub(json.loads(text))))
         async with self._condition:
             interaction = self._peek()
             # A caller that keeps sending (streaming a microphone) runs ahead of the recorded inbound
@@ -367,7 +366,7 @@ class RecordingWebSocket:
 
     async def send(self, message: str | bytes) -> None:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
-        data = _truncate_audio(camelcase_gemini_blob_keys(self._normalizer.normalize(_scrub(json.loads(text)))))
+        data = _truncate_audio(self._normalizer.normalize(_scrub(json.loads(text))))
         self._cassette.interactions.append(CassetteMessage(direction='sent', data=data))
         await self._ws.send(message)
 
