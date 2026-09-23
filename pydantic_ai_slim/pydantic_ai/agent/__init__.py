@@ -46,6 +46,7 @@ from .. import (
     _instructions,
     _output,
     _system_prompt,
+    _usage_attribution,
     _utils,
     concurrency as _concurrency,
     exceptions,
@@ -3649,6 +3650,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         yielded = False
         async with AsyncExitStack() as session_stack:
             if lifecycle_state is not None:
+                # As for a classic run: nothing the session records is credited to an enclosing run's span.
+                session_stack.enter_context(_usage_attribution.accumulate(None))
                 assert cancellation is not None
                 # Setup-time `for_run` callbacks have the same context contract as a classic run:
                 # cancellation becomes available only once the run lifecycle has an owning task.
@@ -4258,6 +4261,10 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         async with AsyncExitStack() as stack:
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+            # This run's usage is credited to no span until one of its own is opened (by
+            # `Instrumentation.wrap_run`), so an uninstrumented run started from inside an
+            # instrumented one doesn't report its usage on the caller's span.
+            stack.enter_context(_usage_attribution.accumulate(None))
 
             # Bind the run's cancellation controller to this task and register the token BEFORE any
             # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
