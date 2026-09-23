@@ -180,11 +180,12 @@ jobs:
         run: uv run pytest scripts/test_typecheck_changed.py
 
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
-      # it can't catch one. On `main`, a stale lock gets rewritten by every gh-aw workflow's
-      # pre-warm. A change to the runner's dependencies, `pydantic_ai_slim`'s included,
-      # must refresh it: `uv lock --script .github/scripts/pydantic-ai-runner`.
+      # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
+      # included, must refresh it.
       - name: Check the gh-aw runner's script lock is up to date
-        run: uv lock --script .github/scripts/pydantic-ai-runner --check
+        run: >-
+          uv lock --script .github/scripts/pydantic-ai-runner --check
+          || { echo "::error file=.github/scripts/pydantic-ai-runner.lock::Stale gh-aw runner lock; run: uv lock --script .github/scripts/pydantic-ai-runner"; exit 1; }
 
       # The tests above import the shim inside this job's workspace venv, which is not
       # the environment it runs in: gh-aw executes it via `uv run --script` against the
