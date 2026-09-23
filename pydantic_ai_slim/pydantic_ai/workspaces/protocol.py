@@ -36,6 +36,8 @@ Contracts every implementation must honor (the rest are on the relevant members)
     - The builtin file errors (`FileNotFoundError`, `IsADirectoryError`, `NotADirectoryError`,
       `PermissionError`, `FileExistsError`) for a path-level failure, translated from the
       platform's own exceptions; the environment itself is fine.
+    - [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError] when a mutation is
+      refused because the workspace is read-only; the environment itself is fine.
     - [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] for any other failure the
       workspace layer refuses deliberately, such as output exceeding a limit.
     - `TypeError` and `ValueError` for invalid arguments, such as a relative `cwd`.
@@ -45,7 +47,7 @@ Contracts every implementation must honor (the rest are on the relevant members)
   platform reports a dead environment and a failed operation with the same exception should
   probe, for example with `working_dir()`, and raise `WorkspaceUnavailableError` when the
   environment is gone. [`UserError`][pydantic_ai.exceptions.UserError] is reserved for the facade
-  and policy wrappers, such as a read-only refusal or an unattached workspace.
+  and policy wrappers, such as an unattached workspace.
 """
 
 from __future__ import annotations as _annotations

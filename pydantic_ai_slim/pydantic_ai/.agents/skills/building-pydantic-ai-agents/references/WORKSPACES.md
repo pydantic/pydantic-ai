@@ -67,7 +67,8 @@ operations.
 Exception contract a backend must follow: `WorkspaceUnavailableError` when the environment is gone
 or unreachable (ends the run; never reaches the model); `WorkspaceTimeoutError` for a command over
 its `timeout=`; builtin file errors (`FileNotFoundError`, `IsADirectoryError`, ...) for path-level
-failures the model can act on; `WorkspaceError` for other deliberate refusals; `TypeError`/`ValueError`
+failures the model can act on; `WorkspaceReadOnlyError` for a mutation on a read-only workspace;
+`WorkspaceError` for other deliberate refusals; `TypeError`/`ValueError`
 for bad arguments. SDK transient errors propagate unchanged (durable engines retry them); if the SDK
 cannot tell a dead environment from a failed operation, probe with `working_dir()` and raise
 `WorkspaceUnavailableError`. `UserError` belongs to the facade and policy wrappers, not backends.

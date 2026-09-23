@@ -399,7 +399,7 @@ on; the full list is on the [`pydantic_ai.workspaces`][pydantic_ai.workspaces] m
   environment and a failed operation with the same exception should probe, for example with
   `working_dir()`, and raise `WorkspaceUnavailableError` when the environment is gone.
 - [`UserError`][pydantic_ai.exceptions.UserError] comes from the facade and policy wrappers, such
-  as a read-only refusal or an unattached workspace, not from a backend operation.
+  as an unattached workspace, not from a backend operation.
 
 ## Durable execution
 

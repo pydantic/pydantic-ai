@@ -13,7 +13,13 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, UnavailableWorkspace, WorkspaceRef
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    UnavailableWorkspace,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+)
 
 from .workspace_fakes import ConnectOnlyWorkspaceCapability, FakeWorkspace, WorkspaceCapability
 
@@ -60,9 +66,9 @@ async def test_read_only_allows_reads_and_refuses_writes_and_commands(tmp_path: 
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        with pytest.raises(UserError, match='read-only'):
+        with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
             await ctx.workspace.write_text('notes.txt', 'changed')
-        with pytest.raises(UserError, match='read-only'):
+        with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
             await ctx.workspace.run(['rm', 'notes.txt'])
         return await ctx.workspace.read_text('notes.txt')
 
