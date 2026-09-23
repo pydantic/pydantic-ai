@@ -424,9 +424,15 @@ def create_input(
     state: Any = None,
     context: list[Context] | None = None,
     forwarded_props: Any = None,
+    protocol_version: str | None = None,
 ) -> RunAgentInput:
-    """Create a RunAgentInput for testing."""
+    """Create a RunAgentInput for testing.
+
+    `protocol_version` is the client's own declaration; only pass it under `requires_ag_ui('1.0.0')`,
+    since `RunAgentInput` has no such field below 1.0.
+    """
     thread_id = thread_id or uuid_str()
+    declared: dict[str, Any] = {'protocol_version': protocol_version} if protocol_version is not None else {}
     return RunAgentInput(
         thread_id=thread_id,
         run_id=uuid_str(),
@@ -435,6 +441,7 @@ def create_input(
         context=context or [],
         tools=tools or [],
         forwarded_props=forwarded_props,
+        **declared,
     )
 
 
@@ -8319,7 +8326,10 @@ async def test_run_finished_cancelled_outcome() -> None:
         return 'completed before the cancellation took effect'
 
     events = await _collect_adapter_events(
-        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='1.0.0', include_usage=True
+        agent,
+        create_input(UserMessage(id='m1', content='hi'), protocol_version='1.0'),
+        ag_ui_version='1.0.0',
+        include_usage=True,
     )
     run_finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
 
@@ -8449,7 +8459,9 @@ async def test_frontend_tool_calls_are_pending_on_success() -> None:
     events = await _collect_adapter_events(
         agent,
         create_input(
-            UserMessage(id='m1', content='call tools'), tools=[get_weather(), get_weather('get_weather_parts')]
+            UserMessage(id='m1', content='call tools'),
+            tools=[get_weather(), get_weather('get_weather_parts')],
+            protocol_version='1.0',
         ),
         ag_ui_version='1.0.0',
     )
@@ -8466,6 +8478,57 @@ async def test_frontend_tool_calls_are_pending_on_success() -> None:
         ag_ui_version='0.1.19',
     )
     assert next(event for event in legacy_events if event['type'] == 'RUN_FINISHED')['outcome'] == {'type': 'success'}
+
+
+@requires_ag_ui('1.0.0')
+async def test_undeclared_client_gets_plain_success_outcome() -> None:
+    """A client that declares no `protocolVersion` predates 1.0, so pending calls are not named for it."""
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='get_weather', json_args='{}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+    events = await _collect_adapter_events(
+        agent,
+        create_input(UserMessage(id='m1', content='call tools'), tools=[get_weather()]),
+        ag_ui_version='1.0.0',
+    )
+    assert next(event for event in events if event['type'] == 'RUN_FINISHED')['outcome'] == {'type': 'success'}
+
+
+@requires_ag_ui('1.0.0')
+async def test_undeclared_client_gets_bare_run_finished_on_cancellation() -> None:
+    """The `cancelled` outcome is withheld from a client that declares no `protocolVersion`."""
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        return 'completed before the cancellation took effect'
+
+    events = await _collect_adapter_events(
+        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='1.0.0'
+    )
+    assert 'outcome' not in next(event for event in events if event['type'] == 'RUN_FINISHED')
+
+
+@requires_ag_ui('1.0.0')
+async def test_unreadable_client_protocol_version_is_treated_as_newer() -> None:
+    """A `protocolVersion` we cannot parse is handled like a newer one: warn, and send the 1.0 shapes."""
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        return 'completed before the cancellation took effect'
+
+    with pytest.warns(UserWarning, match="protocol version 'next'"):
+        events = await _collect_adapter_events(
+            agent,
+            create_input(UserMessage(id='m1', content='hi'), protocol_version='next'),
+            ag_ui_version='1.0.0',
+        )
+    assert next(event for event in events if event['type'] == 'RUN_FINISHED')['outcome'] == {'type': 'cancelled'}
 
 
 _IMAGE_FROM_URL = {

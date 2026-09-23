@@ -247,10 +247,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content instead of generic `BinaryInputContent`.
       An installed `ag-ui-protocol >= 1.0` uses typed content for every negotiated version.
-    - `>= 1.0`: declares the SDK's protocol version on `RUN_STARTED`, reports a cancelled run with
-      a `cancelled` outcome instead of a bare `RUN_FINISHED`, names unanswered frontend tool calls
-      in the success outcome's `pendingToolCallIds`, and, with `include_usage`, reports token usage
-      per provider and model on `RUN_FINISHED`.
+    - `>= 1.0`: declares the SDK's protocol version on `RUN_STARTED` and, with `include_usage`, reports
+      token usage per provider and model on `RUN_FINISHED`. The `cancelled` outcome and the success
+      outcome's `pendingToolCallIds` also need the client to declare `protocolVersion` 1.0 or newer on
+      its `RunAgentInput`; older browser clients reject them and get a plain `success` outcome and a
+      bare `RUN_FINISHED` instead.
 
     `load_messages` accepts reasoning and multimodal content regardless of this setting. `build_run_input`
     skips unsupported inbound content and translates retired `binary` parts when possible.

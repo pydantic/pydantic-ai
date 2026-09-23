@@ -16,7 +16,7 @@ from pydantic_core import to_json
 
 from ..._utils import now_utc
 from ..._uuid import uuid7
-from ...exceptions import RunCancelled
+from ...exceptions import RunCancelled, UserError
 from ...messages import (
     CompactionPart,
     CustomEvent,
@@ -152,7 +152,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     include_usage: bool = False
     """Whether `RUN_FINISHED` reports token usage per provider and model; see `AGUIAdapter.include_usage`."""
     _use_reasoning: bool = field(default=False, init=False)
-    _use_lifecycle_1_0: bool = field(default=False, init=False)
+    _declare_1_0: bool = field(default=False, init=False)
+    _client_speaks_1_0: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
     _reasoning_started: bool = False
     _reasoning_text: bool = False
@@ -167,7 +168,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
-        self._use_lifecycle_1_0 = HAS_LIFECYCLE_1_0 and parse_ag_ui_version(self.ag_ui_version) >= LIFECYCLE_1_0_VERSION
+        # What this producer may declare about itself: fields a pre-1.0 client tolerates.
+        self._declare_1_0 = HAS_LIFECYCLE_1_0 and parse_ag_ui_version(self.ag_ui_version) >= LIFECYCLE_1_0_VERSION
+        # Separate gate for the 1.0 outcome shapes, which a pre-1.0 client rejects outright.
+        self._client_speaks_1_0 = self._declare_1_0 and self._run_input_declares_1_0()
         if (run_input := self.run_input) is not None:
             # A request's own identity wins: the frontend picked these and correlates the run by them,
             # so they're not something the server gets to substitute.
@@ -185,6 +189,27 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 )
             self.thread_id = run_input.thread_id
             self.run_id = run_input.run_id
+
+    def _run_input_declares_1_0(self) -> bool:
+        """Whether the client declared AG-UI 1.0 or newer on `RunAgentInput.protocolVersion`.
+
+        The field only exists on 1.0 SDKs, and a stream is constructible with no run input at all, so an
+        absent declaration means a peer from before the protocol carried a version. A declaration we
+        cannot read is handled like a newer one, as the spec requires.
+        """
+        declared = getattr(self.run_input, 'protocol_version', None)
+        if not isinstance(declared, str):
+            return False
+        try:
+            return parse_ag_ui_version(declared) >= LIFECYCLE_1_0_VERSION
+        except UserError:
+            warnings.warn(
+                f'Unrecognized AG-UI protocol version {declared!r} on the run input; treating the client as '
+                'newer than this server.',
+                UserWarning,
+                stacklevel=4,
+            )
+            return True
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -210,7 +235,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         extra: dict[str, Any] = {}
-        if self._use_lifecycle_1_0:
+        if self._declare_1_0:
             # The producer declares its own version, not the input version.
             extra['protocol_version'] = PROTOCOL_VERSION
         yield RunStartedEvent(
@@ -234,12 +259,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         extra: dict[str, Any] = {}
         if self.cancelled is not None:
             # Below 1.0 there is no cancelled outcome (ag-ui#880).
-            if self._use_lifecycle_1_0:
+            if self._client_speaks_1_0:
                 extra['outcome'] = RunFinishedCancelledOutcome()
         elif HAS_INTERRUPTS:
             # Omit `outcome` for SDKs that predate interrupts.
             extra['outcome'] = self._build_outcome()
-        if self.include_usage and self._use_lifecycle_1_0 and (usage := self._build_usage()):
+        if self.include_usage and self._declare_1_0 and (usage := self._build_usage()):
             extra['usage'] = usage
         yield RunFinishedEvent(
             thread_id=self.thread_id,
@@ -273,7 +298,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 return RunFinishedInterruptOutcome(
                     interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
                 )
-            if output.calls and self._use_lifecycle_1_0:
+            if output.calls and self._client_speaks_1_0:
                 # Every call the run left for the client to execute has no `TOOL_CALL_RESULT` yet.
                 return RunFinishedSuccessOutcome(pending_tool_call_ids=[call.tool_call_id for call in output.calls])
         return RunFinishedSuccessOutcome()
