@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -392,6 +392,31 @@ async def test_run_only_filesystem_lists_symlinked_directories(tmp_path: Path) -
 
     assert entries['child'].is_dir
     assert entries['child-link'].is_dir
+
+
+async def test_run_only_filesystem_raises_builtin_path_errors_in_one_command(tmp_path: Path) -> None:
+    """Classifying the path inside the read or listing command keeps the error to one round trip.
+
+    `base64 < directory` exits 0 with empty output on macOS and fails generically on GNU, so the
+    derived read must check the path itself to raise the documented `IsADirectoryError`.
+    """
+    (tmp_path / 'directory').mkdir()
+    (tmp_path / 'file.txt').write_text('content')
+    backend = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
+    workspace = Workspace(backend)
+
+    cases: list[tuple[type[OSError], Callable[[], Awaitable[object]]]] = [
+        (IsADirectoryError, lambda: workspace.read_bytes('directory')),
+        (FileNotFoundError, lambda: workspace.read_bytes('missing')),
+        (NotADirectoryError, lambda: workspace.list_dir('file.txt')),
+        (FileNotFoundError, lambda: workspace.list_dir('missing')),
+    ]
+    for error_type, action in cases:
+        backend.commands.clear()
+        with pytest.raises(error_type) as exc_info:
+            await action()
+        assert type(exc_info.value) is error_type
+        assert len(backend.commands) == 1
 
 
 @pytest.mark.parametrize('cleanup_fails', [False, True])

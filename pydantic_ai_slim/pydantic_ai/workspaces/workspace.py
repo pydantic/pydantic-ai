@@ -52,6 +52,13 @@ that for quoting and the command template keeps fallback writes below the lower 
 _SHELL_CLEANUP_TIMEOUT = 10
 """Maximum time spent removing an interrupted fallback write's temporary files."""
 
+# Exit codes the shell filesystem's own path checks use to report a path-level failure: 100 plus
+# the matching Linux errno, outside the small codes `sh`, `base64` and `find` return themselves
+# (dash exits 2 on a failed redirection), so a utility failure is never mistaken for a missing path.
+_SHELL_EXIT_NOT_FOUND = 102
+_SHELL_EXIT_NOT_DIRECTORY = 120
+_SHELL_EXIT_IS_DIRECTORY = 121
+
 _DEFAULT_READ_LINES = 2000
 """Line cap applied by `read_file` when the caller passes no `limit`.
 
@@ -153,7 +160,15 @@ class _ShellFilesystem(SupportsFilesystem):
         self._backend = backend
 
     async def read_bytes(self, path: str) -> bytes:
-        result = await self._backend.run(f'base64 < {shlex.quote(path)}', shell=True)
+        quoted_path = shlex.quote(path)
+        # Classify the path in the same command: `base64 < directory` succeeds with empty output
+        # on macOS and fails generically on GNU, and every call is a round trip on a remote backend.
+        result = await self._backend.run(
+            f'if test -d {quoted_path}; then exit {_SHELL_EXIT_IS_DIRECTORY}; '
+            f'elif test -e {quoted_path}; then base64 < {quoted_path}; '
+            f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
+            shell=True,
+        )
         await self._raise_for_error(result, path, missing=True)
         try:
             return base64.b64decode(result.stdout)
@@ -250,7 +265,8 @@ class _ShellFilesystem(SupportsFilesystem):
         # `find`'s status authoritative, and the trap removes it on every shell exit path.
         return await self._backend.run(
             f'file={quoted_temporary}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
-            f'test -d {quoted_path} && '
+            f'if ! test -d {quoted_path}; then '
+            f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
             f'find -H {quoted_path} -mindepth 1 -maxdepth 1{type_filter} -print0 > "$file" && base64 < "$file"',
             shell=True,
         )
@@ -273,6 +289,12 @@ class _ShellFilesystem(SupportsFilesystem):
     async def _raise_for_error(self, result: WorkspaceResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:
             return
+        if result.exit_code == _SHELL_EXIT_NOT_FOUND:
+            raise FileNotFoundError(path)
+        if result.exit_code == _SHELL_EXIT_NOT_DIRECTORY:
+            raise NotADirectoryError(path)
+        if result.exit_code == _SHELL_EXIT_IS_DIRECTORY:
+            raise IsADirectoryError(path)
         if missing and not await self.exists(path):
             raise FileNotFoundError(path)
         message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'
