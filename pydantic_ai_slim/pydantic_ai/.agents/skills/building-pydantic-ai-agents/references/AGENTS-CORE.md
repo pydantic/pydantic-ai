@@ -53,7 +53,17 @@ choosing a whole candidate extracted deterministically from the state. Use the s
 format, or name an extractor on the field's type and register the function under that name on the model:
 
 ```python
-CaseId = Annotated[str, TextCandidates('case_id')]  # from pydantic_ai.models.typesafe
+import re
+from typing import Annotated
+
+from pydantic_ai.models.typesafe import TextCandidates, TypeSafeModel
+
+
+def cases(state: object) -> list[str]:
+    return re.findall(r'CASE-\d{4}', str(state))
+
+
+CaseId = Annotated[str, TextCandidates('case_id')]
 model = TypeSafeModel('jev-latest', text_extractors={'case_id': cases})
 ```
 
