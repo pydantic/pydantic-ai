@@ -515,6 +515,28 @@ class TestGoogleThinkingTranslation:
     """
 
     @pytest.fixture
+    def default_google_model(self):
+        """A model with unspecified thinking_level support (should default to Gemini 3+ behaviour)."""
+        return FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+            ),
+        )
+
+    def test_thinking_default_uses_thinking_level(self, default_google_model: FunctionModel):
+        params = ModelRequestParameters(thinking='high')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(default_google_model, settings, params)
+        assert result == {'include_thoughts': True, 'thinking_level': 'HIGH'}
+
+    def test_thinking_false_default_uses_minimal_level(self, default_google_model: FunctionModel):
+        params = ModelRequestParameters(thinking=False)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(default_google_model, settings, params)
+        assert result == {'thinking_level': 'MINIMAL'}
+
+    @pytest.fixture
     def gemini_3_model(self):
         """A model with thinking_level support (Gemini 3+)."""
         return FunctionModel(
@@ -1504,7 +1526,9 @@ class TestGoogleBudgetApiConstraints:
 
     def test_all_budgets_within_flash_range(self):
         """Every effort budget must be within Gemini 2.5 Flash's [0, 24576] range."""
-        model = FunctionModel(_echo, profile=ModelProfile(supports_thinking=True))
+        model = FunctionModel(
+            _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+        )
         for effort in ('minimal', 'low', 'medium', 'high', 'xhigh'):
             params = ModelRequestParameters(thinking=effort)
             result = GoogleModel._translate_thinking(model, {}, params)
@@ -1515,7 +1539,9 @@ class TestGoogleBudgetApiConstraints:
 
     def test_all_budgets_within_pro_range(self):
         """Every effort budget must be within Gemini 2.5 Pro's [128, 32768] range."""
-        model = FunctionModel(_echo, profile=ModelProfile(supports_thinking=True))
+        model = FunctionModel(
+            _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+        )
         for effort in ('minimal', 'low', 'medium', 'high', 'xhigh'):
             params = ModelRequestParameters(thinking=effort)
             result = GoogleModel._translate_thinking(model, {}, params)
@@ -1526,7 +1552,9 @@ class TestGoogleBudgetApiConstraints:
 
     def test_budgets_are_monotonically_increasing(self):
         """low < medium < high — effort levels should map to increasing budgets."""
-        model = FunctionModel(_echo, profile=ModelProfile(supports_thinking=True))
+        model = FunctionModel(
+            _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+        )
         budgets = {}
         for effort in ('low', 'medium', 'high'):
             params = ModelRequestParameters(thinking=effort)
@@ -1578,15 +1606,41 @@ class TestProfileThinkingCapabilities:
         assert profile is not None
         assert profile.get('supports_thinking', False) is True
         assert profile.get('thinking_always_enabled', False) is False
+        assert profile.get('google_supports_thinking_level') is False
 
         profile = google_model_profile('gemini-2.5-pro')
         assert profile is not None
         assert profile.get('supports_thinking', False) is True
         assert profile.get('thinking_always_enabled', False) is True
+        assert profile.get('google_supports_thinking_level') is False
 
         profile = google_model_profile('gemini-2.0-flash')
         assert profile is not None
         assert profile.get('supports_thinking', False) is False
+        assert profile.get('google_supports_thinking_level') is False
+
+        profile = google_model_profile('gemini-1.5-flash')
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is False
+        assert profile.get('google_supports_thinking_level') is False
+
+        profile = google_model_profile('gemini-3.0-pro')
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
+        assert profile.get('google_supports_thinking_level') is True
+
+        profile = google_model_profile('gemini-3-flash-preview')
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('google_supports_thinking_level') is True
+
+        # Future/unversioned and -latest alias models default to Gemini 3 behaviour
+        for name in ('gemini-9-flash', 'gemini-flash-latest', 'gemini-pro-latest'):
+            profile = google_model_profile(name)
+            assert profile is not None
+            assert profile.get('supports_thinking', False) is True
+            assert profile.get('google_supports_thinking_level') is True
 
     def test_openai_profile_thinking_support(self):
         profile = openai_model_profile('o3')
