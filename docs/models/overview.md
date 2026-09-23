@@ -1,52 +1,63 @@
-# Model Providers
+# Models and Providers
 
-Pydantic AI is model-agnostic and has built-in support for multiple model providers:
+Pydantic AI supports model developers, cloud platforms, inference services, gateways, and local model servers. Find your service below and follow its setup guide for installation, authentication, and supported features.
 
-* [OpenAI](openai.md)
-* [Anthropic](anthropic.md)
-* [Gemini](google.md) (via two different APIs: Gemini API and Google Cloud, formerly known as Vertex AI)
-* [xAI](xai.md)
-* [Bedrock](bedrock.md)
-* [Cerebras](cerebras.md)
-* [Cohere](cohere.md)
-* [Crusoe](crusoe.md)
-* [GitHub Copilot](github-copilot.md)
-* [Groq](groq.md)
-* [Hugging Face](huggingface.md)
-* [Mistral](mistral.md)
-* [OpenAI Codex](openai-codex.md) (via your ChatGPT/Codex subscription)
-* [OpenRouter](openrouter.md)
-* [Snowflake Cortex](snowflake.md)
-* [TypeSafe (Jev)](typesafe.md)
-* [Z.AI](zai.md)
+## Provider directory
 
-## OpenAI-compatible Providers
+Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to select a provider by its prefix. Some routes require an explicit model or client instead; each setup guide shows the available options.
 
-In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
+| Provider and setup | Service | Model selection |
+| --- | --- | --- |
+| [Alibaba Cloud / Qwen (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope) | Cloud platform; model developer | `alibaba:` |
+| [Anthropic](anthropic.md) | Model developer | `anthropic:` |
+| [Atlas Cloud](compatible-apis.md#atlas-cloud) | Gateway | Custom endpoint |
+| [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
+| [Cerebras](cerebras.md) | Inference platform | `cerebras:` |
+| [Cohere](cohere.md) | Model developer | `cohere:` |
+| [Crusoe](crusoe.md) | Inference platform | `crusoe:` |
+| [DeepSeek](deepseek.md) | Model developer | `deepseek:`; explicit Responses model |
+| [Fireworks AI](compatible-apis.md#fireworks-ai) | Inference platform | `fireworks:` |
+| [GitHub Copilot](github-copilot.md) | Subscription access | `github-copilot:` |
+| [Google / Gemini API](google.md) | Model developer | `google:` |
+| [Google Cloud / Vertex AI](google-cloud.md) | Cloud platform | `google-cloud:`; Anthropic client |
+| [Groq](groq.md) | Inference platform | `groq:` |
+| [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
+| [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
+| [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway | `litellm:` |
+| [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
+| [Mistral](mistral.md) | Model developer | `mistral:` |
+| [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
+| [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
+| [Ollama](ollama.md) | Local inference; cloud inference | `ollama:` |
+| [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
+| [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
+| [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
+| [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
+| [Perplexity / Sonar](compatible-apis.md#perplexity) | Search models | Custom endpoint |
+| [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
+| [Rapid-MLX](compatible-apis.md#rapid-mlx-apple-silicon) | Local inference | Custom endpoint |
+| [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
+| [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
+| [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
+| [TypeSafe (Jev)](typesafe.md) | Structured output service | `typesafe:` |
+| [Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway) | Gateway | `vercel:` |
+| [vLLM](compatible-apis.md#vllm) | Self-hosted inference | `vllm:` |
+| [xAI](xai.md) | Model developer | `xai:` |
+| [Z.AI](zai.md) | Model developer | `zai:` |
 
-- [Alibaba Cloud Model Studio (DashScope)](openai.md#alibaba-cloud-model-studio-dashscope)
-- [Azure AI Foundry](openai.md#azure-ai-foundry)
-- [DeepSeek](openai.md#deepseek)
-- [Fireworks AI](openai.md#fireworks-ai)
-- [GitHub Models](openai.md#github-models) (retired, deprecated — see [GitHub Copilot](github-copilot.md))
-- [Heroku](openai.md#heroku-ai)
-- [LiteLLM](openai.md#litellm)
-- [Nebius AI Studio](openai.md#nebius-ai-studio)
-- [Ollama](openai.md#ollama)
-- [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
-- [Perplexity](openai.md#perplexity)
-- [SambaNova](openai.md#sambanova)
-- [Together AI](openai.md#together-ai)
-- [Vercel AI Gateway](openai.md#vercel-ai-gateway)
-- [vLLM](openai.md#vllm)
+The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.
 
-Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
-for testing and development.
+For an endpoint not listed here, see [Other compatible APIs](compatible-apis.md) or implement a [custom model](#custom-models).
 
-To use each model provider, you need to configure your local environment and make sure you have the right
-packages installed. If you try to use the model without having done so, you'll be told what to install.
+[GitHub Models](compatible-apis.md#github-models) is retired; its deprecated integration is separate from [GitHub Copilot](github-copilot.md).
 
-## Models and Providers
+For testing and development, use [`TestModel`](../api/models/test.md) or [`FunctionModel`](../api/models/function.md).
+
+### OpenAI-compatible Providers {#openai-compatible-providers}
+
+Many entries in the directory use OpenAI-compatible APIs. Their setup guides cover which model class to use; [Other compatible APIs](compatible-apis.md) explains custom endpoints and model profiles.
+
+## Models, providers, and profiles {#models-and-providers}
 
 Pydantic AI uses a few key terms to describe how it interacts with different LLMs:
 
@@ -122,7 +133,7 @@ If you provide your own `http_client`, you are responsible for closing it yourse
 ## Custom Models
 
 !!! note
-    If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](openai.md#openai-compatible-models) instead.
+    If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](compatible-apis.md) instead.
 
 To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.

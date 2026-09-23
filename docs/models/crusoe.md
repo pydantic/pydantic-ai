@@ -44,7 +44,7 @@ agent = Agent(model)
 
 ## Model names
 
-Crusoe serves open-weight models from many labs behind one endpoint, and model names carry the lab as a prefix — `zai/GLM-5.2`, `deepseek-ai/DeepSeek-V4-Pro`, `meta-llama/Llama-3.3-70B-Instruct`, `openai/gpt-oss-120b`. That prefix is what selects the [model profile](openai.md#model-profile), so keep it on the name rather than passing the bare model id.
+Crusoe serves open-weight models from many labs behind one endpoint, and model names carry the lab as a prefix — `zai/GLM-5.2`, `deepseek-ai/DeepSeek-V4-Pro`, `meta-llama/Llama-3.3-70B-Instruct`, `openai/gpt-oss-120b`. That prefix is what selects the [model profile](compatible-apis.md#model-profile), so keep it on the name rather than passing the bare model id.
 
 ## Structured output
 
