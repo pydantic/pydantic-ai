@@ -73,9 +73,11 @@ with try_import() as imports_successful:
     from pydantic_ai import _mcp, mcp as mcp_module
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
-    # `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a declaration.
+    # `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a
+    # declaration. It needs a value rather than a bare annotation, because the skip condition below
+    # reads the name at module level, where an annotation alone leaves it unbound.
     if TYPE_CHECKING:
-        TasksExtension: Any
+        TasksExtension: Any = None
     else:
         try:
             from fastmcp_tasks import TasksExtension
@@ -2260,6 +2262,14 @@ def as_legacy_mcp_session(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Client, 'initialize_result', property(lambda self: init_result))
 
 
+# FastMCP 4 moved task execution into the optional `fastmcp-tasks` package, which only the
+# `mcp-tasks` extra installs — and a server declaring task tools refuses to start without it. Install
+# shapes that leave the extra out skip the integration below; the FastMCP 3 ones still run it,
+# because that generation serves task tools itself.
+_TASKS_UNAVAILABLE = MCP_SDK_V2 and TasksExtension is None
+
+
+@pytest.mark.skipif(_TASKS_UNAVAILABLE, reason='fastmcp-tasks not installed')
 class TestMCPToolsetBackgroundTasks:
     """Task-augmented execution across both generations.
 
@@ -2274,10 +2284,7 @@ class TestMCPToolsetBackgroundTasks:
     async def task_server(self) -> FastMCP[None]:
         server: FastMCP[None] = FastMCP('task_server')
         if MCP_SDK_V2:
-            # The FastMCP 4 compatibility environment installs the task extra so this integration
-            # is exercised rather than skipped.
             assert TasksExtension is not None
-            # FastMCP 4 moved task execution into an optional extension package.
             getattr(server, 'add_extension')(TasksExtension())
 
         @server.tool(task=TaskConfig(mode='required'))

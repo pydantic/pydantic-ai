@@ -7,7 +7,7 @@ Pydantic AI models can also be used within MCP Servers.
 Here's a simple example of a [Python MCP server](https://github.com/modelcontextprotocol/python-sdk) using Pydantic AI within a tool call:
 
 ```py {title="mcp_server.py"}
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from pydantic_ai import Agent
 
@@ -76,7 +76,7 @@ Multimodal tool results are not yet supported. Replaying tool history does not e
 We can extend the above example to use sampling so instead of connecting directly to the LLM, the agent calls back through the MCP client to make LLM calls.
 
 ```py {title="mcp_server_sampling.py"}
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 
 from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel

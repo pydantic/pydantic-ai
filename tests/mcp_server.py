@@ -1,30 +1,38 @@
+"""The MCP server the stdio tests spawn as `python -m tests.mcp_server`.
+
+Written against the `fastmcp` server API rather than `mcp.server.fastmcp`, which is the MCP SDK v1
+server that SDK v2 removed: `fastmcp.server` is the one surface both FastMCP generations ship, so
+this module imports under either. The in-process counterpart is the `fastmcp_server` fixture in
+`tests/test_mcp.py`; keep the two in the same idiom.
+"""
+
 import base64
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from mcp.server.fastmcp import Context, FastMCP, Image
-from mcp.server.fastmcp.prompts.base import UserMessage
-from mcp.server.session import ServerSession
+# `fastmcp.prompts` reaches back into `fastmcp.server` on FastMCP 3.3, so the server package has to
+# be initialized first — importing prompts first resolves that against a half-built module and fails
+# with fastmcp's "server support is not installed" hint.
+import fastmcp.server  # noqa: F401  # pyright: ignore[reportUnusedImport]
+from fastmcp.prompts import Message
+from fastmcp.server import FastMCP
+from fastmcp.utilities.types import Image
 from mcp.types import (
     Annotations,
     AudioContent,
     BlobResourceContents,
-    CreateMessageResult,
     EmbeddedResource,
     ImageContent,
     ResourceLink,
-    SamplingMessage,
     TextContent,
     TextResourceContents,
-    ToolAnnotations,
 )
-from pydantic import AnyUrl, BaseModel
+from pydantic import AnyUrl
 
-mcp = FastMCP('Pydantic AI MCP Server', instructions='Be a helpful assistant.')
-log_level = 'unset'
+mcp: FastMCP[None] = FastMCP('Pydantic AI MCP Server', instructions='Be a helpful assistant.')
 
 
-@mcp.tool(annotations=ToolAnnotations(title='Celsius to Fahrenheit'))
+@mcp.tool(annotations={'title': 'Celsius to Fahrenheit'})
 async def celsius_to_fahrenheit(celsius: float) -> float:
     """Convert Celsius to Fahrenheit.
 
@@ -50,13 +58,15 @@ async def get_weather_forecast(location: str) -> str:
     return f'The weather in {location} is sunny and 26 degrees Celsius.'
 
 
+# SDK v2 retypes every `uri` from `AnyUrl` to `str` and rejects an `AnyUrl` instance, so the URIs
+# here are plain strings, cast to satisfy the v1 annotation these tests type-check against.
 @mcp.tool()
 async def get_image_resource() -> EmbeddedResource:
     data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
     return EmbeddedResource(
         type='resource',
         resource=BlobResourceContents(
-            uri=AnyUrl('resource://kiwi.jpg'),
+            uri=cast(AnyUrl, 'resource://kiwi.jpg'),
             blob=base64.b64encode(data).decode('utf-8'),
             mimeType='image/jpeg',
         ),
@@ -67,7 +77,7 @@ async def get_image_resource() -> EmbeddedResource:
 async def get_image_resource_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
-        uri=AnyUrl('resource://kiwi.jpg'),
+        uri=cast(AnyUrl, 'resource://kiwi.jpg'),
         name='kiwi.jpeg',
     )
 
@@ -83,7 +93,7 @@ async def get_audio_resource() -> EmbeddedResource:
     return EmbeddedResource(
         type='resource',
         resource=BlobResourceContents(
-            uri=AnyUrl('resource://marcelo.mp3'),
+            uri=cast(AnyUrl, 'resource://marcelo.mp3'),
             blob=base64.b64encode(data).decode('utf-8'),
             mimeType='audio/mpeg',
         ),
@@ -94,7 +104,7 @@ async def get_audio_resource() -> EmbeddedResource:
 async def get_audio_resource_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
-        uri=AnyUrl('resource://marcelo.mp3'),
+        uri=cast(AnyUrl, 'resource://marcelo.mp3'),
         name='marcelo.mp3',
     )
 
@@ -109,7 +119,7 @@ async def get_product_name() -> EmbeddedResource:
     return EmbeddedResource(
         type='resource',
         resource=TextResourceContents(
-            uri=AnyUrl('resource://product_name.txt'),
+            uri=cast(AnyUrl, 'resource://product_name.txt'),
             text='Pydantic AI',
         ),
     )
@@ -119,7 +129,7 @@ async def get_product_name() -> EmbeddedResource:
 async def get_product_name_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
-        uri=AnyUrl('resource://product_name.txt'),
+        uri=cast(AnyUrl, 'resource://product_name.txt'),
         name='product_name.txt',
     )
 
@@ -150,7 +160,8 @@ async def get_dict() -> dict[str, Any]:
     return {'foo': 'bar', 'baz': 123}
 
 
-@mcp.tool(structured_output=False)
+# `output_schema=None` is the fastmcp spelling of the SDK v1 server's `structured_output=False`.
+@mcp.tool(output_schema=None)
 async def get_unstructured_dict() -> dict[str, Any]:
     return {'foo': 'bar', 'baz': 123}
 
@@ -178,98 +189,6 @@ async def get_multiple_items():
     ]
 
 
-@mcp.tool()
-async def get_log_level(ctx: Context) -> str:  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
-    """Get the current log level.
-
-    Returns:
-        The current log level.
-    """
-    await ctx.info('this is a log message')
-    return log_level
-
-
-@mcp.tool()
-async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
-    """Echo the run context.
-
-    Args:
-        ctx: Context object containing request and session information.
-
-    Returns:
-        Dictionary with an echo message and the deps.
-    """
-    await ctx.info('This is an info message')
-
-    deps: Any = getattr(ctx.request_context.meta, 'deps')
-    return {'echo': 'This is an echo message', 'deps': deps}
-
-
-@mcp.tool()
-async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> CreateMessageResult:
-    """Use sampling callback."""
-
-    result = await ctx.session.create_message(
-        [
-            SamplingMessage(role='assistant', content=TextContent(type='text', text='')),
-            SamplingMessage(role='user', content=TextContent(type='text', text=foo)),
-        ],
-        max_tokens=1_024,
-        system_prompt='this is a test of MCP sampling',
-        temperature=0.5,
-        stop_sequences=['potato'],
-    )
-    return result
-
-
-class UserResponse(BaseModel):
-    response: str
-
-
-@mcp.tool()
-async def get_client_info(ctx: Context[ServerSession, None]) -> dict[str, Any] | None:
-    """Get information about the connected MCP client.
-
-    Returns:
-        Dictionary with client info (name, version, etc.) or None if not available.
-    """
-    client_params = ctx.session.client_params
-    if client_params is None:
-        return None
-    client_info = client_params.clientInfo
-    return {
-        'name': client_info.name,
-        'version': client_info.version,
-        'title': getattr(client_info, 'title', None),
-        'websiteUrl': getattr(client_info, 'websiteUrl', None),
-    }
-
-
-@mcp.tool()
-async def use_elicitation(ctx: Context[ServerSession, None], question: str) -> str:
-    """Use elicitation callback to ask the user a question."""
-
-    result = await ctx.elicit(message=question, schema=UserResponse)
-
-    if result.action == 'accept' and result.data:
-        return f'User responded: {result.data.response}'
-    else:
-        return f'User {result.action}ed the elicitation'
-
-
-async def hidden_tool() -> str:
-    """A tool that is hidden by default."""
-    return 'I was hidden!'
-
-
-@mcp.tool()
-async def enable_hidden_tool(ctx: Context[ServerSession, None]) -> str:
-    """Enable the hidden tool, triggering a ToolListChangedNotification."""
-    mcp._tool_manager.add_tool(hidden_tool)  # pyright: ignore[reportPrivateUsage]
-    await ctx.session.send_tool_list_changed()
-    return 'Hidden tool enabled'
-
-
 @mcp.prompt()
 def simple_prompt() -> str:
     """A simple prompt template."""
@@ -283,10 +202,10 @@ def parameterized_prompt(name: str, topic: str) -> str:
 
 
 @mcp.prompt()
-def annotated_text_prompt() -> list[UserMessage]:
+def annotated_text_prompt() -> list[Message]:
     """A prompt template with annotated text content."""
     return [
-        UserMessage(
+        Message(
             content=TextContent(
                 type='text',
                 text='annotated text',
@@ -297,16 +216,16 @@ def annotated_text_prompt() -> list[UserMessage]:
 
 
 @mcp.prompt()
-def text_meta_prompt() -> list[UserMessage]:
+def text_meta_prompt() -> list[Message]:
     """A prompt template with `_meta` text metadata."""
-    return [UserMessage(content=TextContent(type='text', text='meta text', _meta={'source': 'mcp'}))]
+    return [Message(content=TextContent(type='text', text='meta text', _meta={'source': 'mcp'}))]
 
 
 @mcp.prompt()
-def image_prompt() -> list[UserMessage]:
+def image_prompt() -> list[Message]:
     """A prompt template with image content."""
     return [
-        UserMessage(
+        Message(
             content=ImageContent(
                 type='image',
                 data=base64.b64encode(b'image-bytes').decode('utf-8'),
@@ -318,10 +237,10 @@ def image_prompt() -> list[UserMessage]:
 
 
 @mcp.prompt()
-def audio_prompt() -> list[UserMessage]:
+def audio_prompt() -> list[Message]:
     """A prompt template with audio content."""
     return [
-        UserMessage(
+        Message(
             content=AudioContent(
                 type='audio',
                 data=base64.b64encode(b'audio-bytes').decode('utf-8'),
@@ -333,14 +252,14 @@ def audio_prompt() -> list[UserMessage]:
 
 
 @mcp.prompt()
-def embedded_resource_prompt() -> list[UserMessage]:
+def embedded_resource_prompt() -> list[Message]:
     """A prompt template with an embedded text resource."""
     return [
-        UserMessage(
+        Message(
             content=EmbeddedResource(
                 type='resource',
                 resource=TextResourceContents(
-                    uri=AnyUrl('resource://product_name.txt'),
+                    uri=cast(AnyUrl, 'resource://product_name.txt'),
                     text='Pydantic AI',
                     mimeType='text/plain',
                 ),
@@ -351,13 +270,13 @@ def embedded_resource_prompt() -> list[UserMessage]:
 
 
 @mcp.prompt()
-def resource_link_prompt() -> list[UserMessage]:
+def resource_link_prompt() -> list[Message]:
     """A prompt template with a resource link."""
     return [
-        UserMessage(
+        Message(
             content=ResourceLink(
                 type='resource_link',
-                uri=AnyUrl('resource://kiwi.jpg'),
+                uri=cast(AnyUrl, 'resource://kiwi.jpg'),
                 name='kiwi-image',
                 title='Kiwi Image',
                 description='A photo of a kiwi fruit',
@@ -365,12 +284,6 @@ def resource_link_prompt() -> list[UserMessage]:
             )
         )
     ]
-
-
-@mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]
-async def set_logging_level(level: str) -> None:
-    global log_level
-    log_level = level
 
 
 if __name__ == '__main__':
