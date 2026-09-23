@@ -469,6 +469,12 @@ ACCEPTED = [
         None,
         picks='final_result_None',
     ),
+    Accepted(
+        'model | described None as a union, declined',
+        Union[Ticket, Annotated[None, Field(description='Nothing needs doing.')]],  # noqa: UP007
+        None,
+        picks='final_result_None',
+    ),
     Accepted('a described `None` option', DescribedNoneArea, DescribedNoneArea(area='billing')),
 ]
 

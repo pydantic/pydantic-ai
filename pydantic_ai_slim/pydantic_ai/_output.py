@@ -473,10 +473,12 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
 
-        # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself
-        allows_none = NoneType in outputs or None in outputs
+        # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself.
+        # `Annotated[None, Field(description=...)]` is still `None`, and its description goes to the `None` output tool.
+        none_outputs = [output for output in outputs if _utils.unwrap_annotated(output) in (NoneType, None)]
+        allows_none = bool(none_outputs)
         if allows_none:
-            outputs = [output for output in outputs if output is not NoneType and output is not None]
+            outputs = [output for output in outputs if output not in none_outputs]
             if len(outputs) == 0:
                 raise UserError('At least one output type must be provided other than `None`.')
 
@@ -567,7 +569,8 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         # output tool so the model can commit to `None` through the structured schema alongside
         # any other output types, matching how the model would pick between them.
         if allows_none and (tool_outputs or other_outputs):
-            other_outputs.append(cast(OutputTypeOrFunction[OutputDataT], NoneType))
+            none_output = next((output for output in none_outputs if output not in (NoneType, None)), NoneType)
+            other_outputs.append(cast(OutputTypeOrFunction[OutputDataT], none_output))
 
         toolset = OutputToolset.build(tool_outputs + other_outputs, name=name, description=description, strict=strict)
 
@@ -1607,7 +1610,8 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
     for output in outputs:
         if isinstance(output, Sequence):
             outputs_flat.extend(_flatten_output_spec(cast(OutputSpec[T], output)))
-        elif union_types := _utils.get_union_args(output):
+        # A union's members keep their `Annotated` metadata, as they do when listed: `X | Y` is `[X, Y]`.
+        elif union_types := _utils.get_union_args(output, unwrap_members=False):
             outputs_flat.extend(union_types)
         else:
             outputs_flat.append(cast(_OutputSpecItem[T], output))
@@ -1631,7 +1635,8 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
             outputs_flat.append(str)
         elif isinstance(output, ToolOutput):
             outputs_flat.extend(types_from_output_spec(output.output))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        elif union_types := _utils.get_union_args(output):
+        # A union's members keep their `Annotated` metadata, as they do when listed: `X | Y` is `[X, Y]`.
+        elif union_types := _utils.get_union_args(output, unwrap_members=False):
             outputs_flat.extend(union_types)
         elif inspect.isfunction(output) or inspect.ismethod(output):
             type_hints = get_function_type_hints(output)

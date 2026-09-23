@@ -1,9 +1,10 @@
 import dataclasses
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Optional
 
 import pytest
 from pydantic import AfterValidator, BaseModel, Field
+from typing_extensions import TypeAliasType
 
 from pydantic_ai import (
     Agent,
@@ -19,6 +20,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, T
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition
+from pydantic_ai.tools import ToolDefinition
 
 from ._inline_snapshot import snapshot
 from .conftest import remove_schema_descriptions
@@ -910,3 +912,134 @@ async def test_native_output_union_with_annotated_member():
     agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=NativeOutput(outputs))
     result = await agent.run('Triage this ticket.')
     assert result.output == Ticket(urgent=True)
+
+
+def require_urgent(ticket: Ticket) -> Ticket:
+    if not ticket.urgent:
+        raise ValueError('Only urgent tickets can be triaged.')
+    return ticket
+
+
+UrgentTicket = Annotated[Ticket, AfterValidator(require_urgent), Field(description='An urgent ticket.')]
+DescribedNone = Annotated[None, Field(description='Nothing needs doing.')]
+TicketOrEscalation = TypeAliasType('TicketOrEscalation', UrgentTicket | Escalation)
+
+
+def urgent_on_retry(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call the `Ticket` output tool with a non-urgent ticket, and with an urgent one once the validator objected."""
+    retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+    return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': retried})])
+
+
+# Type checkers read an `Annotated[...]` expression as the `Annotated` special form rather than a type, hence `Any`.
+UNION_SPELLINGS: list[Any] = [
+    pytest.param([UrgentTicket, Escalation], UrgentTicket | Escalation, id='union'),
+    pytest.param([UrgentTicket, Escalation], TicketOrEscalation, id='alias'),
+    pytest.param([UrgentTicket, None], Optional[UrgentTicket], id='optional'),  # noqa: UP045
+    pytest.param([Ticket, DescribedNone], Ticket | DescribedNone, id='described_none'),
+]
+
+
+@pytest.mark.parametrize('listed, union', UNION_SPELLINGS)
+async def test_annotated_union_member_matches_list(listed: Any, union: Any):
+    """`X | Y` offers the model the same output tools as `[X, Y]`, with each `Annotated` member's metadata intact.
+
+    Not a VCR test: the output tool definitions are built before any request is sent.
+    """
+    tools: list[list[ToolDefinition]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tools.append(info.output_tools)
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'urgent': True})])
+
+    for output_type in (listed, union):
+        await Agent(FunctionModel(respond), output_type=output_type).run('Triage this ticket.')
+    assert tools[0] == tools[1]
+    assert (
+        Agent('test', output_type=listed).output_json_schema() == Agent('test', output_type=union).output_json_schema()
+    )
+
+
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param([UrgentTicket, Escalation], id='list'),
+        pytest.param(UrgentTicket | Escalation, id='union'),
+        pytest.param(Optional[UrgentTicket], id='optional'),  # noqa: UP045
+    ],
+)
+async def test_annotated_union_member_validates_and_describes(output_type: Any):
+    """An `Annotated` member's validator runs and its description reaches the tool, however the union is spelled."""
+    descriptions: list[str | None] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        descriptions.append(info.output_tools[0].description)
+        return urgent_on_retry(messages, info)
+
+    agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=output_type)
+    result = await agent.run('Triage this ticket.')
+
+    assert result.output == Ticket(urgent=True)
+    assert descriptions == ['An urgent ticket.', 'An urgent ticket.']
+
+
+@pytest.mark.parametrize('marker', [NativeOutput, PromptedOutput])
+async def test_structured_output_union_annotated_member(marker: type[NativeOutput[Any] | PromptedOutput[Any]]):
+    """A `NativeOutput` or `PromptedOutput` of `X | Y` keeps an `Annotated` member's validator and description."""
+    descriptions: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.output_object is not None
+        [ticket_schema, _] = info.model_request_parameters.output_object.json_schema['properties']['result']['anyOf']
+        descriptions.append(ticket_schema['description'])
+        retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+        return ModelResponse(parts=[TextPart(json.dumps({'result': {'kind': 'Ticket', 'data': {'urgent': retried}}}))])
+
+    output_type: Any = UrgentTicket | Escalation
+    agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=marker(output_type))
+    result = await agent.run('Triage this ticket.')
+
+    assert result.output == Ticket(urgent=True)
+    assert descriptions == ['An urgent ticket.', 'An urgent ticket.']
+
+
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param([Ticket, DescribedNone], id='list'),
+        pytest.param(Ticket | DescribedNone, id='union'),
+    ],
+)
+async def test_described_none_output(output_type: Any):
+    """A described `None` is still `None`: an empty response is its answer, and its description reaches its tool."""
+    tools: list[ToolDefinition] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tools.extend(info.output_tools)
+        return ModelResponse(parts=[])
+
+    agent: Agent[None, Any] = Agent(FunctionModel(respond), output_type=output_type)
+    result = await agent.run('Triage this ticket.')
+
+    assert result.output is None
+    assert [(tool.name, tool.parameters_json_schema) for tool in tools] == snapshot(
+        [
+            (
+                'final_result_Ticket',
+                {
+                    'properties': {'urgent': {'type': 'boolean'}},
+                    'required': ['urgent'],
+                    'title': 'Ticket',
+                    'type': 'object',
+                },
+            ),
+            (
+                'final_result_None',
+                {
+                    'properties': {'response': {'description': 'Nothing needs doing.', 'type': 'null'}},
+                    'required': ['response'],
+                    'type': 'object',
+                },
+            ),
+        ]
+    )
