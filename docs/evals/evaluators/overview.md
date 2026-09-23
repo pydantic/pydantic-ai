@@ -56,6 +56,10 @@ dataset = Dataset(
 )
 ```
 
+When you want several measures of the same output, [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge]
+asks them in one request instead of one per measure — see
+[Several Measures in One Request](llm-judge.md#several-measures-in-one-request) for what that costs.
+
 For metrics aligned with widely-used evaluation methods (G-Eval, the Ragas RAG metrics, GEMBA),
 see [Standard Quality Metrics](standard-quality-metrics.md): the
 [`GEval`][pydantic_evals.evaluators.GEval] evaluator plus ready-made
