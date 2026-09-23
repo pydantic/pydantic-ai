@@ -292,6 +292,7 @@ OpenAIModelName = (
         'gpt-5.5-pro-2026-04-23',
         'gpt-6-luna',
         'gpt-6-sol',
+        'gpt-rosalind-research',
     ]
 )
 """
@@ -306,8 +307,8 @@ allows this model to be used more easily with other model types (ie, Ollama, Dee
 
 These ids are bridged because `AllModels` doesn't list them at the floor the `openai` extra
 declares. The older ids arrived in `openai` 3.1.0
-(https://github.com/openai/openai-python/pull/3617); GPT-6 Sol and Luna arrived in 3.18.0.
-Drop them once the floor is bumped past the respective releases.
+(https://github.com/openai/openai-python/pull/3617); GPT-6 Sol and Luna arrived in 3.18.0, and
+GPT-Rosalind Research in 3.19.0. Drop them once the floor is bumped past the respective releases.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'

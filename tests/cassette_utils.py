@@ -12,7 +12,7 @@ from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeGuard
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
 from urllib.parse import urlparse
 
 import pytest
@@ -37,6 +37,30 @@ _CACHE_ORDER = {'tools': 0, 'system': 1, 'messages': 2}
 
 def _is_list(value: Any) -> TypeGuard[list[Any]]:
     return isinstance(value, list)
+
+
+_GEMINI_BLOB_CONTAINERS = frozenset({'inlineData', 'fileData', 'audio', 'video'})
+_GEMINI_BLOB_CAMEL_KEYS = {'mime_type': 'mimeType', 'file_uri': 'fileUri', 'display_name': 'displayName'}
+
+
+def camelcase_gemini_blob_keys(value: Any) -> Any:
+    """Spell Gemini blob fields (`inlineData`, `fileData`, Live `audio`/`video`) in camelCase.
+
+    google-genai 2.25.0 dropped its `Blob`/`FileData` request converters, so from then on it serializes
+    those fields with their Python names (`mime_type`, `file_uri`) instead of `mimeType`/`fileUri`. The
+    API accepts both spellings, so the wire change is harmless, but request assertions and recorded
+    cassettes have to read the same across SDK versions.
+    """
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in cast('dict[str, Any]', value).items():
+            if key in _GEMINI_BLOB_CONTAINERS and isinstance(item, dict):
+                item = {_GEMINI_BLOB_CAMEL_KEYS.get(k, k): v for k, v in cast('dict[str, Any]', item).items()}
+            result[key] = camelcase_gemini_blob_keys(item)
+        return result
+    if _is_list(value):
+        return [camelcase_gemini_blob_keys(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)
