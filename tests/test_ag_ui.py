@@ -2417,18 +2417,35 @@ def test_dump_messages_preserves_explicit_newlines_in_adjacent_text_parts() -> N
     assert dumped[0].content == response.text
 
 
-def test_dump_messages_keeps_separated_groups_around_non_text_parts() -> None:
+@pytest.mark.parametrize(
+    'ag_ui_version,expected',
+    [
+        pytest.param(
+            '0.1.10',
+            [('AssistantMessage', 'abcd')],
+            id='v010-drops-thinking-merges-text',
+        ),
+        pytest.param(
+            '0.1.11',
+            [('AssistantMessage', 'ab'), ('ReasoningMessage', 'thinking'), ('AssistantMessage', 'cd')],
+            id='v011-separates-around-reasoning',
+            marks=requires_ag_ui('0.1.11'),
+        ),
+    ],
+)
+def test_dump_messages_keeps_separated_groups_around_non_text_parts(
+    ag_ui_version: str, expected: list[tuple[str, str]]
+) -> None:
     """Text groups separated by a flushed ThinkingPart stay in separate messages.
 
     The separator policy between separated groups is owned by #7713; this pins current behavior.
+    Below ag-ui-protocol 0.1.11 the ThinkingPart is dropped, so the flanking text merges instead.
     """
     response = ModelResponse(parts=[TextPart(content='ab'), ThinkingPart(content='thinking'), TextPart(content='cd')])
 
-    dumped = AGUIAdapter.dump_messages([response])
+    dumped = AGUIAdapter.dump_messages([response], ag_ui_version=ag_ui_version)
 
-    assert [type(m).__name__ for m in dumped] == ['AssistantMessage', 'ReasoningMessage', 'AssistantMessage']
-    assert dumped[0].content == 'ab'
-    assert dumped[2].content == 'cd'
+    assert [(type(m).__name__, m.content) for m in dumped] == expected
 
 
 def test_dump_messages_interleaved_text_and_tool_calls() -> None:
@@ -2444,8 +2461,11 @@ def test_dump_messages_interleaved_text_and_tool_calls() -> None:
     dumped = AGUIAdapter.dump_messages([response])
 
     assert [type(m).__name__ for m in dumped] == ['AssistantMessage', 'AssistantMessage']
-    assert dumped[0].content == 'ab'
-    assert [call.function.name for call in dumped[0].tool_calls] == ['get_weather']
+    assistant_msg = dumped[0]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.content == 'ab'
+    assert assistant_msg.tool_calls is not None
+    assert [call.function.name for call in assistant_msg.tool_calls] == ['get_weather']
     assert dumped[1].content == 'cd'
 
 
