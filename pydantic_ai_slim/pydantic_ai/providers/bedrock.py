@@ -236,6 +236,14 @@ class BedrockModelProfile(ModelProfile, total=False):
       Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
     """
 
+    bedrock_disallows_sampling_settings: bool
+    """Whether the model rejects sampling settings like `temperature` and `top_p` on Converse. Default: `False`.
+
+    The OpenAI GPT-5.6 models served on Converse answer a 400 ("This model doesn't support the
+    temperature field") for any `temperature` or `topP`, so `BedrockConverseModel` drops these settings
+    with a warning, as it does for models that set `anthropic_disallows_sampling_settings`.
+    """
+
     bedrock_supported_on_converse: bool
     """Whether this model is served by the Bedrock Converse API. Default: `True`.
 
@@ -500,10 +508,14 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
     # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
-    if model_name in {'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'}:
+    if model_name in {'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'}:
         # AWS serves these on Converse, but no Pydantic AI profile overrides have been verified for them,
         # so they keep the default profile.
         return None
+    if model_name in {'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'}:
+        # AWS serves GPT-5.6 Sol/Luna/Terra on Converse. The only override verified for them is that
+        # Converse rejects `temperature` and `topP`; everything else keeps the default profile.
+        return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
     # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)

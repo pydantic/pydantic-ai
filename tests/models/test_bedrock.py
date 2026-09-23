@@ -7308,6 +7308,85 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     assert sent['additionalModelRequestFields'] == snapshot({'top_k': 5})
 
 
+def test_bedrock_openai_gpt_5_6_api_rejects_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """The Bedrock API rejects sampling settings for the OpenAI GPT-5.6 models it serves on Converse.
+
+    Recorded through the raw client for the same reason as `test_bedrock_anthropic_5_api_rejects_sampling_settings`:
+    the recording must show the API's own behavior rather than anything Pydantic AI generated, so the profile flag
+    below rests on recorded provider evidence.
+    """
+    model = BedrockConverseModel('us.openai.gpt-5.6-sol', provider=bedrock_provider)
+
+    with pytest.raises(ClientError) as exc_info:
+        model.client.converse(
+            modelId='us.openai.gpt-5.6-sol',
+            messages=[{'role': 'user', 'content': [{'text': 'What is 2+2?'}]}],
+            inferenceConfig={'maxTokens': 64, 'temperature': 0.2},
+        )
+
+    response = cast(dict[str, Any], exc_info.value.response)
+    assert response['ResponseMetadata']['HTTPStatusCode'] == 400
+    assert response['Error']['Message'] == snapshot(
+        "This model doesn't support the temperature field. Remove temperature and try again."
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_openai_gpt_5_6_drops_sampling_settings(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """An OpenAI GPT-5.6 model served on Converse warns and drops sampling settings instead of failing with a 400.
+
+    Same drop machinery as `test_bedrock_anthropic_5_drops_sampling_settings`, gated on the new
+    `bedrock_disallows_sampling_settings` profile flag instead of the Anthropic one.
+    """
+    settings = BedrockModelSettings(max_tokens=64, temperature=0.2, top_p=0.3, top_k=5)
+    model = BedrockConverseModel('us.openai.gpt-5.6-sol', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    with pytest.warns(UserWarning, match='Sampling parameters') as recorded:
+        result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output == snapshot('4')
+    sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
+    assert sampling_warnings == snapshot(
+        [
+            "Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
+            "'us.openai.gpt-5.6-sol'. These settings will be ignored."
+        ]
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 64})
+    assert 'additionalModelRequestFields' not in sent
+
+
+def test_bedrock_openai_gpt_oss_keeps_sampling_settings(bedrock_provider: BedrockProvider) -> None:
+    """`gpt-oss` models keep their sampling settings: they accept `temperature`/`topP` via `inferenceConfig`.
+
+    Guard against over-applying `bedrock_disallows_sampling_settings` to the other OpenAI models served on
+    Converse: dropping a user-set value for a model that supports it would silently change its behavior.
+
+    Pinned where the gate lives, in `prepare_request`: the settings-to-wire mapping is shared machinery
+    already pinned by `test_bedrock_non_flagged_model_keeps_sampling_settings`, and a wire-level pin here
+    would need a live recording - a copied cassette cannot carry one, since a replayed body assert reads
+    the recorded request, not the built one.
+    """
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='tool',
+        allow_text_output=False,
+    )
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5)
+
+    prepared_settings, _ = model.prepare_request(settings, params)
+
+    assert prepared_settings == snapshot({'max_tokens': 16, 'temperature': 0.2, 'top_p': 0.3, 'top_k': 5})
+
+
 class _CountTokensCapturingClient:
     """Records the `count_tokens` params instead of calling Bedrock."""
 
