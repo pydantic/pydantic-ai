@@ -136,9 +136,9 @@ class GoogleModelProfile(ModelProfile, total=False):
     See https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses"""
 
     google_supports_thinking_level: bool
-    """Whether the model uses `thinking_level` (enum: LOW/MEDIUM/HIGH) instead of `thinking_budget` (int). Default: `False`.
+    """Whether the model uses `thinking_level` (enum: LOW/MEDIUM/HIGH) instead of `thinking_budget` (int). Default: `True`.
 
-    Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
+    Gemini 3+ models use `thinking_level`; older models (e.g. Gemini 2.5) use `thinking_budget`.
     """
 
     google_supports_minimal_thinking_level: bool
@@ -191,15 +191,36 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
-    is_3_or_newer = 'gemini-3' in model_name
-    is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
-    # `VALIDATED` function-calling mode is available on Gemini 2.5 and newer (the models targeted by
-    # https://github.com/pydantic/pydantic-ai/issues/5366); image models don't support function tools,
-    # so leave it off there.
-    supports_strict_tool_definition = is_thinking_model and not is_image_model
+
+    # Older models (Gemini 2.5, Gemini 2.0, Gemini 1.x) or non-Gemini models (Gemma)
+    is_gemini_2_5 = 'gemini-2.5' in model_name
+    is_pre_gemini_2_5 = (
+        'gemini-1' in model_name or ('gemini-2.' in model_name and not is_gemini_2_5) or model_name == 'gemini-pro'
+    )
+    is_older_gemini = is_gemini_2_5 or is_pre_gemini_2_5
+    is_gemma = 'gemma' in model_name
+
+    # Thinking support: Gemini 3+ defaults to thinking enabled with thinking_level.
+    # Older models: Gemini 2.5 uses thinking_budget; Gemini 2.0, 1.x, and Gemma do not support thinking.
+    if is_gemma or is_pre_gemini_2_5:
+        supports_thinking = False
+        google_supports_thinking_level = False
+    elif is_gemini_2_5:
+        supports_thinking = True
+        google_supports_thinking_level = False
+    else:
+        # Default Gemini 3+ behaviour
+        supports_thinking = True
+        google_supports_thinking_level = True
+
+    is_modern_gemini = not is_older_gemini and not is_gemma
+
+    # `VALIDATED` function-calling mode is available on thinking-capable Gemini models (2.5 and newer);
+    # image models don't support function tools, so leave it off there.
+    supports_strict_tool_definition = supports_thinking and not is_image_model
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
-    thinking_always_enabled = is_thinking_model and is_pro
+    thinking_always_enabled = supports_thinking and is_pro
     thinking_levels = next(
         (levels for prefix, levels in _MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -207,16 +228,16 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     profile = GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
-        supports_json_schema_output=is_3_or_newer or not is_image_model,
-        supports_json_object_output=is_3_or_newer or not is_image_model,
+        supports_json_schema_output=is_modern_gemini or not is_image_model,
+        supports_json_object_output=is_modern_gemini or not is_image_model,
         supports_tools=not is_image_model,
         supports_tool_return_schema=not is_image_model,
-        supports_thinking=is_thinking_model,
+        supports_thinking=supports_thinking,
         thinking_always_enabled=thinking_always_enabled,
-        google_supports_tool_combination=is_3_or_newer,
-        google_supports_server_side_tool_invocations=is_3_or_newer,
-        google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
-        google_supports_thinking_level=is_3_or_newer,
+        google_supports_tool_combination=is_modern_gemini,
+        google_supports_server_side_tool_invocations=is_modern_gemini,
+        google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_modern_gemini else (),
+        google_supports_thinking_level=google_supports_thinking_level,
         google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
     )

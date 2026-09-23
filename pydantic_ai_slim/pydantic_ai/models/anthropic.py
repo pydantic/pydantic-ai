@@ -162,7 +162,7 @@ try:
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
-        BetaCitationsConfigParam,
+        BetaCitationsConfigParamParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
@@ -183,6 +183,7 @@ try:
         BetaFileImageSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
+        BetaInputTransformation,
         BetaJSONOutputFormatParam,
         BetaMCPToolResultBlock,
         BetaMCPToolUseBlock,
@@ -223,7 +224,6 @@ try:
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
         BetaThinkingDelta,
-        BetaThinkingDroppedInputTransformation,
         BetaTokenTaskBudgetParam,
         BetaToolChoiceParam,
         BetaToolParam,
@@ -411,8 +411,8 @@ AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 class AnthropicStaleThinkingBlockWarning(Warning):
     """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
 
-    Claude Fable 5.1 binds each thinking block to the conversation prefix that produced it and
-    rejects a replay once that prefix changes — which a dynamic
+    Claude Fable 5.1 and Claude Opus 5.5 bind each thinking block to the conversation prefix that
+    produced it and reject a replay once that prefix changes — which a dynamic
     [instructions][pydantic_ai.Agent.instructions] function and a
     [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
     check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
@@ -772,7 +772,7 @@ def _warn_stale_thinking_block_recovery(model_name: str) -> None:
 
 
 def _report_input_transformations(
-    transformations: list[BetaThinkingDroppedInputTransformation],
+    transformations: list[BetaInputTransformation],
 ) -> list[dict[str, Any]]:
     """Report Anthropic's input transformations on the current span, and return them for `provider_details`.
 
@@ -1819,7 +1819,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _map_web_fetch_tool(
         tool: WebFetchTool, supports_dynamic_filtering: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
-        citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
+        citations = BetaCitationsConfigParamParam(enabled=tool.enable_citations) if tool.enable_citations else None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
@@ -4147,7 +4147,7 @@ def _support_tool_forcing(
     """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
     Extended thinking rejects forcing (adaptive thinking does not), and some models
-    (Claude Fable 5.1, Claude Mythos 5.1) reject it unconditionally.
+    (Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5) reject it unconditionally.
     We only raise an error if the user explicitly set a forcing value; a forcing value that came
     from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use

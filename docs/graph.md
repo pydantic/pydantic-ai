@@ -18,7 +18,7 @@ Alongside Pydantic AI, we've developed `pydantic-graph` — an async graph and s
 
 While this library is developed as part of Pydantic AI; it has no dependency on `pydantic-ai` and can be considered as a pure graph-based state machine library. You may find it useful whether or not you're using Pydantic AI or even building with GenAI.
 
-`pydantic-graph` is designed for advanced users and makes heavy use of Python generics and type hints. It is not designed to be as beginner-friendly as Pydantic AI.
+Reach for `pydantic-graph` when control flow is the hard part: explicit states, branches and resumable transitions you want typed and diagrammed. It leans on Python generics and type hints; for most agents, plain Python and the [multi-agent patterns](multi-agent-applications.md) are the shorter road.
 
 ## Installation
 

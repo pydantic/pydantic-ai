@@ -700,6 +700,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'large_market': True, 'technically_feasible': True, 'differentiated': False},
     ),
+    'We have sent the 40 pounds back to your card.': ToolCallPart(tool_name='final_result', args={'refunded': True}),
     'The app crashes every time I open the reports tab.': ToolCallPart(
         tool_name='final_result', args={'urgent': False}
     ),
@@ -933,6 +934,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Create a person': ToolCallPart(
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
+    ),
+    'The kettle leaks everywhere. I just want my money back.': ToolCallPart(
+        tool_name='final_result', args={'intent': 'refund', 'summary': 'Leaking kettle, customer wants a refund.'}
     ),
     'The blender arrived smashed. Just send me another one.': ToolCallPart(
         tool_name='final_result', args={'response': 'replace'}

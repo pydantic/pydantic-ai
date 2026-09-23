@@ -927,18 +927,16 @@ class GoogleModel(Model[Client]):
         if thinking is None:
             return None
         profile = self.profile
+        supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
-            if profile.get('google_supports_thinking_level', False):
-                # Gemini represents `thinking=False` as its lowest supported thinking level.
-                return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
-            return ThinkingConfigDict(thinking_budget=0)
-        if profile.get('google_supports_thinking_level', False):
-            if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
-            return ThinkingConfigDict(
-                include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
-            )
-        else:
+            if not supports_thinking_level:
+                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0
+                return ThinkingConfigDict(thinking_budget=0)
+            # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
+            return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
+
+        if not supports_thinking_level:
+            # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             budget_map: dict[ThinkingEffort, int] = {
@@ -949,6 +947,13 @@ class GoogleModel(Model[Client]):
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+
+        # Default Gemini 3+ behaviour uses thinking_level
+        if thinking is True:
+            return ThinkingConfigDict(include_thoughts=True)
+        return ThinkingConfigDict(
+            include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
+        )
 
     async def _build_content_and_config(
         self,

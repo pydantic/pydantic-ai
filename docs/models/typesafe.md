@@ -153,12 +153,12 @@ Each field of the output type is a question, and all of them go out in a single 
 | Field type | Question | Answer |
 |---|---|---|
 | `bool`, or `Literal[True, False]` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
-| `Literal[...]` or `Enum` of strings | pick one | the chosen option |
+| `Literal[...]` or `Enum` of strings or whole numbers, other than a rubric | pick one | the chosen option |
 | `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | Jev's probability, unrounded, in the field's own units |
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
 | `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer |
-| `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or `None` |
+| `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or the field's default, or `None` |
 | a nested model of these | its fields, asked as `outer.inner` | the model |
 
 A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type Jev is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-jev-picks-and-calls-what-it-can) Jev cannot fill is not an error — it is still offered as a route, and picking it hands the step to the model behind Jev.
@@ -171,6 +171,7 @@ A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] b
 | the goal, on every question | the output type's docstring, or a tool's description |
 | shared framing, on every question | the agent's `instructions` |
 | each option's meaning | a description on that option in the schema |
+| what "none of these" means | a description on the `None` itself, `Annotated[None, Field(description=...)]` |
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the [confidence example below](#confidence-and-thresholds).
 
@@ -180,11 +181,74 @@ Unless the schema describes an option, Jev sees it by its name alone, so name `L
 
 The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as Jev gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones Jev said yes to.
 
-An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
+An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, and a field without one gets `None`. The same goes for a nested model with a default when nothing under it was answered: it gets its own default, not one built from the defaults of the fields inside it. A `default_factory` is not in the schema, which is all Jev's answers are read against, so it counts as no default. Any pick-one, of strings or whole numbers, can be optional; a rubric cannot, since its levels are ordered and `None` is not one of them. To say what picking nothing means on this field rather than take the stock phrase, describe the `None` itself: `Area | Annotated[None, Field(description='Nothing here needs routing.')]` makes that description the option's meaning.
+
+A yes/no is a `bool`, which says what is being asked but nothing about what a yes or a no would mean. That is the one place Jev is asked to judge without being told what it is judging against: a `Choice` carries a description per option and a `Score` one per level, while a `Noul` has only the question unless the two answers are spelled out. [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells them out as `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime:
+
+```python {title="describe_what_yes_and_no_mean.py"}
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, BoolCriteria
+
+
+class Settled(BaseModel):
+    """Review the transcript."""
+
+    refunded: Annotated[
+        bool,
+        BoolCriteria(true='Money was returned to the customer.', false='No refund was issued.'),
+    ] = Field(description='Was a refund issued?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=Settled)
+result = agent.run_sync('We have sent the 40 pounds back to your card.')
+print(result.output.refunded)
+#> True
+```
+
+The two descriptions become the question's `criteria`, which is what Jev weighs the text against, so a field that has them is answering a sharper question than the same field without. They are enough on their own, so unlike a bare `bool` such a field needs no description of its own.
+
+Where the answer should be a named thing rather than `True` or `False` — because it is stored, or branched on by name — an `Enum` of `True` and `False` mixing in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] asks exactly the same question, and the field's value is the member Jev's answer picks:
+
+```python {title="say_what_yes_and_no_mean.py"}
+from enum import Enum
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, UseEnumMemberDocstrings
+
+
+class Refunded(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back to the customer."""
+
+    yes = True
+    """Money was returned to the customer."""
+
+    no = False
+    """No refund was issued."""
+
+
+class Settled(BaseModel):
+    """Review the transcript."""
+
+    refunded: Refunded = Field(description='Was a refund issued?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=Settled)
+result = agent.run_sync('We have sent the 40 pounds back to your card.')
+print(result.output.refunded)
+#> Refunded.yes
+```
+
+A `Literal[True, False]` has nowhere to write the two meanings at all, and asks exactly what a bare `bool` asks.
 
 A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them and at most ten, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 
-A level's description reaches the schema the [same way an option's meaning does](#where-the-wording-comes-from), which makes an `IntEnum` mixing in `UseEnumMemberDocstrings` the way to declare one. A bare `Literal[0, 1, 2]` or a plain `IntEnum` is a [`UserError`][pydantic_ai.exceptions.UserError]: the levels are there, but nothing says what they mean.
+A level's description reaches the schema the [same way an option's meaning does](#where-the-wording-comes-from), which makes an `IntEnum` mixing in `UseEnumMemberDocstrings` the way to declare one.
+
+Any other whole numbers are labels rather than levels, and are a pick-one like strings: `Literal[200, 404, 500]`, an `IntEnum` of codes, or `Literal['a', 1]` mixing the two. That includes numbers from 0 upwards that miss being a rubric only because a level says nothing about itself — a bare `Literal[0, 1, 2]`, a plain `IntEnum` — or because there are more than ten of them. A pick-one weighs its options without their order, so describe every level of a rubric you mean as one. Jev picks a number by its digits, and the field gets back the option itself, number and all. A number whose digits are already a string option is offered as `1 (number)`, so `Literal['1', 1]` is still two options.
 
 ```python {title="grade_with_a_rubric.py"}
 from enum import IntEnum
@@ -238,7 +302,7 @@ Jev answers the questions in one request independently and in parallel, which is
 
 Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field, so one threshold reads the same way across an output type. It is a margin, not a probability that the answer is right. For a yes/no it is how far Jev's probability sits from the threshold that decided it, scaled to run from 0 at the threshold to 1 at certainty — at the default of 0.5 that is the distance from the coin flip, doubled, so a `False` answered from a probability of 0.01 reports 0.98 and one answered from 0.45 reports 0.10. The bar it measures from is the one [actually used](#what-true-has-to-mean), so a yes at 0.8 under a threshold of 0.75 reports 0.2 rather than the 0.6 it would report against a coin flip, and a [fallback on low confidence](#falling-back-on-low-confidence) keeps meaning what it meant. For a pick-one or a rubric it is Jev's own number, from how its probabilities are spread; for a list of options it is the least sure option's.
 
-`provider_details['probabilities']` holds the whole distribution of each pick-one and rubric field — a rubric's levels keyed by their number as a string — and each option's probability for a list. `provider_details['scores']` holds each rubric field's unrounded position along its levels.
+`provider_details['probabilities']` holds the whole distribution of each pick-one and rubric field — a pick-one's options keyed by the label Jev picked them by, and a rubric's levels by their number as a string — and each option's probability for a list. `provider_details['scores']` holds each rubric field's unrounded position along its levels.
 
 A `float` field has no entry in any of them. The probability *is* its answer, so nothing was lost to rounding and there is no second number to report — a `churn_risk` of 0.93 is the judgement, not a 93%-confident judgement — and `0.5` means Jev is undecided, not that the answer is middling. Apply `abs(value - 0.5) * 2` yourself for the same reading the other fields give at the default threshold; against a `typesafe_boolean_threshold` of your own, the margin is the distance from *that* bar scaled to the room left on the side the answer fell — `(value - t) / (1 - t)` at or above it, `(t - value) / t` below.
 
@@ -979,6 +1043,7 @@ Jev does not write text or read files, and it only fills tool arguments that map
 - The `output_type` must be made of the field types above: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-jev-picks-and-calls-what-it-can) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
+- A pick-one needs two or more options, each a string or a whole number: one option leaves nothing to pick, and `True` is not a label.
 - At most 255 options in one question. A pick-one field counts its own options, and the route question counts every tool plus every output type, so 255 tools is already one too many once the output type is counted beside them.
 - Jev needs something to ask. A run with no user text and no history has nothing to judge, and an `output_type` with no fields to fill — a lone argumentless output function — leaves no question to ask unless there is more than one route to pick between.
 
