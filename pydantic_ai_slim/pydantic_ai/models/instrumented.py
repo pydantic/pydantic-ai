@@ -265,11 +265,18 @@ class InstrumentationSettings:
 
         instructions = get_instructions(input_messages, parameters)
         system_instructions_attributes = self.system_instructions_attributes(instructions)
+        # Provider details can quote the request or response (refusals, logprobs), so they count as content.
+        provider_details_attributes = (
+            {'pydantic_ai.response.provider_details': safe_to_json(response.provider_details).decode()}
+            if self.include_content and response.provider_details
+            else {}
+        )
 
         attributes: dict[str, AttributeValue] = {
             'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
             'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
+            **provider_details_attributes,
             'logfire.json_schema': to_json(
                 {
                     'type': 'object',
@@ -277,6 +284,11 @@ class InstrumentationSettings:
                         'gen_ai.input.messages': {'type': 'array'},
                         'gen_ai.output.messages': {'type': 'array'},
                         **({'gen_ai.system_instructions': {'type': 'array'}} if system_instructions_attributes else {}),
+                        **(
+                            {'pydantic_ai.response.provider_details': {'type': 'object'}}
+                            if provider_details_attributes
+                            else {}
+                        ),
                         **(
                             {'model_request_parameters': {'type': 'object'}}
                             if self.include_model_request_parameters

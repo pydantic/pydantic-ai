@@ -1,0 +1,66 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '422'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        clarity:
+          criteria:
+          - Leaves a reader who did not already know none the wiser.
+          - Explains some of it, and leaves an obvious question unanswered.
+          - A reader who did not already know could act on it.
+          instructions:
+            field: clarity
+            goal: Grade a piece of writing.
+          type: score
+      state: Jevantic gives Python programs typed, probabilistic decisions from Jev.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '413'
+      content-type:
+      - application/json
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=1M74rje2H6tbyli1hXg6Uweezjb7Dj1zudMQP4qWarkhA8QjYVPU3BYFaDBdwOtQgffViX9SEruPdO%2BpYoOz%2BFhSEFR1ZugCLgtjW7x1ZEdwkZvaYHUrx9ALgJQMrpe2WA%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      answers:
+        clarity:
+          confidence: 0.59
+          legend:
+            '0': Leaves a reader who did not already know none the wiser.
+            '1': Explains some of it, and leaves an obvious question unanswered.
+            '2': A reader who did not already know could act on it.
+          probabilities:
+            '0': 0.73
+            '1': 0.27
+            '2': 0.0
+          score: 0.28
+          type: score
+      model: jev-1.13.0
+      usage:
+        input_tokens: 363
+        output_tokens: 18
+    status:
+      code: 200
+      message: OK
+version: 1

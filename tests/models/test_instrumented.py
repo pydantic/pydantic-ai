@@ -226,6 +226,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                             'gen_ai.input.messages': {'type': 'array'},
                             'gen_ai.output.messages': {'type': 'array'},
                             'gen_ai.system_instructions': {'type': 'array'},
+                            'pydantic_ai.response.provider_details': {'type': 'object'},
                             'model_request_parameters': {'type': 'object'},
                         },
                     },
@@ -278,6 +279,7 @@ Fix the errors and try again.\
                         }
                     ],
                     'logfire.span_type': 'span',
+                    'pydantic_ai.response.provider_details': {'finish_reason': 'stop', 'foo': 'bar'},
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.response.id': 'response_id',
                     'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
@@ -318,6 +320,15 @@ async def test_instrumented_model_not_recording():
             output_object=None,
         ),
     )
+
+
+async def test_instrumented_model_provider_details_are_content(capfire: CaptureLogfire):
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(include_content=False))
+
+    await model.request([ModelRequest.user_text_prompt('user_prompt')], None, ModelRequestParameters())
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert 'pydantic_ai.response.provider_details' not in span['attributes']
 
 
 class MalformedPortModel(MyModel):
@@ -814,6 +825,7 @@ Fix the errors and try again.\
                         }
                     ],
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                    'pydantic_ai.response.provider_details': {'finish_reason': 'stop', 'foo': 'bar'},
                     'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
@@ -831,6 +843,7 @@ Fix the errors and try again.\
                             'gen_ai.input.messages': {'type': 'array'},
                             'gen_ai.output.messages': {'type': 'array'},
                             'gen_ai.system_instructions': {'type': 'array'},
+                            'pydantic_ai.response.provider_details': {'type': 'object'},
                             'model_request_parameters': {'type': 'object'},
                         },
                     },
@@ -1545,11 +1558,13 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                             ],
                         }
                     ],
+                    'pydantic_ai.response.provider_details': {'finish_reason': 'stop', 'foo': 'bar'},
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
                             'gen_ai.input.messages': {'type': 'array'},
                             'gen_ai.output.messages': {'type': 'array'},
+                            'pydantic_ai.response.provider_details': {'type': 'object'},
                             'model_request_parameters': {'type': 'object'},
                         },
                     },

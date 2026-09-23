@@ -41,7 +41,7 @@ from pydantic_ai import (
     WebSearchTool,
 )
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Instrumentation, NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
@@ -57,6 +57,9 @@ from ..conftest import IsStr, RequestCapture, TestEnv, try_import
 with try_import() as evals_imports_successful:
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import Classifier
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
@@ -297,6 +300,30 @@ async def test_rubric_output(
                     'goal': 'Grade a piece of writing.',
                 },
             }
+        }
+    )
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_provider_details_on_model_request_span(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, capfire: CaptureLogfire
+):
+    """Jev's confidence, probabilities and scores reach the model request span, where Logfire shows them."""
+    agent = Agent(typesafe_model, output_type=Review, capabilities=[Instrumentation()])
+    result = await agent.run('Jevantic gives Python programs typed, probabilistic decisions from Jev.')
+
+    [chat_span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['attributes'].get('gen_ai.operation.name') == 'chat'
+    ]
+    assert chat_span['attributes']['pydantic_ai.response.provider_details'] == result.response.provider_details
+    assert result.response.provider_details == snapshot(
+        {
+            'confidence': {'clarity': 0.59},
+            'probabilities': {'clarity': {'0': 0.73, '1': 0.27, '2': 0.0}},
+            'scores': {'clarity': 0.28},
         }
     )
 
