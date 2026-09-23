@@ -478,7 +478,7 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
     await workspace.write_bytes('b.bin', b'\x00\x01')
     assert (await workspace.run(['ls'])).stdout == 'ran:ls'
     assert (await workspace.stat('sub/a.txt')).size == 5
-    assert [entry.name for entry in await workspace.list_dir('.')] == ['b.bin', 'a.txt']
+    assert [entry.name for entry in await workspace.list_dir('.')] == ['b.bin', 'sub']
     assert (await workspace.read_file('sub/a.txt')).lines == ('alpha',)
     assert await workspace.exists('b.bin') is True
     await workspace.remove('b.bin')
