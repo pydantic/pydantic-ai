@@ -74,19 +74,20 @@ class GitHubCopilotOAuthFlow:
     async def start(self) -> GitHubCopilotDeviceAuthorization:
         """Request a new device code. Replaces any previous challenge on this instance.
 
+        The local expiry deadline uses `expires_in` from receipt of the response.
         Raises `UserError` for an HTTP failure, rejected client, or malformed response.
         Transport errors propagate unchanged.
         """
         self._authorization = None
-        started = monotonic()
         response = await self._post('/login/device/code', {'client_id': self._client_id, 'scope': self._scope})
+        received_at = monotonic()
         try:
             result = _DEVICE_RESPONSE.validate_json(response.content)
         except ValidationError:
             raise UserError('GitHub returned an invalid device authorization response.') from None
         if isinstance(result, _OAuthError):
             raise UserError(f'GitHub device authorization failed: {result.error}.')
-        self._authorization = result, started + result.expires_in
+        self._authorization = result, received_at + result.expires_in
         return result
 
     async def wait_for_authorization(self) -> GitHubCopilotCredentials:

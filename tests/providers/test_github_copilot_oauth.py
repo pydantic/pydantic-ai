@@ -291,6 +291,30 @@ async def test_default_interval_and_restart(delays: list[float]) -> None:
         assert (await flow.wait_for_authorization()).access_token == TOKEN['access_token']
 
 
+async def test_slow_initiation_preserves_challenge_lifetime(
+    monkeypatch: pytest.MonkeyPatch, delays: list[float]
+) -> None:
+    now = 0
+    monkeypatch.setattr('pydantic_ai.providers._github_copilot_oauth.monotonic', lambda: now)
+    requests: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal now
+        requests.append(request.url.path)
+        if request.url.path == '/login/device/code':
+            now += 10
+            return httpx2.Response(200, json=DEVICE)
+        return httpx2.Response(200, json=TOKEN)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        flow = GitHubCopilotOAuthFlow(client_id='my-client', http_client=client)
+        await flow.start()
+        now += 894
+        assert (await flow.wait_for_authorization()).access_token == TOKEN['access_token']
+    assert requests == ['/login/device/code', '/login/oauth/access_token']
+    assert delays == [5]
+
+
 async def test_expired_challenge_does_not_poll(monkeypatch: pytest.MonkeyPatch) -> None:
     times = iter([0, 901])
     monkeypatch.setattr('pydantic_ai.providers._github_copilot_oauth.monotonic', lambda: next(times))
