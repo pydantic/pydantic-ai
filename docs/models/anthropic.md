@@ -404,7 +404,7 @@ print(f'Cache write tokens: {usage.cache_write_tokens}')
 print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
-`cache_write_tokens` counts all cache writes. When some of them used a one-hour TTL, which Anthropic bills at a higher rate than five-minute writes, their count is also in `usage.details['ephemeral_1h_input_tokens']`, and the cost is calculated at the one-hour rate for those tokens.
+`cache_write_tokens` counts all cache writes. When some of them used a one-hour TTL, which Anthropic bills at a higher rate than five-minute writes, their count is also in `usage.details['ephemeral_1h_input_tokens']`, or in `usage.details['compaction_ephemeral_1h_input_tokens']` for writes made during [message compaction](#message-compaction), and the cost is calculated at the one-hour rate for those tokens.
 
 ### Cache Point Limits
 
