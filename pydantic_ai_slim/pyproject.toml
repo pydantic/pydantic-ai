@@ -67,7 +67,7 @@ dependencies = [
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
     # 0.1.7 adds GitHub Copilot pricing and context windows.
-    "genai-prices>=0.1.7",
+    "genai-prices>=0.1.8",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
