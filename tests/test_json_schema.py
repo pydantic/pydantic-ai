@@ -7,7 +7,12 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from pydantic_ai._json_schema import (
+    TEXT_CANDIDATES_KEY,
+    InlineDefsJsonSchemaTransformer,
+    JsonSchemaTransformer,
+    without_text_candidates,
+)
 
 from ._inline_snapshot import snapshot
 
@@ -562,3 +567,42 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
     assert set(result['$defs']) == {'Node', 'Node_root'}
     # The definition the root points at is intact, not overwritten by the root.
     assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
+
+
+def test_without_text_candidates_removes_only_the_keyword():
+    """A unit test because the names under `properties` and the data under `default` or `enum` are not keywords.
+
+    A property can be called the same as the keyword, and a default can be a dict holding it: neither is a
+    marker, and stripping them would change what the schema asks for.
+    """
+    key = TEXT_CANDIDATES_KEY
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            key: {'type': 'string', key: 'cases'},
+            'settings': {'type': 'object', 'default': {key: 'kept'}},
+            'kind': {'enum': [{key: 'kept'}]},
+            'cases': {'type': 'array', 'items': {'anyOf': [{'type': 'string', key: 'cases'}, {'type': 'null'}]}},
+        },
+        '$defs': {'Case': {'type': 'string', key: 'cases'}},
+    }
+    original = deepcopy(schema)
+
+    assert without_text_candidates(schema) == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'x-pydantic-ai-text-candidates': {'type': 'string'},
+                'settings': {'type': 'object', 'default': {'x-pydantic-ai-text-candidates': 'kept'}},
+                'kind': {'enum': [{'x-pydantic-ai-text-candidates': 'kept'}]},
+                'cases': {'type': 'array', 'items': {'anyOf': [{'type': 'string'}, {'type': 'null'}]}},
+            },
+            '$defs': {'Case': {'type': 'string'}},
+        }
+    )
+    assert schema == original
+
+
+def test_without_text_candidates_returns_an_unmarked_schema_itself():
+    schema: dict[str, Any] = {'type': 'object', 'properties': {'name': {'type': 'string', 'default': 'x'}}}
+    assert without_text_candidates(schema) is schema

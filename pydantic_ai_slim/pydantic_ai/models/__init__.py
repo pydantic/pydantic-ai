@@ -28,7 +28,7 @@ from typing_inspection.introspection import get_literal_values
 from .. import _utils
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
-from .._json_schema import JsonSchemaTransformer
+from .._json_schema import JsonSchemaTransformer, without_text_candidates
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
@@ -600,7 +600,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         This method can be overridden by subclasses to modify the request parameters before sending them to the model.
         In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
         for vendor/model-specific reasons.
+
+        The base implementation also strips the keyword a
+        [`TextCandidates`][pydantic_ai.models.typesafe.TextCandidates] marker puts in a field's schema, which is
+        meant for [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] alone, so an override should
+        call it rather than replace it.
         """
+        model_request_parameters = _without_text_candidates(model_request_parameters)
         if transformer := self.profile.get('json_schema_transformer'):
             model_request_parameters = replace(
                 model_request_parameters,
@@ -1851,6 +1857,37 @@ def get_user_agent() -> str:
     from .. import __version__
 
     return f'pydantic-ai/{__version__}'
+
+
+def _without_text_candidates(params: ModelRequestParameters) -> ModelRequestParameters:
+    """`params` without the `TextCandidates` keyword in any schema, or `params` itself when none carries it.
+
+    The keyword names a function registered on a `TypeSafeModel`, and means nothing to any other model: it is
+    stripped before a schema transformer sees it, so a strict-mode transformer never has to decide about it.
+    """
+
+    def tool(tool_def: ToolDefinition) -> ToolDefinition:
+        schema = without_text_candidates(tool_def.parameters_json_schema)
+        return_schema = tool_def.return_schema and without_text_candidates(tool_def.return_schema)
+        if schema is tool_def.parameters_json_schema and return_schema is tool_def.return_schema:
+            return tool_def
+        return replace(tool_def, parameters_json_schema=schema, return_schema=return_schema)
+
+    function_tools = [tool(tool_def) for tool_def in params.function_tools]
+    output_tools = [tool(tool_def) for tool_def in params.output_tools]
+    output_object = params.output_object
+    if (
+        output_object
+        and (schema := without_text_candidates(output_object.json_schema)) is not output_object.json_schema
+    ):
+        output_object = replace(output_object, json_schema=schema)
+    if (
+        all(new is old for new, old in zip(function_tools, params.function_tools))
+        and all(new is old for new, old in zip(output_tools, params.output_tools))
+        and output_object is params.output_object
+    ):
+        return params
+    return replace(params, function_tools=function_tools, output_tools=output_tools, output_object=output_object)
 
 
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition) -> ToolDefinition:

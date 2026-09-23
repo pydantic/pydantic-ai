@@ -1062,6 +1062,7 @@ async def model_logic(  # noqa: C901
                         args={
                             'customer_email': 'mira@example.com',
                             'open_case': 'CASE-2048',
+                            'closed_case': 'CASE-1042',
                             'overcharge': '$20.00',
                         },
                     )

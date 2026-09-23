@@ -31,10 +31,12 @@ from pydantic_ai import (
     PromptedOutput,
     RetryPromptPart,
     RunContext,
+    StructuredDict,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    Tool,
     ToolCallPart,
     ToolOutput,
     ToolReturnPart,
@@ -42,6 +44,7 @@ from pydantic_ai import (
     UserPromptPart,
     WebSearchTool,
 )
+from pydantic_ai._json_schema import TEXT_CANDIDATES_KEY
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
@@ -60,11 +63,16 @@ with try_import() as evals_imports_successful:
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import Classifier
 
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
 with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, JSONContent, RetryPolicy
 
     from pydantic_ai.models.typesafe import (
         NoTextCandidate,
+        TextCandidates,
         ToolCallProposed,
         TypeSafeModel,
         TypeSafeModelSettings,
@@ -113,15 +121,17 @@ class EnumAndProbability(BaseModel):
 
 EmailText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'email'})]
 UriText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'uri'})]
+CaseId = Annotated[str, TextCandidates('cases')]
+Amount = Annotated[str, TextCandidates('amounts')]
 
 
 class ExtractedDetails(BaseModel):
     """Extract details from a support ticket without writing new text."""
 
     customer_email: EmailText = Field(description='Which email address belongs to the customer?')
-    open_case: str = Field(description='Which case is still open?')
+    open_case: CaseId = Field(description='Which case is still open?')
     account_page: UriText = Field(description="Which URI is the customer's account page?")
-    overcharge: str = Field(description='Which amount is the overcharge?')
+    overcharge: Amount = Field(description='Which amount is the overcharge?')
 
 
 def extract_amounts(state: JSONContent) -> list[str]:
@@ -314,7 +324,7 @@ async def test_text_candidate_output(
     model = TypeSafeModel(
         'jev-latest',
         provider=provider,
-        text_extractors={'overcharge': extract_amounts, 'open_case': extract_cases},
+        text_extractors={'amounts': extract_amounts, 'cases': extract_cases},
     )
     agent = Agent(model, output_type=ExtractedDetails)
     result = await agent.run(
@@ -639,12 +649,12 @@ async def test_schema_format_candidates_include_the_whole_state_and_keep_first_s
     assert list(seen[0]['questions']['email']['criteria']) == ['old@example.com', 'new@example.com', 'none']
 
 
-async def test_an_explicit_extractor_replaces_the_one_the_format_implies(allow_model_requests: None):
-    """The `email` format would find addresses in this text; the extractor that was passed is what is offered."""
+async def test_a_named_extractor_replaces_the_one_the_format_implies(allow_model_requests: None):
+    """The `email` format would find addresses in this text; the extractor the field names is what is offered."""
     seen: list[dict[str, Any]] = []
 
     class Selected(BaseModel):
-        contact: EmailText = Field(description='Which contact should be used?')
+        contact: Annotated[EmailText, TextCandidates('desks')] = Field(description='Which contact should be used?')
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
@@ -660,7 +670,7 @@ async def test_an_explicit_extractor_replaces_the_one_the_format_implies(allow_m
     def desks(_state: JSONContent) -> list[str]:
         return ['desk+one@example.net', 'desk+two@example.net', 'desk+two@example.net', '']
 
-    model = mock_model(record, text_extractors={'contact': desks})
+    model = mock_model(record, text_extractors={'desks': desks})
     result = await Agent(model, output_type=Selected).run('Write to mira@example.com or lee@example.org.')
 
     assert result.output.contact == 'desk+two@example.net'
@@ -672,29 +682,39 @@ async def test_an_explicit_extractor_replaces_the_one_the_format_implies(allow_m
     ]
 
 
-async def test_an_explicit_extractor_uses_the_flattened_name_of_a_nested_field(allow_model_requests: None):
+async def test_one_alias_answers_a_nested_field_and_a_top_level_one(allow_model_requests: None):
+    """The field names its extractor, so a nested field needs no path and one alias serves every field it types.
+
+    Both fields go out as their own question over the same candidates, and each answer lands in its own place.
+    """
+    seen: list[dict[str, Any]] = []
+
     class Inner(BaseModel):
-        identifier: str = Field(description='Which identifier?')
+        identifier: CaseId = Field(description='Which case is open?')
 
     class Outer(BaseModel):
         inner: Inner
+        closed: CaseId = Field(description='Which case is closed?')
 
-    nested_answer: dict[str, object] = {
-        'type': 'choice',
-        'choice': 'CASE-2',
-        'confidence': 0.9,
-        'probabilities': {'CASE-1': 0.1, 'CASE-2': 0.9, 'none': 0.0},
-    }
+    def pick(choice: str) -> dict[str, object]:
+        return {
+            'type': 'choice',
+            'choice': choice,
+            'confidence': 0.9,
+            'probabilities': {'CASE-1': 0.05, 'CASE-2': 0.05, choice: 0.9, 'none': 0.0},
+        }
 
-    def two_cases(_state: JSONContent) -> list[str]:
-        return ['CASE-1', 'CASE-2']
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(**{'inner.identifier': pick('CASE-2'), 'closed': pick('CASE-1')})
 
-    model = mock_model(
-        lambda _: answers(**{'inner.identifier': nested_answer}),
-        text_extractors={'inner.identifier': two_cases},
-    )
+    model = mock_model(record, text_extractors={'cases': extract_cases})
     result = await Agent(model, output_type=Outer).run('CASE-1 is closed and CASE-2 is open.')
-    assert result.output == Outer(inner=Inner(identifier='CASE-2'))
+
+    assert result.output == Outer(inner=Inner(identifier='CASE-2'), closed='CASE-1')
+    assert {name: list(question['criteria']) for name, question in seen[0]['questions'].items()} == snapshot(
+        {'inner.identifier': ['CASE-1', 'CASE-2', 'none'], 'closed': ['CASE-1', 'CASE-2', 'none']}
+    )
 
 
 def test_a_uri_candidate_keeps_what_belongs_to_it():
@@ -765,7 +785,7 @@ async def test_a_schema_pattern_says_why_it_is_not_an_extractor(
 
         case: str = Field(pattern=r'CASE-\d+', description='Which case?')
 
-    with pytest.raises(UserError, match=r'has a schema `pattern`.*Pass the same expression yourself'):
+    with pytest.raises(UserError, match=r'has a schema `pattern`.*Run the same expression yourself'):
         await Agent(typesafe_model, output_type=Cased).run('CASE-1 is open.')
 
 
@@ -792,15 +812,15 @@ async def test_options_and_a_pattern_together_are_still_a_pick_one(allow_model_r
 
 async def test_no_candidates_answers_none_for_an_optional_field_without_a_request(allow_model_requests: None):
     class Selected(BaseModel):
-        identifier: str | None = Field(default=None, description='Which case, if any?')
+        identifier: CaseId | None = Field(default=None, description='Which case, if any?')
 
     def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('the request should not be sent')
 
-    model = mock_model(unreachable, text_extractors={'identifier': extract_cases})
+    model = mock_model(unreachable, text_extractors={'cases': extract_cases})
     result = await Agent(model, output_type=Selected).run('No case number was supplied.')
     assert result.output.identifier is None
-    assert result.response.usage == RequestUsage()
+    assert not result.response.usage.has_values()
     assert result.response.provider_details == snapshot(
         {
             'confidence': {'identifier': 1.0},
@@ -822,7 +842,7 @@ async def test_a_defaulted_field_falls_back_to_its_default_rather_than_failing(
     """
 
     class Selected(BaseModel):
-        identifier: str = Field(default='unknown', description='Which case is open?')
+        identifier: CaseId = Field(default='unknown', description='Which case is open?')
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         if not extracted:  # pragma: no cover
@@ -836,7 +856,7 @@ async def test_a_defaulted_field_falls_back_to_its_default_rather_than_failing(
             }
         )
 
-    model = mock_model(handler, text_extractors={'identifier': extract_cases})
+    model = mock_model(handler, text_extractors={'cases': extract_cases})
     prompt = 'CASE-1000 is closed; there is no open case.' if extracted else 'Nothing was filed.'
     result = await Agent(model, output_type=Selected).run(prompt)
 
@@ -866,7 +886,7 @@ async def test_a_required_nested_model_is_sent_even_when_every_field_under_it_ta
     """
 
     class Details(BaseModel):
-        identifier: str = Field(default='unknown', description='Which case is open?')
+        identifier: CaseId = Field(default='unknown', description='Which case is open?')
 
     class Report(BaseModel):
         """Summarise what was filed."""
@@ -885,7 +905,7 @@ async def test_a_required_nested_model_is_sent_even_when_every_field_under_it_ta
             raise AssertionError('the request should not be sent')
         return answers(**{'details.identifier': no_match})
 
-    model = mock_model(handler, text_extractors={'details.identifier': extract_cases_anywhere})
+    model = mock_model(handler, text_extractors={'cases': extract_cases_anywhere})
     prompt = 'CASE-1000 is closed; there is no open case.' if extracted else 'Nothing was filed.'
     result = await Agent(model, output_type=Report).run(prompt)
 
@@ -903,7 +923,7 @@ async def test_a_nested_model_with_a_default_of_its_own_is_left_out_like_any_oth
     """
 
     class Details(BaseModel):
-        identifier: str = Field(default='unknown', description='Which case is open?')
+        identifier: CaseId = Field(default='unknown', description='Which case is open?')
 
     class Report(BaseModel):
         """Summarise what was filed."""
@@ -913,7 +933,7 @@ async def test_a_nested_model_with_a_default_of_its_own_is_left_out_like_any_oth
     def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('the request should not be sent')
 
-    model = mock_model(unreachable, text_extractors={'details.identifier': extract_cases_anywhere})
+    model = mock_model(unreachable, text_extractors={'cases': extract_cases_anywhere})
     result = await Agent(model, output_type=Report).run('Nothing was filed.')
 
     assert result.output == snapshot(Report(details=Details(identifier='nothing filed')))
@@ -922,7 +942,8 @@ async def test_a_nested_model_with_a_default_of_its_own_is_left_out_like_any_oth
 
 @pytest.mark.parametrize('optional', [False, True])
 async def test_the_no_match_option_never_becomes_an_invented_value(allow_model_requests: None, optional: bool):
-    annotation = str | None if optional else str
+    # The marker on the union rather than on its `str`, which puts it beside `anyOf` in the schema.
+    annotation = Annotated[str | None, TextCandidates('cases')] if optional else CaseId
     Selected = type(
         'Selected',
         (BaseModel,),
@@ -940,7 +961,7 @@ async def test_the_no_match_option_never_becomes_an_invented_value(allow_model_r
                 'probabilities': {'CASE-1000': 0.2, 'none': 0.8},
             }
         ),
-        text_extractors={'identifier': extract_cases},
+        text_extractors={'cases': extract_cases},
     )
     agent = Agent(model, output_type=Selected)
     if optional:
@@ -960,7 +981,7 @@ async def test_a_fallback_model_takes_a_field_jev_cannot_answer(allow_model_requ
     """
 
     class Selected(BaseModel):
-        identifier: str = Field(description='Which case is open?')
+        identifier: CaseId = Field(description='Which case is open?')
 
     jev = mock_model(
         lambda _: answers(
@@ -971,7 +992,7 @@ async def test_a_fallback_model_takes_a_field_jev_cannot_answer(allow_model_requ
                 'probabilities': {'CASE-1000': 0.2, 'none': 0.8},
             }
         ),
-        text_extractors={'identifier': extract_cases},
+        text_extractors={'cases': extract_cases},
     )
     agent = Agent(FallbackModel(jev, TestModel(custom_output_args={'identifier': 'CASE-4242'})), output_type=Selected)
     result = await agent.run(prompt)
@@ -1056,7 +1077,7 @@ async def test_a_field_jev_cannot_answer_does_not_take_the_tool_it_picked_away(
 
 
 def _one_value(_state: JSONContent) -> list[str]:
-    return ['value']  # pragma: no cover — both cases using it are refused before extraction runs
+    return ['value']
 
 
 def _one_string(_state: JSONContent) -> str:
@@ -1087,43 +1108,139 @@ async def test_invalid_extractor_results_are_refused(
     """What an extractor hands back is the caller's code misbehaving, so it is a `UserError` before the request."""
 
     class Selected(BaseModel):
-        identifier: str = Field(description='Which identifier?')
+        identifier: CaseId = Field(description='Which identifier?')
 
-    model = mock_model(
-        lambda _: pytest.fail('the request should not be sent'), text_extractors={'identifier': extractor}
-    )
+    model = mock_model(lambda _: pytest.fail('the request should not be sent'), text_extractors={'cases': extractor})
     with pytest.raises(UserError, match=match):
         await Agent(model, output_type=Selected).run('CASE-1')
 
 
 async def test_an_extractor_failure_is_named_for_its_field(allow_model_requests: None):
     class Selected(BaseModel):
-        identifier: str = Field(description='Which identifier?')
+        identifier: CaseId = Field(description='Which identifier?')
 
     def fail(_state: JSONContent) -> list[str]:
         raise RuntimeError('parser unavailable')
 
-    model = mock_model(lambda _: pytest.fail('the request should not be sent'), text_extractors={'identifier': fail})
+    model = mock_model(lambda _: pytest.fail('the request should not be sent'), text_extractors={'cases': fail})
     with pytest.raises(UserError, match="extractor for output field 'identifier' failed: parser unavailable"):
         await Agent(model, output_type=Selected).run('CASE-1')
 
 
+class WithMarkedBool(BaseModel):
+    flag: Annotated[bool, TextCandidates('cases')] = Field(description='Is it flagged?')
+
+
 @pytest.mark.parametrize(
-    'text_extractors,output_type,match',
+    'output_type,match',
     [
-        pytest.param({'missing': _one_value}, WithText, 'unknown output fields: missing', id='unknown field'),
-        pytest.param({'ok': _one_value}, WithUndescribedBool, 'requires a plain string field', id='non-string field'),
+        pytest.param(
+            ExtractedDetails,
+            r"text extractor 'amounts', which is not registered on this model",
+            id='unregistered name',
+        ),
+        pytest.param(
+            # A raw schema names an extractor too, and a name that happens to match a built-in is not one: the
+            # `email` format is right there, and it is still the registry and nothing else that a name selects from.
+            StructuredDict(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'contact': {'type': 'string', 'format': 'email', TEXT_CANDIDATES_KEY: 'email'},
+                    },
+                    'required': ['contact'],
+                },
+                name='Contact',
+            ),
+            r"text extractor 'email', which is not registered on this model",
+            id='built-in name',
+        ),
+        pytest.param(WithMarkedBool, r'requires a plain `str` field', id='non-string field'),
     ],
 )
-async def test_invalid_extractor_configuration_is_refused(
+async def test_an_extractor_a_field_names_must_be_registered_and_fit_the_field(
     allow_model_requests: None,
-    text_extractors: dict[str, TypeSafeTextExtractor],
-    output_type: type[BaseModel],
+    output_type: type[Any],
     match: str,
 ):
-    model = mock_model(lambda _: pytest.fail('the request should not be sent'), text_extractors=text_extractors)
+    """Only `cases` is registered, so every other name is refused before the request rather than looked up."""
+    model = mock_model(lambda _: pytest.fail('the request should not be sent'), text_extractors={'cases': _one_value})
     with pytest.raises(UserError, match=match):
         await Agent(model, output_type=output_type).run('anything')
+
+
+class CaseCustomer(BaseModel):
+    case: CaseId = Field(description='Which case is the customer asking about?')
+
+
+class CaseEscalation(BaseModel):
+    """Escalate a support ticket."""
+
+    customer: CaseCustomer
+    closed: CaseId | None = Field(default=None, description='Which case is closed, if any?')
+
+
+def look_up_case(case: CaseId) -> CaseCustomer:
+    """Look a case up."""
+    return CaseCustomer(case=case)  # pragma: no cover
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param(ToolOutput(CaseEscalation, strict=True), id='strict tool output'),
+        pytest.param(CaseEscalation, id='tool output'),
+        pytest.param(NativeOutput(CaseEscalation), id='native output'),
+    ],
+)
+async def test_another_model_never_sends_the_text_candidates_keyword(allow_model_requests: None, output_type: Any):
+    """The keyword a `TextCandidates` marker adds is for Jev: a provider model strips it from everything it sends.
+
+    Stripped before the profile's schema transformer runs, so OpenAI's strict-mode transformer never sees it and a
+    strict output tool stays strict. The output type, a function tool's arguments and its return schema, which
+    OpenAI puts in the tool's description, all carry the marker here.
+    """
+    sent: list[dict[str, Any]] = []
+    output = {'customer': {'case': 'CASE-2'}, 'closed': 'CASE-1'}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        if isinstance(output_type, NativeOutput):
+            message: dict[str, Any] = {'role': 'assistant', 'content': json.dumps(output)}
+        else:
+            call = {
+                'id': 'call_1',
+                'type': 'function',
+                'function': {'name': 'final_result', 'arguments': json.dumps(output)},
+            }
+            message = {'role': 'assistant', 'content': None, 'tool_calls': [call]}
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'chatcmpl-1',
+                'object': 'chat.completion',
+                'created': 0,
+                'model': 'gpt-5.2',
+                'choices': [{'index': 0, 'finish_reason': 'stop', 'message': message}],
+            },
+        )
+
+    provider = OpenAIProvider(
+        api_key='api-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    )
+    agent = Agent(
+        OpenAIChatModel('gpt-5.2', provider=provider),
+        output_type=output_type,
+        tools=[Tool(look_up_case, include_return_schema=True)],
+    )
+    result = await agent.run('CASE-1 is closed; the customer is asking about CASE-2.')
+
+    assert result.output == CaseEscalation(customer=CaseCustomer(case='CASE-2'), closed='CASE-1')
+    assert TEXT_CANDIDATES_KEY not in json.dumps(sent)
+    if isinstance(output_type, ToolOutput):
+        tools = {tool['function']['name']: tool['function'] for tool in sent[0]['tools']}
+        assert tools['final_result'].get('strict') == (output_type.strict or None)
 
 
 async def test_a_format_without_an_extractor_leaves_the_field_unsupported(allow_model_requests: None):
@@ -1159,9 +1276,9 @@ async def test_an_unexpected_extracted_answer(
     match: str,
 ):
     class Selected(BaseModel):
-        identifier: str = Field(description='Which case?')
+        identifier: CaseId = Field(description='Which case?')
 
-    model = mock_model(lambda _: answers(identifier=answer), text_extractors={'identifier': extract_cases})
+    model = mock_model(lambda _: answers(identifier=answer), text_extractors={'cases': extract_cases})
     with pytest.raises(UnexpectedModelBehavior, match=match):
         await Agent(model, output_type=Selected).run('CASE-1000')
 

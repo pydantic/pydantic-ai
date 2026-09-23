@@ -16,10 +16,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast
 
+from pydantic import GetJsonSchemaHandler
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 from typing_extensions import assert_never
 
 from .. import _utils, usage
 from .._http import to_httpx2_timeout
+from .._json_schema import TEXT_CANDIDATES_KEY
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
@@ -87,6 +91,7 @@ __all__ = (
     'TypeSafeModelSettings',
     'TypeSafeStreamedResponse',
     'TypeSafeTextExtractor',
+    'TextCandidates',
     'LatestTypeSafeModelNames',
     'NoTextCandidate',
     'ToolCallProposed',
@@ -101,11 +106,35 @@ TypeSafeModelName = str | LatestTypeSafeModelNames
 """Possible TypeSafe model names."""
 
 TypeSafeTextExtractor = Callable[[JSONContent], Iterable[str]]
-"""Candidate values for one string output field, taken from the state Jev judges.
+"""Candidate values for a string output field, taken from the state Jev judges.
 
 The state is a string when the latest prompt stands alone, and the mapping of `history` and `text` otherwise.
 Jev picks one of the strings returned, or the no-match option, and never writes or alters one.
 """
+
+
+@dataclass(frozen=True)
+class TextCandidates:
+    """Mark a `str` field as answered by picking one of the candidates a named text extractor returns.
+
+    Use it in `Annotated`, as in `CaseId = Annotated[str, TextCandidates('case_id')]`, and register the function
+    under the same name on the model: `TypeSafeModel('jev-latest', text_extractors={'case_id': cases})`. One alias
+    serves every field it annotates, nested ones included. See
+    [extracting a string already in the text](../../models/typesafe.md#extracting-a-string-already-in-the-text).
+
+    The marker adds only the name to the field's JSON schema, under a reserved keyword, because a schema is all a
+    model is given and all that crosses a durable execution boundary. Every model other than
+    [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] strips that keyword before a request, so the
+    same output type works on a language model unchanged. A name that is not registered on the model is refused
+    rather than looked up anywhere else, so a schema can only choose among functions the application registered.
+    """
+
+    extractor: str
+    """The name the extractor is registered under in `TypeSafeModel`'s `text_extractors`."""
+
+    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        return {**handler(core_schema), TEXT_CANDIDATES_KEY: self.extractor}
+
 
 # Jev picks from at most this many options in one question; a 256th is a 400 from the API.
 # https://docs.typesafe.ai/model-jaggedness/jev-1.13
@@ -249,7 +278,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     |---|---|---|
     | `bool` | yes or no | `True` when Jev's probability is at least 0.5 |
     | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
-    | `str` with a supported `format` or an explicit extractor | pick one candidate extracted from the state | the candidate |
+    | `str` with a supported `format` or a [`TextCandidates`][pydantic_ai.models.typesafe.TextCandidates] marker | pick one candidate extracted from the state | the candidate |
     | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
     | whole numbers 0, 1, 2, … with a description per level in the schema | score against a rubric | the nearest level |
     | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
@@ -261,9 +290,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     A bare `bool`, `Literal` or `float` output has no field to describe, so there the agent's instructions are the
     question.
     A string field is selection, not writing: the `email` or `uri` schema format that Pydantic's own `EmailStr`
-    and `AnyUrl` declare, or an explicit
-    [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor] passed as `text_extractors`,
-    supplies whole candidates from the state before the request, and Jev picks one of them or the no-match option.
+    and `AnyUrl` declare, or a [`TextCandidates`][pydantic_ai.models.typesafe.TextCandidates] marker naming an
+    extractor registered in `text_extractors`, supplies whole candidates from the state before the request, and
+    Jev picks one of them or the no-match option.
     A schema `pattern` is not read as an extractor. A required field left without a value is raised as
     [`NoTextCandidate`][pydantic_ai.models.typesafe.NoTextCandidate]; an optional one answers `None`, and one
     with a default takes it.
@@ -323,9 +352,10 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                 'typesafe' or an instance of `Provider[AsyncTypeSafeClient]`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Model-specific settings that will be used as defaults for this model.
-            text_extractors: Candidate extractors for string output fields, keyed by field name. Use the flattened
-                name such as `customer.email` for a nested field. The `email` and `uri` schema formats supply an
-                extractor without this mapping; an explicit one takes precedence.
+            text_extractors: [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor]s by
+                name. A `str` field annotated with [`TextCandidates`][pydantic_ai.models.typesafe.TextCandidates]
+                is answered with the one registered under the name it gives, and a name missing here is an error.
+                The `email` and `uri` schema formats supply an extractor without one; a marker takes precedence.
         """
         self._model_name = model_name
 
@@ -339,6 +369,11 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     @property
     def client(self) -> AsyncTypeSafeClient:
         return self._provider.client
+
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        # The `TextCandidates` keyword every other model strips is the one this model reads, and Jev's profile has
+        # no schema transformer to apply, so the parameters are used as they are.
+        return model_request_parameters
 
     @property
     def base_url(self) -> str:
@@ -1198,9 +1233,13 @@ def _text_extractor(
     name: str,
     prop: dict[str, Any],
     options: dict[Any, str | None] | None,
-    explicit: TypeSafeTextExtractor | None,
+    text_extractors: Mapping[str, TypeSafeTextExtractor],
 ) -> TypeSafeTextExtractor | None:
-    """The extractor for one field: the caller's own, or the one a supported schema `format` implies.
+    """The extractor for one field: the registered one its `TextCandidates` names, or the one its `format` implies.
+
+    The name comes from the schema, and schemas are not always the application's own: `StructuredDict` takes a
+    raw one. So a name only ever selects from `text_extractors`, which the application wrote, and one missing
+    there is an error rather than a lookup of anything else, the built-in extractors included.
 
     A `pattern` is deliberately not used. Running it would mean matching a regular expression we did not write
     against text we did not write: an innocent-looking pattern such as `(a+)+$` backtracks for exponential time
@@ -1208,24 +1247,30 @@ def _text_extractor(
     applies. An extractor the caller passes is their own code and carries its own risk, as a tool function does;
     a `pattern` in a schema does not read like code that is about to run, so it is refused rather than obeyed.
     """
+    extractor_name = prop.get(TEXT_CANDIDATES_KEY)
     if prop.get('type') != 'string' or options is not None:
         # A field with a finite set of options is a pick-one whatever else its schema says, so neither an
         # extractor nor the refusal below applies to it.
-        if explicit is None:
+        if extractor_name is None:
             return None
         raise UserError(
-            f'Text candidate extractor for output field {name!r} requires a plain string field, not another '
-            'field type or a finite set of options.'
+            f'`TextCandidates` on output field {name!r} requires a plain `str` field, not another field type or a '
+            'finite set of options.'
         )
-    if explicit is not None:
-        return explicit
+    if extractor_name is not None:
+        if isinstance(extractor_name, str) and (extractor := text_extractors.get(extractor_name)):
+            return extractor
+        raise UserError(
+            f'Output field {name!r} is answered by the text extractor {extractor_name!r}, which is not registered '
+            f'on this model. Register it: `TypeSafeModel(..., text_extractors={{{extractor_name!r}: ...}})`.'
+        )
     if isinstance(format_name := prop.get('format'), str) and (extractor := _FORMAT_EXTRACTORS.get(format_name)):
         return extractor
     if prop.get('pattern') is not None:
         raise UserError(
             f'Output field {name!r} has a schema `pattern`, which this model does not read as a candidate '
             'extractor: it would mean running a regular expression Pydantic AI did not write over text it did '
-            f'not write. Pass the same expression yourself, as `text_extractors={{{name!r}: ...}}` on the model.'
+            'not write. Run the same expression yourself, in a text extractor the field names with `TextCandidates`.'
         )
     return None
 
@@ -1264,12 +1309,10 @@ def _text_candidates(
     text_extractors: Mapping[str, TypeSafeTextExtractor],
 ) -> dict[str, _TextCandidates]:
     """What each string output field can be answered with, extracted from the state before anything is asked."""
-    if unknown := sorted(set(text_extractors) - properties.keys()):
-        raise UserError(f'Text candidate extractors refer to unknown output fields: {", ".join(unknown)}.')
     candidates: dict[str, _TextCandidates] = {}
     for name, prop in properties.items():
         prop, none_key = _optional(prop)
-        extractor = _text_extractor(name, prop, _options(prop), text_extractors.get(name))
+        extractor = _text_extractor(name, prop, _options(prop), text_extractors)
         if extractor is None:
             continue
         values = _extract(name, extractor, state)

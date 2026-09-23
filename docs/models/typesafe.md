@@ -154,7 +154,7 @@ Each field of the output type is a question, and all of them go out in a single 
 |---|---|---|
 | `bool`, or `Literal[True, False]` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
 | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
-| `str` with a supported `format` or an explicit extractor | pick one candidate extracted from the state | the candidate |
+| `str` with a supported `format` or a [`TextCandidates`](#extracting-a-string-already-in-the-text) marker | pick one candidate extracted from the state | the candidate |
 | `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | Jev's probability, unrounded, in the field's own units |
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
@@ -257,30 +257,37 @@ customer_email='mira@example.com' account_page=AnyUrl('https://app.example.com/8
 """
 ```
 
-For a shape Pydantic AI does not know — a case number, an invoice amount, an order id — write the extractor yourself. A [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor] is an ordinary function of yours that returns the candidate strings for one field, and it is passed to [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] as `text_extractors`, keyed by field name; use the flattened name such as `customer.email` for a nested field. An explicit extractor takes the place of the one a `format` would imply, though its selected value must still pass the field's Pydantic validation.
+For a shape Pydantic AI does not know — a case number, an invoice amount, an order id — write the extractor yourself. A [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor] is an ordinary function of yours that returns the candidate strings. Register it on [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] under a name, in `text_extractors`, and give each field it answers a [`TextCandidates`][pydantic_ai.models.typesafe.TextCandidates] marker with that name. The marker goes on the type, so an alias such as `CaseId = Annotated[str, TextCandidates('case_id')]` serves every field it annotates, in a nested model as much as at the top. A marker takes the place of the extractor a `format` would imply, though the selected value must still pass the field's Pydantic validation.
 
-A field's schema `pattern` is deliberately not used as an extractor, and is refused rather than obeyed. Running one would mean matching a regular expression Pydantic AI did not write against text it did not write, and a pattern that looks harmless can backtrack for exponential time on an input chosen to make it, holding the interpreter while it does. An extractor you pass is your own code, like a tool function.
+The marker puts only the name in the field's JSON schema, because a schema is all a model is given, and under [durable execution](../durable_execution/overview.md) all that crosses into the activity that makes the request. A name the model has no extractor registered under is refused with a [`UserError`][pydantic_ai.exceptions.UserError], never looked up anywhere else, so a schema you did not write, such as one passed to [`StructuredDict`][pydantic_ai.output.StructuredDict], can only select a function your application registered. Every other model strips the marker before a request, so the same output type runs unchanged on a language model, including one behind Jev in a [`FallbackModel`](overview.md#fallback-model).
+
+A field's schema `pattern` is deliberately not used as an extractor, and is refused rather than obeyed. Running one would mean matching a regular expression Pydantic AI did not write against text it did not write, and a pattern that looks harmless can backtrack for exponential time on an input chosen to make it, holding the interpreter while it does. An extractor you register is your own code, like a tool function.
 
 Extractors receive the state Jev judges: a string when the latest prompt stands alone, or the JSON-compatible mapping of `history` and `text` described under [judging a conversation](#judging-a-conversation). They are synchronous and must return an iterable of strings. Candidates are de-duplicated in first-seen order, and at most 254 are accepted because the no-match option is the 255th Jev supports.
 
-The two kinds mix in one output type: `customer_email` below needs no extractor, while `open_case` and `overcharge` get one each.
+The two kinds mix in one output type: `customer_email` below needs no extractor, while `open_case` and `closed_case` share one and `overcharge` has its own.
 
 ```python {title="extract_invoice_details.py"}
 import json
 import re
+from typing import Annotated
 
 from pydantic import BaseModel, EmailStr, Field
 
 from pydantic_ai import Agent
-from pydantic_ai.models.typesafe import TypeSafeModel
+from pydantic_ai.models.typesafe import TextCandidates, TypeSafeModel
+
+CaseId = Annotated[str, TextCandidates('case_id')]
+Amount = Annotated[str, TextCandidates('amount')]
 
 
 class InvoiceDetails(BaseModel):
     customer_email: EmailStr = Field(
         description='Which email address belongs to the customer?'
     )
-    open_case: str = Field(description='Which case is still open?')
-    overcharge: str = Field(description='Which amount is the overcharge?')
+    open_case: CaseId = Field(description='Which case is still open?')
+    closed_case: CaseId = Field(description='Which case is closed?')
+    overcharge: Amount = Field(description='Which amount is the overcharge?')
 
 
 def amounts(state: object) -> list[str]:
@@ -292,7 +299,7 @@ def cases(state: object) -> list[str]:
 
 
 model = TypeSafeModel(
-    'jev-latest', text_extractors={'overcharge': amounts, 'open_case': cases}
+    'jev-latest', text_extractors={'case_id': cases, 'amount': amounts}
 )
 agent = Agent(model, output_type=InvoiceDetails)
 result = agent.run_sync(
@@ -300,7 +307,9 @@ result = agent.run_sync(
     'The invoice was $80.00 instead of $60.00, an overcharge of $20.00.'
 )
 print(result.output)
-#> customer_email='mira@example.com' open_case='CASE-2048' overcharge='$20.00'
+"""
+customer_email='mira@example.com' open_case='CASE-2048' closed_case='CASE-1042' overcharge='$20.00'
+"""
 ```
 
 Every extraction question includes an explicit "none of these candidate values" option. For `str | None`, both finding no candidate and Jev picking that option answer `None`, and when no other question needs Jev no request is made. A field with a default, such as `open_case: str = 'unknown'`, is left out of the arguments in the same two cases, so Pydantic applies the default. For a required field both raise [`NoTextCandidate`][pydantic_ai.models.typesafe.NoTextCandidate], a `ModelAPIError` rather than a refusal, because whether a value is there to pick depends on the text and not on how the agent is built: a [`FallbackModel`](overview.md#fallback-model) with a language model behind Jev answers that step instead. With tools attached the output is one route among them, so a field Jev could not answer only fails the turn when the output is the route it took. A candidate outside the extracted set is never accepted.
