@@ -13,11 +13,11 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Model providers | Many (services) | [Many](../models/overview.md) |
 | Extensibility | Frame processors and services | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
-| Observability | OpenTelemetry, opt-in; turn and per-service spans | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
+| Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Durable execution | No | [Seven integrations](../durable_execution/overview.md) |
 | Interfaces | WebRTC and WebSocket transports, telephony, client SDKs | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
 | Realtime voice | Cascaded STT + LLM + TTS, and speech-to-speech services | [Speech-to-speech](../realtime/overview.md), four providers |
-| Evals | Pipecat Evals: scripted and simulated scenarios, LLM judge | [Pydantic Evals](../evals.md) |
+| Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | Image-generation services | [Image Generation](../image-generation.md) |
 
 ## Realtime, side by side
@@ -37,7 +37,7 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 | Tools mid-call | Direct functions, MCP | [The same tools, toolsets and dependencies](../realtime/tools.md) as a text agent |
 | Capabilities mid-call | No equivalent | [Capabilities and hooks](../realtime/capabilities.md), with documented limits |
 | After the call | The pipeline's `LLMContext` messages | [`Agent.run()` on the call's history](../realtime/history.md#handing-off-to-a-text-agent) for structured output or follow-up |
-| Observability | OpenTelemetry, opt-in per worker: conversation, turn, STT, LLM and TTS spans, with TTFB, token and character metrics | [OpenTelemetry](../realtime/observability.md): session, turn and tool spans, usage attributed per response |
-| Evals | Pipecat Evals: scripted and simulated scenarios run against the real pipeline and graded by a judge LLM, in text or audio mode | [Pydantic Evals](../evals.md) on the text hand-off; nothing realtime-specific yet |
+| Observability | OpenTelemetry, opt-in; turn and per-service spans | [OpenTelemetry](../realtime/observability.md): session, turn and tool spans, usage attributed per response |
+| Evals | Pipecat Evals: scripted and simulated scenarios, LLM judge | [Pydantic Evals](../evals.md) on the text hand-off; nothing realtime-specific yet |
 | Deployment | A Python process; Pipecat Cloud or self-host | [Your process, your backend](../realtime/deployment.md) |
 | The same agent without voice | Text-only bots over a WebSocket transport, still a pipeline and a worker | [`run()`, CLI, web chat, AG-UI, Vercel AI](../interfaces.md) |
