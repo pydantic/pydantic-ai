@@ -182,6 +182,7 @@ The supported chunk types are [`DataChunk`][pydantic_ai.ui.vercel_ai.response_ty
 [`SourceDocumentChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceDocumentChunk],
 and [`FileChunk`][pydantic_ai.ui.vercel_ai.response_types.FileChunk].
 Unlike emitted events, these are part of the message and survive a message-history round-trip, which is what you want for data the frontend must be able to rebuild, such as the source URLs behind an answer; the trade-off is that they are sent when the tool returns rather than while it runs.
+A `DataChunk` with `transient=True` is only streamed, and is left out of `dump_messages`.
 
 ```python {title="vercel_ai_tool_chunks.py"}
 from pydantic_ai import Agent, ToolReturn

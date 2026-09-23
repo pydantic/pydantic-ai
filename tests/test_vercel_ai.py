@@ -2593,6 +2593,8 @@ async def test_run_stream_tool_metadata_yields_data_chunks(serialized: bool):
             FileChunk(url='https://example.com/file.png', media_type='image/png'),
             # Protocol-control chunk — filtered out by iter_metadata_chunks
             ToolInputStartChunk(tool_call_id='call_x', tool_name='other'),
+            # Transient data is streamed, but not persisted by dump_messages
+            DataChunk(type='data-progress', data={'pct': 50}, transient=True),
             DataChunk(type='data-valid', data={'survived': True}),
         ]
         if serialized:
@@ -2631,6 +2633,7 @@ async def test_run_stream_tool_metadata_yields_data_chunks(serialized: bool):
                 'filename': 'doc.pdf',
             },
             {'type': 'file', 'url': 'https://example.com/file.png', 'mediaType': 'image/png'},
+            {'type': 'data-progress', 'data': {'pct': 50}, 'transient': True},
             {'type': 'data-valid', 'data': {'survived': True}},
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -5845,6 +5848,8 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         FileChunk(url='https://example.com/file.png', media_type='image/png'),
                         # Protocol-control chunk — filtered out by iter_metadata_chunks
                         ToolInputStartChunk(tool_call_id='call_x', tool_name='other'),
+                        # Transient data is streamed but, as in the Vercel AI SDK, never persisted
+                        DataChunk(type='data-progress', data={'pct': 50}, transient=True),
                         DataChunk(type='data-valid', data={'survived': True}),
                     ],
                 )
