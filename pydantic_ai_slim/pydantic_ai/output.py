@@ -25,6 +25,7 @@ __all__ = (
     'StructuredDict',
     'Choice',
     'Choices',
+    'BoolCriteria',
     'OutputObjectDefinition',
     'OutputContext',
     # types
@@ -660,11 +661,75 @@ def Choices(
     return _ChoicesWithActions
 
 
+@dataclass(frozen=True, kw_only=True)
+class BoolCriteria:
+    """What a yes and what a no would each mean, for a `bool` field or parameter to carry in `Annotated`.
+
+    A `bool` field's description says what is being asked; these two say what either answer amounts to,
+    which is what a set of options gets from [`Choices()`][pydantic_ai.output.Choices] and an `Enum` gets
+    from [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings]. Both descriptions reach the model
+    in the schema, as a description on each of the two constants a boolean can be.
+
+    It is a marker rather than a type, so the field stays a plain `bool` to every type checker, and the
+    value you get back is a plain `True` or `False`:
+
+    ```python {title="bool_criteria.py"}
+    from typing import Annotated
+
+    from pydantic import BaseModel, Field
+
+    from pydantic_ai import Agent, BoolCriteria
+
+
+    class Settled(BaseModel):
+        refunded: Annotated[
+            bool,
+            BoolCriteria(true='Money was returned to the customer.', false='No refund was issued.'),
+        ] = Field(description='Was a refund issued?')
+
+
+    agent = Agent('openai:gpt-5.2', output_type=Settled)
+    result = agent.run_sync('We have sent the 40 pounds back to your card.')
+    print(result.output.refunded)
+    #> True
+    ```
+
+    On [TypeSafe's Jev](../models/typesafe.md), which asks a yes/no as its own primitive, the two land in
+    that question's `criteria` as `true` and `false`, sent verbatim.
+    """
+
+    true: str
+    """What it means for the answer to be `True`."""
+
+    false: str
+    """What it means for the answer to be `False`."""
+
+    def __get_pydantic_json_schema__(
+        self, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        json_schema = handler(core_schema)
+        # A `Literal` of `True` and/or `False` renders as a `boolean` too, but already pins its values in a
+        # `const` or `enum` that the two meanings below would contradict or be shadowed by. The rendered schema
+        # rather than the core schema is checked, so a `bool` wrapped in a validator is still accepted.
+        if json_schema.get('type') != 'boolean' or 'const' in json_schema or 'enum' in json_schema:
+            raise exceptions.UserError(
+                '`BoolCriteria` says what each answer of a `bool` means, so it can only annotate a plain `bool`, '
+                'not a `Literal` of `True` and/or `False` or any other type.'
+            )
+        # The same `anyOf`-of-`const`s shape `Choices()` and a described `Enum` produce, on the two constants a
+        # boolean can be.
+        return {
+            **json_schema,
+            'anyOf': [{'const': True, 'description': self.true}, {'const': False, 'description': self.false}],
+        }
+
+
 _OutputSpecItem = TypeAliasType(
     '_OutputSpecItem',
     OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co],
     type_params=(T_co,),
 )
+
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
