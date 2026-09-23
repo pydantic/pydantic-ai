@@ -1573,3 +1573,32 @@ async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:
 
     assert isinstance(without_ref.workspace.backend, UnavailableWorkspace)
     assert capability.ids == ['existing']
+
+
+async def test_fake_filesystem_rejects_path_kind_mismatches() -> None:
+    backend = FakeWorkspace('kinds', {'/workspace/file.txt': b'data'})
+
+    with pytest.raises(IsADirectoryError):
+        await backend.write_bytes('/workspace', b'data')
+    with pytest.raises(NotADirectoryError):
+        await backend.list_dir('/workspace/file.txt')
+    with pytest.raises(FileExistsError):
+        await backend.make_dir('/workspace/file.txt')
+
+
+async def test_fake_compare_and_swap_command_leaves_a_mismatched_file_alone() -> None:
+    backend = FakeWorkspace('swap', {'/workspace/shared.txt': b'actual\n'})
+    command = [
+        'sh',
+        '-c',
+        'IFS= read -r value < "$1" && [ "$value" = "$2" ] && printf "%s\\n" "$3" > "$1"',
+        'sh',
+        '/workspace/shared.txt',
+        'expected',
+        'replacement',
+    ]
+
+    assert (await backend.run(command)).exit_code == 1
+    assert backend.files['/workspace/shared.txt'] == b'actual\n'
+    # A three-part `sh -c` command that is not the env probe falls through to the generic fake.
+    assert (await backend.run(['sh', '-c', 'true'])).stdout == 'connected'

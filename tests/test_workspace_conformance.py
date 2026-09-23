@@ -44,9 +44,8 @@ class _CleanupFake(FakeWorkspace):
         self.cleanup_error = cleanup_error
 
     async def remove(self, path: str) -> None:
-        if '.pydantic-ai-conformance-' in path:
-            raise self.cleanup_error
-        await super().remove(path)
+        # The exists rule only removes the probe root, so every call here is the probe cleanup.
+        raise self.cleanup_error
 
 
 async def test_suite_failures_quote_the_rule() -> None:
