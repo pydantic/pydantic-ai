@@ -237,6 +237,7 @@ class SupportsFilesystem(Protocol):
 
     Operations that require an existing path raise the builtin `FileNotFoundError` when it is
     missing; `exists` returns `False`. Backends translate their SDK's own missing-file exception.
+    Reading a directory with `read_bytes` raises the builtin `IsADirectoryError`.
     """
 
     async def read_bytes(self, path: str) -> bytes:
