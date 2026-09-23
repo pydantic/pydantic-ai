@@ -153,7 +153,7 @@ Each field of the output type is a question, and all of them go out in a single 
 | Field type | Question | Answer |
 |---|---|---|
 | `bool`, or `Literal[True, False]` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
-| `Literal[...]` or `Enum` of strings | pick one | the chosen option |
+| `Literal[...]` or `Enum` of strings or whole numbers, other than a rubric | pick one | the chosen option |
 | `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | Jev's probability, unrounded, in the field's own units |
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
@@ -180,11 +180,13 @@ Unless the schema describes an option, Jev sees it by its name alone, so name `L
 
 The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as Jev gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones Jev said yes to.
 
-An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Only a `Literal` or `Enum` of strings can be optional, since `None` has to be one more option to pick.
+An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.", and the answer is `None` when Jev picks it: an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Any pick-one can be optional, since `None` has to be one more option to pick; a rubric cannot, since its levels are ordered and `None` is not one of them.
 
 A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them and at most ten, and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. Jev answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 
-A level's description reaches the schema the [same way an option's meaning does](#where-the-wording-comes-from), which makes an `IntEnum` mixing in `UseEnumMemberDocstrings` the way to declare one. A bare `Literal[0, 1, 2]` or a plain `IntEnum` is a [`UserError`][pydantic_ai.exceptions.UserError]: the levels are there, but nothing says what they mean.
+A level's description reaches the schema the [same way an option's meaning does](#where-the-wording-comes-from), which makes an `IntEnum` mixing in `UseEnumMemberDocstrings` the way to declare one.
+
+Any other whole numbers are labels rather than levels, and are a pick-one like strings: `Literal[200, 404, 500]`, an `IntEnum` of codes, or `Literal['a', 1]` mixing the two. That includes numbers from 0 upwards that miss being a rubric only because a level says nothing about itself — a bare `Literal[0, 1, 2]`, a plain `IntEnum` — or because there are more than ten of them. A pick-one weighs its options without their order, so describe every level of a rubric you mean as one. Jev picks a number by its digits, and the field gets back the option itself, number and all. A number whose digits are already a string option is offered as `1 (number)`, so `Literal['1', 1]` is still two options.
 
 ```python {title="grade_with_a_rubric.py"}
 from enum import IntEnum
@@ -975,6 +977,7 @@ Jev does not write text or read files, and it only fills tool arguments that map
 - The `output_type` must be made of the field types above: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-jev-picks-and-calls-what-it-can) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
+- A pick-one needs two or more options, each a string or a whole number: one option leaves nothing to pick, and `True` is not a label.
 - At most 255 options in one question. A pick-one field counts its own options, and the route question counts every tool plus every output type, so 255 tools is already one too many once the output type is counted beside them.
 - Jev needs something to ask. A run with no user text and no history has nothing to judge, and an `output_type` with no fields to fill — a lone argumentless output function — leaves no question to ask unless there is more than one route to pick between.
 

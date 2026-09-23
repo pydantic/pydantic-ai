@@ -4,7 +4,7 @@ import json
 import pickle
 from collections.abc import Callable
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Annotated, Any, Literal, cast
 
 import httpx2
@@ -412,14 +412,6 @@ class WithOptional(BaseModel):
     ok: bool | None
 
 
-class WithIntOptions(BaseModel):
-    level: Literal[1, 2, 3]
-
-
-class WithUndescribedLevels(BaseModel):
-    level: Literal[0, 1, 2]
-
-
 # Declared out of level order; the numbers are what count.
 OutOfOrder = Annotated[
     Literal[2, 0, 1], rubric((2, 'Top of the rubric.'), (0, 'Bottom of the rubric.'), (1, 'The middle.'))
@@ -451,8 +443,6 @@ class WithUndescribedBool(BaseModel):
     [
         pytest.param(WithText, "Output field 'summary' is not supported", id='str-field'),
         pytest.param(WithOptional, "Output field 'ok' is not supported", id='optional'),
-        pytest.param(WithIntOptions, 'a rubric must be the whole numbers from 0 upwards', id='rubric-not-from-0'),
-        pytest.param(WithUndescribedLevels, 'every level needs to say what it means', id='rubric-undescribed'),
         pytest.param(WithOneOption, 'options are not two or more strings', id='one-option'),
         pytest.param(WithUnboundedFloat, "Output field 'score' is not supported", id='unbounded-float'),
         pytest.param(bool, "Output field 'response' asks Jev nothing", id='bare-bool-no-question'),
@@ -1564,21 +1554,137 @@ async def test_a_field_with_more_options_than_jev_picks_from_is_refused(
         await Agent(typesafe_model, output_type=Routed).run('anything')
 
 
-async def test_a_rubric_with_more_levels_than_jev_scores_against_is_refused(
-    allow_model_requests: None, typesafe_model: TypeSafeModel
+class Codes(IntEnum):
+    ok = 200
+    missing = 404
+
+
+class Statuses(UseEnumMemberDocstrings, IntEnum):
+    ok = 200
+    """The request worked."""
+    missing = 404
+    """Nothing is at that address."""
+
+
+def choose(label: str, seen: list[dict[str, Any]] | None = None) -> Callable[[httpx2.Request], httpx2.Response]:
+    """Jev picking `label` for the one field it is asked about, keeping what it was asked in `seen`."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        if seen is not None:
+            seen.append(body)
+        [(name, question)] = body['questions'].items()
+        answer: dict[str, object] = {
+            'type': 'choice',
+            'choice': label,
+            'confidence': 0.8,
+            'probabilities': {option: 0.9 if option == label else 0.1 for option in question['criteria']},
+        }
+        return answers(**{name: answer})
+
+    return respond
+
+
+@pytest.mark.parametrize(
+    'annotation,label,value,criteria',
+    [
+        pytest.param(Literal[200, 404, 500], '404', 404, {'200': None, '404': None, '500': None}, id='status codes'),
+        pytest.param(Codes, '404', Codes.missing, {'200': None, '404': None}, id='IntEnum'),
+        pytest.param(
+            Statuses,
+            '200',
+            Statuses.ok,
+            {'200': 'The request worked.', '404': 'Nothing is at that address.'},
+            id='IntEnum with a docstring per member',
+        ),
+        pytest.param(Literal[0, 1, 2], '1', 1, {'0': None, '1': None, '2': None}, id='levels with no meanings'),
+        pytest.param(
+            Annotated[Literal[0, 1, 2], rubric((0, 'Bottom.'), (1, 'Middle.'), (2, ''))],
+            '2',
+            2,
+            {'0': 'Bottom.', '1': 'Middle.', '2': ''},
+            id='a level with no meaning',
+        ),
+        pytest.param(
+            Annotated[Literal[tuple(range(11))], rubric(*((level, f'Level {level}.') for level in range(11)))],
+            '10',
+            10,
+            {str(level): f'Level {level}.' for level in range(11)},
+            id='more levels than a rubric takes',
+        ),
+        pytest.param(Literal['a', 1], '1', 1, {'a': None, '1': None}, id='a string and a number'),
+    ],
+)
+async def test_whole_numbers_that_are_not_a_rubric_are_a_pick_one(
+    allow_model_requests: None, annotation: Any, label: str, value: Any, criteria: dict[str, str | None]
 ):
-    """Jev scores against at most 10 levels; an 11th is a 400, so it is refused before the request."""
+    """Whole numbers Jev cannot score against are labels, picked by their digits and answered as the number."""
+    seen: list[dict[str, Any]] = []
+    Picked = type(
+        'Picked', (BaseModel,), {'__annotations__': {'value': annotation}, 'value': Field(description='Which?')}
+    )
+    result = await Agent(mock_model(choose(label, seen)), output_type=Picked).run('anything')
+    assert seen[0]['questions']['value']['type'] == 'choice'
+    assert seen[0]['questions']['value']['criteria'] == criteria
+    picked = result.output.model_dump()['value']
+    assert picked == value
+    assert type(picked) is type(value)
 
-    class Rated(BaseModel):
-        """Rate the ticket."""
 
-        severity: Annotated[
-            Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-            rubric(*((level, f'Level {level}.') for level in range(11))),
-        ] = Field(description='How severe is it?')
+@pytest.mark.parametrize(
+    'label,value', [pytest.param('1', '1', id='the string'), pytest.param('1 (number)', 1, id='the number')]
+)
+async def test_a_string_and_a_number_with_the_same_digits_are_two_options(
+    allow_model_requests: None, label: str, value: str | int
+):
+    """Each option gets a label of its own, and the answer is the option that label stands for, type and all."""
+    seen: list[dict[str, Any]] = []
 
-    with pytest.raises(UserError, match='scores against at most 10 levels, and this rubric has 11'):
-        await Agent(typesafe_model, output_type=Rated).run('anything')
+    class Picked(BaseModel):
+        value: Literal['1', 1] = Field(description='Which?')
+
+    result = await Agent(mock_model(choose(label, seen)), output_type=Picked).run('anything')
+    assert seen[0]['questions']['value']['criteria'] == snapshot({'1': None, '1 (number)': None})
+    assert result.output.value == value
+    assert type(result.output.value) is type(value)
+
+
+async def test_an_optional_pick_one_of_whole_numbers(allow_model_requests: None):
+    class Named(BaseModel):
+        status: Literal[200, 404] | None = Field(description='Which status, if any?')
+
+    result = await Agent(mock_model(choose('404')), output_type=Named).run('anything')
+    assert result.output == Named(status=404)
+    result = await Agent(mock_model(choose('none')), output_type=Named).run('anything')
+    assert result.output == Named(status=None)
+
+
+async def test_a_tools_whole_number_argument_is_filled_by_jev(allow_model_requests: None):
+    """An argument Jev can pick is filled rather than handed to a model behind it, whole numbers included."""
+    calls: list[int] = []
+
+    class Flag(BaseModel):
+        """Triage the ticket."""
+
+        urgent: bool = Field(description='Is this urgent?')
+
+    def check(status: Literal[200, 404]) -> str:
+        """Check what the service returned."""
+        calls.append(status)
+        return 'checked'
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        questions = json.loads(request.content)['questions']
+        if 'tool' in questions:
+            return answers(tool=tool_answers_for('check'), urgent={'type': 'noul', 'noul': 0.1})
+        if 'status' in questions:
+            return choose('404')(request)
+        # With the result in view, the output is what is left to fill.
+        return answers(urgent={'type': 'noul', 'noul': 0.1})
+
+    result = await Agent(mock_model(respond), output_type=Flag, tools=[check]).run('anything')
+    assert calls == [404]
+    assert result.output == Flag(urgent=False)
 
 
 async def test_more_routes_than_jev_picks_from_are_refused(allow_model_requests: None, typesafe_model: TypeSafeModel):
@@ -1762,7 +1868,13 @@ async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
     'annotation,match',
     [
         pytest.param('list[str]', 'a list must be of two or more string options', id='list of text'),
-        pytest.param('bool | None', 'only a `Literal` or `Enum` of strings can be optional', id='optional yes/no'),
+        pytest.param(
+            'bool | None', 'only a pick-one of strings or whole numbers can be optional', id='optional yes/no'
+        ),
+        # A rubric's levels are ordered, and `None` has no place among them.
+        pytest.param(
+            'Clarity | None', 'only a pick-one of strings or whole numbers can be optional', id='optional rubric'
+        ),
         pytest.param('Customer | None', 'is not supported by this model', id='optional model'),
     ],
 )
