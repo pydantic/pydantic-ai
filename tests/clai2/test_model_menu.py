@@ -30,7 +30,7 @@ def anyio_backend() -> str:
 
 def test_catalog_merges_sources_and_only_lists_runnable_providers() -> None:
     providers = runnable_providers()
-    assert {'openai', 'anthropic', 'google', 'openai-codex'} <= providers
+    assert {'openai', 'anthropic', 'google', 'openai-codex', 'github-copilot'} <= providers
     priced = genai_prices_models()
     assert priced and all(model.provider in providers for model in priced)
     assert all(':' not in model.name.partition(':')[2] for model in priced)
@@ -108,7 +108,9 @@ def test_model_settings_source(tmp_path: Path) -> None:
 def test_provider_catalog_and_back_navigation(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
     menu = ModelMenu(context)
-    assert menu.providers() == sorted({model.name.partition(':')[0] for model in menu.models} | {'openrouter', 'vllm'})
+    assert menu.providers() == sorted(
+        {model.name.partition(':')[0] for model in menu.models} | {'github-copilot', 'openrouter', 'vllm'}
+    )
     codex = menu.for_provider('openai-codex')
     assert all(model.provider == 'openai-codex' for model in codex.models)
     assert {f'openai-codex:gpt-5.6-{suffix}' for suffix in ('luna', 'terra', 'sol')} <= {

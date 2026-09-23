@@ -10,7 +10,9 @@ from dataclasses import dataclass
 from genai_prices.data_snapshot import get_snapshot
 from pydantic_ai.models import known_model_names
 
-EXTRA_PROVIDERS = frozenset({'openai-codex'})
+from . import github_copilot
+
+EXTRA_PROVIDERS = frozenset({'github-copilot', 'openai-codex'})
 """Provider prefixes core can run but does not list in `known_model_names()`."""
 
 
@@ -52,8 +54,16 @@ def genai_prices_models() -> list[CatalogModel]:
     return found
 
 
-def catalog(*, include: Iterable[str] = ()) -> list[CatalogModel]:
-    """Every source merged and sorted by name; `include` adds names not in any source."""
+async def github_copilot_models() -> list[CatalogModel]:
+    """Discover the signed-in account's visible, Chat Completions-compatible models."""
+    return [
+        CatalogModel(name=f'github-copilot:{name}', provider='github-copilot', label=name)
+        for name in await github_copilot.discover()
+    ]
+
+
+def catalog(*, include: Iterable[str] = (), discovered: Iterable[CatalogModel] = ()) -> list[CatalogModel]:
+    """Merge sources; authenticated discovery replaces static entries for the providers it contains."""
     models = {model.name: model for model in genai_prices_models()}
     for name in (
         *known_model_names(),
@@ -63,4 +73,8 @@ def catalog(*, include: Iterable[str] = ()) -> list[CatalogModel]:
         if name and name not in models:
             provider, _, label = name.partition(':')
             models[name] = CatalogModel(name=name, provider=provider, label=label)
+    discovered = tuple(discovered)
+    providers = {model.provider for model in discovered}
+    models = {name: model for name, model in models.items() if model.provider not in providers}
+    models.update((model.name, model) for model in discovered)
     return [models[name] for name in sorted(models)]

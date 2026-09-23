@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
 from rich.console import Console
 
-from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, read_line
+from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, login_command, read_line
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 
@@ -69,7 +69,8 @@ async def test_credentials_round_trip() -> None:
     assert await source.load() == credentials
 
 
-async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('command', ['/login', '/login openai-codex'])
+async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
         assert self.redirect_uri == 'http://localhost:1455/auth/callback'
         return CREDENTIALS
@@ -79,8 +80,8 @@ async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     output = io.StringIO()
     auth = CodexAuth(Console(file=output), read_line=never_pasted)
     commands = Commands()
-    commands.register(Command(name='login', description='Login', handler=auth.login))
-    assert 'connected' in await commands.execute_async('/login openai-codex')
+    commands.register(Command(name='login', description='Login', handler=lambda args: login_command(args, codex=auth)))
+    assert 'connected' in await commands.execute_async(command)
     assert await auth.source.load() == CREDENTIALS
     assert 'fake-access' not in output.getvalue()
     assert 'fake-refresh' not in output.getvalue()

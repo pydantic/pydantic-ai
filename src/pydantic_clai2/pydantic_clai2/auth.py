@@ -1,4 +1,4 @@
-"""Codex login through core OAuth and an application-owned credential source."""
+"""Subscription login dispatch and Codex OAuth credential management."""
 
 import asyncio
 import webbrowser
@@ -18,13 +18,22 @@ from pydantic_ai.providers.openai_codex import (
 )
 from rich.console import Console
 
-from . import theme
+from . import github_copilot, theme
 from .credential_store import credentials_path, load_codex_credentials, save_codex_credentials
 
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
 
 ReadLine = Callable[[str], Awaitable[str]]
+
+
+async def login_command(args: list[str], *, codex: 'CodexAuth') -> str:
+    """Keep bare `/login` compatible with Codex while accepting an explicit subscription provider."""
+    if args == ['github-copilot']:
+        return await github_copilot.login(console=codex.console)
+    if args not in ([], ['openai-codex']):
+        raise ValueError('Usage: /login [openai-codex|github-copilot]')
+    return await codex.login(args)
 
 
 async def read_line(message: str) -> str:

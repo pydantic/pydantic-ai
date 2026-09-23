@@ -4,7 +4,7 @@ import io
 from pathlib import Path
 
 import pytest
-from httpx import Request
+from httpx2 import Request
 from openai import APIConnectionError
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability

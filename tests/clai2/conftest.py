@@ -1,5 +1,6 @@
 """Isolate settings and provider access for every CLAI test."""
 
+import os
 from pathlib import Path
 
 import keyring
@@ -16,6 +17,7 @@ def anyio_backend() -> str:
 @pytest.fixture(autouse=True)
 def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Redirect default databases, including subprocesses, away from user data."""
+    monkeypatch.setenv('PYTEST_ADDOPTS', f'{os.getenv("PYTEST_ADDOPTS", "")} -p no:cassetter')
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)

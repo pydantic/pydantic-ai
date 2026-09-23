@@ -111,7 +111,7 @@ async def test_model_string_and_non_command_plugin(tmp_path: Path, monkeypatch: 
     )
 
 
-@pytest.mark.parametrize('provider', ['openrouter', 'vllm'])
+@pytest.mark.parametrize('provider', ['openrouter', 'vllm', 'github-copilot'])
 async def test_connected_provider_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
     inputs(monkeypatch, ['hello', '/exit'])
 
@@ -119,7 +119,7 @@ async def test_connected_provider_resolution(tmp_path: Path, monkeypatch: pytest
         assert name == f'{provider}:test'
         return TestModel(custom_output_text='Connected response')
 
-    monkeypatch.setattr(f'pydantic_clai2.{provider}.model', model)
+    monkeypatch.setattr(f'pydantic_clai2.{provider.replace("-", "_")}.model', model)
     output = io.StringIO()
     await chat(
         Agent(TestModel()),
