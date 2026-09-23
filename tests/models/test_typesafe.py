@@ -1745,6 +1745,45 @@ async def test_the_none_option_stays_clear_of_an_option_named_none(allow_model_r
     assert list(seen[0]['questions']['plan']['criteria']) == ['none', 'some', 'none_']
 
 
+async def test_the_none_option_says_what_the_user_wrote_about_none(allow_model_requests: None):
+    """`Annotated[None, Field(description=...)]` says what picking nothing means on this field, so it is the option.
+
+    The description lands beside the `None` branch's `{'type': 'null'}`, not on the field, whose own description
+    is still the question.
+    """
+    seen: list[dict[str, Any]] = []
+
+    class Triage(BaseModel):
+        """Triage a support ticket."""
+
+        area: Literal['billing', 'shipping'] | Annotated[None, Field(description='Nothing here needs routing.')] = (
+            Field(description='Which area?')
+        )
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            area={
+                'type': 'choice',
+                'choice': 'none',
+                'confidence': 0.9,
+                'probabilities': {'none': 0.9, 'billing': 0.05, 'shipping': 0.05},
+            }
+        )
+
+    result = await Agent(mock_model(record), output_type=Triage).run('Thanks, all sorted.')
+    assert result.output == Triage(area=None)
+    assert seen[0]['questions'] == snapshot(
+        {
+            'area': {
+                'type': 'choice',
+                'criteria': {'billing': None, 'shipping': None, 'none': 'Nothing here needs routing.'},
+                'instructions': {'field': 'area', 'question': 'Which area?', 'goal': 'Triage a support ticket.'},
+            }
+        }
+    )
+
+
 async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
     class Touches(BaseModel):
         areas: list[Literal['billing', 'bug']] = Field(description='Which teams?')
@@ -2482,6 +2521,39 @@ async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_
     assert result.output is None
     assert seen[0]['questions']['tool']['criteria'] == snapshot(
         {'final_result_Ticket': 'Triage a support ticket.', 'nothing': 'Nothing needs doing here.'}
+    )
+
+
+async def test_a_described_none_route_keeps_what_the_user_said_about_it(allow_model_requests: None):
+    """`Annotated[None, Field(description=...)]` in the union says the same thing `ToolOutput` does.
+
+    The description lands on the `null` property Pydantic AI wraps `None` in rather than on the tool, and the
+    route question reads it from there, as it does for any wrapped output type. `OutputSpec` does not accept an
+    `Annotated` member, which is why the documented spelling is `ToolOutput`, but this one reaches Jev too.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.1},
+            tool=_route('final_result_None', {'final_result_Ticket': 0.05, 'final_result_None': 0.95}),
+        )
+
+    output_type: list[Any] = [Ticket, Annotated[None, Field(description='Nothing needs doing here.')]]
+    agent = Agent(mock_model(record), output_type=output_type)
+    result = await agent.run('Thanks, all sorted.')
+
+    assert result.output is None
+    assert seen[0]['questions']['tool'] == snapshot(
+        {
+            'type': 'choice',
+            'criteria': {
+                'final_result_Ticket': 'Triage a support ticket.',
+                'final_result_None': 'Nothing needs doing here.',
+            },
+            'instructions': 'Which of these does this call for?',
+        }
     )
 
 

@@ -587,7 +587,7 @@ def _answers(
     probabilities: dict[str, dict[str, float]] = {}
     scores: dict[str, float] = {}
     for name, prop in properties.items():
-        prop, none_key = _optional(prop)
+        prop, none_option = _optional(prop)
         if keys := _mapping_options(prop):
             # A mapping keeps every option with the answer it got, unlike a list.
             verdicts, labelled = _fanned_in(name, keys, answers, boolean_threshold)
@@ -614,7 +614,7 @@ def _answers(
                 _set(args, name, chosen)
                 confidence[name] = sureness
         elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
-            _set(args, name, None if answer.choice == none_key else answer.choice)
+            _set(args, name, None if answer.choice in none_option else answer.choice)
             confidence[name] = answer.confidence
             probabilities[name] = answer.probabilities
         elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
@@ -857,23 +857,27 @@ def _set(args: dict[str, Any], name: str, value: Any) -> None:
     args[leaf] = value
 
 
-def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
-    """An `X | None` field as `X` plus the name of one more option, "none of these"; any other field as it is.
+def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """An `X | None` field as `X` plus one more option, "none of these", named and described; any other as it is.
 
     Measured on labelled tickets, an explicit option is as accurate as an `other` member the user wrote and more
-    accurate than reading `None` off low confidence, which is what the field's confidence is for.
+    accurate than reading `None` off low confidence, which is what the field's confidence is for. What the user
+    wrote about the `None` branch, `Annotated[None, Field(description=...)]`, says what picking it means on this
+    field better than the stock phrase does, so it describes the option when there is one.
     """
     options = prop.get('anyOf')
     # Exactly one of the two has to be `None`, and the other one has to be something: a union of nothing but
     # `None`s has no `X` to ask about, and is refused as the unsupported field it is rather than crashing here.
     if not options or len(options) != 2 or sum(_null(option) for option in options) != 1:
-        return prop, None
+        return prop, {}
+    none = next(option for option in options if _null(option))
     inner = next(option for option in options if not _null(option))
     prop = {**inner, **{k: v for k, v in prop.items() if k not in ('anyOf', 'default')}}
     key = 'none'
     while key in (_options(prop) or {}):
         key += '_'
-    return prop, key
+    meaning = none.get('description')
+    return prop, {key: meaning if isinstance(meaning, str) and meaning else _NONE_OF_THESE}
 
 
 def _list_options(name: str, prop: dict[str, Any]) -> dict[Any, str | None]:
@@ -1027,19 +1031,19 @@ def _questions(
     questions: dict[str, Noul | Choice | Score] = {}
     for name, prop in properties.items():
         ask = _ask(name, prop, output_tool, instructions, picked=picked)
-        prop, none_key = _optional(prop)
+        prop, none_option = _optional(prop)
         options = _options(prop)
         if options and all(isinstance(option, bool) for option in options):
             # `Literal[True, False]` spells out the two values a `bool` already has. There is nothing to pick
             # between that a yes/no does not ask, and the schema says `boolean` too, so it is one.
             options = None
-        if none_key is not None:
+        if none_option:
             if options is None or not all(isinstance(option, str) for option in options):
                 raise UserError(
                     f'Output field {name!r} is not supported by this model: only a `Literal` or `Enum` of strings can '
                     f'be optional, since `None` is one more option to pick. {_UNSUPPORTED_FIELD_HINT}'
                 )
-            options = {**options, none_key: _NONE_OF_THESE}
+            options = {**options, **none_option}
 
         # A single value needs no labelling, and TypeSafe's advice is to start with a string; the object
         # form earns its keys only once there is more than one thing in it.
