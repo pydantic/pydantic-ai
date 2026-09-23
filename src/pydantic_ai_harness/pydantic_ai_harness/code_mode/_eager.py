@@ -226,8 +226,9 @@ class EagerCoordinator(Generic[AgentDepsT]):
         # Parsing only that suffix keeps each scan proportional to what is still open.
         unfed = '\n'.join(lines[call.fed_line_count :])
 
+        scan_start = call.fed_line_count
         for statement in closed_statements(unfed):
-            end = call.fed_line_count + (statement.end_lineno or statement.lineno)
+            end = scan_start + (statement.end_lineno or statement.lineno)
             call.queue.append('\n'.join(lines[call.fed_line_count : end]))
             call.fed_line_count = end
         call.fed_prefix = '\n'.join(lines[: call.fed_line_count])
