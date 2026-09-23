@@ -332,6 +332,16 @@ class DescribedNoneArea(BaseModel):
     area: Area | Annotated[None, Field(description='Nothing to route.')] = Field(description='Which area, if any?')
 
 
+class Refunded(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back."""
+
+    yes = True
+    """Money was returned to the customer."""
+
+    no = False
+    """No refund was issued."""
+
+
 class Clarity(UseEnumMemberDocstrings, IntEnum):
     """How clearly is the problem stated?"""
 
@@ -394,6 +404,16 @@ def scripted(picks: str | None) -> tuple[TypeSafeModel, list[dict[str, Any]]]:
     return mock_model(respond), sent
 
 
+# `True` and `False` are a yes/no's own two options, so either spelling of them is one.
+TrueFalse = probe('which', Literal[True, False], description='Which?')
+
+
+class Settled(BaseModel):
+    """Review the transcript."""
+
+    refunded: Refunded = Field(description='Was a refund issued?')
+
+
 @dataclass(frozen=True)
 class Accepted:
     """An output type Jev fills, what it answers, and what the shape costs in requests."""
@@ -424,6 +444,11 @@ CodedArea = probe('area', Codes, description='Which area?')
 Mixed = probe('which', Literal['a', 1], description='Which?')
 Described = probe('status', Statuses, description='Which status?')
 OptionalStatus = probe('status', Literal[200, 404] | None, description='Which status, if any?')
+DescribedNoneStatus = probe(
+    'status',
+    Literal[200, 404] | Annotated[None, Field(description='The service did not answer.')],
+    description='Which status, if any?',
+)
 
 
 ACCEPTED = [
@@ -432,6 +457,8 @@ ACCEPTED = [
     Accepted('a list of options', list[Area], ['billing', 'shipping', 'security']),
     Accepted('an optional pick-one field', OptionalArea, OptionalArea(area='billing')),
     Accepted('a rubric field', Graded, Graded(clarity=Clarity.partial)),
+    Accepted('field: yes/no from two options', TrueFalse, TrueFalse(which=True)),
+    Accepted('field: yes/no with each answer described', Settled, Settled(refunded=Refunded.yes)),
     # A union is a route set: one request picks the member, a second asks only that member's fields.
     Accepted(
         'a union of output types',
@@ -553,6 +580,26 @@ ACCEPTED = [
                 'status': {
                     'type': 'choice',
                     'criteria': {'200': None, '404': None, 'none': 'None of these.'},
+                    'instructions': {
+                        'field': 'status',
+                        'question': 'Which status, if any?',
+                        'goal': 'Triage the ticket.',
+                    },
+                }
+            }
+        ),
+    ),
+    # What the user wrote about `None` describes the extra option on a pick-one of numbers as on one of strings.
+    Accepted(
+        'field: optional pick-one of ints with a described None',
+        DescribedNoneStatus,
+        DescribedNoneStatus(status=None),
+        picks='none',
+        questions=snapshot(
+            {
+                'status': {
+                    'type': 'choice',
+                    'criteria': {'200': None, '404': None, 'none': 'The service did not answer.'},
                     'instructions': {
                         'field': 'status',
                         'question': 'Which status, if any?',

@@ -539,7 +539,42 @@ print(result.output)
 
 The descriptions are what make this worth a helper: each option carries its meaning into the schema the model receives, and the output is one of the keys, validated, and typed `str`. Passing a sequence of keys instead of a mapping describes nothing and asks the same question with a plain `enum`.
 
-Like [`StructuredDict()`](#structured-dict), `Choices()` returns a type rather than a marker, so the same value works as an `output_type`, as a field of a Pydantic model, and as a [tool](tools.md) parameter.
+Like [`StructuredDict()`](#structured-dict), `Choices()` returns a type, so the same value works as an `output_type`, as a field of a Pydantic model, and as a [tool](tools.md) parameter. A type checker won't accept a type built at runtime in an annotation, though, so as a field or a parameter, put either one in `Annotated` on the type of the value it gives back: `Annotated[str, Intent]` for choices that don't [stand for something else](#choices-that-stand-for-something-else), and `Annotated[dict[str, Any], Person]` for a `StructuredDict()`. Pydantic reads the schema and validation from the metadata, and the type checker sees a plain `str` or `dict`:
+
+```python {title="choices_annotated.py"}
+from typing import Annotated
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, Choices
+
+Intent = Choices(
+    {
+        'refund': 'The customer wants their money back.',
+        'replace': 'The customer wants a working unit instead.',
+        'escalate': 'Nobody on this tier can resolve it.',
+    }
+)
+
+
+class Triage(BaseModel):
+    intent: Annotated[str, Intent]
+    summary: str
+
+
+agent = Agent('openai:gpt-5.2', output_type=Triage)
+
+
+@agent.tool_plain
+def open_ticket(intent: Annotated[str, Intent], summary: str) -> str:
+    """Open a ticket with the team that handles this intent."""
+    return f'Opened a {intent} ticket.'
+
+
+result = agent.run_sync('The kettle leaks everywhere. I just want my money back.')
+print(result.output)
+#> intent='refund' summary='Leaking kettle, customer wants a refund.'
+```
 
 #### Choices that stand for something else
 
