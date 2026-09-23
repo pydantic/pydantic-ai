@@ -508,8 +508,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
         'supports_webrtc': False,
-        # The Live model keeps the conversation going while the delegated backend works — narrating
-        # progress is the whole point of the delegation design — so tool calls never block speech.
+        # Speech and delegated work run independently: the Live model can keep the conversation going
+        # while the backend works, so a tool call doesn't hold up speech.
         'supports_async_tool_calls': True,
         'supports_thinking': False,
         'emits_input_speech_events': False,

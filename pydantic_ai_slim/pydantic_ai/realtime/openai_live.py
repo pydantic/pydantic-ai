@@ -72,6 +72,7 @@ from ._openai_protocol import (
     map_connect_errors,
     openai_websocket_auth_headers,
     realtime_websocket_url,
+    tool_choice_config,
 )
 from ._utils import inject_trace_context, resolve_advertised_tools
 from .codec import (
@@ -113,6 +114,7 @@ try:
     from openai.types.responses import (
         Response,
         ResponseCompletedEvent,
+        ResponseErrorEvent,
         ResponseFailedEvent,
         ResponseFunctionToolCall,
         ResponseIncompleteEvent,
@@ -163,6 +165,25 @@ _SESSION_STARTED_EVENT = 'session.started'
 _VOICE_FLOOR = 64
 
 _server_event_adapter: TypeAdapter[ServerEvent] = TypeAdapter(ServerEvent)
+
+
+class _LiveErrorDetails(TypedDict):
+    message: str
+    code: str | None
+
+
+class _LiveErrorFrame(TypedDict):
+    type: Literal['error']
+    error: _LiveErrorDetails
+
+
+# OpenAI's guide says to expect `error` frames whose `code` is null, but the SDK's `Error.code` is a
+# required `str`, so those fail `ServerEvent` validation. This narrower shape still parses them.
+_live_error_adapter: TypeAdapter[_LiveErrorFrame] = TypeAdapter(_LiveErrorFrame)
+
+#: Why a session can end without anyone asking. The others, `close_requested` and `remote_hangup`, are
+#: an ordinary end of the call.
+_ABNORMAL_CLOSE_REASONS = frozenset({'expired', 'content', 'connection_lost'})
 _response_stream_event_adapter: TypeAdapter[ResponseStreamEvent] = TypeAdapter(ResponseStreamEvent)
 #: Nested events the codec acts on. One of these that doesn't parse is a malformed frame, reported as
 #: recoverable; any other nested type that doesn't parse is one this SDK doesn't know yet, and ignored.
@@ -345,12 +366,17 @@ class _Delegation:
 
     id: str
     pending_tool_calls: set[str] = field(default_factory=set[str])
-    outstanding_responses: int = 1
-    """Backend responses still owed, counting the one that opened the delegation.
+    response_in_flight: bool = True
+    """Whether a backend response is running: the one that opened the delegation, or a continuation.
 
-    A continuation we solicit with `response.create` adds another. The delegation is only over once
-    nothing is owed and no tool call is unanswered, which is what keeps the turn clock suspended
-    across a tool round instead of ending the turn while the backend is still working.
+    Only that response's terminal event says every call it will make has been asked for. With parallel
+    tool calls a result can come back before the next call does, so answering every call seen so far
+    is not yet a reason to continue.
+    """
+    continuation_due: bool = False
+    """Every call seen so far is answered, but the response that asked for them is still running.
+
+    The continuation waits for its terminal, then goes out from the receive loop.
     """
     owes_usage: bool = False
     """Whether the backend response in flight asked for tool calls whose usage the session awaits.
@@ -399,6 +425,9 @@ class OpenAILiveConnection(RealtimeConnection):
         # Calls a delegation asked for before its backend gave up. The session still runs them and
         # sends their results; those must go nowhere, not restart a response the backend abandoned.
         self._abandoned_calls: set[str] = set()
+        # Delegations whose results all came back before the response that asked for them ended. Their
+        # continuations go out from the receive loop, which is where that terminal is seen.
+        self._continuations_due: list[_Delegation] = []
         self._reported_seconds = 0
 
     @property
@@ -441,14 +470,7 @@ class OpenAILiveConnection(RealtimeConnection):
 
     async def _send_tool_result(self, result: ToolResult) -> None:
         """Return a tool result to the delegated Responses backend and let it continue."""
-        if result.content:
-            # Refused before the output item is sent, so a result Live cannot carry in full fails
-            # with nothing on the wire rather than reaching the backend without the media that
-            # explains it. Live takes no media at all, so there is nowhere to put this.
-            raise UserError(
-                'OpenAI GPT-Live does not accept media in tool results, so the `content` of a '
-                "`ToolReturn` cannot be sent. Put what the model needs in the tool's return value."
-            )
+        follow_up = _tool_result_follow_up(result)
         delegation_id = self._call_delegations.pop(result.tool_call_id, None)
         if result.tool_call_id in self._abandoned_calls:
             # The backend that asked for this call gave up before it was answered. Sending the output
@@ -464,16 +486,34 @@ class OpenAILiveConnection(RealtimeConnection):
                 'item': {'type': 'function_call_output', 'call_id': result.tool_call_id, 'output': result.output},
             }
         )
-        if delegation is not None and delegation.pending_tool_calls:
-            # With `parallel_tool_calls` the backend asked for several at once and resumes from all
-            # of their outputs together. Continuing after the first would answer with the rest
-            # missing, and solicit a second response when they arrive.
+        if follow_up is not None:
+            await self._send_event({'type': 'response.item.create', 'item': follow_up})
+        if delegation is None:
+            # A call we can't correlate to a delegation has no response we can wait on, so continue now.
+            await self._send_event({'type': 'response.create'})
             return
-        # A delegated response waiting on tool results does not resume on its own. The continuation
-        # is a response the delegation is now owed, so the clock stays suspended until it lands even
-        # if the completion of the response that asked for the tools has yet to arrive.
-        if delegation is not None:
-            delegation.outstanding_responses += 1
+        if delegation.pending_tool_calls:
+            # With `parallel_tool_calls` the backend resumes from all of its calls' outputs together.
+            return
+        if delegation.response_in_flight:
+            # The response that asked for these calls may still ask for more: continue at its terminal.
+            delegation.continuation_due = True
+            return
+        await self._continue(delegation)
+
+    async def _send_due_continuations(self) -> None:
+        """Continue each delegation whose asking response just ended with every result already in."""
+        while self._continuations_due:
+            await self._continue(self._continuations_due.pop(0))
+
+    async def _continue(self, delegation: _Delegation) -> None:
+        """Resume a delegated response that has every tool result it asked for.
+
+        A delegated response waiting on tool results does not resume on its own. The continuation is a
+        response in flight like the first, which keeps the turn clock suspended until it lands.
+        """
+        delegation.response_in_flight = True
+        delegation.continuation_due = False
         await self._send_event({'type': 'response.create'})
 
     async def _send_event(self, event: dict[str, Any]) -> None:
@@ -518,6 +558,7 @@ class OpenAILiveConnection(RealtimeConnection):
                     return
                 for event in self._map_frame(raw):
                     yield event
+                await self._send_due_continuations()
             # Checked after every frame, not just when the socket goes quiet: the idle audio track
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
             for event in self._expire_quiet_turn():
@@ -550,12 +591,12 @@ class OpenAILiveConnection(RealtimeConnection):
             return []
         return self._settle_open_turns()
 
-    def _settle_open_turns(self) -> list[RealtimeCodecEvent]:
+    def _settle_open_turns(self, *, interrupted: bool = False) -> list[RealtimeCodecEvent]:
         """Finalize whichever turns are open, in either direction."""
         events = self._close_input_turn()
         if self._response_open:
             self._response_open = False
-            events.append(ResponseDone())
+            events.append(ResponseDone(interrupted=interrupted))
         return events
 
     def _close_input_turn(self) -> list[RealtimeCodecEvent]:
@@ -579,8 +620,12 @@ class OpenAILiveConnection(RealtimeConnection):
         try:
             event = _server_event_adapter.validate_json(raw)
         except ValidationError:
-            # An event type this version of the SDK doesn't know is not a reason to end the session.
-            return []
+            try:
+                error = _live_error_adapter.validate_json(raw)['error']
+            except ValidationError:
+                # An event type this version of the SDK doesn't know is not a reason to end the session.
+                return []
+            return [RealtimeSessionErrorEvent(message=error['message'], code=error['code'])]
         try:
             return self._map_event(event)
         except ValueError as e:
@@ -609,11 +654,32 @@ class OpenAILiveConnection(RealtimeConnection):
             return self._map_delegation(event)
         if isinstance(event, ResponseEvent):
             return self._map_response_event(cast('dict[str, Any]', event.event), delegation_id=event.delegation_id)
-        if isinstance(event, (SessionUsageUpdatedEvent, SessionClosedEvent)):
+        if isinstance(event, SessionUsageUpdatedEvent):
             return self._map_usage(event.usage.seconds)
+        if isinstance(event, SessionClosedEvent):
+            return self._map_session_closed(event)
         if isinstance(event, ErrorEvent):
             return [RealtimeSessionErrorEvent(message=event.error.message, code=event.error.code)]
         return []
+
+    def _map_session_closed(self, event: SessionClosedEvent) -> list[RealtimeCodecEvent]:
+        """Record the final usage, and say so when the session ended without anyone asking.
+
+        The WebSocket close that follows is clean either way, so without this a reply cut off by the
+        safety filter or the duration limit would be settled as though the model had finished it.
+        """
+        events = self._map_usage(event.usage.seconds)
+        if event.reason not in _ABNORMAL_CLOSE_REASONS:
+            return events
+        events.extend(self._settle_open_turns(interrupted=True))
+        events.append(
+            RealtimeSessionErrorEvent(
+                message=f'The OpenAI GPT-Live session ended: {event.reason}.',
+                code=f'live_session_{event.reason}',
+                recoverable=False,
+            )
+        )
+        return events
 
     def _map_output_audio(self, pcm: bytes) -> list[RealtimeCodecEvent]:
         """Forward model audio, ignoring the idle track between replies.
@@ -654,6 +720,14 @@ class OpenAILiveConnection(RealtimeConnection):
             if nested.get('type') in _ACTED_ON_DELEGATED_RESPONSE_EVENTS:
                 raise  # a malformed frame, which `_map_frame` reports as recoverable
             return []  # a nested event type this version of the SDK doesn't know
+        if isinstance(event, ResponseErrorEvent):
+            # Recoverable: the Live session carries on, and a failed response still sends its terminal.
+            return [
+                RealtimeSessionErrorEvent(
+                    message=f'The delegated OpenAI Responses backend reported an error: {event.message}',
+                    code=event.code,
+                )
+            ]
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
             events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
@@ -693,16 +767,20 @@ class OpenAILiveConnection(RealtimeConnection):
         from ever reporting another turn boundary: a backend that fails or stops short has to close
         it just as a completed one does.
         """
-        delegation.outstanding_responses -= 1
+        delegation.response_in_flight = False
         if gave_up:
             # Nothing further is coming for this delegation — no continuation, and no answer to any
             # call it had asked for — so it must not hold the clock open waiting for one.
             self._abandoned_calls.update(delegation.pending_tool_calls)
             delegation.pending_tool_calls.clear()
-            delegation.outstanding_responses = 0
-        if delegation.outstanding_responses <= 0 and not delegation.pending_tool_calls:
-            self._delegations.pop(delegation.id, None)
-            self._heard_voice()
+            delegation.continuation_due = False
+        if delegation.pending_tool_calls:
+            return  # the last result to come back continues it
+        if delegation.continuation_due:
+            self._continuations_due.append(delegation)
+            return
+        self._delegations.pop(delegation.id, None)
+        self._heard_voice()
 
     def _map_backend_usage(self, response: Response) -> list[RealtimeCodecEvent]:
         """Accumulate the delegated backend's token usage, priced as the backend.
@@ -768,6 +846,29 @@ async def _recv(ws: ClientConnection) -> str | bytes:
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
+
+
+def _tool_result_follow_up(result: ToolResult) -> dict[str, Any] | None:
+    """The backend input message carrying a `ToolReturn`'s text `content`, sent after its output.
+
+    Validated before anything is sent, so a result that can't be carried in full fails with nothing on
+    the wire rather than reaching the backend without the material that explains it.
+    """
+    if not result.content:
+        return None
+    texts: list[str] = []
+    for item in result.content:
+        if not isinstance(item, str):
+            raise UserError(
+                'OpenAI GPT-Live does not support media in tool results yet, so the `content` of a '
+                '`ToolReturn` can only be text. Put what the model needs in text or in the return value.'
+            )
+        texts.append(item)
+    return {
+        'type': 'message',
+        'role': 'user',
+        'content': [{'type': 'input_text', 'text': text} for text in texts],
+    }
 
 
 def _delegation_stopped(event: ResponseFailedEvent | ResponseIncompleteEvent) -> RealtimeSessionErrorEvent:
@@ -880,10 +981,10 @@ class OpenAILiveModel(RealtimeModel):
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
         if advertised_tools:
             responses['tools'] = [tool_def_to_live(tool) for tool in advertised_tools]
-        if tool_choice is not None and not isinstance(tool_choice, tuple):
-            # An allow-list is applied by trimming the advertised tools above; Live takes only the
-            # declarative modes on the wire.
-            responses['tool_choice'] = tool_choice
+        if tool_choice is not None:
+            # The backend takes the same forms as the Realtime API: a mode, or one named function. An
+            # allow-list is applied by trimming the advertised tools above, leaving its mode to send.
+            responses['tool_choice'] = tool_choice_config(tool_choice)
         for setting, key in (
             ('max_output_tokens', 'max_output_tokens'),
             ('parallel_tool_calls', 'parallel_tool_calls'),

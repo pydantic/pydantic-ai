@@ -566,47 +566,99 @@ def test_a_backend_that_gives_up_is_reported(nested: dict[str, Any], code: str, 
     assert isinstance(error, RealtimeSessionErrorEvent) and error.recoverable is True
 
 
+class _Recorder(OpenAILiveConnection):
+    """A connection with no socket that records what it would send."""
+
+    def __init__(self) -> None:
+        super().__init__(object())  # pyright: ignore[reportArgumentType]
+        self.sent: list[str] = []
+
+    async def _send_event(self, event: dict[str, Any]) -> None:
+        self.sent.append(event['type'])
+
+    async def terminal(self, nested_type: str = 'response.completed') -> None:
+        """The backend response ends; as the receive loop does, send any continuation now due."""
+        self._map_response_event(_backend_terminal(nested_type), delegation_id='d1')
+        await self._send_due_continuations()
+
+    def call(self, call_id: str) -> None:
+        self._map_response_event(_backend_call(call_id), delegation_id='d1')
+
+
 async def test_parallel_tool_calls_continue_once_every_result_is_in() -> None:
     """The backend resumes from all of its outputs together, so the first result is not the cue."""
-    sent: list[dict[str, Any]] = []
-
-    class _Recorder(OpenAILiveConnection):
-        async def _send_event(self, event: dict[str, Any]) -> None:
-            sent.append(event)
-
-    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    connection = _Recorder()
     _open_delegation(connection, call_ids=('c1', 'c2'))
 
     await connection.send(ToolResult('c1', output='14C'))
-    # Continuing here would answer with `c2` missing, and solicit a second response when it lands.
-    assert [event['type'] for event in sent] == ['response.item.create']
+    await connection.send(ToolResult('c2', output='rainy'))
+    # Every result is in, but the response that asked for them hasn't ended: it could ask for more.
+    assert connection.sent == ['response.item.create', 'response.item.create']
+
+    await connection.terminal()
+    assert connection.sent == snapshot(['response.item.create', 'response.item.create', 'response.create'])
+
+
+async def test_a_result_before_the_next_call_does_not_continue_early() -> None:
+    """A fast tool can answer before the backend's next parallel call has even arrived.
+
+    Continuing as soon as every call *seen so far* was answered sent `response.create` with the second
+    call still to come, then a second `response.create` once it was answered.
+    """
+    connection = _Recorder()
+    _open_delegation(connection, call_ids=('c1',))
+    await connection.send(ToolResult('c1', output='14C'))
+    connection.call('c2')
+    await connection.terminal()
+    # The response has ended, but `c2` is still unanswered.
+    assert connection.sent == ['response.item.create']
 
     await connection.send(ToolResult('c2', output='rainy'))
-    assert [event['type'] for event in sent] == snapshot(
-        ['response.item.create', 'response.item.create', 'response.create']
-    )
+    assert connection.sent == snapshot(['response.item.create', 'response.item.create', 'response.create'])
 
 
 async def test_a_late_completion_does_not_end_a_delegation_mid_continuation() -> None:
     """Answering before the asking response completes must not hand the turn back early."""
-
-    class _Recorder(OpenAILiveConnection):
-        async def _send_event(self, event: dict[str, Any]) -> None:
-            pass
-
-    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    connection = _Recorder()
     _open_delegation(connection, call_ids=('c1',))
     await connection.send(ToolResult('c1', output='14C'))
 
-    # The completion of the response that *asked* for the tool arrives only now. Closing the
-    # delegation on it would restart the clock while the continuation is still being generated.
-    connection._map_response_event(_backend_terminal(), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    # The response that *asked* for the tool ends only now, which is what sends the continuation.
+    await connection.terminal()
+    assert connection.sent == ['response.item.create', 'response.create']
     assert connection._delegations  # pyright: ignore[reportPrivateUsage]
     assert connection._silence_timeout() is None  # pyright: ignore[reportPrivateUsage]
 
     # The continuation itself is what ends the delegation.
-    connection._map_response_event(_backend_terminal(), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    await connection.terminal()
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_tool_result_text_content_reaches_the_backend() -> None:
+    """A `ToolReturn`'s text `content` goes to the backend as a message after the call's output."""
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Sink(object())  # pyright: ignore[reportArgumentType]
+    await connection.send(ToolResult('c1', output='ok', content=['The user is a returning guest.']))
+
+    assert sent == snapshot(
+        [
+            {'type': 'response.item.create', 'item': {'type': 'function_call_output', 'call_id': 'c1', 'output': 'ok'}},
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': 'The user is a returning guest.'}],
+                },
+            },
+            {'type': 'response.create'},
+        ]
+    )
 
 
 async def test_tool_result_media_is_refused() -> None:
@@ -620,10 +672,75 @@ async def test_tool_result_media_is_refused() -> None:
     connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
     result = ToolResult('c1', output='see this', content=[BinaryContent(data=b'x', media_type='image/png')])
 
-    with pytest.raises(UserError, match='does not accept media in tool results'):
+    with pytest.raises(UserError, match='does not support media in tool results'):
         await connection.send(result)
 
     assert sent == []
+
+
+def _session_closed(reason: str, seconds: float = 0) -> dict[str, Any]:
+    return {
+        'type': 'session.closed',
+        'event_id': 'e',
+        'reason': reason,
+        'session': {'id': 's', 'expires_at': 0, 'model': 'gpt-live-1', 'status': 'active'},
+        'usage': {'seconds': seconds},
+    }
+
+
+@pytest.mark.parametrize('reason', ['expired', 'content', 'connection_lost'])
+def test_a_session_ended_by_the_provider_interrupts_the_reply(reason: str) -> None:
+    """The WebSocket close that follows is clean, so the reason is the only sign the reply was cut off.
+
+    Settled on that close, a reply stopped by the safety filter or the duration limit read as finished.
+    """
+    connection = _connection()
+    connection._map_frame(json.dumps({'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='}))  # pyright: ignore[reportPrivateUsage]
+
+    events = connection._map_frame(json.dumps(_session_closed(reason)))  # pyright: ignore[reportPrivateUsage]
+
+    assert events == [
+        ResponseDone(interrupted=True),
+        RealtimeSessionErrorEvent(
+            message=f'The OpenAI GPT-Live session ended: {reason}.', code=f'live_session_{reason}', recoverable=False
+        ),
+    ]
+
+
+@pytest.mark.parametrize('reason', ['close_requested', 'remote_hangup'])
+def test_an_ordinary_close_only_reports_final_usage(reason: str) -> None:
+    connection = _connection()
+    connection._map_frame(json.dumps({'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='}))  # pyright: ignore[reportPrivateUsage]
+
+    events = connection._map_frame(json.dumps(_session_closed(reason, seconds=12)))  # pyright: ignore[reportPrivateUsage]
+
+    assert events == [SessionUsage(_request_usage(12), response_scoped=False)]
+
+
+def test_a_backend_error_event_is_reported() -> None:
+    """A nested Responses `error` is the backend's diagnostic; dropping it hid why delegated work failed."""
+    connection = _connection()
+    error = {
+        'type': 'error',
+        'sequence_number': 0,
+        'code': 'rate_limit_exceeded',
+        'message': 'slow down',
+        'param': None,
+    }
+
+    assert connection._map_response_event(error, delegation_id='d1') == [  # pyright: ignore[reportPrivateUsage]
+        RealtimeSessionErrorEvent(
+            message='The delegated OpenAI Responses backend reported an error: slow down', code='rate_limit_exceeded'
+        )
+    ]
+
+
+def test_an_error_with_no_code_is_still_reported() -> None:
+    """OpenAI documents `error` frames with a null `code`, which the SDK's `ServerEvent` rejects."""
+    connection = _connection()
+    frame = {'type': 'error', 'event_id': 'e', 'error': {'type': 'server_error', 'code': None, 'message': 'boom'}}
+
+    assert connection._map_frame(json.dumps(frame)) == [RealtimeSessionErrorEvent(message='boom', code=None)]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_unknown_events_are_ignored() -> None:
@@ -805,16 +922,26 @@ def test_strict_tools_and_declarative_tool_choice(model: OpenAILiveModel) -> Non
 
 
 def test_tool_allow_list_trims_the_advertised_tools(model: OpenAILiveModel) -> None:
-    """Live takes only the declarative modes, so an allow-list is applied by trimming."""
+    """The backend has no list form, so an allow-list is applied by trimming, and its mode still sent.
+
+    Dropping the mode lost what the allow-list says about whether a tool *must* be called: a
+    one-tool list is a named function choice, and the backend can express exactly that.
+    """
     tools = [
         ToolDefinition(name='kept', parameters_json_schema={'type': 'object'}),
+        ToolDefinition(name='also_kept', parameters_json_schema={'type': 'object'}),
         ToolDefinition(name='dropped', parameters_json_schema={'type': 'object'}),
     ]
-    config = _config(model, tools=tools, settings=OpenAILiveModelSettings(tool_choice=['kept']))
-    responses = config['delegation']['responses']
+    one = _config(model, tools=tools, settings=OpenAILiveModelSettings(tool_choice=['kept']))
+    assert [tool['name'] for tool in one['delegation']['responses']['tools']] == ['kept']
+    assert one['delegation']['responses']['tool_choice'] == snapshot({'type': 'function', 'name': 'kept'})
 
-    assert [tool['name'] for tool in responses['tools']] == ['kept']
-    assert 'tool_choice' not in responses
+    two = _config(model, tools=tools, settings=OpenAILiveModelSettings(tool_choice=['kept', 'also_kept']))
+    assert [tool['name'] for tool in two['delegation']['responses']['tools']] == ['kept', 'also_kept']
+    assert two['delegation']['responses']['tool_choice'] == snapshot('required')
+    # Both are shapes the backend's own schema accepts.
+    TypeAdapter(SessionConfig).validate_python(one)
+    TypeAdapter(SessionConfig).validate_python(two)
 
 
 def test_user_prompt_text_parts_are_joined() -> None:
