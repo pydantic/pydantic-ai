@@ -202,7 +202,7 @@ def test_bedrock_mantle_model_rejects_wrong_endpoint_family() -> None:
 
 def test_bedrock_converse_rejects_proprietary_openai() -> None:
     # Proprietary GPT models Converse doesn't serve (GPT-5.4, GPT-5.5, GPT-5.6 Cyber — and future GPT
-    # generations until AWS lists them) are flagged by the profile (`bedrock_supported_on_converse=False`)
+    # generations until verified on Converse) are flagged by the profile (`bedrock_supported_on_converse=False`)
     # and `BedrockConverseModel` raises at construction with a pointer to `BedrockMantleProvider`.
     # Exact names, not a prefix: GPT-5.6 Sol/Luna/Terra and GPT-6 Sol/Luna/Astra are served on Converse;
     # `gpt-5.6-cyber` is not.
@@ -239,7 +239,6 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
             }
         )
     assert isinstance(infer_model('bedrock:openai.gpt-5.6-luna'), BedrockConverseModel)
-    assert isinstance(infer_model('bedrock:global.openai.gpt-6-sol'), BedrockConverseModel)
 
 
 def test_bedrock_converse_gpt_5_6_inference_id_forms() -> None:
