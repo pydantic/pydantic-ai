@@ -502,7 +502,7 @@ async def test_api_error(allow_model_requests: None, typesafe_api_key: str, capf
 
 def approve_refund() -> str:
     """Approve the refund as requested."""
-    return 'Refund approved.'
+    return 'Refund approved.'  # pragma: no cover - offered, but the history leaves only the other tool to call
 
 
 def reject_refund() -> str:
