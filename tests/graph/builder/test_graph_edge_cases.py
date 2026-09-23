@@ -338,15 +338,13 @@ async def test_literal_branch_matching():
     async def handle_c(ctx: StepContext[MyState, None, object]) -> str:
         return 'Chose C'  # pragma: no cover
 
-    from pydantic_graph import TypeExpression
-
     g.add(
         g.edge_from(g.start_node).to(choose_option),
         g.edge_from(choose_option).to(
             g.decision()
-            .branch(g.match(TypeExpression[Literal['a']]).to(handle_a))
-            .branch(g.match(TypeExpression[Literal['b']]).to(handle_b))
-            .branch(g.match(TypeExpression[Literal['c']]).to(handle_c))
+            .branch(g.match(Literal['a']).to(handle_a))
+            .branch(g.match(Literal['b']).to(handle_b))
+            .branch(g.match(Literal['c']).to(handle_c))
         ),
         g.edge_from(handle_a, handle_b, handle_c).to(g.end_node),
     )

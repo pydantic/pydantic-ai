@@ -12,14 +12,13 @@ from collections.abc import AsyncIterable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, get_origin
 
-from typing_extensions import Never, Self, TypeVar
+from typing_extensions import Never, Self, TypeForm, TypeVar
 
 from pydantic_graph import BaseNode
 from pydantic_graph.exceptions import GraphBuildingError
 from pydantic_graph.id_types import NodeID
 from pydantic_graph.paths import Path, PathBuilder, TransformFunction
 from pydantic_graph.step import NodeStep
-from pydantic_graph.util import TypeOrTypeExpression
 
 if TYPE_CHECKING:
     from pydantic_graph.node_types import AnyDestinationNode, DestinationNode
@@ -96,7 +95,7 @@ class DecisionBranch(Generic[SourceT]):
     `tests.graph.builder.test_graph_edge_cases.test_decision_no_matching_branch` for an example of how this works.
     """
 
-    source: TypeOrTypeExpression[SourceT]
+    source: TypeForm[SourceT]
     """The expected type of data for this branch.
 
     This is necessary for exhaustiveness-checking when handling the inputs to a decision node."""
@@ -144,7 +143,7 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
 
     _decision: Decision[StateT, DepsT, HandledT]
     """The parent decision node."""
-    _source: TypeOrTypeExpression[SourceT]
+    _source: TypeForm[SourceT]
     """The expected source type for this branch."""
     _matches: Callable[[Any], bool] | None
     """Optional matching predicate."""
@@ -156,7 +155,7 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
         self,
         *,
         decision: Decision[StateT, DepsT, HandledT],
-        source: TypeOrTypeExpression[SourceT],
+        source: TypeForm[SourceT],
         matches: Callable[[Any], bool] | None,
         path_builder: PathBuilder[StateT, DepsT, OutputT],
     ):

@@ -238,10 +238,10 @@ class Failed(BaseModel):
     """Unable to find a satisfactory choice."""
 
 
-flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
+flight_search_agent = Agent(  # (1)!
     'openai:gpt-5.2',
     name='flight_search_agent',
-    output_type=FlightDetails | Failed,  # type: ignore
+    output_type=FlightDetails | Failed,
     instructions=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
@@ -287,10 +287,10 @@ class SeatPreference(BaseModel):
 
 
 # This agent is responsible for extracting the user's seat selection
-seat_preference_agent = Agent[object, SeatPreference | Failed](  # (5)!
+seat_preference_agent = Agent(  # (5)!
     'openai:gpt-5.2',
     name='seat_preference_agent',
-    output_type=SeatPreference | Failed,  # type: ignore
+    output_type=SeatPreference | Failed,
     instructions=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
@@ -330,11 +330,11 @@ async def main():  # (7)!
         #> Seat preference: row=1 seat='A'
 ```
 
-1. Define the first agent, which finds a flight. We use an explicit type annotation until [PEP-747](https://peps.python.org/pep-0747/) lands, see [structured output](output.md#structured-output). We use a union as the output type so the model can communicate if it's unable to find a satisfactory choice; internally, each member of the union will be registered as a separate tool.
+1. Define the first agent, which finds a flight. We use a union as the output type so the model can communicate if it's unable to find a satisfactory choice; internally, each member of the union will be registered as a separate tool. See [structured output](output.md#structured-output) for the type checking caveats that apply to unions with mypy.
 2. Define a tool on the agent to find a flight. In this simple case we could dispense with the tool and just define the agent to return structured data, then search for a flight, but in more complex scenarios the tool would be necessary.
 3. Define usage limits for the entire app.
 4. Define a function to find a flight, which asks the user for their preferences and then calls the agent to find a flight.
-5. As with `flight_search_agent` above, we use an explicit type annotation to define the agent.
+5. As with `flight_search_agent` above, we use a union as the output type.
 6. Define a function to find the user's seat preference, which asks the user for their seat preference and then calls the agent to extract the seat preference.
 7. Now that we've put our logic for running each agent into separate functions, our main app becomes very simple.
 

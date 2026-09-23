@@ -1,5 +1,7 @@
 """Tests for pydantic_graph.util module."""
 
+import pytest
+
 from pydantic_graph.util import (
     Some,
     TypeExpression,
@@ -14,8 +16,13 @@ def test_type_expression_unpacking():
     result = unpack_type_expression(int)
     assert result is int
 
-    # Test with TypeExpression wrapper
-    wrapped = TypeExpression[str | int]
+    # Test with a non-class type expression
+    result = unpack_type_expression(str | int)
+    assert result == str | int
+
+    # Test with the deprecated TypeExpression wrapper
+    with pytest.warns(DeprecationWarning, match='`TypeExpression` is deprecated'):
+        wrapped = TypeExpression[str | int]
     result = unpack_type_expression(wrapped)
     assert result == str | int
 

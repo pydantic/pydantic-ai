@@ -91,10 +91,9 @@ class InvalidRequest(BaseModel):
 
 
 Response: TypeAlias = Success | InvalidRequest
-agent = Agent[Deps, Response](
+agent = Agent(
     'google:gemini-3-flash-preview',
-    # Pass the union members directly: a `Response` type alias isn't yet accepted as a `TypeForm` value (PEP-747)
-    output_type=Success | InvalidRequest,
+    output_type=Response,
     deps_type=Deps,
 )
 

@@ -6,6 +6,8 @@ from dataclasses import KW_ONLY, dataclass, replace
 from functools import update_wrapper, wraps
 from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints
 
+from typing_extensions import TypeForm
+
 from pydantic_ai._function_schema import (
     FunctionSchema,
     extract_return_schema_type,
@@ -71,7 +73,7 @@ class CapabilityOperationResult(Generic[ResultT]):
     usage_delta: RunUsage
 
 
-def capability_operation_result_type(result_type: object) -> type[CapabilityOperationResult[Any]]:
+def capability_operation_result_type(result_type: TypeForm[Any]) -> type[CapabilityOperationResult[Any]]:
     """Build `CapabilityOperationResult[ResultT]` for the operation's declared result type.
 
     Codecs use the parametrized wrapper to validate both the operation value and its usage delta
@@ -142,7 +144,7 @@ class CapabilityMethodDeclaration:
     function: Callable[..., Awaitable[Any]]
     signature: inspect.Signature
     schema: FunctionSchema
-    result_type: object
+    result_type: TypeForm[Any]
     ctx_parameter: str | None
     model_request_parameter: str | None = None
 

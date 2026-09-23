@@ -4,54 +4,58 @@ This module provides helper classes and functions for working with Python's type
 including workarounds for type checker limitations and utilities for runtime type inspection.
 """
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, Generic, cast, get_args, get_origin
 
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 T = TypeVar('T', infer_variance=True)
 """Generic type variable with inferred variance."""
 
 
 class TypeExpression(Generic[T]):
-    """A workaround for type checker limitations when using complex type expressions.
+    """Deprecated wrapper for passing complex type expressions to the graph builder.
 
-        This class serves as a wrapper for types that cannot normally be used in positions
-    requiring `type[T]`, such as `Any`, `Union[...]`, or `Literal[...]`. It provides a
-        way to pass these complex type expressions to functions expecting concrete types.
+    Before type checkers supported [PEP 747](https://peps.python.org/pep-0747/) `TypeForm`, type expressions
+    that aren't classes (such as `int | str` or `Literal['a']`) could not be passed to parameters annotated
+    with `type[T]` without a type error, so they had to be wrapped as `TypeExpression[int | str]`.
 
-    Example:
-            Instead of `output_type=Union[str, int]` (which may cause type errors),
-            use `output_type=TypeExpression[Union[str, int]]`.
+    Those parameters now accept any type expression directly, so this wrapper is no longer needed:
+    use `g.match(Literal['a'])` instead of `g.match(TypeExpression[Literal['a']])`.
 
-    Note:
-            This is a workaround for the lack of TypeForm in the Python type system.
+    Wrapped type expressions are still unwrapped at runtime, but subscripting this class emits a `DeprecationWarning`.
     """
 
-    pass
+    def __class_getitem__(cls, item: Any) -> Any:
+        warnings.warn(
+            '`TypeExpression` is deprecated, pass the type expression directly instead of wrapping it.',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # `Generic.__class_getitem__` isn't declared in typeshed, so pyright can't resolve the `super()` call.
+        return super().__class_getitem__(item)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
 
 
-TypeOrTypeExpression = TypeAliasType('TypeOrTypeExpression', type[TypeExpression[T]] | type[T], type_params=(T,))
-"""Type alias allowing both direct types and TypeExpression wrappers.
+TypeOrTypeExpression = TypeAliasType('TypeOrTypeExpression', TypeForm[T], type_params=(T,))
+"""Deprecated alias for `TypeForm[T]`, kept for backwards compatibility.
 
-This alias enables functions to accept either regular types (when compatible with type checkers)
-or TypeExpression wrappers for complex type expressions. The correct type should be inferred
-automatically in either case.
+Use `typing_extensions.TypeForm` directly instead.
 """
 
 
-def unpack_type_expression(type_: TypeOrTypeExpression[T]) -> type[T]:
-    """Extract the actual type from a TypeExpression wrapper or return the type directly.
+def unpack_type_expression(type_: TypeForm[T]) -> TypeForm[T]:
+    """Unwrap a deprecated [`TypeExpression`][pydantic_graph.util.TypeExpression] wrapper, or return the type expression directly.
 
     Args:
-        type_: Either a direct type or a TypeExpression wrapper.
+        type_: A type expression, possibly wrapped in a `TypeExpression`.
 
     Returns:
-        The unwrapped type, ready for use in runtime type operations.
+        The unwrapped type expression, ready for use in runtime type operations.
     """
     if get_origin(type_) is TypeExpression:
-        return get_args(type_)[0]
-    return cast(type[T], type_)
+        return cast(TypeForm[T], get_args(type_)[0])
+    return type_
 
 
 @dataclass

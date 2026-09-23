@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from pydantic import ConfigDict, with_config
+from typing_extensions import TypeForm
 
 from pydantic_ai import messages as _messages
 from pydantic_ai.durable_exec._capability_operation import (
@@ -254,7 +255,7 @@ _StreamedActivityPayload: TypeAlias = StreamedActivityResult | ModelResponse
 class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tuple[_RequestParams, Any]]):
     wire_type = _RequestParams
 
-    def __init__(self, durability: TemporalDurability[Any], *, result_type: object) -> None:
+    def __init__(self, durability: TemporalDurability[Any], *, result_type: TypeForm[Any]) -> None:
         self._durability = durability
         self.result_type = result_type
 

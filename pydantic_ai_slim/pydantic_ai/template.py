@@ -6,6 +6,7 @@ from typing import Any, Generic, cast
 
 from pydantic import GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import CoreSchema, core_schema
+from typing_extensions import TypeForm
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import AgentDepsT
@@ -51,7 +52,7 @@ class TemplateStr(Generic[AgentDepsT]):
         self,
         source: str,
         *,
-        deps_type: type[Any] | None = None,
+        deps_type: TypeForm[Any] | None = None,
         deps_schema: dict[str, Any] | None = None,
     ) -> None:
         self._source = source
@@ -102,7 +103,7 @@ class TemplateStr(Generic[AgentDepsT]):
                 raise ValueError('Not a template string (no {{ found)')
 
             context: dict[str, Any] = info.context or {}
-            deps_type: type[Any] | None = context.get('deps_type')
+            deps_type: TypeForm[Any] | None = context.get('deps_type')
             deps_schema: dict[str, Any] | None = context.get('deps_schema')
 
             return TemplateStr(value, deps_type=deps_type, deps_schema=deps_schema)
