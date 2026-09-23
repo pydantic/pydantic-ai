@@ -16,9 +16,9 @@ AWS [recommends the `bedrock-runtime` endpoint for new applications](https://doc
 
 ## OpenAI model routes {#bedrock-openai-model-routes}
 
-GPT-OSS and GPT-5.6 Sol, Luna, and Terra are available through both routes. GPT-5.4, GPT-5.5, and GPT-5.6 Cyber are available only through Mantle.
+GPT-OSS, GPT-5.6 Sol/Luna/Terra, and GPT-6 Astra are available through both routes. GPT-6 Sol and Luna are available through Converse. GPT-5.4, GPT-5.5, and GPT-5.6 Cyber are available only through Mantle.
 
-On Converse, GPT-5.6 requires a cross-region inference-profile model ID. Sol supports `us.openai.gpt-5.6-sol` and `global.openai.gpt-5.6-sol`. Luna and Terra support `us.`, `in.`, and `global.` IDs. See the AWS model cards for [Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html), [Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html), and [Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html) for current endpoint and regional availability.
+On Converse, GPT-5.6 requires a cross-region inference-profile model ID. Sol supports `us.openai.gpt-5.6-sol` and `global.openai.gpt-5.6-sol`. Luna and Terra support `us.`, `in.`, and `global.` IDs. GPT-6 Sol, Luna, and Astra support `us.` and `global.` IDs, such as `global.openai.gpt-6-sol`. See the AWS model cards for [GPT-5.6 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html), [GPT-5.6 Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html), [GPT-5.6 Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html), and [GPT-6 Astra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html) for current endpoint and regional availability.
 
 ## Bedrock Converse
 
