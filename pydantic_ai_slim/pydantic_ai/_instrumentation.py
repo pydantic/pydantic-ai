@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
-from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, get_current_span
+from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
@@ -86,10 +86,15 @@ class ContentPolicy:
     where `reset` raises), and a `set` lands only in the `Context` that runs it, so the `Context`
     that opened the request can be left holding a finished request's value. Naming the span means a
     reader can only honour a policy set for the span in front of it, and anything else fails closed.
+
+    It also carries the tracer the span was opened with, so that a span opened inside the request
+    (a decision model's `decide`) goes to the same tracer provider as the request's own span, even
+    when that is not the global one. Such a span reads the policy through `open_request_policy`.
     """
 
-    span_id: int
+    span: Span
     include_content: bool
+    tracer: Tracer
 
 
 include_content_ctx: ContextVar[ContentPolicy | None] = ContextVar('include_content', default=None)
@@ -113,7 +118,42 @@ def span_include_content(span: Span) -> bool:
     policy belonging to a different span, both mean nothing vouches for exporting content here.
     """
     policy = include_content_ctx.get()
-    return policy is not None and policy.span_id == span.get_span_context().span_id and policy.include_content
+    return (
+        policy is not None
+        and policy.span.get_span_context().span_id == span.get_span_context().span_id
+        and policy.include_content
+    )
+
+
+def open_request_policy() -> ContentPolicy | None:
+    """The policy of the instrumented request the caller runs inside, for a span opened beneath that request.
+
+    `span_include_content` answers for the one span a policy was set for. A span opened inside the
+    request -- a decision model's `decide` -- is not that span, and need not be its child either:
+    a durable engine's step, task or activity span can sit in between. So this asks whether the
+    request is still open around the caller, and still fails closed on a stale policy: the span the
+    policy was set for must not have ended, which a finished request's span has, and the current
+    span must be in its trace. `None` means no instrumented request is open here, and nothing
+    should be emitted.
+    """
+    policy = include_content_ctx.get()
+    if policy is None or not policy.span.is_recording():
+        return None
+    if get_current_span().get_span_context().trace_id != policy.span.get_span_context().trace_id:
+        return None
+    return policy
+
+
+@contextmanager
+def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
+    """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""
+    previous = include_content_ctx.get()
+    include_content_ctx.set(policy)
+    try:
+        yield
+    finally:
+        # A plain `set`, like `open_model_request_span`'s restore, so it can't fail across `Context`s.
+        include_content_ctx.set(previous)
 
 
 time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
@@ -673,7 +713,7 @@ def open_model_request_span(
             record_uncaught_errors(span, include_content=settings.include_content),
         ):
             # Set inside the `with`, because the policy names the span it speaks for.
-            include_content_ctx.set(ContentPolicy(span.get_span_context().span_id, settings.include_content))
+            include_content_ctx.set(ContentPolicy(span, settings.include_content, settings.tracer))
 
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the

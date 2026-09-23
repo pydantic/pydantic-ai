@@ -228,6 +228,11 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
             raise UserError(f'TypeSafe could not send this request: {e}') from e
 
         answers = {name: _from_typesafe_answer(answer) for name, answer in response.answers.items()}
+        try:
+            request_id = response.request_id
+        except TypeSafeError:
+            # The SDK raises rather than returning `None` when the response carries no request ID header.
+            request_id = None
         return DecisionResponse(
             answers=answers,
             model_name=response.model,
@@ -235,6 +240,7 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
                 input_tokens=response.usage.input_tokens or 0,
                 output_tokens=response.usage.output_tokens or 0,
             ),
+            provider_response_id=request_id,
         )
 
 

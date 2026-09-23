@@ -432,6 +432,31 @@ Agent.instrument_all(instrumentation_settings)
 
 The `gen_ai.tool.definitions` attribute (tool name, description, and parameters) is emitted regardless of this setting, so observability platforms that read the available tools from it are unaffected.
 
+### Decision model spans
+
+A [decision model][pydantic_ai.models.decision.DecisionModel], such as [TypeSafe's Jev](models/typesafe.md), answers typed questions about the conversation instead of generating text, and one model request can take more than one of its requests: with a union `output_type`, the first asks which member the text calls for, and the second fills in that member's fields. A function tool with arguments is picked and then filled the same way. The model request span shows the agent-level request and response, so each of these requests gets a `decide {model}` span of its own underneath it, recording exactly what was asked and answered.
+
+A `decide` span is only emitted inside an instrumented model request, and only for a request that is actually sent: when there is one route left and nothing to fill in, the model takes it without asking, and there is no span. Under [durable execution](durable_execution/overview.md), it sits inside the engine's step, task or activity span for the model request. With Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) to carry the trace into the activity, and the agent's own instrumentation (`Agent.instrument_all()`, or an `Instrumentation` capability on the agent) to say how to record it.
+
+| Attribute | Value |
+|-----------|-------|
+| `gen_ai.operation.name` | `decide` |
+| `gen_ai.provider.name`, `gen_ai.request.model`, `server.address`, ... | The same model attributes as the model request span |
+| `gen_ai.response.model` | The model that answered |
+| `gen_ai.response.id` | The provider's ID for the request, when it returns one |
+| `pydantic_ai.decision.route` | On a request that fills in a picked route, the name of the tool or output tool being filled |
+| `pydantic_ai.decision.thresholds` | The `decision_boolean_threshold` and `decision_tool_call_threshold` applied, as `{"boolean": ..., "tool_call": ...}` |
+| `pydantic_ai.decision.usage.input_tokens`, `pydantic_ai.decision.usage.output_tokens` | This request's usage |
+| `pydantic_ai.decision.questions` | The questions as sent: `{name: {"type": ..., "instructions": ..., "criteria": ...}}`, where `type` is `noul` (yes/no), `choice` or `score` |
+| `pydantic_ai.decision.state` | The state as sent: the text being judged, or a JSON object that adds the conversation's `history` |
+| `pydantic_ai.decision.answers` | The answers as received: `{"type": "noul", "noul": ...}` for a yes/no, whose `noul` is the probability of yes, `{"type": "choice", "choice": ..., "confidence": ..., "probabilities": {...}}` for a pick, and `{"type": "score", "score": ..., "confidence": ..., "probabilities": {...}, "legend": {...}}` for a rubric |
+
+Questions and answers share their keys, so an answer can be matched to the question it answers. A field's question is keyed by the field's name, a nested model's fields as `outer.inner`, and each option of a `list` or of a mapping from options to `bool` as `field.option`, since the model is asked about each option separately. The question that picks between routes is keyed `tool` (with underscores appended if a field already has that name), and its options are the tool names.
+
+With [`include_content=False`](#excluding-prompts-and-completions), `pydantic_ai.decision.state` and `pydantic_ai.decision.answers` are left out, and `pydantic_ai.decision.questions` keeps only each question's `type`: the instructions and criteria are your own words, and an answer can quote the text being judged, such as an option picked from it.
+
+Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage.*`, and no metrics are recorded for `decide` spans: the model request span above them already reports the total of its `decide` spans' usage, and a backend that adds up usage across spans would count it twice.
+
 ### Adding Custom Metadata
 
 Use the agent's `metadata` parameter to attach additional data to the agent's span.

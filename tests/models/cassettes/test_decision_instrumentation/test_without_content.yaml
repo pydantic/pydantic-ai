@@ -1,0 +1,66 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '549'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        abusive:
+          instructions:
+            field: abusive
+            goal: Moderate a comment before it is published.
+            question: Does the comment insult or threaten someone?
+          type: noul
+        action:
+          criteria:
+            hold: null
+            publish: null
+            remove: null
+          instructions:
+            field: action
+            goal: Moderate a comment before it is published.
+            question: What should happen to the comment?
+          type: choice
+      state: Great write-up, thanks. The second chart finally made the latency spike click for me.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '265'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d06d1e447e9c9680f758b1884a95
+    parsed_body:
+      answers:
+        abusive:
+          noul: 0.01
+          type: noul
+        action:
+          choice: publish
+          confidence: 1.0
+          probabilities:
+            hold: 0.0
+            publish: 1.0
+            remove: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 389
+        output_tokens: 55
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -6,9 +6,10 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, BoolCriteria
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
@@ -25,6 +26,11 @@ from pydantic_ai.models.decision import (
 )
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
+
+from ..conftest import IsStr, try_import
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 
 class InMemoryDecisionModel(DecisionModel[None]):
@@ -112,6 +118,79 @@ async def test_decision_model_extension_point(allow_model_requests: None):
     assert result.response.usage == RequestUsage(input_tokens=4, output_tokens=2)
     assert result.response.provider_name == 'test-decisions'
     assert result.response.provider_url == 'https://example.test/decisions'
+
+
+class Release(BaseModel):
+    """Decide whether a change can ship."""
+
+    ship: Annotated[bool, BoolCriteria(true='It can go out today.', false='It has to wait.')] = Field(
+        description='Can this change ship?'
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span(allow_model_requests: None, capfire: CaptureLogfire):
+    """The `decide` span belongs to the base class, so any decision model gets one, with the protocol's shapes.
+
+    A history makes the state JSON rather than text, and a described yes/no sends criteria, both on the span as
+    on the wire.
+    """
+    history = [
+        ModelRequest(parts=[UserPromptPart('The migration is reviewed.')]),
+        ModelResponse(parts=[TextPart('Noted.')]),
+    ]
+    agent = Agent(InMemoryDecisionModel(), output_type=Release, capabilities=[Instrumentation()])
+    result = await agent.run('And the tests pass.', message_history=history)
+
+    assert result.output == Release(ship=True)
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert {key: value for key, value in span['attributes'].items() if not key.startswith('logfire.')} == snapshot(
+        {
+            'gen_ai.operation.name': 'decide',
+            'gen_ai.provider.name': 'test-decisions',
+            'gen_ai.system': 'test-decisions',
+            'server.address': 'example.test',
+            'gen_ai.request.model': 'in-memory-decisions',
+            'pydantic_ai.decision.questions': {
+                'ship': {
+                    'type': 'noul',
+                    'instructions': {
+                        'field': 'ship',
+                        'question': 'Can this change ship?',
+                        'goal': 'Decide whether a change can ship.',
+                    },
+                    'criteria': {'true': 'It can go out today.', 'false': 'It has to wait.'},
+                }
+            },
+            'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+            'pydantic_ai.decision.state': {
+                'history': [{'user': 'The migration is reviewed.'}, {'assistant': 'Noted.'}],
+                'text': 'And the tests pass.',
+            },
+            'gen_ai.agent.name': 'agent',
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.conversation.id': IsStr(),
+            'gen_ai.response.model': 'in-memory-decisions',
+            'pydantic_ai.decision.usage.input_tokens': 4,
+            'pydantic_ai.decision.usage.output_tokens': 2,
+            'pydantic_ai.decision.answers': {'ship': {'type': 'noul', 'noul': 0.8}},
+        }
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_no_decide_span_without_instrumentation(allow_model_requests: None, capfire: CaptureLogfire):
+    """Outside an instrumented request there is no `chat` span to hang a `decide` span from, so none is made."""
+    result = await Agent(InMemoryDecisionModel(), output_type=Triage).run('The customer cannot sign in.')
+
+    assert result.output == Triage(urgent=True, action='review')
+    assert capfire.exporter.exported_spans_as_dict() == []
 
 
 @pytest.mark.anyio

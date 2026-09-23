@@ -621,6 +621,10 @@ Accuracy falls as the state grows with detail the question does not need, and a 
 
 A decision model answers in one piece, so there is nothing to stream, and nothing that stops working: `run_stream`, an `event_stream_handler`, and the AG-UI and Vercel AI adapters get the whole answer as a single event. There are no partial results and no earlier first token — it is compatibility, not streaming.
 
+## Tracing
+
+With [instrumentation](../logfire.md) on, every request a decision model sends gets a `decide` span under the model request span, recording the questions as sent, the state they were asked about, and the answers with their probabilities. A model request that picks a route and then fills it has two. See [Decision model spans](../logfire.md#decision-model-spans) for what each one records.
+
 ## Decision models inside an agent run
 
 Everything above asks a decision model a question and uses the answer. The same question is worth as much *inside* a run as outside one: a decision that sits between the expensive steps — which model answers, whether a call should run, which tools are worth offering — is a classification, and a decision model fast enough for a real-time request path makes it cheap enough to ask every time rather than once at the top.

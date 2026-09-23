@@ -1,0 +1,118 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '356'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        tool:
+          criteria:
+            final_result_Escalation: Hand the ticket to a specialist team.
+            final_result_Refund: Refund the customer for a charge.
+          instructions: Which of these does this call for?
+          type: choice
+      state: I was charged twice for my March subscription. Please put the second charge back.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '248'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d06d1c17732ba445a7c0c48c9d7b
+    parsed_body:
+      answers:
+        tool:
+          choice: final_result_Refund
+          confidence: 1.0
+          probabilities:
+            final_result_Escalation: 0.0
+            final_result_Refund: 1.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 347
+        output_tokens: 44
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '583'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        full_refund:
+          instructions:
+            chosen: Refund
+            field: full_refund
+            goal: Refund the customer for a charge.
+            question: Should the whole charge be refunded?
+          type: noul
+        reason:
+          criteria:
+            cancelled_order: null
+            duplicate_charge: null
+            service_outage: null
+          instructions:
+            chosen: Refund
+            field: reason
+            goal: Refund the customer for a charge.
+            question: Why is the refund due?
+          type: choice
+      state: I was charged twice for my March subscription. Please put the second charge back.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '306'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d06d1cac7619a7c02643587517ea
+    parsed_body:
+      answers:
+        full_refund:
+          noul: 0.56
+          type: noul
+        reason:
+          choice: duplicate_charge
+          confidence: 1.0
+          probabilities:
+            cancelled_order: 0.0
+            duplicate_charge: 1.0
+            service_outage: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 409
+        output_tokens: 65
+    status:
+      code: 200
+      message: OK
+version: 1

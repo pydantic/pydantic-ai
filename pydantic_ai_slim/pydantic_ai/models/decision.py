@@ -3,15 +3,18 @@ from __future__ import annotations as _annotations
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from functools import cached_property
 from typing import Any, ClassVar, Literal, TypeAlias, cast
 
+from opentelemetry.trace import SpanKind
+from opentelemetry.util.types import AttributeValue
 from pydantic import JsonValue
 from typing_extensions import assert_never
 
 from .. import _utils, usage
+from .._instrumentation import model_attributes, open_request_policy, record_uncaught_errors, safe_to_json
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
@@ -185,6 +188,28 @@ class DecisionResponse:
     """The model that produced the answers."""
     usage: RequestUsage = field(default_factory=RequestUsage)
     """Usage for this request."""
+    provider_response_id: str | None = None
+    """The backend's identifier for this request, if it returned one.
+
+    Recorded as `gen_ai.response.id` on the request's `decide` span. It is not copied to the
+    `ModelResponse`, which can be built from two Decisions requests.
+    """
+
+
+def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
+    """A question or answer in the Decisions protocol's JSON shape: `type` first, and unset fields left out.
+
+    What a `decide` span records, so it reads as what was sent and received.
+    """
+    fields = asdict(value)
+    wire: dict[str, Any] = {'type': fields.pop('type')}
+    for name, item in fields.items():
+        if isinstance(value, NoulQuestion) and name == 'criteria' and item is not None:
+            # Either side of a yes/no can be left undescribed, and is then left out, like the question's own fields.
+            item = {outcome: meaning for outcome, meaning in item.items() if meaning is not None}
+        if item is not None:
+            wire[name] = item
+    return wire
 
 
 _UNSUPPORTED_FIELD_HINT = (
@@ -343,6 +368,31 @@ class DecisionModel(Model[InterfaceClient]):
         """
         raise NotImplementedError()
 
+    async def _decide(
+        self, request: DecisionRequest, model_settings: DecisionModelSettings, *, route: str | None = None
+    ) -> DecisionResponse:
+        """Send one request through `decide()`, in a `decide` span when an instrumented request is open.
+
+        `route` is the tool or output route whose fields this request fills, when a previous request picked it.
+        """
+        policy = open_request_policy()
+        if policy is None:
+            return await self.decide(request, model_settings)
+        include_content = policy.include_content
+        with (
+            policy.tracer.start_as_current_span(
+                f'decide {self.model_name}',
+                attributes=_decide_span_attributes(self, request, model_settings, route, include_content),
+                kind=SpanKind.CLIENT,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span,
+            record_uncaught_errors(span, include_content=include_content),
+        ):
+            response = await self.decide(request, model_settings)
+            span.set_attributes(_decide_response_attributes(response, include_content))
+        return response
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -376,8 +426,8 @@ class DecisionModel(Model[InterfaceClient]):
         settings = cast(DecisionModelSettings, model_settings or {})
         # Both bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding
         # out from a rejected answer would mean paying for the request that carried the prompt and history.
-        threshold = _threshold(settings, 'decision_tool_call_threshold', 0.6)
-        boolean_threshold = _threshold(settings, 'decision_boolean_threshold', 0.5)
+        threshold = _threshold(settings, 'decision_tool_call_threshold', _DEFAULT_TOOL_CALL_THRESHOLD)
+        boolean_threshold = _threshold(settings, 'decision_boolean_threshold', _DEFAULT_BOOLEAN_THRESHOLD)
         limits = _Limits(choice_options=self.max_choice_options, score_levels=self.max_score_levels)
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
@@ -397,7 +447,7 @@ class DecisionModel(Model[InterfaceClient]):
         ask = _Ask.about(output_tool, instructions, limits) if output_tool else _Ask.nothing()
         tool_key = _tool_question(ask.questions, output_tools, tools, instructions, limits)
 
-        response = await self.decide(DecisionRequest(state=state, questions=ask.questions), settings)
+        response = await self._decide(DecisionRequest(state=state, questions=ask.questions), settings)
         response_usage = response.usage
         args, provider_details = ask.answers(response, boolean_threshold)
         parts: list[ModelResponsePart] = []
@@ -466,7 +516,9 @@ class DecisionModel(Model[InterfaceClient]):
             raise ToolCallProposed(self.model_name, tool.name, probability) from None
 
         try:
-            response = await self.decide(DecisionRequest(state=state, questions=ask.questions), settings)
+            response = await self._decide(
+                DecisionRequest(state=state, questions=ask.questions), settings, route=tool.name
+            )
             args, provider_details = ask.answers(response, boolean_threshold)
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
@@ -567,6 +619,75 @@ class DecisionStreamedResponse(StreamedResponse):
     @property
     def timestamp(self) -> datetime:
         return self._response.timestamp
+
+
+_DEFAULT_TOOL_CALL_THRESHOLD = 0.6
+_DEFAULT_BOOLEAN_THRESHOLD = 0.5
+
+
+def _decide_span_attributes(
+    model: DecisionModel[Any],
+    request: DecisionRequest,
+    settings: DecisionModelSettings,
+    route: str | None,
+    include_content: bool,
+) -> dict[str, AttributeValue]:
+    """A `decide` span's attributes from the request, before it is sent.
+
+    The questions are always recorded by type, keyed like the answers, so a trace shows what kind of decision was
+    asked even without content; their instructions and criteria are the user's words, and need `include_content`.
+    """
+    questions = {
+        name: _wire(question) if include_content else {'type': question.type}
+        for name, question in request.questions.items()
+    }
+    thresholds = {
+        'boolean': _threshold(settings, 'decision_boolean_threshold', _DEFAULT_BOOLEAN_THRESHOLD),
+        'tool_call': _threshold(settings, 'decision_tool_call_threshold', _DEFAULT_TOOL_CALL_THRESHOLD),
+    }
+    attributes: dict[str, AttributeValue] = {
+        'gen_ai.operation.name': 'decide',
+        **model_attributes(model),
+        'pydantic_ai.decision.questions': safe_to_json(questions).decode(),
+        'pydantic_ai.decision.thresholds': safe_to_json(thresholds).decode(),
+    }
+    json_attributes = ['pydantic_ai.decision.questions', 'pydantic_ai.decision.thresholds']
+    if route is not None:
+        attributes['pydantic_ai.decision.route'] = route
+    if include_content:
+        # The state is text or JSON, as it is on the wire, and only JSON is declared as such.
+        if isinstance(request.state, str):
+            attributes['pydantic_ai.decision.state'] = request.state
+        else:
+            attributes['pydantic_ai.decision.state'] = safe_to_json(request.state).decode()
+            json_attributes.append('pydantic_ai.decision.state')
+        # Set once the response is in, and declared here with the rest.
+        json_attributes.append('pydantic_ai.decision.answers')
+    attributes['logfire.json_schema'] = safe_to_json(
+        {'type': 'object', 'properties': {name: {'type': 'object'} for name in json_attributes}}
+    ).decode()
+    return attributes
+
+
+def _decide_response_attributes(response: DecisionResponse, include_content: bool) -> dict[str, AttributeValue]:
+    """A `decide` span's attributes from the response.
+
+    Usage is this request's alone, and deliberately not `gen_ai.usage.*`: the `chat` span above reports the sum of its
+    requests there, and a backend that adds up usage across spans would count it twice. The answers can quote the
+    state, a picked option being the user's own text, so they are content.
+    """
+    attributes: dict[str, AttributeValue] = {
+        'gen_ai.response.model': response.model_name,
+        'pydantic_ai.decision.usage.input_tokens': response.usage.input_tokens,
+        'pydantic_ai.decision.usage.output_tokens': response.usage.output_tokens,
+    }
+    if response.provider_response_id is not None:
+        attributes['gen_ai.response.id'] = response.provider_response_id
+    if include_content:
+        attributes['pydantic_ai.decision.answers'] = safe_to_json(
+            {name: _wire(answer) for name, answer in response.answers.items()}
+        ).decode()
+    return attributes
 
 
 def _threshold(settings: DecisionModelSettings, name: str, default: float) -> float:

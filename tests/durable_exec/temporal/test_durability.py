@@ -167,6 +167,7 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsInt, IsList, IsStr
+    from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -4660,3 +4661,66 @@ async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
     assert output == snapshot('the registered function ran')
     # The model only ever saw the renamed tool, in both steps.
     assert _renamed_tool_names == snapshot([['exposed_tool'], ['exposed_tool']])
+
+
+decide_durable_agent = Agent(
+    ShipItDecisionModel(),
+    output_type=ShipIt,
+    name='durability_decide_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+decide_durable_agent_without_content = Agent(
+    ShipItDecisionModel(),
+    output_type=ShipIt,
+    name='durability_decide_agent_without_content',
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        Instrumentation(settings=InstrumentationSettings(include_content=False)),
+    ],
+)
+
+
+@workflow.defn
+class DecideDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, include_content: bool) -> ShipIt:
+        agent = decide_durable_agent if include_content else decide_durable_agent_without_content
+        result = await agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_durability_decide_span_in_activity(
+    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire, include_content: bool
+):
+    """A decision model's `decide` span lands inside the model activity, under the workflow's `chat` span.
+
+    The context variable the `chat` span sets its policy in does not cross into the activity, so the unit rebuilds
+    it from the agent's own instrumentation: the one `Agent.instrument_all()` set up (by `LogfirePlugin`), or an
+    `Instrumentation` capability on the agent, which the run lets win and so does the activity.
+    """
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[DecideDurableAgentWorkflow],
+        plugins=[AgentPlugin(decide_durable_agent), AgentPlugin(decide_durable_agent_without_content)],
+    ):
+        output = await client_with_logfire.execute_workflow(
+            DecideDurableAgentWorkflow.run,
+            args=['The migration is reviewed and the tests pass.', include_content],
+            id=f'{DecideDurableAgentWorkflow.__name__}_{include_content}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == ShipIt(ship=True)
+
+    lineage, attributes = decide_span_lineage(capfire.exporter.exported_spans_as_dict())
+    agent_name = 'durability_decide_agent' if include_content else 'durability_decide_agent_without_content'
+    assert lineage[:4] == [
+        f'RunActivity:agent__{agent_name}__model_request',
+        f'StartActivity:agent__{agent_name}__model_request',
+        'chat ship-it',
+        f'invoke_agent {agent_name}',
+    ]
+    assert ('pydantic_ai.decision.state' in attributes) is include_content
+    assert ('pydantic_ai.decision.answers' in attributes) is include_content

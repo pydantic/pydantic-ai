@@ -1,0 +1,57 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '361'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        priority:
+          criteria:
+            low: null
+            normal: null
+            urgent: null
+          instructions:
+            field: priority
+            goal: Triage an incoming support ticket.
+            question: How quickly does this ticket need a response?
+          type: choice
+      state: Could you update the billing address on my account when you get a chance?
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '224'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d06d1faa7b7c91b00b759eeb9bdd
+    parsed_body:
+      answers:
+        priority:
+          choice: normal
+          confidence: 0.32
+          probabilities:
+            low: 0.45
+            normal: 0.55
+            urgent: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 340
+        output_tokens: 38
+    status:
+      code: 200
+      message: OK
+version: 1
