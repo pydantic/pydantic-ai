@@ -377,6 +377,9 @@ class OpenAILiveConnection(RealtimeConnection):
         self._last_voice = 0.0
         self._delegations: dict[str, _Delegation] = {}
         self._call_delegations: dict[str, str] = {}
+        # Calls a delegation asked for before its backend gave up. The session still runs them and
+        # sends their results; those must go nowhere, not restart a response the backend abandoned.
+        self._abandoned_calls: set[str] = set()
         self._reported_seconds = 0
 
     @property
@@ -428,6 +431,11 @@ class OpenAILiveConnection(RealtimeConnection):
                 "`ToolReturn` cannot be sent. Put what the model needs in the tool's return value."
             )
         delegation_id = self._call_delegations.pop(result.tool_call_id, None)
+        if result.tool_call_id in self._abandoned_calls:
+            # The backend that asked for this call gave up before it was answered. Sending the output
+            # would attach it to nothing, and `response.create` would start a turn nobody asked for.
+            self._abandoned_calls.discard(result.tool_call_id)
+            return
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if delegation is not None:
             delegation.pending_tool_calls.discard(result.tool_call_id)
@@ -554,7 +562,13 @@ class OpenAILiveConnection(RealtimeConnection):
         except ValidationError:
             # An event type this version of the SDK doesn't know is not a reason to end the session.
             return []
-        return self._map_event(event)
+        try:
+            return self._map_event(event)
+        except ValueError as e:
+            # A well-formed event with a payload we can't decode (bad base64 audio, say) costs that
+            # frame, not the call: report it as recoverable and keep reading, as the Realtime
+            # connection does.
+            return [RealtimeSessionErrorEvent(message=f'Failed to parse OpenAI GPT-Live event: {e}', recoverable=True)]
 
     def _map_event(self, event: ServerEvent) -> list[RealtimeCodecEvent]:
         """Translate one Live server event, ignoring the ones the session has no vocabulary for.
@@ -655,6 +669,7 @@ class OpenAILiveConnection(RealtimeConnection):
         if gave_up:
             # Nothing further is coming for this delegation — no continuation, and no answer to any
             # call it had asked for — so it must not hold the clock open waiting for one.
+            self._abandoned_calls.update(delegation.pending_tool_calls)
             delegation.pending_tool_calls.clear()
             delegation.outstanding_responses = 0
         if delegation.outstanding_responses <= 0 and not delegation.pending_tool_calls:

@@ -318,6 +318,20 @@ def test_idle_audio_is_held_back_while_the_user_speaks() -> None:
     assert connection._map_event(_event(silence)) == []  # pyright: ignore[reportPrivateUsage]
 
 
+def test_an_undecodable_audio_frame_is_a_recoverable_error() -> None:
+    """Bad base64 in one frame must not take down the receive loop and, with it, the call."""
+    connection = _connection()
+    events = connection._map_frame(  # pyright: ignore[reportPrivateUsage]
+        json.dumps({'type': 'session.output_audio.delta', 'delta': 'A', 'event_id': 'e'})
+    )
+
+    assert len(events) == 1
+    error = events[0]
+    assert isinstance(error, RealtimeSessionErrorEvent)
+    assert error.recoverable is True
+    assert error.message.startswith('Failed to parse OpenAI GPT-Live event:')
+
+
 def test_output_transcript_closes_the_user_turn() -> None:
     """Live marks neither turn as finished, so the model replying is what ends the user's."""
     connection = _connection()
@@ -453,6 +467,23 @@ def test_a_backend_that_gives_up_releases_the_turn_clock(nested_type: str) -> No
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
     # The clock runs again, so this turn — and every later one — can still end.
     assert connection._silence_timeout() is not None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_result_for_an_abandoned_call_is_not_sent() -> None:
+    """A tool that finishes after its backend gave up must not restart the backend."""
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)  # pragma: no cover
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    connection._map_response_event({'type': 'response.failed'}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+
+    await connection.send(ToolResult('c1', output='too late'))
+
+    assert sent == []
 
 
 async def test_parallel_tool_calls_continue_once_every_result_is_in() -> None:
