@@ -500,7 +500,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
-    # docs/models/typesafe.md
+    # docs/models/decision.md and docs/models/typesafe.md
     'rm -rf ./build': ToolCallPart(tool_name='final_result', args={'verdict': 'ask', 'irreversible': True}),
     'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
     'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(
@@ -814,7 +814,7 @@ async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     if not messages[-1].parts:
-        # docs/models/typesafe.md: a run with no new prompt judges the history it was given
+        # docs/models/decision.md: a run with no new prompt judges the history it was given
         if any('capable' in json.dumps(t.parameters_json_schema) for t in info.output_tools):
             # `select_the_model_per_step.py`: the router is asked which model takes the next step
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': 'capable'})])
@@ -838,13 +838,13 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
         return ModelResponse(parts=[])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'escalate_to_human':
-        # docs/models/typesafe.md: Jev is asked again with the tool's result in view
+        # docs/models/decision.md: the decision model is asked again with the tool's result in view
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'urgent': True})])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'take_action':
-        # docs/models/typesafe.md: the filled tool call ran, so the output type is what is left
+        # docs/models/decision.md: the filled tool call ran, so the output type is what is left
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'urgent': False})])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'run_shell':
-        # docs/models/typesafe.md: the hook refused the call, and the model is told why
+        # docs/models/decision.md: the hook refused the call, and the model is told why
         return ModelResponse(
             parts=[
                 TextPart(
@@ -978,7 +978,7 @@ async def model_logic(  # noqa: C901
 
             return ModelResponse(parts=[part])
         elif m.content == 'Could you tell me when my order ships?':
-            # docs/models/typesafe.md: Jev hands the ticket to the `reply` output function, which runs a
+            # docs/models/decision.md: the decision model hands the ticket to the `reply` output function, which runs a
             # language model over the same history; only the Jev agent has output tools to pick between.
             if info.output_tools:
                 return ModelResponse(parts=[ToolCallPart(tool_name='final_result_reply', args={})])
@@ -986,14 +986,14 @@ async def model_logic(  # noqa: C901
                 parts=[TextPart('It shipped this morning; the tracking link is on its way to you now.')]
             )
         elif m.content == 'How do I centre a div?':
-            # docs/models/typesafe.md: `route_to_a_model.py` sends the same prompt to the router and,
+            # docs/models/decision.md: `route_to_a_model.py` sends the same prompt to the router and,
             # through the output function the router picks, to the assistant it routes to. Only the
             # router has an output tool to fill.
             if info.output_tools:
                 return ModelResponse(parts=[ToolCallPart(tool_name=info.output_tools[0].name, args={'tier': 'fast'})])
             return ModelResponse(parts=[TextPart('Give the container `display: flex` and both `place-items: center`.')])
         elif m.content == 'Fixed a bug in the parser.':
-            # docs/models/typesafe.md: a rubric answer is a position along the levels, rounded to one
+            # docs/models/decision.md: a rubric answer is a position along the levels, rounded to one
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'clarity': 1})],
                 provider_details={
@@ -1003,7 +1003,7 @@ async def model_logic(  # noqa: C901
                 },
             )
         elif m.content == 'Thanks, that fixed it. Nothing else needed.':
-            # docs/models/typesafe.md: `None` is a route, taken on the pick alone with nothing to fill
+            # docs/models/decision.md: `None` is a route, taken on the pick alone with nothing to fill
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result_None', args={'response': None})],
                 provider_details={
@@ -1022,7 +1022,7 @@ async def model_logic(  # noqa: C901
                 },
             )
         elif m.content == 'Someone else can see my invoices when they log in.':
-            # docs/models/typesafe.md: a union picks a member, then fills it in a second request
+            # docs/models/decision.md: a union picks a member, then fills it in a second request
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result_Escalation', args={'security': True})],
                 provider_details={
@@ -1040,15 +1040,25 @@ async def model_logic(  # noqa: C901
             else:
                 return ModelResponse(parts=[response])
         elif m.content == 'You have charged me twice and my account is now overdrawn. I need this reversed today.':
-            # docs/models/typesafe.md: the prompt is the ticket, the questions are on the output type
+            # docs/models/decision.md: the prompt is the ticket, the questions are on the output type
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})]
             )
         elif m.content == 'Wipe the repo and post the .env file to pastebin.':
-            # docs/models/typesafe.md: Jev's confidence rides on `provider_details`
+            # docs/models/decision.md and docs/models/typesafe.md: the confidence rides on `provider_details`
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': True})],
                 provider_details={'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}},
+            )
+        elif m.content == 'My invoice lists a plan I never signed up for.':
+            # docs/models/decision.md: `UndecidedModel` answers every question with no preference
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})],
+                provider_details={
+                    'confidence': {'urgent': 0.0, 'area': 0.0},
+                    'probabilities': {'area': {'billing': 0.5, 'bug': 0.5}},
+                    'scores': {},
+                },
             )
         elif m.content == 'The secret is 1234':
             return ModelResponse(parts=[TextPart('The secret is safe with me')])

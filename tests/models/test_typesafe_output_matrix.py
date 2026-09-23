@@ -123,7 +123,7 @@ def unsupported(field: str, because: str = '') -> str:
 def says_nothing(route: str, *, alone: bool = False) -> str:
     # With one output type left the agent's `instructions` can describe it, so the message offers that too.
     return (
-        f'Jev weighs each route by what it is for, and {route!r} says nothing about itself. '
+        f'A decision model weighs each route by what it is for, and {route!r} says nothing about itself. '
         'Give the output type a docstring that says what filling it does'
         + (', or the agent `instructions`.' if alone else '.')
     )
@@ -132,7 +132,7 @@ def says_nothing(route: str, *, alone: bool = False) -> str:
 def contains_itself(field: str) -> str:
     return (
         f'Output field {field!r} is not supported by this model: a model that contains itself has no end '
-        'to fill, and Jev asks a fixed set of questions. Give the field a type that does not contain itself.'
+        'to fill, and every question is asked up front. Give the field a type that does not contain itself.'
     )
 
 
