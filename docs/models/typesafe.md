@@ -1,3 +1,7 @@
+---
+description: "Run a Pydantic AI agent on Jev from TypeSafe, which answers typed questions about a text with confidence scores instead of writing text, for decision tasks."
+---
+
 # TypeSafe (Jev)
 
 [Jev](https://typesafe.ai) is not a language model. You give it a text and typed questions, and it answers each one with a confidence. It does not write text.

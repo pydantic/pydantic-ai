@@ -1,3 +1,7 @@
+---
+description: "Look up the V2 replacement for every Pydantic AI V1 name in your code: a fast index of renamed and replaced APIs that complements the full Upgrade Guide."
+---
+
 # V1 → V2 Migration Map
 
 A lookup index for upgrading from Pydantic AI V1 to V2: find the V1 name you have in your code, read off the V2 name to replace it with.

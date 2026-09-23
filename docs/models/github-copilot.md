@@ -1,3 +1,7 @@
+---
+description: "Use Anthropic, OpenAI, Google and xAI models from your GitHub Copilot subscription with Pydantic AI, with device login, plan-based model IDs and thinking."
+---
+
 # GitHub Copilot
 
 [GitHub Copilot](https://docs.github.com/en/copilot) serves Anthropic, OpenAI, Google, xAI and MoonshotAI models, metered in AI credits drawn from your Copilot subscription at published per-model token rates. Pydantic AI talks to Copilot's OpenAI-compatible Chat Completions API, which reaches only the ids Copilot exposes there: Claude, Gemini and Kimi ids and `gpt-5.4` at the time of writing, while every xAI Grok id and most other GPT ids are served on the Responses API alone and are out of reach until Pydantic AI speaks it. See [Model ids depend on your plan](#model-ids-depend-on-your-plan) to check yours.

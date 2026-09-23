@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with Temporal, running model requests and tool calls as activities so agents recover from crashes and resume long-running work."
+---
+
 # Durable Execution with Temporal
 
 [Temporal](https://temporal.io) is a popular [durable execution](https://docs.temporal.io/evaluate/understanding-temporal#durable-execution) platform that's natively supported by Pydantic AI.

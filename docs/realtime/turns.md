@@ -1,3 +1,7 @@
+---
+description: "Control turn-taking in Pydantic AI realtime voice sessions with voice activity detection, explicit interruption and manual turn control for push-to-talk apps."
+---
+
 # Turns and interruptions
 
 Realtime providers normally use voice activity detection (VAD) to decide when the user starts and

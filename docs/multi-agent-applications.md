@@ -1,3 +1,7 @@
+---
+description: "Build multi-agent applications with Pydantic AI, from agent delegation through tools and programmatic hand-off to graph-based control flow and deep agents."
+---
+
 # Multi-agent Applications
 
 There are roughly five levels of complexity when building applications with Pydantic AI:

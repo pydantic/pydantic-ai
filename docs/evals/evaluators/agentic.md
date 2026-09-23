@@ -1,3 +1,7 @@
+---
+description: "Grade an agent's trajectory, the sequence and arguments of its tool calls, with deterministic span-based Pydantic Evals evaluators, not just its final output."
+---
+
 # Agentic Evaluators
 
 Deterministic, span-based evaluators that grade an agent's *trajectory* — the sequence and arguments of tool calls — rather than just its final output.

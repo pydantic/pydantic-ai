@@ -1,3 +1,7 @@
+---
+description: "Fix common problems with Pydantic AI realtime voice sessions, from audio and turn-taking issues to connection errors, with links to the underlying behavior."
+---
+
 # Realtime troubleshooting
 
 Below are suggestions on how to fix some common problems with realtime sessions, each linking to

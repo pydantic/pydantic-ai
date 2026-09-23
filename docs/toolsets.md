@@ -1,3 +1,7 @@
+---
+description: "Group tools into reusable Pydantic AI toolsets that you can register in one go, swap at runtime or in tests, and compose to filter, rename or wrap tool calls."
+---
+
 
 # Toolsets
 

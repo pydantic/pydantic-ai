@@ -1,3 +1,7 @@
+---
+description: "Send images, audio, video and documents to a Pydantic AI agent alongside text, by URL or as binary content, on models that support multimodal input."
+---
+
 # Multimodal Input
 
 Alongside text, agents can accept image, audio, video, and document input, as long as the model supports it.

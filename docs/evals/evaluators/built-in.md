@@ -1,3 +1,7 @@
+---
+description: "Use the evaluators that ship with Pydantic Evals: comparison and type checks, performance limits, LLM judges, span-based checks and report evaluators."
+---
+
 # Native Evaluators
 
 Pydantic Evals provides several built-in evaluators for common evaluation tasks.

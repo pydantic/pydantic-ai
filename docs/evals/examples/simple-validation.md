@@ -1,3 +1,7 @@
+---
+description: "A worked Pydantic Evals example that evaluates a simple text transformation function with deterministic checks, from defining cases to reading the report."
+---
+
 # Example: Simple Validation
 
 A proof of concept example of evaluating a simple text transformation function with deterministic checks.

@@ -1,3 +1,7 @@
+---
+description: "Manage the persistent provider connection behind a Pydantic AI realtime session, and recover from drops and provider session limits with a reconnect policy."
+---
+
 # Connection lifecycle
 
 A realtime model uses one persistent provider connection. Your backend owns that session and the

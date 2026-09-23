@@ -1,5 +1,6 @@
 ---
 title: Pydantic Evals
+description: "Test AI systems with Pydantic Evals: grade agent outputs and tool-call trajectories against datasets in code, or evaluate a sample of live production traffic."
 ---
 
 # Pydantic Evals

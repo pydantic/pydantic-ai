@@ -1,3 +1,7 @@
+---
+description: "Record custom metrics and attributes during task execution in Pydantic Evals, and use them in evaluators and reports for richer evaluation insights."
+---
+
 # Metrics & Attributes
 
 Track custom metrics and attributes during task execution for richer evaluation insights.

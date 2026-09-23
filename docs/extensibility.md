@@ -1,3 +1,7 @@
+---
+description: "Extend Pydantic AI with capabilities, custom toolsets, models and agents, publish your own capability packages, and find third-party packages built on them."
+---
+
 
 # Extensibility
 

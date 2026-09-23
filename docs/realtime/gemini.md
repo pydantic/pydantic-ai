@@ -1,3 +1,7 @@
+---
+description: "Connect a Pydantic AI agent to Gemini Live with GoogleRealtimeModel, for spoken conversations with native audio, live images and provider-native tools."
+---
+
 # Google Gemini Live
 
 [`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] connects an agent to Gemini

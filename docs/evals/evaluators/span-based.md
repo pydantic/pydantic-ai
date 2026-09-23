@@ -1,3 +1,7 @@
+---
+description: "Evaluate how an AI system behaved, not only what it returned, by querying the OpenTelemetry spans from a run with span-based evaluators in Pydantic Evals."
+---
+
 # Span-Based Evaluation
 
 Evaluate AI system behavior by analyzing OpenTelemetry spans captured during execution.

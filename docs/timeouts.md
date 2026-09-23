@@ -1,3 +1,7 @@
+---
+description: "Bound how long each step of a Pydantic AI agent run may take, from model requests to tool calls, and end a run from inside a tool when you need to stop early."
+---
+
 # Timeouts
 
 Bounding how long one step inside a run may take, and ending a run from inside a tool, are answered by separate mechanisms with separate failure modes. This page maps them. To stop a run that is already in flight, see [Cancelling a Run](agent.md#cancelling-a-run).

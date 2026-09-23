@@ -1,3 +1,7 @@
+---
+description: "Fix common Pydantic AI errors, including event loop errors in Jupyter notebooks, missing provider API keys, and monitoring the underlying HTTPX requests."
+---
+
 # Troubleshooting
 
 Below are suggestions on how to fix some common errors you might encounter while using Pydantic AI. If the issue you're experiencing is not listed below or addressed in the documentation, please feel free to ask in the [Pydantic Slack](help.md) or create an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).

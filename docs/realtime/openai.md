@@ -1,3 +1,7 @@
+---
+description: "Connect a Pydantic AI agent to OpenAI's speech-to-speech models with OpenAIRealtimeModel: setup, model names, settings, reasoning and browser WebRTC."
+---
+
 # OpenAI Realtime
 
 [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] connects an agent to

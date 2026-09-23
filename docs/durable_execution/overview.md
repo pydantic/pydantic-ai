@@ -1,3 +1,7 @@
+---
+description: "Build durable Pydantic AI agents that survive failures and restarts and handle long-running and human-in-the-loop work, with Temporal, DBOS, Prefect and more."
+---
+
 # Durable Execution
 
 Capability authors can also move custom hook work into engine activities, steps, or tasks with [durable capability operations](../capabilities/custom.md#durable-capability-operations).

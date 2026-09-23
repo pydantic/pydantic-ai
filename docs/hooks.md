@@ -1,3 +1,7 @@
+---
+description: "Intercept and modify a Pydantic AI agent at every stage of a run, from model requests to tool calls and stream events, with decorators or constructor arguments."
+---
+
 
 # Hooks
 

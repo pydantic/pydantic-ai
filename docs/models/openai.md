@@ -1,3 +1,7 @@
+---
+description: "Use OpenAI models with Pydantic AI through the Responses or Chat Completions API, or connect any OpenAI-compatible provider, with reasoning and native tools."
+---
+
 # OpenAI
 
 ## Install

@@ -1,3 +1,7 @@
+---
+description: "Resolve deferred tool calls that need approval or external execution inline during a Pydantic AI run with the HandleDeferredToolCalls capability."
+---
+
 # Handle Deferred Tool Calls
 
 [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] is a [capability](overview.md) that resolves [deferred tool calls](../deferred-tools.md) inline during an agent run. When tools require approval or external execution, the agent normally pauses and returns [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] as output; this capability intercepts those calls, invokes your handler to resolve them, and continues the run automatically:

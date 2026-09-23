@@ -1,3 +1,7 @@
+---
+description: "Construct parallel execution graphs with the pydantic-graph builder API, which interoperates with the original BaseNode-based graph API from Pydantic AI."
+---
+
 # Graph Builder API
 
 The graph builder API provides a powerful builder pattern for constructing parallel execution graphs. The original [`BaseNode`][pydantic_graph.basenode.BaseNode]-based graph API is still available (and interoperable with the builder API) and is documented in the [main graph documentation](../../graph.md).

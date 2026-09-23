@@ -1,3 +1,7 @@
+---
+description: "Use provider-executed native tools with Pydantic AI, such as web search, code execution, image generation and MCP servers, and see which providers support each."
+---
+
 # Native Tools
 
 Native tools are provided and executed by LLM providers, while [common tools](common-tools.md) are custom implementations executed by Pydantic AI.

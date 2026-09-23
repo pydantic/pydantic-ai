@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI example of a data analyst agent that keeps query results in dependencies, so tools can share a DataFrame without sending every row to the model."
+---
+
 # Data Analyst
 
 Sometimes in an agent workflow, the agent does not need to know the exact tool

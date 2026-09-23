@@ -1,3 +1,7 @@
+---
+description: "Pause a Pydantic AI agent run on tool calls that need human approval or external execution, then resume the run once the approvals or results are available."
+---
+
 # Deferred Tools
 
 There are a few scenarios where the model should be able to call a tool that should not or cannot be executed during the same agent run inside the same Python process:

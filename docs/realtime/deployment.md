@@ -1,3 +1,7 @@
+---
+description: "Connect browsers, apps and phone lines to a Pydantic AI realtime voice agent over WebRTC, WebSocket or SIP, keeping provider keys and tools on your server."
+---
+
 # Connecting a frontend
 
 Keep provider keys, tools, and business logic on the server; connect user devices to your backend,

@@ -1,3 +1,7 @@
+---
+description: "Understand the seven kinds of retry in a Pydantic AI agent run, from HTTP and model retries to tool and output validation retries, and what configures each."
+---
+
 # Retries
 
 "Retry" means seven different things in an agent run, at seven different layers, and they don't share budgets. Mixing them up is the usual cause of a run that retries far more (or far less) than expected. This page is the map; each layer links to the page that configures it in detail.

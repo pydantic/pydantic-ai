@@ -1,3 +1,7 @@
+---
+description: "Debug and monitor Pydantic AI agents with Pydantic Logfire or any OpenTelemetry backend, tracing the model requests, tool calls and token usage of every run."
+---
+
 # Pydantic Logfire Debugging and Monitoring
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.

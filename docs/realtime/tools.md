@@ -1,3 +1,7 @@
+---
+description: "Give Pydantic AI realtime voice agents tools that run on your backend, with argument validation, retries, concurrent execution and recorded tool-call messages."
+---
+
 # Tools
 
 [Tools](../tools.md) registered on an agent are offered to the realtime model and execute on your

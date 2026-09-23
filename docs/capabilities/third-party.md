@@ -1,3 +1,7 @@
+---
+description: "Find third-party capabilities that extend Pydantic AI agents, next to the first-party options in Pydantic AI and the Harness, grouped by use case."
+---
+
 # Third-Party Capabilities
 
 [Capabilities](overview.md) are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](../extensibility.md) for the full ecosystem, including [third-party toolsets](../toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.

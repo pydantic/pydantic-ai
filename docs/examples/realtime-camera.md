@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI realtime example that streams microphone audio and camera frames to a speech-to-speech model, then plays and captions its spoken answers."
+---
+
 This camera agent streams microphone audio and one camera frame per second into a
 [realtime session](../realtime/overview.md), then plays and captions the spoken response. Point it at
 objects to ask about them, enable *Watch* for proactive narration, or show it a sketch to redraw.

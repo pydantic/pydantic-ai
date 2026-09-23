@@ -1,3 +1,7 @@
+---
+description: "Turn application-specific model IDs into Pydantic AI Model instances with ResolveModelId, using run dependencies for per-tenant providers or credentials."
+---
+
 # Resolve Model ID
 
 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] is a [capability](overview.md) that turns application-specific model IDs into [`Model`][pydantic_ai.models.Model] instances. The resolver can use run dependencies to look up tenant-specific providers, credentials, or model registries:

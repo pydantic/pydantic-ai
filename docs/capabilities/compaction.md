@@ -1,3 +1,7 @@
+---
+description: "Keep long Pydantic AI conversations within the context window by trimming, clearing or summarizing older messages, natively or with model-agnostic compaction."
+---
+
 # Compaction
 
 As a conversation grows, its message history can approach the model's context window. *Compaction* keeps it in check by shrinking older messages (trimming, clearing, or summarizing them) while preserving recent context and tool-call integrity. Pydantic AI supports this at several levels: [provider-native compaction APIs](#provider-native-compaction), [model-agnostic history editing](#model-agnostic-compaction) you write yourself, and [Pydantic AI Harness](#pydantic-ai-harness)'s menu of ready-made model-agnostic strategies.

@@ -1,3 +1,7 @@
+---
+description: "Synchronize and aggregate results from parallel paths in a pydantic-graph workflow with join nodes and reducers that combine many inputs into one output."
+---
+
 # Joins and Reducers
 
 Join nodes synchronize and aggregate data from parallel execution paths. They use **Reducers** to combine multiple inputs into a single output.

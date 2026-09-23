@@ -1,3 +1,7 @@
+---
+description: "Create, configure and run Pydantic AI agents: instructions, tools, output types, dependencies, model settings, streaming, and iterating over a run step by step."
+---
+
 ## Introduction
 
 Agents are Pydantic AI's primary interface for interacting with LLMs.

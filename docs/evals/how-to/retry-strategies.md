@@ -1,3 +1,7 @@
+---
+description: "Handle transient failures such as rate limits in Pydantic Evals tasks and evaluators with automatic retry configuration, so one flaky call does not fail a run."
+---
+
 # Retry Strategies
 
 Handle transient failures in tasks and evaluators with automatic retry logic.

@@ -1,3 +1,7 @@
+---
+description: "Choose the model for each Pydantic AI run or step from dependencies, message history or usage with the SelectModel capability, without a constructor model."
+---
+
 # Select Model
 
 [`SelectModel`][pydantic_ai.capabilities.SelectModel] is a [capability](overview.md) that chooses a model from run dependencies, message history, usage, or the current step. The selector is first evaluated during run setup, so the agent does not need a constructor model:

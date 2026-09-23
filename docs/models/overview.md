@@ -1,3 +1,7 @@
+---
+description: "Pydantic AI is model-agnostic: see the built-in model providers, OpenAI-compatible providers, and how to use fallback models or implement your own model."
+---
+
 # Model Providers
 
 Pydantic AI is model-agnostic and has built-in support for multiple model providers:

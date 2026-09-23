@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent function tools to take actions and fetch context, with arguments validated from type hints and docstrings used as tool descriptions."
+---
+
 # Function Tools
 
 Function tools provide a mechanism for models to perform actions and retrieve extra information to help them generate a response.

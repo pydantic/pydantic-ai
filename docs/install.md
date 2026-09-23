@@ -1,3 +1,7 @@
+---
+description: "Install Pydantic AI from PyPI, or install pydantic-ai-slim with only the optional dependency groups for the model providers and integrations you actually use."
+---
+
 # Installation
 
 Pydantic AI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pydantic-ai/) so installation is as simple as:

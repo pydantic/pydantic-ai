@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with Restate, the lightweight durable execution runtime, using the Pydantic AI integration in the Restate Python SDK."
+---
+
 # Durable Execution with Restate
 
 [Restate](https://restate.dev) is a lightweight durable execution runtime with first-class support for AI agents. The Pydantic AI integration is provided via the [Restate Python SDK](https://github.com/restatedev/sdk-python/tree/main/python/restate/ext/pydantic).

@@ -1,3 +1,7 @@
+---
+description: "Enable model thinking and reasoning across providers with the Pydantic AI Thinking capability, using unified settings or each provider's own thinking options."
+---
+
 # Thinking
 
 Thinking (or reasoning) is the process by which a model works through a problem step-by-step before

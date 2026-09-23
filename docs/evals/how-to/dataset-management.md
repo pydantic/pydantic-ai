@@ -1,3 +1,7 @@
+---
+description: "Create, save, load and generate Pydantic Evals datasets, including generating test cases with an LLM, so your evaluation suite grows with your application."
+---
+
 # Dataset Management
 
 Create, save, load, and generate evaluation datasets.

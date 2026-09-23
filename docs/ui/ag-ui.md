@@ -1,3 +1,7 @@
+---
+description: "Serve Pydantic AI agents to frontends over the Agent-User Interaction (AG-UI) protocol, with streamed events, frontend tools and shared state."
+---
+
 # Agent-User Interaction (AG-UI) Protocol
 
 The [Agent-User Interaction (AG-UI) Protocol](https://docs.ag-ui.com/introduction) is an open standard introduced by the

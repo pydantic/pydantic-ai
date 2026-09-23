@@ -1,3 +1,7 @@
+---
+description: "How to contribute to Pydantic AI: how maintainers prioritize issues and PRs, what to expect in review, setting up your environment, and running tests."
+---
+
 We'd love you to contribute to Pydantic AI!
 
 ## How we work — the short version {#how-we-work-the-short-version}

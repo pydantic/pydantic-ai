@@ -1,3 +1,7 @@
+---
+description: "Choose how to persist Pydantic AI conversations: store message history in your database, use the Harness for persistence and memory, or use durable execution."
+---
+
 # Storage
 
 "Persistence", "memory", "sessions": several different problems go by those names, and they have different answers. Start here:

@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI example of a weather agent with multiple tools the model calls in turn to answer a question, plus a Gradio UI to chat with it."
+---
+
 Example of Pydantic AI with multiple tools which the LLM needs to call in turn to answer a question.
 
 Demonstrates:

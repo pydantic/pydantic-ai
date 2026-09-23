@@ -1,3 +1,7 @@
+---
+description: "Send live audio, text and images into a Pydantic AI realtime session, and use its separate audio playback and transcript views for speakers and captions."
+---
+
 # Audio, images, and transcripts
 
 A realtime session accepts live audio, text, and supported images while exposing separate views for

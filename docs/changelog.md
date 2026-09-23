@@ -1,3 +1,7 @@
+---
+description: "Upgrade to Pydantic AI V2: what changed since V1, how to install it, and the breaking changes for each version with the recommended upgrade path for your code."
+---
+
 # Upgrade Guide
 
 In September 2025, Pydantic AI reached V1 and committed to API stability: no changes that break your code until V2. V2 is now available, collecting the breaking and behavior changes that stability guarantee didn't allow. This guide is the canonical place to learn what's in V2, how to install it, and how to upgrade; for the guarantees behind these version numbers, see the [Version Policy](version-policy.md).

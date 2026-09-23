@@ -1,3 +1,7 @@
+---
+description: "Connect a Pydantic AI agent to MCP servers with the MCP capability, which runs servers locally by default or uses the provider's native MCP support."
+---
+
 # MCP
 
 [`MCP`][pydantic_ai.capabilities.MCP] is a [provider-adaptive capability](overview.md#provider-adaptive-tools) and the primary entry point for [MCP](../mcp/overview.md) in Pydantic AI. It runs the MCP server locally by default — keeping credentials, hooks, and tracing under your control — and supports both URL-based servers and direct client / toolset / transport inputs.

@@ -1,3 +1,7 @@
+---
+description: "Run Pydantic AI realtime voice agents on Azure with AzureRealtimeModel, using the Azure OpenAI GA protocol by default or Azure AI Voice Live."
+---
+
 # Azure Realtime
 
 [`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] connects to Azure's realtime

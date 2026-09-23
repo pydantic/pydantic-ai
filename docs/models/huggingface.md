@@ -1,3 +1,7 @@
+---
+description: "Use open source models through Hugging Face Inference Providers with Pydantic AI, including DeepSeek R1, with a custom provider or Hugging Face client."
+---
+
 # Hugging Face
 
 [Hugging Face](https://huggingface.co/) is an AI platform with all major open source models, datasets, MCPs, and demos. You can use [Inference Providers](https://huggingface.co/docs/inference-providers) to run open source models like DeepSeek R1 on scalable serverless infrastructure.

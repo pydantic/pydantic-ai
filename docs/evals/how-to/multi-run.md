@@ -1,3 +1,7 @@
+---
+description: "Run each Pydantic Evals case multiple times to measure the variability of a non-deterministic system and get more reliable aggregate scores."
+---
+
 # Multi-Run Evaluation
 
 Run each case multiple times to measure variability and get more reliable aggregate results.

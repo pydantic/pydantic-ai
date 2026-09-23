@@ -1,3 +1,7 @@
+---
+description: "Use Amazon Bedrock models with Pydantic AI through the Bedrock Converse API or the OpenAI-compatible Mantle API, with AWS credentials and model settings."
+---
+
 # Bedrock
 
 [Amazon Bedrock](https://aws.amazon.com/bedrock/) exposes foundation models from many providers, and Pydantic AI reaches it through two separate AWS APIs. Pick the route by model prefix:

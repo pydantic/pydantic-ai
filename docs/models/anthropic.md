@@ -1,3 +1,7 @@
+---
+description: "Use Anthropic Claude models with Pydantic AI, including prompt caching, task budgets and compaction, directly or via AWS Bedrock, Google Cloud or Foundry."
+---
+
 # Anthropic
 
 ## Install

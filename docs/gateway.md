@@ -1,6 +1,7 @@
 ---
 title: Pydantic AI Gateway
 status: new
+description: "Reach many AI providers with one key through Pydantic AI Gateway, managed in Pydantic Logfire, with OpenTelemetry tracing, cost monitoring and failover."
 ---
 
 # Pydantic AI Gateway

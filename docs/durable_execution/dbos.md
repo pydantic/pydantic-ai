@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with DBOS, checkpointing workflow state in a database so runs resume from the last completed step after a failure or restart."
+---
+
 # Durable Execution with DBOS
 
 [DBOS](https://www.dbos.dev/) is a lightweight [durable execution](https://docs.dbos.dev/architecture) library natively integrated with Pydantic AI.

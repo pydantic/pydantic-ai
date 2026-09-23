@@ -1,3 +1,7 @@
+---
+description: "Use Pydantic AI capabilities and hooks in a realtime voice session, and see how their lifecycle maps onto one persistent provider connection."
+---
+
 # Capabilities and hooks
 
 A [capability](../capabilities/overview.md) attached to the agent or passed to

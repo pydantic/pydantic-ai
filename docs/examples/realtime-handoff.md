@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI example that lets a realtime voice model run the conversation, then hands its message history to a regular agent to extract typed output."
+---
+
 Realtime speech-to-speech models are great conversationalists, but they don't produce structured
 output. This example shows the robust pattern: let the realtime model run the live conversation,
 then hand its [message history](../message-history.md) to a normal

@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI example that generates SQL from user input, with structured output and an output validator that checks each query with EXPLAIN on PostgreSQL."
+---
+
 # SQL Generation
 
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.

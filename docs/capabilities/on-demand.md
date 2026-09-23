@@ -1,3 +1,7 @@
+---
+description: "Load Pydantic AI capabilities on demand with defer_loading, so the model sees a short catalog entry and pulls in instructions and tools only when needed."
+---
+
 # On-Demand Capabilities
 
 A capability is a bundle of instructions and/or tools, optionally with settings and hooks. A multi-workflow agent normally sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks for the whole run — even though most requests need just one workflow. That cost grows with each workflow you add: more input tokens, and worse tool selection once the visible tool set passes the ~30–50-tool mark where models start picking the wrong one (the same pressure behind [tool search](../tools-advanced.md#tool-search)).

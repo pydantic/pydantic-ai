@@ -1,3 +1,7 @@
+---
+description: "Assess subjective qualities of outputs against a rubric with the Pydantic Evals LLMJudge evaluator, and learn when an LLM judge is the right tool."
+---
+
 # LLM Judge Deep Dive
 
 The [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] evaluator uses an LLM to assess subjective qualities of outputs based on a rubric.

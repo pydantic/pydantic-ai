@@ -1,3 +1,7 @@
+---
+description: "Migrate an agent application from another framework to Pydantic AI with the bundled migration skills, porting one working path at a time with your coding agent."
+---
+
 # Migrate to Pydantic AI
 
 If you have an application built with another agent framework, your coding agent can use a migration skill bundled with Pydantic AI. Each skill helps the agent understand the source framework, choose the right Pydantic AI components, and port one working application path at a time.
