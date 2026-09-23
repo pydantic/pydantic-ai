@@ -739,6 +739,7 @@ def _answers(
     properties: dict[str, dict[str, Any]],
     questions: dict[str, DecisionQuestion],
     boolean_threshold: float,
+    defaulted: frozenset[str],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The output's arguments and `provider_details` from the model's answers to the field questions."""
     args: dict[str, Any] = {}
@@ -781,7 +782,7 @@ def _answers(
             elif 'default' in properties[name]:
                 # "None of these" is the absence of an answer, and a default says what to use when there is
                 # none, so the field is left out for Pydantic to fill in. The model it belongs to is still put
-                # in place, to apply the default in.
+                # in place, to apply the default in, unless that model has a default of its own to apply instead.
                 _slot(args, name)
             else:
                 _set(args, name, None)
@@ -797,6 +798,7 @@ def _answers(
             scores[name] = answer.score
         else:
             raise UnexpectedModelBehavior(f'Unexpected answer from the model for output field {name!r}: {answer!r}')
+    _leave_out_unanswered(args, properties, defaulted)
     return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
 
 
@@ -963,11 +965,12 @@ def _properties(schema: dict[str, Any]) -> dict[str, Any]:
     return schema.get('properties', {})
 
 
-def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
+def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], frozenset[str]]:
     """The output schema's fields, flattened, with `$ref`s to `$defs` (how Pydantic renders an `Enum` or a model) resolved.
 
     A nested model is its fields, named `outer.inner`: each question is about one value, and a field of a field is
-    still one value. The answers are nested back into place by `_set`.
+    still one value. The answers are nested back into place by `_set`. The nested models with a default in the
+    schema come back alongside, by the same names, for `_leave_out_unanswered`.
     """
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
@@ -1004,18 +1007,42 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
                         'itself has no end to fill, and every question is asked up front. Give the field a type '
                         'that does not contain itself.'
                     )
+                if 'default' in prop:
+                    defaulted.add(f'{prefix}{name}')
                 fields.update(flatten(prop['properties'], f'{prefix}{name}.', seen | {ref} if ref else seen))
             else:
                 fields[f'{prefix}{name}'] = prop
         return fields
 
-    return flatten(_properties(schema), '', frozenset())
+    defaulted: set[str] = set()
+    return flatten(_properties(schema), '', frozenset()), frozenset(defaulted)
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
     """Put a flattened field's answer back where it belongs, `outer.inner` under `outer`."""
     parent, leaf = _slot(args, name)
     parent[leaf] = value
+
+
+def _leave_out_unanswered(
+    args: dict[str, Any], properties: dict[str, dict[str, Any]], defaulted: frozenset[str], prefix: str = ''
+) -> bool:
+    """Leave out a nested model with a default when nothing under it was answered, and say if `args` holds an answer.
+
+    Every field under such a model was left out for its own default to apply, and the model's default says what to
+    use when there is nothing to fill it with. An empty model put in place would apply the defaults inside it
+    instead. One without a default of its own stays, empty, for those inner defaults to apply in.
+    """
+    answered = False
+    for name, value in list(args.items()):
+        path = f'{prefix}{name}'
+        if path in properties:
+            answered = True
+        elif _leave_out_unanswered(value, properties, defaulted, f'{path}.'):
+            answered = True
+        elif path in defaulted:
+            del args[name]
+    return answered
 
 
 def _slot(args: dict[str, Any], name: str) -> tuple[dict[str, Any], str]:
@@ -1234,6 +1261,7 @@ class _Ask:
 
     properties: dict[str, dict[str, Any]]
     questions: dict[str, DecisionQuestion]
+    defaulted: frozenset[str]
 
     @classmethod
     def about(cls, tool: ToolDefinition, instructions: str | None, limits: _Limits, *, picked: bool = False) -> _Ask:
@@ -1242,16 +1270,16 @@ class _Ask:
         `picked` is for the second request of a turn that chose a route first: those questions name the
         route they belong to, which the first request's questions have no reason to.
         """
-        properties = _fields(tool)
-        return cls(properties, _questions(properties, tool, instructions, limits, picked=picked))
+        properties, defaulted = _fields(tool)
+        return cls(properties, _questions(properties, tool, instructions, limits, picked=picked), defaulted)
 
     @classmethod
     def nothing(cls) -> _Ask:
         """No fields to fill: a turn that only picks a route still reports the same empty details."""
-        return cls({}, {})
+        return cls({}, {}, frozenset())
 
     def answers(self, response: DecisionResponse, boolean_threshold: float) -> tuple[dict[str, Any], dict[str, Any]]:
-        return _answers(response.answers, self.properties, self.questions, boolean_threshold)
+        return _answers(response.answers, self.properties, self.questions, boolean_threshold, self.defaulted)
 
 
 def _questions(
