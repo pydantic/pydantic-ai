@@ -13,6 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import replace
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
 from weakref import ReferenceType, ref
@@ -222,6 +223,21 @@ class _TypedResultCodec(ResultCodec[_T]):
 
     def load(self, payload: object) -> _T:
         return self._load(payload)
+
+
+def _with_request_content_policy(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+    """The run context to hand a model unit, with content capture off if the open `chat` span has it off.
+
+    `ctx.trace_include_content` is resolved from the agent's instrumentation when the run starts, but an
+    `Instrumentation` capability, on the agent or passed to one run, can open `chat` with a different policy. A unit
+    that runs outside this context (a Temporal activity) rebuilds the policy for the spans opened inside the model's
+    request from `trace_include_content`, so it is narrowed here, where the `chat` span's own policy is still in reach.
+    It is only ever narrowed: a policy that includes content leaves the run's answer as it is.
+    """
+    policy = open_request_policy()
+    if policy is None or policy.include_content or not ctx.trace_include_content:
+        return ctx
+    return replace(ctx, trace_include_content=False)
 
 
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
@@ -1403,7 +1419,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         messages=request.messages,
                         model_settings=request.model_settings,
                         model_request_parameters=request.model_request_parameters,
-                        run_context=ctx,
+                        run_context=_with_request_content_policy(ctx),
                     )
                 )
 
@@ -1414,7 +1430,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         messages=request.messages,
                         model_settings=request.model_settings,
                         model_request_parameters=request.model_request_parameters,
-                        run_context=ctx,
+                        run_context=_with_request_content_policy(ctx),
                     )
                 )
                 return await self._load_streamed_activity_result(result, request.model_request_parameters)
