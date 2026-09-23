@@ -739,7 +739,7 @@ class InvalidRequest(BaseModel):
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
     'google:gemini-3-flash-preview',
-    output_type=Output,  # type: ignore
+    output_type=Output,
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
 )

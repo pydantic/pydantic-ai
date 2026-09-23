@@ -914,7 +914,7 @@ The pick is reported in `provider_details['tool']`, with the probability of ever
 
 `None` is a route like any other. Include it in the union and Jev is offered one more option, "None of these.", for the text that calls for nothing at all:
 
-```python {title="union_none.py" typecheck="skip - None in an output_type list type-checks once PR 8641 lands"}
+```python {title="union_none.py"}
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
