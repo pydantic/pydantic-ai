@@ -1359,6 +1359,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 End(data=FinalResult(output='The capital of France is Paris.')),
             ]
             '''
+            assert agent_run.result is not None
             print(agent_run.result.output)
             #> The capital of France is Paris.
         ```
@@ -2533,7 +2534,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
 
         @agent.on_event(IndexRebuiltEvent)
-        async def republish(ctx: RunContext[None], event: IndexRebuiltEvent) -> None:
+        async def republish(ctx: RunContext, event: IndexRebuiltEvent) -> None:
             await ctx.emit(SearchReadyEvent(documents=event.documents))
         ```
         """
@@ -2612,7 +2613,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return ctx.deps + x
 
         @agent.tool(retries=2)
-        async def spam(ctx: RunContext[str], y: float) -> float:
+        async def spam(ctx: RunContext[int], y: float) -> float:
             return ctx.deps + y
 
         result = agent.run_sync('foobar', deps=1)
@@ -2741,19 +2742,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent, RunContext
+        from pydantic_ai import Agent
 
         agent = Agent('test')
 
-        @agent.tool
-        def foobar(ctx: RunContext[int]) -> int:
+        @agent.tool_plain
+        def foobar() -> int:
             return 123
 
-        @agent.tool(retries=2)
-        async def spam(ctx: RunContext[str]) -> float:
+        @agent.tool_plain(retries=2)
+        async def spam() -> float:
             return 3.14
 
-        result = agent.run_sync('foobar', deps=1)
+        result = agent.run_sync('foobar')
         print(result.output)
         #> {"foobar":123,"spam":3.14}
         ```

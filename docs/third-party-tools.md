@@ -14,7 +14,7 @@ You will need to install the `langchain-community` package and any others requir
 
 Here is how you can use the LangChain `DuckDuckGoSearchRun` tool, which requires the `ddgs` package:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - langchain-community is not installed in the test environment"}
 from langchain_community.tools import DuckDuckGoSearchRun
 
 from pydantic_ai import Agent
@@ -37,7 +37,7 @@ print(result.output)
 
 If you'd like to use multiple LangChain tools or a LangChain [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits), you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] [toolset](toolsets.md) which takes a list of LangChain tools:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - langchain-community is not installed in the test environment"}
 from langchain_community.agent_toolkits import SlackToolkit
 
 from pydantic_ai import Agent

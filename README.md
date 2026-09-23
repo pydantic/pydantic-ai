@@ -103,7 +103,7 @@ agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
 
 
 @agent.tool
-def recent_reviews(ctx: RunContext[None], product: str) -> list[str]:
+def recent_reviews(ctx: RunContext, product: str) -> list[str]:
     """Fetch recent review snippets for a product."""
     return ['The new release fixed everything I complained about!']
 
