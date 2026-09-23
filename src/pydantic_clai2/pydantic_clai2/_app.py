@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from anyio import create_task_group
 from prompt_toolkit import PromptSession
@@ -20,12 +20,11 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from rich.console import Console
 
-from . import openrouter, theme, vllm
+from . import theme
 from ._branding import print_banner
 from ._completion_adapter import COMPLETION_STYLE, PromptCompleter
 from ._rendering import StreamRenderer
 from ._session import Session
-from .auth import CodexAuth
 from .capability_catalog import HARNESS_PLUGINS
 from .command_context import CommandContext, CommandProvider
 from .commands import Command, Commands, config_command, config_completions, is_command_input, set_completions
@@ -37,7 +36,6 @@ from .input_history import input_history
 from .interrupts import Interrupts
 from .key_menu import keys_command
 from .live_prompt import LivePrompt
-from .model_menu import model_settings_command, open_add_model_menu
 from .model_picker import model_command, model_completions
 from .plugin_loader import PluginError, PluginLoader
 from .plugin_menu import open_plugins_menu
@@ -53,6 +51,9 @@ from .status import Status, StatusLine
 from .theme_picker import theme_command
 from .tool_output import terminal_text
 from .usage_report import cost_line, session_usage
+
+if TYPE_CHECKING:
+    from .auth import CodexAuth
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -187,6 +188,35 @@ async def chat(
                 fresh = True
 
 
+@dataclass(kw_only=True)
+class _ModelResolver:
+    """Load provider integrations on demand, retaining Codex authentication per conversation."""
+
+    console: Console
+    _auth: 'CodexAuth | None' = None
+
+    def codex_auth(self) -> 'CodexAuth':
+        if self._auth is None:
+            from .auth import CodexAuth  # noqa: PLC0415
+
+            self._auth = CodexAuth(self.console)
+        return self._auth
+
+    async def login(self, args: list[str]) -> str:
+        return await self.codex_auth().login(args)
+
+    async def resolve(self, name: str) -> Model | str:
+        if name.startswith('openrouter:'):
+            from . import openrouter  # noqa: PLC0415
+
+            return await asyncio.to_thread(openrouter.model, name)
+        if name.startswith('vllm:'):
+            from . import vllm  # noqa: PLC0415
+
+            return await asyncio.to_thread(vllm.model, name)
+        return self.codex_auth().model(name) if name.startswith('openai-codex:') else name
+
+
 def create_shell(
     agent: AbstractAgent[DepsT, OutputT],
     *,
@@ -219,16 +249,8 @@ def create_shell(
         session.summary = summary
     session.model = settings.model
     session.tool_retries = settings.tool_retries
-    auth = CodexAuth(console)
-
-    async def resolve_model(name: str) -> Model | str:
-        if name.startswith('openrouter:'):
-            return await asyncio.to_thread(openrouter.model, name)
-        if name.startswith('vllm:'):
-            return await asyncio.to_thread(vllm.model, name)
-        return auth.model(name) if name.startswith('openai-codex:') else name
-
-    session.resolve_model = resolve_model
+    models = _ModelResolver(console=console)
+    session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
         console.print('Add a model with /add_model.', style=theme.color(theme.INFO))
 
@@ -250,6 +272,18 @@ def create_shell(
         settings=settings, store=store, clear_history=session.clear, apply_setting=apply_setting, project=project
     )
 
+    async def add_model(args: list[str]) -> str:
+        if args:
+            return context.set_setting(['model', *args])
+        from .model_menu import open_add_model_menu  # noqa: PLC0415
+
+        return await open_add_model_menu(context)
+
+    async def model_settings(args: list[str]) -> str:
+        from .model_menu import model_settings_command  # noqa: PLC0415
+
+        return await model_settings_command(context, args)
+
     sessions = Sessions(session=session, store=conversations, context=context)
     commands = Commands()
     commands.register(Command(name='resume', description='Browse or restore a saved session', handler=sessions.command))
@@ -258,7 +292,7 @@ def create_shell(
         Command(
             name='login',
             description='Connect your ChatGPT/Codex subscription',
-            handler=auth.login,
+            handler=models.login,
             complete=lambda _: ('openai-codex',),
         )
     )
@@ -290,7 +324,7 @@ def create_shell(
         Command(
             name='add_model',
             description='Add and use a model, or browse providers and model settings',
-            handler=lambda args: context.set_setting(['model', *args]) if args else open_add_model_menu(context),
+            handler=add_model,
             complete=lambda args: set_completions(['model', *args]) if len(args) <= 1 else (),
         )
     )
@@ -298,7 +332,7 @@ def create_shell(
         Command(
             name='model_settings',
             description='Choose an added model to configure, or edit a named model',
-            handler=lambda args: model_settings_command(context, args),
+            handler=model_settings,
             complete=lambda args: model_completions(context, args),
         )
     )

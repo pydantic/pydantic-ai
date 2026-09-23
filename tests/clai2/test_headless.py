@@ -129,7 +129,7 @@ def test_cli_alias_and_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
             raise KeyboardInterrupt
         return 0
 
-    monkeypatch.setattr(_cli, 'run_headless', run_headless)
+    monkeypatch.setattr(headless, 'run_headless', run_headless)
     with pytest.raises(SystemExit) as error:
         _cli.run()
     assert error.value.code == (130 if interrupt else 0)

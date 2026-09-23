@@ -9,7 +9,6 @@ from ._rendering import markdown_style
 from .command_context import CommandContext
 from .field_menu import TERMINAL, Runners
 from .menu_worker import menu_key, run_worker
-from .model_menu import open_add_model_menu
 
 
 class ModelPickerAction(Enum):
@@ -58,6 +57,8 @@ async def model_command(context: CommandContext, args: list[str], *, runners: Ru
         if result.cancelled or result.item is None:
             return 'No changes.'
         if result.item.value is ModelPickerAction.ADD:
+            from .model_menu import open_add_model_menu  # noqa: PLC0415
+
             return await open_add_model_menu(context, runners=runners)
         if not isinstance(result.item.value, str):
             return 'No changes.'

@@ -28,9 +28,10 @@ def main() -> None:
     splash.start()
     try:
         from ._cli import run
+
+        run(splash=splash)
     finally:
         splash.stop()
-    run()
 
 
 if __name__ == '__main__':

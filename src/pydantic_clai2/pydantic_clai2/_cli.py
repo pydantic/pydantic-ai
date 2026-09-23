@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 """CLI settings resolution and interactive application startup."""
 
 import argparse
@@ -6,18 +7,10 @@ import os
 import sys
 from pathlib import Path
 
-from pydantic_ai.usage import UsageLimits
-
-from ._app import DEFAULT_PLUGINS, chat, create_agent
-from .commands import config_command, plugins_command
-from .config import resolve_settings
-from .headless import run_headless
-from .project_settings import load_project_settings
-from .settings_store import SettingsStore
-from .worktrees import create_worktree, offer_worktree_cleanup
+from .splash import Splash
 
 
-def run() -> None:
+def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
     parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
     parser.add_argument(
@@ -40,18 +33,20 @@ def run() -> None:
     parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    _validate_args(args, parser)
     try:
-        if args.command and (args.resume is not None or args.worktree is not None):
-            parser.error('--resume and --worktree cannot be combined with config or plugins')
-        if args.worktree is not None and args.resume is not None:
-            parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
-        if args.prompt is not None:
-            if args.command:
-                parser.error('--prompt cannot be combined with config or plugins')
-            if not args.prompt.strip():
-                parser.error('--prompt requires non-empty text')
-            if args.resume == '':
-                parser.error('--prompt requires an explicit --resume SESSION-ID')
+        from pydantic_ai.usage import UsageLimits
+
+        from ._app import DEFAULT_PLUGINS, chat, create_agent
+        from .commands import config_command, plugins_command
+        from .config import resolve_settings
+        from .project_settings import load_project_settings
+        from .settings_store import SettingsStore
+        from .worktrees import create_worktree, offer_worktree_cleanup
+    finally:
+        if splash is not None:
+            splash.stop()
+    try:
         store = SettingsStore(args.database)
         store.path = store.path.resolve()
         if args.command:
@@ -73,6 +68,8 @@ def run() -> None:
             overrides['run.request_limit'] = args.request_limit
         settings = resolve_settings(overrides)
         if args.prompt is not None:
+            from .headless import run_headless
+
             raise SystemExit(
                 asyncio.run(
                     run_headless(
@@ -102,3 +99,17 @@ def run() -> None:
     except KeyboardInterrupt:
         if args.prompt is not None:
             raise SystemExit(130) from None
+
+
+def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.command and (args.resume is not None or args.worktree is not None):
+        parser.error('--resume and --worktree cannot be combined with config or plugins')
+    if args.worktree is not None and args.resume is not None:
+        parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
+    if args.prompt is not None:
+        if args.command:
+            parser.error('--prompt cannot be combined with config or plugins')
+        if not args.prompt.strip():
+            parser.error('--prompt requires non-empty text')
+        if args.resume == '':
+            parser.error('--prompt requires an explicit --resume SESSION-ID')

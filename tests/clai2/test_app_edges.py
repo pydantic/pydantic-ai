@@ -17,11 +17,12 @@ from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
 from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
 
 from pydantic_clai2 import api_keys, chat, key_menu, theme
+from pydantic_clai2.auth import CodexAuth
 from pydantic_clai2.command_context import CommandContext
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import Settings
 from pydantic_clai2.field_menu import FieldMenu, Runners
-from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command
+from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command, open_add_model_menu
 from pydantic_clai2.settings_store import SettingsStore
 
 PromptT = TypeVar('PromptT')
@@ -191,7 +192,7 @@ async def test_invalid_saved_model_settings_can_be_repaired_without_exiting(
     async def edit_settings(context: CommandContext, args: list[str]) -> str:
         return await model_settings_command(context, args, runners=script.runners)
 
-    monkeypatch.setattr('pydantic_clai2._app.model_settings_command', edit_settings)
+    monkeypatch.setattr('pydantic_clai2.model_menu.model_settings_command', edit_settings)
 
     class Repair(AbstractCapability[None]):
         async def before_model_request(
@@ -218,3 +219,54 @@ async def test_invalid_saved_model_settings_can_be_repaired_without_exiting(
         {'temperature': 0.5, 'future_setting': True} if invalid_key == 'temperature' else {'future_setting': True}
     )
     assert store.model_settings('test') == expected
+
+
+async def test_codex_login_and_turns_share_lazy_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inputs(monkeypatch, ['/login openai-codex', 'hello', 'again', '/exit'])
+    instances: list[CodexAuth] = []
+
+    async def login(self: CodexAuth, args: list[str]) -> str:
+        assert args == ['openai-codex']
+        instances.append(self)
+        return 'Signed in.'
+
+    def model(self: CodexAuth, name: str) -> TestModel:
+        assert name == 'openai-codex:test'
+        instances.append(self)
+        return TestModel(custom_output_text='Connected response')
+
+    monkeypatch.setattr(CodexAuth, 'login', login)
+    monkeypatch.setattr(CodexAuth, 'model', model)
+    output = io.StringIO()
+    await chat(
+        Agent(TestModel()),
+        deps=None,
+        settings=Settings(model='openai-codex:test', session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        console=Console(file=output),
+    )
+    assert len(instances) == 3
+    assert all(instance is instances[0] for instance in instances)
+    assert 'Signed in.' in output.getvalue()
+    assert output.getvalue().count('Connected response') == 2
+
+
+async def test_lazy_add_model_menu_and_named_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inputs(monkeypatch, ['/add_model', '/add_model test', '/exit'])
+
+    async def add_model(context: CommandContext) -> str:
+        return await open_add_model_menu(context, run=lambda menu: [])
+
+    monkeypatch.setattr('pydantic_clai2.model_menu.open_add_model_menu', add_model)
+    output = io.StringIO()
+    store = SettingsStore(tmp_path / 'config.db')
+    await chat(
+        Agent(TestModel()),
+        deps=None,
+        settings=Settings(model=None),
+        store=store,
+        console=Console(file=output),
+    )
+    assert 'No changes.' in output.getvalue()
+    assert 'Saved model. Applied.' in output.getvalue()
+    assert store.load().model == 'test'

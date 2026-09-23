@@ -8,6 +8,13 @@ Everything a plugin can do goes through one object, the `PluginHost`. There is n
 global registry to import and no magic file to name. You get a `host`, you tell it
 what you want, you're done.
 
+## Startup
+
+`clai2 --help` parses arguments without loading the agent or plugins. Interactive
+startup defers model menus and provider integrations until you open those menus,
+log in, or run a prompt. The first use can therefore take longer. Enabled plugins
+still load before the first prompt; their initialization contributes to startup time.
+
 ## Connect MCP servers
 
 The enabled built-in `mcp` plugin provides `/mcp`. CLAI includes the MCP client;
