@@ -429,6 +429,37 @@ async def test_tool_result_continues_the_delegated_response() -> None:
     )
 
 
+def _backend_response(**overrides: Any) -> dict[str, Any]:
+    """A Responses object as the delegated backend's lifecycle events carry it."""
+    return {
+        'id': 'resp_1',
+        'object': 'response',
+        'created_at': 0,
+        'status': 'completed',
+        'model': 'gpt-5.6-sol',
+        'output': [],
+        'parallel_tool_calls': True,
+        'tool_choice': 'auto',
+        'tools': [],
+        **overrides,
+    }
+
+
+def _backend_terminal(nested_type: str = 'response.completed', **response: Any) -> dict[str, Any]:
+    """A backend response's terminal event: `response.completed`, `.failed`, or `.incomplete`."""
+    return {'type': nested_type, 'sequence_number': 0, 'response': _backend_response(**response)}
+
+
+def _backend_call(call_id: str, name: str = 'weather', arguments: str = '{}') -> dict[str, Any]:
+    """The backend asking for a tool call."""
+    return {
+        'type': 'response.output_item.done',
+        'output_index': 0,
+        'sequence_number': 0,
+        'item': {'type': 'function_call', 'call_id': call_id, 'name': name, 'arguments': arguments},
+    }
+
+
 def _open_delegation(connection: OpenAILiveConnection, *, call_ids: tuple[str, ...] = ()) -> None:
     """Open a Responses delegation and have the backend ask for `call_ids`."""
     connection._map_event(  # pyright: ignore[reportPrivateUsage]
@@ -442,13 +473,7 @@ def _open_delegation(connection: OpenAILiveConnection, *, call_ids: tuple[str, .
         )
     )
     for call_id in call_ids:
-        connection._map_response_event(  # pyright: ignore[reportPrivateUsage]
-            {
-                'type': 'response.output_item.done',
-                'item': {'type': 'function_call', 'call_id': call_id, 'name': 'weather', 'arguments': '{}'},
-            },
-            delegation_id='d1',
-        )
+        connection._map_response_event(_backend_call(call_id), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('nested_type', ['response.failed', 'response.incomplete'])
@@ -462,7 +487,7 @@ def test_a_backend_that_gives_up_releases_the_turn_clock(nested_type: str) -> No
     _open_delegation(connection, call_ids=('c1',))
     assert connection._silence_timeout() is None  # pyright: ignore[reportPrivateUsage]
 
-    connection._map_response_event({'type': nested_type}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    connection._map_response_event(_backend_terminal(nested_type), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
     # The clock runs again, so this turn — and every later one — can still end.
@@ -479,7 +504,7 @@ async def test_a_result_for_an_abandoned_call_is_not_sent() -> None:
 
     connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
     _open_delegation(connection, call_ids=('c1',))
-    connection._map_response_event({'type': 'response.failed'}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    connection._map_response_event(_backend_terminal('response.failed'), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
     await connection.send(ToolResult('c1', output='too late'))
 
@@ -496,11 +521,11 @@ def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
     connection = _connection()
     _open_delegation(connection, call_ids=('c1',))
 
-    events = connection._map_response_event({'type': nested_type}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    events = connection._map_response_event(_backend_terminal(nested_type), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
     assert events[0] == SessionUsage(RequestUsage())
     # Only the response that asked for calls owes usage; the next one reports only what it has.
-    later = connection._map_response_event({'type': nested_type}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    later = connection._map_response_event(_backend_terminal(nested_type), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
     assert not any(isinstance(event, SessionUsage) for event in later)
 
 
@@ -508,16 +533,18 @@ def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
     ('nested', 'code', 'reason'),
     [
         (
-            {'type': 'response.failed', 'response': {'error': {'code': 'server_error', 'message': 'boom'}}},
+            _backend_terminal('response.failed', status='failed', error={'code': 'server_error', 'message': 'boom'}),
             'live_delegation_failed',
             'server_error: boom',
         ),
         (
-            {'type': 'response.incomplete', 'response': {'incomplete_details': {'reason': 'max_output_tokens'}}},
+            _backend_terminal(
+                'response.incomplete', status='incomplete', incomplete_details={'reason': 'max_output_tokens'}
+            ),
             'live_delegation_incomplete',
             'incomplete: max_output_tokens',
         ),
-        ({'type': 'response.failed'}, 'live_delegation_failed', 'response.failed'),
+        (_backend_terminal('response.failed', status='failed'), 'live_delegation_failed', 'response.failed'),
     ],
 )
 def test_a_backend_that_gives_up_is_reported(nested: dict[str, Any], code: str, reason: str) -> None:
@@ -573,12 +600,12 @@ async def test_a_late_completion_does_not_end_a_delegation_mid_continuation() ->
 
     # The completion of the response that *asked* for the tool arrives only now. Closing the
     # delegation on it would restart the clock while the continuation is still being generated.
-    connection._map_response_event({'type': 'response.completed'}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    connection._map_response_event(_backend_terminal(), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
     assert connection._delegations  # pyright: ignore[reportPrivateUsage]
     assert connection._silence_timeout() is None  # pyright: ignore[reportPrivateUsage]
 
     # The continuation itself is what ends the delegation.
-    connection._map_response_event({'type': 'response.completed'}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    connection._map_response_event(_backend_terminal(), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
 
 
@@ -675,20 +702,52 @@ async def test_delegated_work_holds_the_turn_open() -> None:
 
     # Once the backend reports it is finished, the clock restarts and the turn can end.
     assert connection._delegations  # pyright: ignore[reportPrivateUsage]
-    connection._map_response_event({'type': 'response.completed'}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    connection._map_response_event(_backend_terminal(), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_response_completed_without_a_delegation_is_ignored() -> None:
     """A nested event we can't correlate is not an error; Live says it may be uncorrelated."""
     connection = _connection()
-    assert connection._map_response_event({'type': 'response.completed'}, delegation_id=None) == []  # pyright: ignore[reportPrivateUsage]
-    # A completed output item that carries no item object at all is likewise nothing to map.
-    assert connection._map_response_event({'type': 'response.output_item.done'}, delegation_id=None) == []  # pyright: ignore[reportPrivateUsage]
-    assert connection._map_response_event(  # pyright: ignore[reportPrivateUsage]
-        {'type': 'response.output_item.done', 'item': {'type': 'function_call', 'call_id': 'c', 'name': 'n'}},
-        delegation_id='missing',
-    )[-1] == ToolCall('c', tool_name='n', args='{}', response_usage_follows=False)
+    assert connection._map_response_event(_backend_terminal(), delegation_id=None) == []  # pyright: ignore[reportPrivateUsage]
+    # An output item that isn't a function call is nothing to map.
+    message: dict[str, Any] = {
+        **_backend_call('c'),
+        'item': {'type': 'message', 'id': 'm', 'role': 'assistant', 'status': 'completed', 'content': []},
+    }
+    assert connection._map_response_event(message, delegation_id=None) == []  # pyright: ignore[reportPrivateUsage]
+    assert connection._map_response_event(_backend_call('c', name='n', arguments=''), delegation_id='missing')[  # pyright: ignore[reportPrivateUsage]
+        -1
+    ] == ToolCall('c', tool_name='n', args='{}', response_usage_follows=False)
+
+
+def test_a_malformed_backend_event_is_a_recoverable_error() -> None:
+    """A tool call missing its `call_id` must not take down the receive loop.
+
+    Read with dict indexing, it raised a `KeyError`, which isn't the `ValueError` `_map_frame` reports
+    as recoverable. Parsed through the SDK's types, it is a `ValidationError`, which is.
+    """
+    connection = _connection()
+    _open_delegation(connection)
+    frame = {
+        'type': 'response.event',
+        'event_id': 'e2',
+        'delegation_id': 'd1',
+        'event': {**_backend_call('c1'), 'item': {'type': 'function_call', 'name': 'weather', 'arguments': '{}'}},
+    }
+
+    events = connection._map_frame(json.dumps(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(events) == 1
+    error = events[0]
+    assert isinstance(error, RealtimeSessionErrorEvent) and error.recoverable is True
+    assert error.message.startswith('Failed to parse OpenAI GPT-Live event:')
+
+
+def test_an_unknown_backend_event_type_is_ignored() -> None:
+    """A nested event type this SDK doesn't know is not a reason to report anything."""
+    connection = _connection()
+    assert connection._map_response_event({'type': 'response.something_new'}, delegation_id=None) == []  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_aclose_cancels_the_pending_read() -> None:
@@ -965,6 +1024,7 @@ def test_delegated_backend_token_usage_is_accumulated() -> None:
         'delegation_id': 'd1',
         'event': {
             'type': 'response.completed',
+            'sequence_number': 0,
             'response': {
                 'id': 'resp_1',
                 'object': 'response',
@@ -1016,6 +1076,7 @@ def test_unpriceable_backend_usage_is_still_accumulated() -> None:
         'delegation_id': 'd1',
         'event': {
             'type': 'response.completed',
+            'sequence_number': 0,
             'response': {
                 'id': 'resp_1',
                 'object': 'response',

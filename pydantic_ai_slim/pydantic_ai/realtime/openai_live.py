@@ -50,6 +50,8 @@ from ..exceptions import UserError
 from ..messages import (
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
+    ModelResponsePart,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
@@ -108,7 +110,15 @@ try:
         SessionClosedEvent,
         SessionUsageUpdatedEvent,
     )
-    from openai.types.responses import Response
+    from openai.types.responses import (
+        Response,
+        ResponseCompletedEvent,
+        ResponseFailedEvent,
+        ResponseFunctionToolCall,
+        ResponseIncompleteEvent,
+        ResponseOutputItemDoneEvent,
+        ResponseStreamEvent,
+    )
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -153,7 +163,12 @@ _SESSION_STARTED_EVENT = 'session.started'
 _VOICE_FLOOR = 64
 
 _server_event_adapter: TypeAdapter[ServerEvent] = TypeAdapter(ServerEvent)
-_responses_adapter: TypeAdapter[Response] = TypeAdapter(Response)
+_response_stream_event_adapter: TypeAdapter[ResponseStreamEvent] = TypeAdapter(ResponseStreamEvent)
+#: Nested events the codec acts on. One of these that doesn't parse is a malformed frame, reported as
+#: recoverable; any other nested type that doesn't parse is one this SDK doesn't know yet, and ignored.
+_ACTED_ON_DELEGATED_RESPONSE_EVENTS = frozenset(
+    {'response.completed', 'response.failed', 'response.incomplete', 'response.output_item.done'}
+)
 
 
 class OpenAILiveResponsesDelegation(TypedDict, total=False):
@@ -247,7 +262,7 @@ def _seed_item(role: _SeedRole, text: str) -> dict[str, Any] | None:
     return {'role': role, 'content': [{'type': content_type, 'text': text}]}
 
 
-def _seed_request_part(part: Any, *, provider_name: str) -> tuple[_SeedRole, str] | None:
+def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_SeedRole, str] | None:
     """The role and text a request part seeds as, or `None` when it carries nothing replayable.
 
     `SystemPromptPart`s are routed through `instructions` instead, exactly as on the Realtime
@@ -268,7 +283,7 @@ def _seed_request_part(part: Any, *, provider_name: str) -> tuple[_SeedRole, str
     return None
 
 
-def _seed_response_part(part: Any) -> tuple[_SeedRole, str] | None:
+def _seed_response_part(part: ModelResponsePart) -> tuple[_SeedRole, str] | None:
     """The role and text a response part seeds as, or `None` when it carries nothing replayable.
 
     Thinking is bound to the session that produced it: its text is replayable, its signature is not.
@@ -295,9 +310,11 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
     """
     items: list[dict[str, Any]] = []
     for message in messages:
-        is_request = isinstance(message, ModelRequest)
-        for part in message.parts:
-            seeded = _seed_request_part(part, provider_name=provider_name) if is_request else _seed_response_part(part)
+        if isinstance(message, ModelRequest):
+            seeded_parts = [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
+        else:
+            seeded_parts = [_seed_response_part(part) for part in message.parts]
+        for seeded in seeded_parts:
             if seeded is not None and (item := _seed_item(*seeded)) is not None:
                 items.append(item)
     return items
@@ -320,11 +337,6 @@ def _prompt_text(part: UserPromptPart, *, provider_name: str) -> str:
                 'Strip non-text content from `message_history`, or summarize it as text.'
             )
     return '\n'.join(texts)
-
-
-#: Nested Responses events that end one backend response. Only `completed` carries a result; the
-#: other two are the backend giving up, and none of them is the end of the *delegation* on its own.
-_TERMINAL_DELEGATED_RESPONSE_EVENTS = frozenset({'response.completed', 'response.failed', 'response.incomplete'})
 
 
 @dataclass
@@ -636,37 +648,36 @@ class OpenAILiveConnection(RealtimeConnection):
 
     def _map_response_event(self, nested: dict[str, Any], *, delegation_id: str | None) -> list[RealtimeCodecEvent]:
         """Map one nested Responses streaming event from the delegated backend."""
-        nested_type = nested.get('type')
+        try:
+            event = _response_stream_event_adapter.validate_python(nested)
+        except ValidationError:
+            if nested.get('type') in _ACTED_ON_DELEGATED_RESPONSE_EVENTS:
+                raise  # a malformed frame, which `_map_frame` reports as recoverable
+            return []  # a nested event type this version of the SDK doesn't know
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
-        if nested_type in _TERMINAL_DELEGATED_RESPONSE_EVENTS:
-            events: list[RealtimeCodecEvent] = self._map_backend_usage(nested.get('response'))
+        if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
+            events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
             if delegation is not None:
                 if delegation.owes_usage and not events:
                     events = [SessionUsage(RequestUsage())]
                 delegation.owes_usage = False
-                self._settle_delegation(delegation, gave_up=nested_type != 'response.completed')
-            if nested_type != 'response.completed':
-                events.append(_delegation_stopped(nested_type, nested.get('response')))
+                self._settle_delegation(delegation, gave_up=not isinstance(event, ResponseCompletedEvent))
+            if not isinstance(event, ResponseCompletedEvent):
+                events.append(_delegation_stopped(event))
             return events
-        if nested_type != 'response.output_item.done':
+        if not isinstance(event, ResponseOutputItemDoneEvent) or not isinstance(event.item, ResponseFunctionToolCall):
             return []
-        raw_item = nested.get('item')
-        if not isinstance(raw_item, dict):
-            return []
-        item = cast('dict[str, Any]', raw_item)
-        if item.get('type') != 'function_call':
-            return []
-        call_id = cast('str', item['call_id'])
+        call = event.item
         if delegation is not None:
-            delegation.pending_tool_calls.add(call_id)
+            delegation.pending_tool_calls.add(call.call_id)
             delegation.owes_usage = True
-            self._call_delegations[call_id] = delegation.id
+            self._call_delegations[call.call_id] = delegation.id
         return [
             *self._open_response(),
             ToolCall(
-                call_id,
-                tool_name=cast('str', item['name']),
-                args=cast('str', item.get('arguments') or '{}'),
+                call.call_id,
+                tool_name=call.name,
+                args=call.arguments or '{}',
                 # The backend response that asked for the call reports its tokens on its terminal event,
                 # after the call. Without this the call's `ModelResponse` is finalized empty and those
                 # tokens land on the spoken reply that follows. A call we can't correlate to a
@@ -693,7 +704,7 @@ class OpenAILiveConnection(RealtimeConnection):
             self._delegations.pop(delegation.id, None)
             self._heard_voice()
 
-    def _map_backend_usage(self, response: Any) -> list[RealtimeCodecEvent]:
+    def _map_backend_usage(self, response: Response) -> list[RealtimeCodecEvent]:
         """Accumulate the delegated backend's token usage, priced as the backend.
 
         Live meters its own audio by the second and reports no tokens for it, but the Responses
@@ -708,19 +719,13 @@ class OpenAILiveConnection(RealtimeConnection):
         charge one model's tokens at another's rate. A cost that is already set is never recalculated
         there, so resolving it now is also what stops that from happening.
         """
-        if not isinstance(response, dict):
-            return []
-        try:
-            parsed = _responses_adapter.validate_python(response)
-        except ValidationError:
-            return []
-        mapped = map_openai_usage(parsed, self._provider_name, self._provider_url, parsed.model)
+        mapped = map_openai_usage(response, self._provider_name, self._provider_url, response.model)
         if not mapped.has_values():
-            return []  # pragma: no cover
+            return []
         if (
             price := best_effort_price(
                 mapped,
-                model_name=parsed.model,
+                model_name=response.model,
                 provider_api_url=self._provider_url,
                 provider_name=self._provider_name,
             )
@@ -765,26 +770,23 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
 
-def _delegation_stopped(nested_type: str | None, response: Any) -> RealtimeSessionErrorEvent:
+def _delegation_stopped(event: ResponseFailedEvent | ResponseIncompleteEvent) -> RealtimeSessionErrorEvent:
     """Report a delegated backend that failed or stopped short.
 
     The turn itself still ends — Live keeps talking and the silence clock closes it — so without this
     the caller would see an ordinary turn boundary and no sign that the delegated work never finished.
     Recoverable, because the session is fine: only this one piece of delegated work was lost.
     """
-    details = cast('dict[str, Any]', response) if isinstance(response, dict) else {}
-    error = details.get('error')
-    incomplete = details.get('incomplete_details')
-    if isinstance(error, dict):
-        error_details = cast('dict[str, Any]', error)
-        reason = f'{error_details.get("code")}: {error_details.get("message")}'
-    elif isinstance(incomplete, dict):
-        reason = f'incomplete: {cast("dict[str, Any]", incomplete).get("reason")}'
+    response = event.response
+    if response.error is not None:
+        reason = f'{response.error.code}: {response.error.message}'
+    elif response.incomplete_details is not None:
+        reason = f'incomplete: {response.incomplete_details.reason}'
     else:
-        reason = nested_type
+        reason = event.type
     return RealtimeSessionErrorEvent(
         message=f'The delegated OpenAI Responses backend did not finish ({reason}).',
-        code='live_delegation_failed' if nested_type == 'response.failed' else 'live_delegation_incomplete',
+        code='live_delegation_failed' if isinstance(event, ResponseFailedEvent) else 'live_delegation_incomplete',
     )
 
 
