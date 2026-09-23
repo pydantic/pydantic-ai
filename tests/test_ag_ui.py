@@ -2395,6 +2395,71 @@ def test_dump_load_roundtrip_basic() -> None:
     assert reloaded == original
 
 
+def test_dump_messages_concatenates_adjacent_text_parts() -> None:
+    """Adjacent TextParts concatenate with nothing inserted, matching ModelResponse.text."""
+    response = ModelResponse(parts=[TextPart(content='a'), TextPart(content='b')])
+
+    dumped = AGUIAdapter.dump_messages([response])
+
+    assert len(dumped) == 1
+    assert dumped[0].content == 'ab'
+    assert dumped[0].content == response.text
+
+
+def test_dump_messages_preserves_explicit_newlines_in_adjacent_text_parts() -> None:
+    """An explicit newline in its own TextPart survives adjacent concatenation unmodified."""
+    response = ModelResponse(parts=[TextPart(content='a'), TextPart(content='\n'), TextPart(content='b')])
+
+    dumped = AGUIAdapter.dump_messages([response])
+
+    assert len(dumped) == 1
+    assert dumped[0].content == 'a\nb'
+    assert dumped[0].content == response.text
+
+
+def test_dump_messages_keeps_separated_groups_around_non_text_parts() -> None:
+    """Text groups separated by a flushed ThinkingPart stay in separate messages.
+
+    The separator policy between separated groups is owned by #7713; this pins current behavior.
+    """
+    response = ModelResponse(parts=[TextPart(content='ab'), ThinkingPart(content='thinking'), TextPart(content='cd')])
+
+    dumped = AGUIAdapter.dump_messages([response])
+
+    assert [type(m).__name__ for m in dumped] == ['AssistantMessage', 'ReasoningMessage', 'AssistantMessage']
+    assert dumped[0].content == 'ab'
+    assert dumped[2].content == 'cd'
+
+
+def test_dump_messages_interleaved_text_and_tool_calls() -> None:
+    """Text on both sides of a tool call serializes into separate messages with the tool call preserved."""
+    response = ModelResponse(
+        parts=[
+            TextPart(content='ab'),
+            ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call_1'),
+            TextPart(content='cd'),
+        ]
+    )
+
+    dumped = AGUIAdapter.dump_messages([response])
+
+    assert [type(m).__name__ for m in dumped] == ['AssistantMessage', 'AssistantMessage']
+    assert dumped[0].content == 'ab'
+    assert [call.function.name for call in dumped[0].tool_calls] == ['get_weather']
+    assert dumped[1].content == 'cd'
+
+
+def test_dump_load_round_trip_stable_for_adjacent_text_parts() -> None:
+    """The documented dump -> load -> dump persistence flow introduces no character into adjacent text."""
+    response = ModelResponse(parts=[TextPart(content='a'), TextPart(content='b')])
+    original = AGUIAdapter.dump_messages([response])
+
+    dumped = AGUIAdapter.dump_messages(AGUIAdapter.load_messages(original))
+
+    assert len(dumped) == len(original) == 1
+    assert dumped[0].content == original[0].content == 'ab'
+
+
 def test_load_dump_preserves_message_id() -> None:
     """An inbound AG-UI message `id` survives `load_messages` -> `dump_messages` instead of being replaced.
 

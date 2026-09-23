@@ -825,7 +825,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             if isinstance(part, TextPart):
                 if tool_calls_list:
                     flush()
-                text_content.append(part.content)
+                if text_content:
+                    text_content[-1] += part.content
+                else:
+                    text_content.append(part.content)
             elif isinstance(part, ThinkingPart):
                 if use_reasoning:
                     from ag_ui.core import ReasoningMessage
