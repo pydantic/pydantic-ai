@@ -59,7 +59,6 @@ class InMemoryDecisionModel(DecisionModel[None]):
                     score=10,
                     confidence=1,
                     probabilities={level: float(level == 10) for level in range(11)},
-                    legend={level: criterion for level, criterion in enumerate(question.criteria)},
                 )
             elif isinstance(question, NoulQuestion):
                 answers[name] = NoulAnswer(noul=0.8)
