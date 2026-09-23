@@ -1785,6 +1785,16 @@ async def test_bool_criteria_on_anything_but_a_bool_is_refused(
         await Agent(typesafe_model, output_type=Misplaced).run('anything')
 
 
+@pytest.mark.parametrize('literal', [Literal[True], Literal[False], Literal[True, False]])
+async def test_bool_criteria_on_a_bool_literal_is_refused(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, literal: object
+):
+    """A `Literal` already pins its values, which the two meanings would contradict or be dropped in favor of."""
+    output_type = Annotated[literal, BoolCriteria(true='Yes.', false='No.')]
+    with pytest.raises(UserError, match='can only annotate a plain `bool`, not a `Literal`'):
+        await Agent(typesafe_model, output_type=output_type).run('anything')  # type: ignore[arg-type]
+
+
 async def test_a_true_false_literal_that_says_nothing_anywhere_is_refused(allow_model_requests: None):
     """With neither meanings nor a description, the two options say no more than a bare `bool` with no question."""
 

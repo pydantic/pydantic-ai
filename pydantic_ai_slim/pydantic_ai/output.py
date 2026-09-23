@@ -726,9 +726,13 @@ class BoolCriteria:
         self, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
     ) -> JsonSchemaValue:
         json_schema = handler(core_schema)
-        if json_schema.get('type') != 'boolean':
+        # A `Literal` of `True` and/or `False` renders as a `boolean` too, but already pins its values in a
+        # `const` or `enum` that the two meanings below would contradict or be shadowed by. The rendered schema
+        # rather than the core schema is checked, so a `bool` wrapped in a validator is still accepted.
+        if json_schema.get('type') != 'boolean' or 'const' in json_schema or 'enum' in json_schema:
             raise exceptions.UserError(
-                '`BoolCriteria` says what each answer of a `bool` means, so it can only annotate a `bool`.'
+                '`BoolCriteria` says what each answer of a `bool` means, so it can only annotate a plain `bool`, '
+                'not a `Literal` of `True` and/or `False` or any other type.'
             )
         # The same `anyOf`-of-`const`s shape `Choices()` and a described `Enum` produce, on the two constants a
         # boolean can be.
