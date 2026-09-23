@@ -14,7 +14,7 @@ from typing_extensions import TypeAliasType
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from ..exceptions import ModelAPIError, UserError
 from ..messages import ModelMessage
-from ..models import ModelRequestParameters
+from ..models import KnownModelName, Model, ModelRequestParameters
 from ..models._abstract import AbstractModel
 from ..native_tools import AbstractNativeTool
 from ..tools import ToolDefinition
@@ -177,6 +177,18 @@ class RealtimeModel(AbstractModel):
         self.settings = settings
         self._profile = profile
         preload_pricing_data()
+
+    def with_agent_model(self, model: Model | KnownModelName | str | None) -> RealtimeModel:
+        """Adapt this model to the agent it serves, given that agent's own `model`.
+
+        Called by [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] with the model the agent would use
+        for a standard run (its override, if one is active). A realtime model that does the whole job
+        itself ignores it and returns `self`, which is the default. One that hands the work to a text
+        model, such as [`OpenAILiveModel`][pydantic_ai.realtime.openai_live.OpenAILiveModel]'s delegated
+        backend, can return a copy that uses the agent's model for that work when none is configured.
+        """
+        del model
+        return self
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:

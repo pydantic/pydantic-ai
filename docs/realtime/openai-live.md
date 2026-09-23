@@ -40,8 +40,27 @@ provider prefix alone cannot tell the two protocols apart. Use the
 [official OpenAI model documentation](https://platform.openai.com/docs/models) as the canonical model
 list.
 
-The *backend* model is a second model name nested inside the session: it defaults to `gpt-5.6-sol`
-and is set with `openai_live_delegation`, described below.
+The *backend* model, the one that does the delegated work, is a second model name. Since it runs the
+agent's instructions and tools, it is the agent's own model when that is an OpenAI model, so an agent
+built on `'openai:gpt-5.6-sol'` delegates to `gpt-5.6-sol`. Name a different backend after a `+` in the
+realtime model name, which reads as the composite it is:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.6-sol', instructions='You look things up.')
+
+# Delegates to the agent's model, gpt-5.6-sol:
+realtime = agent.realtime('openai:gpt-live-1')
+
+# Delegates to gpt-6-luna instead:
+realtime = agent.realtime('openai:gpt-live-1+gpt-6-luna')
+```
+
+`openai_live_delegation={'model': ...}`, described below, takes precedence over both. With none of
+them, or with the agent on a model OpenAI doesn't host, the backend is `'auto'`: the model Pydantic AI
+currently recommends ([`AUTO_BACKEND_MODEL`][pydantic_ai.realtime.openai_live.AUTO_BACKEND_MODEL]),
+which moves as OpenAI releases new models. Pin one when the backend's behavior needs to stay put.
 
 ## How delegation works
 
@@ -58,8 +77,8 @@ the backend model takes over, calling the agent's tools as it goes. Those calls 
 [`ToolCall`][pydantic_ai.realtime.codec.ToolCall]s, so the session runs them through the same
 [tool loop](tools.md#function-tools) as every other provider, including validation, retries,
 [dependencies](../dependencies.md), and [capability hooks](capabilities.md), and sends the
-results back. The Live model keeps speaking while that happens, so tool latency does not create dead
-air.
+results back. Speech and delegated work run independently, so the Live model can keep talking while
+that happens rather than leaving dead air.
 
 That split is why the agent's instructions describe the *work* and `openai_live_instructions`
 describes the *speech*:

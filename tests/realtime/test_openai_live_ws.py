@@ -45,6 +45,10 @@ pytestmark = [
 # default would add two seconds to every test here.
 _FAST_TURN = OpenAILiveModelSettings(openai_live_turn_silence_ms=1000)
 
+# The agent's own model is what the Live session delegates to, so naming one here pins the backend these
+# recordings were made with rather than whatever `'auto'` resolves to today.
+_BACKEND = 'openai:gpt-5.6-sol'
+
 
 # Live's session timeline advances with the audio it receives, and the model can only speak onto that
 # timeline. A clip that simply stops leaves it nothing to speak into; a real microphone keeps sending
@@ -82,7 +86,7 @@ async def test_audio_in_delegated_tool_round(
     """
     provider, cassette = openai_live_ws_cassette
     model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
-    agent = Agent(instructions='You answer weather questions. Use the `lookup_forecast` tool.')
+    agent = Agent(_BACKEND, instructions='You answer weather questions. Use the `lookup_forecast` tool.')
 
     @agent.tool_plain
     async def lookup_forecast(city: str) -> str:
@@ -148,7 +152,7 @@ async def test_text_reaches_the_model_as_context(
     model = OpenAILiveModel(
         'gpt-live-1', provider=provider, settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=2500)
     )
-    agent = Agent(instructions='Relay what you are told, in one short sentence.')
+    agent = Agent(_BACKEND, instructions='Relay what you are told, in one short sentence.')
 
     async def silence(frames: int) -> None:
         for _ in range(frames):
@@ -180,7 +184,7 @@ async def test_history_seeding(
     """Prior text history is seeded into the session and is still present in `all_messages()`."""
     provider, cassette = openai_live_ws_cassette
     model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
-    agent = Agent(instructions='Answer in a few words.')
+    agent = Agent(_BACKEND, instructions='Answer in a few words.')
     history = [
         ModelRequest(parts=[UserPromptPart(content='My favorite color is orange.')]),
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Good to know!')]),

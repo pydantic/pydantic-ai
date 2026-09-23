@@ -61,11 +61,13 @@ with try_import() as imports_successful:
     from pydantic import TypeAdapter
     from websockets.frames import Close
 
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import openai_live as live_module
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
     from pydantic_ai.realtime.openai_live import (
-        DEFAULT_BACKEND_MODEL,
+        AUTO_BACKEND_MODEL,
         OpenAILiveConnection,
         OpenAILiveModel,
         OpenAILiveModelSettings,
@@ -161,7 +163,7 @@ def test_agent_instructions_and_tools_configure_the_backend(model: OpenAILiveMod
         {
             'type': 'responses',
             'responses': {
-                'model': DEFAULT_BACKEND_MODEL,
+                'model': AUTO_BACKEND_MODEL,
                 'instructions': 'You look things up.',
                 'tools': [
                     {
@@ -921,6 +923,90 @@ def test_strict_tools_and_declarative_tool_choice(model: OpenAILiveModel) -> Non
     assert 'instructions' not in responses
 
 
+def _backend(model: OpenAILiveModel, **settings: Any) -> str:
+    return _config(model, settings=OpenAILiveModelSettings(**settings))['delegation']['responses']['model']
+
+
+def test_the_backend_model_can_follow_a_plus_in_the_model_name() -> None:
+    """`'gpt-live-1+gpt-6-luna'` reads as the composite it is: a voice model and the model it delegates to."""
+    model = infer_realtime_model('openai:gpt-live-1+gpt-6-luna')
+
+    assert isinstance(model, OpenAILiveModel)
+    assert model.model_name == 'gpt-live-1'
+    assert _backend(model) == 'gpt-6-luna'
+
+
+@pytest.mark.parametrize(
+    ('agent_model', 'backend'),
+    [
+        ('openai:gpt-6-luna', 'gpt-6-luna'),
+        ('openai-responses:gpt-6-luna', 'gpt-6-luna'),
+        # Not something OpenAI hosts, so it can't be a Live backend.
+        ('anthropic:claude-opus-5-5', AUTO_BACKEND_MODEL),
+        ('gateway/openai:gpt-6-luna', AUTO_BACKEND_MODEL),
+        (None, AUTO_BACKEND_MODEL),
+    ],
+)
+def test_the_backend_defaults_to_the_agents_own_model(agent_model: str | None, backend: str) -> None:
+    """The backend runs the agent's instructions and tools; an OpenAI agent model already names it."""
+    model = OpenAILiveModel('gpt-live-1', provider='openai').with_agent_model(agent_model)
+    assert _backend(model) == backend
+
+
+def test_an_agent_model_instance_is_used_only_when_openai_hosts_it() -> None:
+    hosted = OpenAIResponsesModel('gpt-6-luna', provider=OpenAIProvider(api_key='x'))
+    compatible = OpenAIChatModel('llama3', provider=OpenAIProvider(api_key='x', base_url='http://localhost:11434/v1'))
+    live = OpenAILiveModel('gpt-live-1', provider='openai')
+
+    assert _backend(live.with_agent_model(hosted)) == 'gpt-6-luna'
+    assert _backend(live.with_agent_model(compatible)) == AUTO_BACKEND_MODEL
+
+
+def test_a_named_backend_takes_precedence_over_the_agents_model() -> None:
+    """An explicit setting beats the name's `+`, which beats the agent's model, which beats `'auto'`."""
+    plus = OpenAILiveModel('gpt-live-1+gpt-6-luna', provider='openai')
+    assert plus.with_agent_model('openai:gpt-5.6-sol') is plus
+    assert _backend(plus) == 'gpt-6-luna'
+
+    adopted = OpenAILiveModel('gpt-live-1', provider='openai').with_agent_model('openai:gpt-5.6-sol')
+    assert _backend(adopted, openai_live_delegation=OpenAILiveResponsesDelegation(model='gpt-6-luna')) == 'gpt-6-luna'
+    assert _backend(adopted, openai_live_delegation=OpenAILiveResponsesDelegation(model='auto')) == AUTO_BACKEND_MODEL
+
+
+def test_other_realtime_models_ignore_the_agents_model() -> None:
+    """Only a realtime model that hands work to a text model has any use for the agent's."""
+    model = infer_realtime_model('openai:gpt-realtime')
+    assert model.with_agent_model('openai:gpt-6-luna') is model
+
+
+def test_16khz_audio_is_chosen_through_the_profile() -> None:
+    """Live runs at 16 or 24 kHz, set the way the Realtime providers set their rate: on the profile."""
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider='openai',
+        profile={'audio_input_sample_rate': 16000, 'audio_output_sample_rate': 16000},
+    )
+    config = _config(model)
+
+    assert config['audio']['format'] == {'type': 'audio/pcm', 'rate': 16000}
+    TypeAdapter(SessionConfig).validate_python(config)
+
+
+@pytest.mark.parametrize(
+    ('input_rate', 'output_rate'),
+    [(16000, 24000), (8000, 8000), (48000, 48000)],
+)
+def test_an_audio_rate_live_cannot_run_raises(input_rate: int, output_rate: int) -> None:
+    """One format covers both directions, so the two rates must agree, and be one Live accepts."""
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider='openai',
+        profile={'audio_input_sample_rate': input_rate, 'audio_output_sample_rate': output_rate},
+    )
+    with pytest.raises(UserError, match='one PCM16 audio format for both directions'):
+        _config(model)
+
+
 def test_tool_allow_list_trims_the_advertised_tools(model: OpenAILiveModel) -> None:
     """The backend has no list form, so an allow-list is applied by trimming, and its mode still sent.
 
@@ -1112,6 +1198,20 @@ async def test_a_malformed_handshake_frame_raises_a_realtime_error(model: OpenAI
                 messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
             ):
                 pass  # pragma: no cover
+
+
+async def test_an_agent_model_override_picks_the_backend(model: OpenAILiveModel) -> None:
+    """`agent.realtime()` hands the realtime model the model a standard run would use, override included."""
+    agent = Agent('openai:gpt-5.6-sol')
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+
+    with _patched_connect(ws), agent.override(model='openai:gpt-6-luna'):
+        async with agent.realtime(model).session():
+            pass
+
+    start = json.loads(ws.sent[0])
+    assert start['session']['delegation']['responses']['model'] == 'gpt-6-luna'
 
 
 def test_session_config_matches_the_provider_schema(model: OpenAILiveModel) -> None:

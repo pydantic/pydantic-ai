@@ -35,6 +35,7 @@ import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
+from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, ClassVar, Literal, cast
 
@@ -62,7 +63,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..models import ModelRequestParameters
+from ..models import KnownModelName, Model, ModelRequestParameters
 from ..models.openai import _map_usage as map_openai_usage  # pyright: ignore[reportPrivateUsage]
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
@@ -154,8 +155,12 @@ Matches the `assistant_silence_ms` default of OpenAI's own `TranscriptGrouper`, 
 problem for display transcripts.
 """
 
-DEFAULT_BACKEND_MODEL = 'gpt-5.6-sol'
-"""The Responses model the Live session delegates to when `openai_live_delegation` doesn't name one."""
+AUTO_BACKEND_MODEL = 'gpt-6-sol'
+"""What a backend model of `'auto'` resolves to: the Responses model Pydantic AI currently recommends.
+
+Used when nothing names one: not `openai_live_delegation`, not the model name, and not the agent. It
+moves with new OpenAI models, so pin a backend explicitly when its behavior needs to stay put.
+"""
 
 _LIVE_WEBSOCKET_PATH = 'live/sessions'
 _SESSION_STARTED_EVENT = 'session.started'
@@ -184,6 +189,13 @@ _live_error_adapter: TypeAdapter[_LiveErrorFrame] = TypeAdapter(_LiveErrorFrame)
 #: Why a session can end without anyone asking. The others, `close_requested` and `remote_hangup`, are
 #: an ordinary end of the call.
 _ABNORMAL_CLOSE_REASONS = frozenset({'expired', 'content', 'connection_lost'})
+
+#: Model-string prefixes that name a model OpenAI hosts, and so one a Live session can delegate to.
+_OPENAI_MODEL_PREFIXES = frozenset({'openai', 'openai-responses', 'openai-chat'})
+_OPENAI_BASE_URL = 'https://api.openai.com/v1/'
+
+#: The PCM16 sample rates Live accepts. (It also takes 8 kHz G.711, which isn't PCM16.)
+_LIVE_PCM_RATES = frozenset({16000, 24000})
 _response_stream_event_adapter: TypeAdapter[ResponseStreamEvent] = TypeAdapter(ResponseStreamEvent)
 #: Nested events the codec acts on. One of these that doesn't parse is a malformed frame, reported as
 #: recoverable; any other nested type that doesn't parse is one this SDK doesn't know yet, and ignored.
@@ -202,7 +214,12 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     """
 
     model: str
-    """The Responses model that handles delegated work. Defaults to `gpt-5.6-sol`."""
+    """The Responses model that handles delegated work.
+
+    When unset, the backend is the one named after a `+` in the model name
+    (`'gpt-live-1+gpt-5.6-sol'`), else the agent's own model if it is an OpenAI model, else `'auto'`,
+    which resolves to [`AUTO_BACKEND_MODEL`][pydantic_ai.realtime.openai_live.AUTO_BACKEND_MODEL].
+    """
     instructions: str
     """Extra backend instructions, appended after the agent's own instructions."""
     max_output_tokens: int
@@ -848,6 +865,16 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
 
+def _openai_model_name(model: Model | KnownModelName | str | None) -> str | None:
+    """The name of an OpenAI-hosted model, or `None` for anything a Live backend can't be."""
+    if isinstance(model, str):
+        provider, separator, name = model.partition(':')
+        return name if separator and provider in _OPENAI_MODEL_PREFIXES else None
+    if model is not None and model.system == 'openai' and model.base_url == _OPENAI_BASE_URL:
+        return model.model_name
+    return None
+
+
 def _tool_result_follow_up(result: ToolResult) -> dict[str, Any] | None:
     """The backend input message carrying a `ToolReturn`'s text `content`, sent after its output.
 
@@ -940,7 +967,10 @@ class OpenAILiveModel(RealtimeModel):
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
         super().__init__(settings=settings, profile=profile)
-        self.model = model
+        # `'gpt-live-1+gpt-5.6-sol'` names the voice model and the backend it delegates to.
+        live_model, _, backend_model = model.partition('+')
+        self.model = live_model
+        self._backend_model = backend_model or None
         if isinstance(provider, str):
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
         if provider.name == 'azure':
@@ -954,6 +984,20 @@ class OpenAILiveModel(RealtimeModel):
     def client(self) -> AsyncOpenAI:
         """The underlying [`AsyncOpenAI`](https://github.com/openai/openai-python) client from the provider."""
         return self._provider.client
+
+    def with_agent_model(self, model: Model | KnownModelName | str | None) -> OpenAILiveModel:
+        """Delegate to the agent's own model when no backend is named.
+
+        The backend runs the agent's instructions and calls its tools, so it is the agent doing its
+        work; an agent built on an OpenAI model has already said which model that should be. Any other
+        agent model (another provider, or an OpenAI-compatible server) can't serve as a Live backend and
+        leaves the default in place.
+        """
+        if self._backend_model is not None or (backend_model := _openai_model_name(model)) is None:
+            return self
+        adapted = copy(self)
+        adapted._backend_model = backend_model
+        return adapted
 
     @property
     def model_name(self) -> OpenAILiveModelName:
@@ -975,7 +1019,8 @@ class OpenAILiveModel(RealtimeModel):
         backend_instructions = '\n\n'.join(
             text for text in (instructions, delegation_settings.get('instructions')) if text
         )
-        responses: dict[str, Any] = {'model': delegation_settings.get('model', DEFAULT_BACKEND_MODEL)}
+        backend_model = delegation_settings.get('model') or self._backend_model or 'auto'
+        responses: dict[str, Any] = {'model': AUTO_BACKEND_MODEL if backend_model == 'auto' else backend_model}
         if backend_instructions:
             responses['instructions'] = backend_instructions
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
@@ -1000,7 +1045,7 @@ class OpenAILiveModel(RealtimeModel):
         config: dict[str, Any] = {
             'model': self.model,
             'instructions': settings.get('openai_live_instructions', DEFAULT_LIVE_INSTRUCTIONS),
-            'audio': {'format': {'type': 'audio/pcm', 'rate': self.profile.get('audio_input_sample_rate', 24000)}},
+            'audio': {'format': {'type': 'audio/pcm', 'rate': self._audio_rate()}},
             'delegation': {'type': 'responses', 'responses': responses},
         }
         if voice := settings.get('openai_voice'):
@@ -1010,6 +1055,23 @@ class OpenAILiveModel(RealtimeModel):
         if seed := seed_input_items(messages, provider_name=self.system):
             config['input'] = seed
         return config
+
+    def _audio_rate(self) -> int:
+        """The PCM16 sample rate to run the session at, from the profile's audio rates.
+
+        Live takes one audio format for both directions, at 16 or 24 kHz, while the profile has a rate
+        for each; set both through `profile=` to choose 16 kHz. Checked before connecting, since a
+        mismatch would have the session resample one direction to a rate Live isn't using.
+        """
+        input_rate = self.profile.get('audio_input_sample_rate', 24000)
+        output_rate = self.profile.get('audio_output_sample_rate', 24000)
+        if input_rate != output_rate or input_rate not in _LIVE_PCM_RATES:
+            raise UserError(
+                'OpenAI GPT-Live uses one PCM16 audio format for both directions, at 16000 or 24000 Hz, so '
+                '`audio_input_sample_rate` and `audio_output_sample_rate` must be equal and one of those; '
+                f'got {input_rate} and {output_rate}.'
+            )
+        return input_rate
 
     def _reject_unsupported(self, settings: OpenAILiveModelSettings) -> None:
         """Refuse settings Live cannot honor, rather than silently ignoring a stated requirement."""

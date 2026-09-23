@@ -242,8 +242,11 @@ def _model(
     )
     if case.model_kind == 'openai-live':
         # Live never produces text, so it never takes the `text_output` branch above.
+        # Named after the `+`, the backend stays the one this row was recorded with.
         return OpenAILiveModel(
-            case.model_name, provider=provider, settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=1000)
+            f'{case.model_name}+gpt-5.6-sol',
+            provider=provider,
+            settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=1000),
         )
     if case.model_kind == 'openai':
         return OpenAIRealtimeModel(case.model_name, provider=provider, settings=settings)
