@@ -173,13 +173,15 @@ class WorkspaceBackendSuite:
     async def test_timeout_raises_workspace_timeout_error(self, backend: WorkspaceBackend) -> None:
         rule = (
             'On expiry a [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] is raised; '
-            '`timeout` is the deadline that was enforced.'
+            '`timeout` is the deadline that was enforced, which may be coarser than requested.'
         )
         commands = _commands(backend)
-        timeout = 0.2
+        timeout = 1.0
         error = await _caught(lambda: commands.run(['sh', '-c', 'sleep 30'], timeout=timeout))
         assert isinstance(error, WorkspaceTimeoutError), _failure(rule, f'timeout raised {type(error).__name__}')
-        assert error.timeout == timeout, _failure(rule, f'timeout carried {error.timeout!r}, expected {timeout!r}')
+        assert error.timeout is not None and error.timeout >= timeout, _failure(
+            rule, f'timeout carried {error.timeout!r}, expected at least {timeout!r}'
+        )
 
     async def test_env_is_added(self, backend: WorkspaceBackend) -> None:
         rule = 'Extra environment variables for the command.'

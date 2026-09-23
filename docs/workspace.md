@@ -300,7 +300,7 @@ the corresponding optional protocol; reattachment rules skip until their fixture
 - `test_shell_result_is_honest`: A shell result carries the real `exit_code`, `stdout`, and `stderr`.
 - `test_argv_arguments_are_literal`: Argv items are passed literally, without shell interpretation.
 - `test_default_working_dir_is_canonical`: `working_dir` is an absolute, canonical POSIX path.
-- `test_timeout_raises_workspace_timeout_error`: A timeout raises `WorkspaceTimeoutError` carrying the deadline.
+- `test_timeout_raises_workspace_timeout_error`: A timeout raises `WorkspaceTimeoutError` carrying the enforced deadline, which is at least the requested one.
 - `test_env_is_added`: Extra environment variables reach the command.
 - `test_absolute_cwd_is_used`: An absolute `cwd` is honored.
 - `test_ref_is_stable_across_operations`: Once assigned, `ref` remains stable across operations.
