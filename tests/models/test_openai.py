@@ -3849,7 +3849,12 @@ async def test_openai_logprobs_streaming(allow_model_requests: None):
         )
         return c
 
-    stream = [logprob_chunk('Hello'), logprob_chunk(' world'), logprob_chunk('!'), chunk([ChoiceDelta()], finish_reason='stop')]
+    stream = [
+        logprob_chunk('Hello'),
+        logprob_chunk(' world'),
+        logprob_chunk('!'),
+        chunk([ChoiceDelta()], finish_reason='stop'),
+    ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
 
