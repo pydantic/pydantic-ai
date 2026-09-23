@@ -69,6 +69,13 @@ class TestLocalWorkspaceBackend(WorkspaceBackendSuite):
         return lambda ref: LocalWorkspaceBackend(tmp_path)
 
 
+class TestClassScopedLocalWorkspaceBackend(WorkspaceBackendSuite):
+    @pytest.fixture(scope='class')
+    @classmethod
+    def backend(cls, tmp_path_factory: pytest.TempPathFactory) -> LocalWorkspaceBackend:
+        return LocalWorkspaceBackend(working_dir=tmp_path_factory.mktemp('ws'))
+
+
 class TestFakeWorkspace(WorkspaceBackendSuite):
     @pytest.fixture
     def backend(self) -> FakeWorkspace:

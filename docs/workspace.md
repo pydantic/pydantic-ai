@@ -280,19 +280,23 @@ pytest suite and provide its `backend` fixture:
 
 ```python {test="skip" lint="skip"}
 import pytest
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai.workspaces.testing import WorkspaceBackendSuite
 
 
 class TestMyBackend(WorkspaceBackendSuite):
-    @pytest.fixture
-    def backend(self) -> MyBackend:
-        return MyBackend()
+    @pytest.fixture(scope='class')
+    @classmethod
+    def backend(cls, tmp_path_factory: pytest.TempPathFactory) -> LocalWorkspaceBackend:
+        return LocalWorkspaceBackend(working_dir=tmp_path_factory.mktemp('ws'))
 ```
 
-The fixture can be synchronous or asynchronous. It can also be class-scoped, so a remote backend
-does not start a sandbox per rule: the ref rule accepts a ref that already exists, and the destroy
-rule runs last. The suite checks these rules. Command and
-filesystem rules skip when the backend does not implement
+The fixture can be synchronous or asynchronous, and function- or class-scoped. A class-scoped
+fixture means a remote backend does not start a sandbox per rule. Write it as a `classmethod`, as
+above: pytest requires that for class-scoped fixtures on a class. The ref rule accepts a ref that
+already exists, and the destroy rule runs last.
+
+The suite checks these rules. Command and filesystem rules skip when the backend does not implement
 the corresponding optional protocol; reattachment rules skip until their fixtures are provided.
 
 - `test_required_members`: The backend provides the structural `WorkspaceBackend` members.
