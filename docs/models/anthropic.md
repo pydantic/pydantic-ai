@@ -404,6 +404,10 @@ print(f'Cache write tokens: {usage.cache_write_tokens}')
 print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
+When Anthropic reports the cache-write duration split, `usage.details` also contains
+`cache_write_5m_tokens` and `cache_write_1h_tokens`. `cache_write_tokens` remains the total,
+and cost calculations apply the separate rates.
+
 ### Cache Point Limits
 
 Anthropic enforces a maximum of 4 cache points per request. Pydantic AI automatically manages this limit to ensure your requests always comply without errors.

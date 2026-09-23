@@ -3113,6 +3113,16 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         if isinstance((value := getattr(response_usage, key, None)), int):
             details[key] = value
 
+    # Five-minute and one-hour cache writes have different rates. The start event carries this
+    # split in streaming responses; later delta events do not, so keep it in the merged details.
+    if (
+        isinstance(response_usage, BetaUsage)
+        and (cache_creation := response_usage.cache_creation)
+        and (cache_creation.ephemeral_5m_input_tokens or cache_creation.ephemeral_1h_input_tokens)
+    ):
+        details['cache_write_5m_tokens'] = cache_creation.ephemeral_5m_input_tokens
+        details['cache_write_1h_tokens'] = cache_creation.ephemeral_1h_input_tokens
+
     # Anthropic bills thinking tokens inside `output_tokens`, so this is a readable subset of the
     # output total rather than an additive one, matching `reasoning_tokens` on OpenAI and
     # `thoughts_tokens` on Google.
@@ -3194,6 +3204,11 @@ def _map_usage(
     # genai-prices reads the web search count from Anthropic's nested wire shape and maps it to `web_searches`.
     if web_search_requests := details.get('web_search_requests'):
         usage_for_extraction['server_tool_use'] = {'web_search_requests': web_search_requests}
+    if 'cache_write_5m_tokens' in details or 'cache_write_1h_tokens' in details:
+        usage_for_extraction['cache_creation'] = {
+            'ephemeral_5m_input_tokens': details.get('cache_write_5m_tokens', 0),
+            'ephemeral_1h_input_tokens': details.get('cache_write_1h_tokens', 0),
+        }
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
