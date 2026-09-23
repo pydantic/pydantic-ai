@@ -25,6 +25,7 @@ pydantic-core = false
 pydantic = false
 openai = "2026-09-03T19:51:09Z"
 logfire-api = false
+ag-ui-protocol = false
 
 [manifest]
 requirements = [
@@ -1143,7 +1144,7 @@ mcp = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10,<1" },
+    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.8.0" },
     { name = "anyio", specifier = ">=4.7.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
