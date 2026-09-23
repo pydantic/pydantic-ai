@@ -17,7 +17,7 @@ from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import ReadOnlyWorkspace, WorkspaceRef
+from pydantic_ai.workspaces import ReadOnlyWorkspace, WorkspaceReadOnlyError, WorkspaceRef
 
 from ..workspace_fakes import InMemoryProvider
 
@@ -178,14 +178,14 @@ async def test_prefect_read_only_policy_is_enforced_inside_the_task() -> None:
         assert isinstance(ctx.workspace.wrapped, ReadOnlyWorkspace)
         try:
             await ctx.workspace.write_text('nope.txt', 'x')
-        except UserError as error:
+        except WorkspaceReadOnlyError as error:
             return f'blocked: {str(error)[:28]}'
         return 'wrote'  # pragma: no cover
 
     @flow
     async def run_agent() -> str:
         result = await agent.run('Try to write.')
-        with pytest.raises(UserError, match='read-only'):
+        with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
             await result.workspace.make_dir('sub')
         return result.output
 

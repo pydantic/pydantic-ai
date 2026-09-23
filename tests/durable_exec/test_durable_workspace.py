@@ -229,7 +229,7 @@ async def test_policy_wrapper_is_enforced_inside_the_unit(tmp_path: Path) -> Non
 
     assert isinstance(result.workspace, DurableWorkspace)
     assert isinstance(result.workspace.wrapped, ReadOnlyWorkspace)
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await result.workspace.write_text('x.txt', 'x')
     assert _workspace_units(durability) == ['ensure', 'write_text']
 
@@ -435,7 +435,7 @@ async def test_per_run_policy_must_match_the_construction_tree_when_units_rebuil
 
     # The same replacement is fine for an engine whose units use the run's live workspace.
     result = await Agent(TestModel(), name='ws', capabilities=[ReadOnlyPerRun(tmp_path), FakeDurability()]).run('go')
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await result.workspace.make_dir('sub')
 
 

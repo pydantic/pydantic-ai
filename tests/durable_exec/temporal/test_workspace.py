@@ -35,6 +35,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
+    WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
@@ -335,7 +336,7 @@ async def try_write(ctx: RunContext[Any]) -> str:
     assert isinstance(ctx.workspace, ReadOnlyWorkspace)
     try:
         await ctx.workspace.write_text('nope.txt', 'x')
-    except UserError as error:
+    except WorkspaceReadOnlyError as error:
         return f'blocked: {error}'
     return 'wrote'  # pragma: no cover
 
@@ -366,13 +367,13 @@ async def test_read_only_policy_is_enforced_inside_the_activity_and_from_the_wor
         )
 
         # From workflow code the refusal crosses the activity boundary as data and is re-raised as
-        # the same `UserError`, which fails the workflow instead of the workflow task.
+        # the same `WorkspaceReadOnlyError`, which fails the workflow instead of the workflow task.
         with pytest.raises(WorkflowFailureError) as exc_info:
             await client.execute_workflow(
                 ReadOnlyWorkflow.run, True, id=f'{ReadOnlyWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
             )
     cause = _workflow_failure_cause(exc_info.value)
-    assert cause.type == 'UserError'
+    assert cause.type == 'WorkspaceReadOnlyError'
     assert cause.message.startswith('This workspace is read-only')
 
 

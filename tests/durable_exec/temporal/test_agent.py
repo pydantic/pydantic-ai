@@ -92,6 +92,7 @@ from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
+    WorkspaceReadOnlyError,
     WorkspaceRef,
 )
 
@@ -2747,7 +2748,7 @@ async def test_temporal_application_deserializer_restores_validated_workspace_re
     copied = replace(restored, run_id='copy')
     assert copied.workspace is restored.workspace
     assert copied.workspace.ref == WorkspaceRef(provider='fake', id='readonly-ref')
-    with pytest.raises(UserError, match='read-only'):
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await copied.workspace.run(['touch', 'blocked'])
 
 
