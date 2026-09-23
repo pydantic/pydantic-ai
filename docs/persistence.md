@@ -1,4 +1,4 @@
-# Storage
+# Persistence
 
 "Persistence", "memory", "sessions": several different problems go by those names, and they have different answers. Start here:
 
