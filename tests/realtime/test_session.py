@@ -9480,10 +9480,7 @@ async def test_a_user_interjecting_mid_stall_is_recorded_after_the_filler() -> N
         await drain_events(session)
 
     assert [
-        (type(m).__name__, p.transcript)
-        for m in session.all_messages()
-        for p in m.parts
-        if isinstance(p, SpeechPart)
+        (type(m).__name__, p.transcript) for m in session.all_messages() for p in m.parts if isinstance(p, SpeechPart)
     ] == [
         ('ModelRequest', 'Find flights'),
         ('ModelResponse', 'Let me check.'),
