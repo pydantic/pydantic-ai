@@ -157,6 +157,47 @@ assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modu
 """
 )
 
+# Prepended to the emscripten-stand-in script below: since httpx2 2.10, emscripten installs use
+# `httpx2-jsfetch` instead of `httpcore2`, so the SDK must not require `httpcore2` at import time
+# there. `httpx2-jsfetch` can't be installed on CPython (it is pinned to `sys_platform == 'emscripten'`),
+# so a stub with the two names httpx2's transport dispatcher re-exports stands in for it.
+_EMSCRIPTEN_HTTPCORE2_FREE = """
+import sys
+import types
+
+_javascript_fetch = types.ModuleType('httpx2_jsfetch')
+
+
+class _AsyncJavascriptFetchTransport:
+    pass
+
+
+class _JavascriptFetchTransport:
+    pass
+
+
+_javascript_fetch.AsyncJavascriptFetchTransport = _AsyncJavascriptFetchTransport
+_javascript_fetch.JavascriptFetchTransport = _JavascriptFetchTransport
+sys.modules['httpx2_jsfetch'] = _javascript_fetch
+
+
+class BlockHttpcore2:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'httpcore2' or fullname.startswith('httpcore2.'):
+            raise ImportError('httpcore2 is not installed')
+
+
+sys.meta_path.insert(0, BlockHttpcore2())
+
+sys.platform = 'emscripten'
+
+import httpx2  # noqa: F401
+
+import pydantic_ai.models  # noqa: F401
+
+assert 'httpcore2' not in sys.modules, 'the emscripten core imported httpcore2'
+"""
+
 
 def test_core_runs_without_httpx() -> None:
     result = subprocess.run(
@@ -182,6 +223,16 @@ def test_openai_providers_run_without_httpx() -> None:
 def test_anthropic_providers_run_without_httpx() -> None:
     result = subprocess.run(
         [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_ANTHROPIC],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
+
+
+def test_core_runs_on_emscripten_without_httpcore2() -> None:
+    result = subprocess.run(
+        [sys.executable, '-W', 'error', '-c', _EMSCRIPTEN_HTTPCORE2_FREE],
         capture_output=True,
         text=True,
     )

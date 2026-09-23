@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from typing import TYPE_CHECKING, TypeAlias, TypeVar
 
 # Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
-# I/O if that happens inside the event loop.
-import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
+# I/O if that happens inside the event loop. Emscripten is skipped: httpx2>=2.10 doesn't install
+# httpcore2 there (it uses httpx2-jsfetch instead), so the eager import is the only thing that
+# would make `import pydantic_ai.models` fail on Pyodide.
+if sys.platform != 'emscripten':
+    import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import httpx2
 
 from ._warnings import PydanticAIDeprecationWarning
