@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
+import anyio
 import pytest
 from anyio import Event, create_task_group, fail_after
 
@@ -12,6 +14,7 @@ from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.graph_builder import EndMarker, GraphTask, _GraphIterator  # pyright: ignore[reportPrivateUsage]
 from pydantic_graph.id_types import ForkID, JoinID, NodeRunID, TaskID
 from pydantic_graph.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
+from pydantic_graph.node import Fork
 
 pytestmark = pytest.mark.anyio
 
@@ -661,3 +664,64 @@ def test_run_sync():
     # Second call skips name inference because the name is already set.
     assert graph.run_sync(inputs=4) == 10
     assert graph.name == 'graph'
+
+
+async def test_genuine_cancellation_preserves_cancelled_error():
+    """Test that genuine cancellation with an in-flight stream node still surfaces CancelledError."""
+    g = GraphBuilder(output_type=int)
+    entered = anyio.Event()
+
+    @g.stream()
+    async def stream_never(ctx: StepContext[None, None, None]) -> AsyncIterator[int]:
+        entered.set()
+        await anyio.sleep_forever()
+        yield 0  # pragma: no cover
+
+    g.add(
+        g.edge_from(g.start_node).to(stream_never),
+        # A stream node needs an outgoing edge for the graph runtime to wire up its
+        # iterable; the generator below never yields, so no items ever flow through
+        # this edge.
+        g.edge_from(stream_never).map().to(g.end_node),
+    )
+    graph = g.build()
+
+    async with create_task_group() as outer:
+
+        async def run_graph():
+            with pytest.raises(anyio.get_cancelled_exc_class()):
+                async with graph.iter() as run:
+                    async for _event in run:
+                        pass
+
+        outer.start_soon(run_graph)
+        await entered.wait()
+        outer.cancel_scope.cancel()
+
+
+@pytest.mark.parametrize('close_sender', [False, True], ids=['closed-receiver', 'closed-sender'])
+async def test_stream_error_during_teardown_is_swallowed(close_sender: bool):
+    """Drive the task directly to deterministically reproduce the stream-closing teardown race."""
+    entered = False
+
+    async def failing_stream() -> AsyncIterator[int]:
+        nonlocal entered
+        entered = True
+        raise ValueError('stream failed during teardown')
+        yield 0  # pragma: no cover
+
+    g = GraphBuilder(input_type=AsyncIterator[int], output_type=int)
+    g.add(g.edge_from(g.start_node).map().to(g.end_node))
+    graph = g.build()
+    fork = next(node for node in graph.nodes.values() if isinstance(node, Fork))
+
+    async with create_task_group() as task_group:
+        iterator = _GraphIterator(graph, None, None, task_group, lambda: NodeRunID('run:1'), lambda: TaskID('task:1'))
+        with iterator.iter_stream_sender:
+            if close_sender:
+                iterator.iter_stream_sender.close()
+            iterator.iter_stream_receiver.close()
+            task = GraphTask(fork.id, failing_stream(), (), TaskID('task:1'))
+            await iterator._run_tracked_task(task)  # pyright: ignore[reportPrivateUsage]
+
+    assert entered

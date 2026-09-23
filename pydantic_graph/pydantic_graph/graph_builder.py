@@ -884,6 +884,13 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 # `BrokenResourceError`); both are benign here — the result/error
                 # is no longer needed because the run is being torn down.
                 pass
+            except Exception as exc:
+                # Streaming errors must reach the caller through ErrorMarker too.
+                # Cancellation still propagates because it is not an Exception.
+                try:
+                    await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
+                except (BrokenResourceError, ClosedResourceError):
+                    pass
 
     async def _run_task(
         self,
