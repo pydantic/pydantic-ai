@@ -911,7 +911,7 @@ Toolsets for file operations help agents read, write, and edit files:
 
 Toolsets that give an agent its own mailbox:
 
-* [`pydantic-ai-atomicmail`](https://github.com/Atomic-Mail/atomic-mail-agentic/tree/main/py/pydantic_ai) - `AtomicMailToolset` registers `register`, `jmap_request` and `help` against an [Atomic Mail](https://atomicmail.ai) inbox the agent provisions for itself by proof of work, sending and receiving over JMAP. Also available as a capability bundling the same tools with instructions, via `AtomicMailCapability`.
+* [`pydantic-ai-atomicmail`](https://pypi.org/project/pydantic-ai-atomicmail/) - `AtomicMailToolset` registers `register`, `jmap_request` and `help` against an [Atomic Mail](https://atomicmail.ai) inbox the agent provisions for itself by proof of work, sending and receiving over JMAP. Also available as a capability bundling the same tools with instructions, via `AtomicMailCapability`.
 
 ### Code Execution
 
