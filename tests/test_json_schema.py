@@ -2,7 +2,6 @@
 
 from __future__ import annotations as _annotations
 
-import re
 from copy import deepcopy
 from typing import Any
 
@@ -13,8 +12,18 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ._inline_snapshot import snapshot
+from .conftest import try_import
+
+with try_import() as provider_imports_successful:
+    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
+    from pydantic_ai.providers.bedrock import BedrockJsonSchemaTransformer
+    from pydantic_ai.providers.openrouter import (
+        _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 class _PassthroughTransformer(JsonSchemaTransformer):
@@ -137,15 +146,15 @@ _MALFORMED_SCHEMAS: dict[str, tuple[Any, str]] = {
     ),
     'properties-is-a-string': (
         {'type': 'object', 'properties': 'nope'},
-        "Invalid JSON Schema at `properties`: Input should be a valid dictionary, got 'nope'",
+        "Invalid JSON Schema at `properties`: `properties` must be an object of schemas, got 'nope'",
     ),
     'properties-is-empty-string': (
         {'type': 'object', 'properties': ''},
-        "Invalid JSON Schema at `properties`: Input should be a valid dictionary, got ''",
+        "Invalid JSON Schema at `properties`: `properties` must be an object of schemas, got ''",
     ),
     'patternProperties-is-a-string': (
         {'type': 'object', 'patternProperties': 'nope'},
-        "Invalid JSON Schema at `patternProperties`: Input should be a valid dictionary, got 'nope'",
+        "Invalid JSON Schema at `patternProperties`: `patternProperties` must be an object of schemas, got 'nope'",
     ),
     'additionalProperties-is-a-string': (
         {'type': 'object', 'additionalProperties': 'nope'},
@@ -161,11 +170,11 @@ _MALFORMED_SCHEMAS: dict[str, tuple[Any, str]] = {
     ),
     'prefixItems-is-a-string': (
         {'type': 'array', 'prefixItems': 'nope'},
-        "Invalid JSON Schema at `prefixItems`: Input should be a valid list, got 'nope'",
+        "Invalid JSON Schema at `prefixItems`: `prefixItems` must be a list of schemas, got 'nope'",
     ),
     'anyOf-is-a-string': (
         {'anyOf': 'nope'},
-        "Invalid JSON Schema at `anyOf`: Input should be a valid list, got 'nope'",
+        "Invalid JSON Schema at `anyOf`: `anyOf` must be a list of schemas, got 'nope'",
     ),
     'anyOf-member-is-a-string': (
         {'anyOf': [{'type': 'string'}, 'nope']},
@@ -173,11 +182,11 @@ _MALFORMED_SCHEMAS: dict[str, tuple[Any, str]] = {
     ),
     'allOf-is-a-string-typed': (
         {'type': 'object', 'allOf': 'nope'},
-        "Invalid JSON Schema at `allOf`: Input should be a valid list, got 'nope'",
+        "Invalid JSON Schema at `allOf`: `allOf` must be a list of schemas, got 'nope'",
     ),
     'defs-is-a-string': (
         {'type': 'object', '$defs': 'nope'},
-        "Invalid JSON Schema at `$defs`: Input should be a valid dictionary, got 'nope'",
+        "Invalid JSON Schema at `$defs`: `$defs` must be an object of schemas, got 'nope'",
     ),
     'defs-entry-is-a-string': (
         {'type': 'object', 'properties': {'x': {'$ref': '#/$defs/X'}}, '$defs': {'X': 'nope'}},
@@ -185,19 +194,39 @@ _MALFORMED_SCHEMAS: dict[str, tuple[Any, str]] = {
     ),
     'ref-is-an-int': (
         {'type': 'object', 'properties': {'x': {'$ref': 5}}},
-        'Invalid JSON Schema at `properties.x.$ref`: Input should be a valid string, got 5',
+        'Invalid JSON Schema at `properties.x.$ref`: `$ref` must be a string, got 5',
     ),
     'type-is-an-int': (
         {'type': 5},
-        'Invalid JSON Schema at `type`: Input should be a valid string, got 5',
+        'Invalid JSON Schema at `type`: `type` must be a string or a list of strings, got 5',
     ),
     'required-is-an-int': (
         {'type': 'object', 'required': 5},
-        'Invalid JSON Schema at `required`: Input should be a valid list, got 5',
+        'Invalid JSON Schema at `required`: `required` must be a list, got 5',
     ),
     'enum-is-an-int': (
         {'type': 'object', 'properties': {'x': {'enum': 5}}},
-        'Invalid JSON Schema at `properties.x.enum`: Input should be a valid list, got 5',
+        'Invalid JSON Schema at `properties.x.enum`: `enum` must be a list, got 5',
+    ),
+    'type-list-has-an-int': (
+        {'type': ['string', 5]},
+        "Invalid JSON Schema at `type`: `type` must be a string or a list of strings, got ['string', 5]",
+    ),
+    'required-is-a-tuple': (
+        {'type': 'object', 'required': ('a', 'b')},
+        "Invalid JSON Schema at `required`: `required` must be a list, got ('a', 'b')",
+    ),
+    'minItems-is-a-string': (
+        {'type': 'array', 'items': {'type': 'string'}, 'minItems': 'x'},
+        "Invalid JSON Schema at `minItems`: `minItems` must be an integer, got 'x'",
+    ),
+    'minItems-is-a-bool': (
+        {'type': 'array', 'items': {'type': 'string'}, 'minItems': True},
+        'Invalid JSON Schema at `minItems`: `minItems` must be an integer, got True',
+    ),
+    'defs-entry-union-member-is-a-string': (
+        {'type': 'object', '$defs': {'X': {'anyOf': [{'type': 'string'}, 'nope']}}},
+        "Invalid JSON Schema at `$defs.X.anyOf.1`: a schema must be an object or a boolean, got 'nope'",
     ),
 }
 
@@ -233,6 +262,59 @@ def test_schema_shape_ignores_keywords_the_transformers_do_not_read():
     }
 
     assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
+
+
+@pytest.mark.skipif(not provider_imports_successful(), reason='provider packages not installed')
+@pytest.mark.parametrize('strict', [None, True, False])
+def test_malformed_schema_error_is_the_same_for_every_provider(strict: bool | None):
+    """The check runs before any provider `transform()`, so the error does not depend on the model in use.
+
+    On `main` the same input crashed at different points, or not at all, depending on the transformer.
+    """
+    schema = {'type': 'object', 'properties': {'x': 'string'}}
+    message = "Invalid JSON Schema at `properties.x`: a schema must be an object or a boolean, got 'string'"
+
+    for transformer_cls in (
+        OpenAIJsonSchemaTransformer,
+        GoogleJsonSchemaTransformer,
+        GoogleOpenAPISchemaTransformer,
+        AnthropicJsonSchemaTransformer,
+        BedrockJsonSchemaTransformer,
+        _OpenRouterGoogleJsonSchemaTransformer,
+    ):
+        with pytest.raises(UserError) as exc_info:
+            transformer_cls(deepcopy(schema), strict=strict)
+        assert str(exc_info.value) == message, transformer_cls.__name__
+
+
+_VALID_SCHEMAS: dict[str, Any] = {
+    'type-is-a-list': {'type': ['string', 'null']},
+    'boolean-property': {'type': 'object', 'properties': {'x': True, 'y': False}},
+    'boolean-pattern-property': {'type': 'object', 'patternProperties': {'^x': True}},
+    'boolean-additional-properties': {'type': 'object', 'additionalProperties': False},
+    'boolean-items': {'type': 'array', 'items': True},
+    'boolean-prefix-item': {'type': 'array', 'prefixItems': [True, {'type': 'string'}]},
+    'boolean-union-member': {'anyOf': [{'type': 'string'}, False]},
+    'empty-containers': {'type': 'object', 'properties': {}, 'required': [], 'allOf': [], 'enum': []},
+    'min-items-zero': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 0},
+}
+
+
+@pytest.mark.parametrize('case', list(_VALID_SCHEMAS), ids=list(_VALID_SCHEMAS))
+def test_schema_shape_accepts_valid_schemas(case: str):
+    """Shapes JSON Schema allows and the walker already handles must not be rejected by the check."""
+    schema = _VALID_SCHEMAS[case]
+
+    assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
+
+
+def test_schema_shape_accepts_a_boolean_defs_entry():
+    """A boolean `$defs` entry is a valid schema, so the check passes it.
+
+    The inlining walker still crashes on it (issue #8621); that is a library bug on a valid schema, and the
+    shape check must not turn it into a "your schema is invalid" error.
+    """
+    _PassthroughTransformer({'type': 'object', '$defs': {'X': True}})
 
 
 def test_boolean_schema_in_single_member_union():
@@ -690,6 +772,7 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
 def test_agent_run_rejects_a_tool_schema_that_is_not_a_json_schema():
     """A malformed hand-written tool schema fails the run with a `UserError` before any request is made.
 
+    The error names the tool, which is known at the `prepare_request` call site but not to the transformer.
     Provider-agnostic: `FunctionModel` with a profile that installs the inlining transformer stands in for
     Google/Bedrock, which are the providers that inline `$defs`. Not a VCR test because the rejection happens
     in `prepare_request`, before there is a request to record; the model function asserts it is never reached.
@@ -710,7 +793,9 @@ def test_agent_run_rejects_a_tool_schema_that_is_not_a_json_schema():
     )
     agent = Agent(model, tools=[tool])
 
-    with pytest.raises(
-        UserError, match=re.escape("at `properties.x`: a schema must be an object or a boolean, got 'string'")
-    ):
+    with pytest.raises(UserError) as exc_info:
         agent.run_sync('hi')
+
+    assert str(exc_info.value) == (
+        "Tool 'lookup': Invalid JSON Schema at `properties.x`: a schema must be an object or a boolean, got 'string'"
+    )
