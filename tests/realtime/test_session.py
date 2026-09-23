@@ -9399,3 +9399,94 @@ async def test_wait_for_reply_holds_through_a_stalled_exchange() -> None:
         continue_exchange.set()
         with anyio.fail_after(5):
             await waiting
+
+
+def _two_stalled_utterances() -> list[RealtimeCodecEvent]:
+    """A background-reasoning model speaking twice in one exchange, with no tool call between.
+
+    Each utterance is its own provider response with its own usage report; only the first carries
+    `more_expected`, since the exchange isn't over until the second.
+    """
+    return [
+        OutputTranscript(text='Let me think.', is_final=True),
+        SessionUsage(usage=RequestUsage(input_tokens=60, output_tokens=4)),
+        ResponseDone(more_expected=True),
+        OutputTranscript(text='The answer is 42.', is_final=True),
+        SessionUsage(usage=RequestUsage(input_tokens=70, output_tokens=5)),
+        ResponseDone(),
+    ]
+
+
+async def test_stalled_utterances_without_a_tool_call_stay_separate_responses() -> None:
+    """A response is held open only for the tool call it was stalling for, not for more speech.
+
+    Merging the two would sum distinct provider responses' usage into one `ModelResponse`: 130 input
+    tokens for what were two requests of 60 and 70, one request counted where two were made.
+    """
+    session = RealtimeSession(FakeRealtimeConnection(_two_stalled_utterances()))
+    async with session:
+        events = await drain_events(session)
+
+    responses = [m for m in session.all_messages() if isinstance(m, ModelResponse)]
+    assert [[cast(SpeechPart, p).transcript for p in r.parts] for r in responses] == [
+        ['Let me think.'],
+        ['The answer is 42.'],
+    ]
+    assert [r.usage.input_tokens for r in responses] == [60, 70]
+    assert session.usage.requests == 2
+    # Still one exchange: the provider said the first response wasn't its last.
+    assert events.count(RealtimeTurnCompleteEvent()) == 1
+
+
+async def test_stalled_utterances_are_checked_against_per_request_limits_individually() -> None:
+    session = RealtimeSession(
+        FakeRealtimeConnection(_two_stalled_utterances()),
+        usage_limits=UsageLimits(per_request_input_tokens_limit=100),
+    )
+    async with session:
+        await drain_events(session)
+    assert session.usage.input_tokens == 130
+
+
+async def test_stalled_utterances_count_against_the_request_limit_individually() -> None:
+    session = RealtimeSession(
+        FakeRealtimeConnection(_two_stalled_utterances()), usage_limits=UsageLimits(request_limit=1)
+    )
+    with pytest.raises(UsageLimitExceeded):
+        async with session:
+            await drain_events(session)
+
+
+async def test_a_user_interjecting_mid_stall_is_recorded_after_the_filler() -> None:
+    """The held filler was already spoken, so a user turn that arrives next goes after it in history.
+
+    Holding the filler out of history until the exchange ended would anchor the user's interjection
+    before it — handing a standard run, or a re-seeded session, the reply before the words it answers.
+    """
+    session = RealtimeSession(
+        FakeRealtimeConnection(
+            [
+                InputTranscript(text='Find flights', is_final=False),
+                OutputTranscript(text='Let me check.', is_final=True),
+                ResponseDone(more_expected=True),
+                InputTranscript(text='Actually never mind', is_final=False),
+                ResponseDone(interrupted=True),
+                OutputTranscript(text='OK.', is_final=True),
+                ResponseDone(),
+            ]
+        )
+    )
+    async with session:
+        await drain_events(session)
+
+    assert [
+        (type(m).__name__, p.transcript)
+        for m in session.all_messages()
+        for p in m.parts
+        if isinstance(p, SpeechPart)
+    ] == [
+        ('ModelRequest', 'Find flights'),
+        ('ModelResponse', 'Let me check.'),
+        ('ModelRequest', 'Actually never mind'),
+        ('ModelResponse', 'OK.'),
+    ]

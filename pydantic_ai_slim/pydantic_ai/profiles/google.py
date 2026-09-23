@@ -272,6 +272,15 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     nearest level in the set.
     """
 
+    google_tool_calls_non_blocking_by_default: bool
+    """Whether a function declaration with no `behavior` runs non-blocking on this model. Default: `False`.
+
+    True of the Gemini 3.8 Live family, where Google made `NON_BLOCKING` the default. Pydantic AI keeps tool
+    calls blocking unless
+    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
+    asks otherwise, so on such a model it declares `BLOCKING` explicitly rather than leaving it unset.
+    """
+
 
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for a Gemini Live model."""
@@ -280,6 +289,7 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # normalized once here rather than every check below having to allow for both.
     model_name = model_name.rsplit('/', 1)[-1]
     is_extended_thinking = model_name.startswith('gemini-3.8-live-extended-thinking')
+    is_3_8_live = model_name == 'gemini-3.8-live'
     thinking_levels = next(
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -326,10 +336,7 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # supported for this model` to any level (verified live 2026-09-16), so the shared `thinking`
         # setting is skipped for it too.
         'supports_thinking': is_extended_thinking
-        or (
-            ('native-audio' in model_name or not model_name.startswith('gemini-live-2.5'))
-            and model_name != 'gemini-3.8-live'
-        ),
+        or (('native-audio' in model_name or not model_name.startswith('gemini-live-2.5')) and not is_3_8_live),
         # Extended thinking reasons and speaks at once, and its API *requires* a thinking level:
         # connecting without one is `1007 Thinking level must be specified for this model`, and a
         # `thinking_budget` (including `0`, the shape `thinking=False` maps to) is rejected the same way.
@@ -338,22 +345,37 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
         # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result
         # lands. This gates the opt-in `google_async_tool_calls` setting; it is not enabled by
-        # merely being supported. Extended thinking has no other mode — see below.
-        'supports_async_tool_calls': 'native-audio' in model_name or is_extended_thinking,
+        # merely being supported. Extended thinking has no other mode — see below. `gemini-3.8-live`
+        # honors it too: verified live 2026-09-16, a `NON_BLOCKING` call's `turn_complete` arrives with
+        # the call rather than after its result, as it does for `BLOCKING`.
+        'supports_async_tool_calls': 'native-audio' in model_name or is_3_8_live or is_extended_thinking,
         # Verified live 2026-09-16: `gemini-3.8-live-extended-thinking` answers `1007 BLOCKING function
         # calls are not supported for this model` to a `BLOCKING` (or unset) declaration behavior, so
         # every tool session on it is async whether or not `google_async_tool_calls` asked.
         'requires_async_tool_calls': is_extended_thinking,
         # ...and conversely rejects the scheduling field the async path otherwise sends: `1007 Function
         # response scheduling is not supported for this model`. It paces results against its own
-        # reasoning instead.
-        'supports_async_tool_call_scheduling': 'native-audio' in model_name,
+        # reasoning instead. `gemini-3.8-live` accepts `INTERRUPT` (verified live 2026-09-16), as Google
+        # documents for it.
+        'supports_async_tool_call_scheduling': 'native-audio' in model_name or is_3_8_live,
         # Gemini Live takes a tool's return schema natively, as the function declaration's
         # `response` schema (matching the classic `GoogleModel`'s `response_json_schema`).
         'supports_tool_return_schema': True,
     }
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
+    if is_3_8_live or is_extended_thinking:
+        # Google made `NON_BLOCKING` the default for the 3.8 family, so an unset behavior no longer means
+        # blocking there: verified live 2026-09-16 against `gemini-3.8-live`, where a declaration without
+        # one completes the turn alongside the call just as `NON_BLOCKING` does.
+        # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live#migrating
+        profile['google_tool_calls_non_blocking_by_default'] = True
+    if is_3_8_live or is_extended_thinking:
+        # Google made `NON_BLOCKING` the default for the 3.8 family, so an unset behavior no longer means
+        # blocking there: verified live 2026-09-16 against `gemini-3.8-live`, where a declaration without
+        # one completes the turn alongside the call just as `NON_BLOCKING` does.
+        # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live#migrating
+        profile['google_tool_calls_non_blocking_by_default'] = True
     return profile
 
 

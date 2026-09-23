@@ -217,10 +217,15 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     [text-to-speech](../models/google.md) feature; a Live session has one voice, set with `google_voice`.
     """
     google_affective_dialog: bool
-    """Whether to enable emotion-aware delivery (native-audio models only)."""
+    """Whether to enable emotion-aware delivery (native-audio models only).
+
+    Not supported by the Gemini 3.8 Live models, which reject it at connect."""
     google_proactive_audio: bool
     """Whether the model may decide *when* to respond, including staying silent on input not
     addressed to it. Useful for "react to the camera" experiences.
+
+    Always on for the Gemini 3.8 Live models, so there it can be left unset. They reject an explicit
+    `False`, which is never sent: `False` just leaves the field out.
 
     Gemini serves `proactivity` on the Developer API's `v1alpha` only, and the API version belongs to
     the client, so the client has to be built for it — `connect` raises
@@ -530,14 +535,24 @@ def _schema_from_json_schema(json_schema: dict[str, Any]) -> genai_types.Schema:
     )
 
 
-def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
-    """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
+def _tool_def_to_genai(
+    tool: ToolDefinition, *, async_tool_calls: bool = False, explicit_blocking: bool = False
+) -> genai_types.FunctionDeclaration:
+    """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration.
+
+    `explicit_blocking` declares a blocking call `BLOCKING` rather than leaving the behavior unset, for a
+    model whose unset default is non-blocking.
+    """
     return genai_types.FunctionDeclaration(
         name=tool.name,
         description=tool.description or '',
         parameters=_schema_from_json_schema(tool.parameters_json_schema),
         response=_schema_from_json_schema(tool.return_schema) if tool.return_schema else None,
-        behavior=genai_types.Behavior.NON_BLOCKING if async_tool_calls else None,
+        behavior=genai_types.Behavior.NON_BLOCKING
+        if async_tool_calls
+        else genai_types.Behavior.BLOCKING
+        if explicit_blocking
+        else None,
     )
 
 
@@ -985,10 +1000,17 @@ class GoogleRealtimeModel(RealtimeModel):
         # functions are advertised; the mode the resolution asks for is dropped.
         advertised_tools, _ = resolve_advertised_tools(tools, settings.get('tool_choice'))
         if advertised_tools:
+            async_tool_calls = self._async_tool_calls(settings)
             genai_tools.append(
                 genai_types.Tool(
                     function_declarations=[
-                        _tool_def_to_genai(t, async_tool_calls=self._async_tool_calls(settings))
+                        _tool_def_to_genai(
+                            t,
+                            async_tool_calls=async_tool_calls,
+                            explicit_blocking=cast('GoogleRealtimeModelProfile', self.profile).get(
+                                'google_tool_calls_non_blocking_by_default', False
+                            ),
+                        )
                         for t in advertised_tools
                     ]
                 )
@@ -1134,8 +1156,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._reconnects_used = 0
         self._async_tool_calls_enabled = async_tool_calls
         # Whether the model takes a `scheduling` field at all: extended thinking paces results against its
-        # own reasoning and closes the session if one is sent.
-        self._async_tool_call_scheduling_enabled = self._profile.get('supports_async_tool_call_scheduling', False)
+        # own reasoning and closes the session if one is sent. A connection built without a profile keeps
+        # sending it, as it did before the flag existed; `GoogleRealtimeModel.connect` always passes one.
+        self._async_tool_call_scheduling_enabled = profile is None or profile.get(
+            'supports_async_tool_call_scheduling', False
+        )
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.

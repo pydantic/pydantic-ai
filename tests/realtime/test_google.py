@@ -1049,6 +1049,20 @@ async def test_send_tool_result_echoes_name() -> None:
     assert response.response == {'output': 'Sunny'}
 
 
+@pytest.mark.parametrize('async_tool_calls', [False, True])
+async def test_send_tool_result_async_scheduling_without_a_profile(async_tool_calls: bool) -> None:
+    """A connection built without a profile schedules async results exactly as it did before the flag."""
+    session = _RecordingSession()
+    conn = GoogleRealtimeConnection(cast('AsyncSession', session), async_tool_calls=async_tool_calls)
+    _register_call(conn, name='get_weather')
+
+    await conn.send(ToolResult(tool_call_id='c1', output='Sunny'))
+
+    assert session.tool_responses[0].scheduling == (
+        genai_types.FunctionResponseScheduling.INTERRUPT if async_tool_calls else None
+    )
+
+
 @pytest.mark.parametrize(
     ('async_tool_calls', 'supports_scheduling', 'scheduled'),
     [
@@ -2423,6 +2437,9 @@ def test_thinking_false_still_disables_where_it_can() -> None:
         ('gemini-2.5-flash-native-audio-latest', {'google_async_tool_calls': True}, True),
         ('gemini-2.5-flash-native-audio-latest', None, False),
         ('gemini-3.1-flash-live-preview', {'google_async_tool_calls': True}, False),
+        # `gemini-3.8-live` honors the opt-in like the native-audio models do.
+        ('gemini-3.8-live', {'google_async_tool_calls': True}, True),
+        ('gemini-3.8-live', None, False),
         # Forced on where the model has no blocking mode, whether or not the session asked.
         ('gemini-3.8-live-extended-thinking', None, True),
         ('gemini-3.8-live-extended-thinking', {'google_async_tool_calls': True}, True),
@@ -2607,3 +2624,28 @@ def test_turn_stays_open_while_the_exchange_is_stalled(
     )
     assert events[-1] == ResponseDone(interrupted=interrupted, more_expected=more_expected)
     assert conn._turn_open is turn_stays_open  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'settings', 'expected_behavior'),
+    [
+        # The 3.8 family defaults an unset behavior to non-blocking, so a blocking call has to say so.
+        ('gemini-3.8-live', None, 'BLOCKING'),
+        ('gemini-3.8-live', {'google_async_tool_calls': True}, 'NON_BLOCKING'),
+        ('gemini-3.8-live-extended-thinking', None, 'NON_BLOCKING'),
+        # Every older Live model keeps the declaration it always had: unset means blocking there.
+        ('gemini-2.5-flash-native-audio-latest', None, None),
+        ('gemini-3.1-flash-live-preview', None, None),
+    ],
+)
+def test_declared_tool_behavior_per_model(
+    model_name: str, settings: GoogleRealtimeModelSettings | None, expected_behavior: str | None
+) -> None:
+    model = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession())))
+    tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})
+    config = model._config('', [tool], model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert config.tools is not None
+    genai_tool = config.tools[0]
+    assert isinstance(genai_tool, genai_types.Tool) and genai_tool.function_declarations
+    behavior = genai_tool.function_declarations[0].behavior
+    assert (behavior.value if behavior else None) == expected_behavior

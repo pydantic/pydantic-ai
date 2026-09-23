@@ -65,8 +65,14 @@ differs from every other Live model in three ways the model handles for you:
   actually finish. A UI that shows "thinking…" should key off those. An utterance the user barges in on is the
   exception: it really is over, and is recorded as its own interrupted response.
 
-`gemini-3.8-live` is the same family without background reasoning: it takes no thinking configuration
-at all, and a [`thinking`](../capabilities/thinking.md) setting is ignored rather than sent.
+`gemini-3.8-live` is the same family without background reasoning. It rejects a thinking *level*, so
+the shared [`thinking`](../capabilities/thinking.md) setting is ignored rather than sent. Unlike older
+Live models it defaults to asynchronous tool calls, so Pydantic AI declares tools `BLOCKING` unless
+`google_async_tool_calls=True` asks otherwise, keeping the same default as every other model.
+
+Both 3.8 models keep proactive audio permanently on, so there's nothing for `google_proactive_audio`
+to turn on and it can be left unset. Gemini rejects an explicit `False`, which Pydantic AI never sends,
+and `True` still needs a `v1alpha` client like on any model. Neither supports affective dialog.
 
 ## Settings
 
@@ -94,14 +100,14 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | Setting | Purpose |
 | --- | --- |
 | `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
-| `google_affective_dialog` | Emotion-aware delivery, on native-audio models |
-| `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below) |
+| `google_affective_dialog` | Emotion-aware delivery, on native-audio models (not the 3.8 models) |
+| `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below). Always on for the 3.8 models |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
 | `google_activity_handling`, `google_turn_coverage` | [Interruption](turns.md#barge-in) behavior and which input belongs to a turn |
 | `google_input_transcription`, `google_output_transcription` | Native [transcription](audio.md#input-transcription) switches, enabled by default |
 | `google_context_compression` | Sliding-window compression for long sessions |
 | `google_enable_session_resumption` | Native state restoration; enabled automatically by a `reconnect` policy |
-| `google_async_tool_calls` | Lets supported models continue speaking during tools; always on for extended thinking |
+| `google_async_tool_calls` | Lets supported models, including `gemini-3.8-live`, continue speaking during tools; always on for extended thinking |
 | `google_config_overrides` | Raw `LiveConnectConfig` keys merged last as a forward-compatibility escape hatch |
 
 `google_voice` is the provider voice setting. `google_thinking_config` takes precedence over the

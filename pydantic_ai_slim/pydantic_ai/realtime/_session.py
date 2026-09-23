@@ -841,6 +841,10 @@ class RealtimeSession:
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
+        # Set while a response the provider said isn't the last of its exchange is held open for the
+        # tool call it was stalling for; the finish reason it will be recorded with if something else
+        # arrives first. See `_handle_turn_complete`.
+        self._deferred_response_finish_reason: FinishReason | None = None
         # `ToolManager` adds a call to `usage.tool_calls` only once it *succeeds*, so calls still
         # running aren't visible there. Reserved when a `ToolCall` passes `_check_tool_call_limit`,
         # released the moment `handle_call` settles (the same event-loop segment that records a
@@ -2231,20 +2235,25 @@ class RealtimeSession:
             or any(isinstance(part, ToolCallPart) for part in self._response_parts)
         )
         self._response_finalized_before_terminal = False
-        if event.more_expected and not event.interrupted:
+        if event.more_expected and not event.interrupted and event.provider_details is None:
             # The provider ended this response but said the exchange isn't over: a background-reasoning
             # model speaks a filler, closes the response, and only then calls the tool it was stalling
-            # for. Treat the boundary as mid-response and keep accumulating, so the utterance and the
-            # tool call it belongs to land in one `ModelResponse` — the same shape a response whose
-            # usage arrives mid-part gets. Its terminal metadata carries forward in the pending slots,
-            # and the next real boundary finalizes the lot: on Gemini that is the tool call itself,
-            # whose frame carries no usage to wait for, and otherwise the terminal that ends the exchange.
+            # for. Hold the response open for that one tool call, so the utterance and the call it
+            # belongs to land in one `ModelResponse` — the same shape a response whose usage arrives
+            # mid-part gets. On Gemini the tool call's own finalization closes the pair, since its frame
+            # carries no usage to wait for.
+            #
+            # Held for the tool call *only*: anything else that arrives first — more speech, a usage
+            # report, a user transcript — settles the held response on its own (see
+            # `_settle_deferred_response`), so two utterances stay two responses with their own usage,
+            # request count, and `chat` span, and a user interjecting mid-stall is recorded after what
+            # the model had already said rather than before it.
             #
             # An interrupted response is exempt: the user barged in, so that utterance really is over
-            # and belongs in history as its own interrupted response rather than absorbing what the
-            # model says next.
+            # and belongs in history as its own interrupted response. So is one carrying terminal
+            # `provider_details`, which have no pending slot to wait in.
             self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
-            self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
+            self._deferred_response_finish_reason = event.finish_reason or 'stop'
             return events
         self._finalize_response(
             provider_response_id=event.provider_response_id,
@@ -2691,6 +2700,9 @@ class RealtimeSession:
         # Whatever the model still owed is being settled here rather than spoken, on both the reconnect
         # and the close path, so a `wait_for_reply()` waiting on it is waiting on nothing.
         self._release_exchange()
+        # A response held for a tool call was spoken in full, so it is recorded as the complete response
+        # it was, ahead of anything below that really was cut short.
+        self._settle_deferred_response()
         events = self._finalize_user()
         for item_id, turn in list(self._user_turns.items()):
             if item_id is not None and not turn.finalized:
@@ -3179,6 +3191,8 @@ class RealtimeSession:
     ) -> bool:
         """Process one upstream event onto the queue; return `True` to stop the pump (a limit tripped)."""
         if isinstance(event, ToolCall):
+            # The tool call a held response was waiting for joins it, so the hold is spent.
+            self._deferred_response_finish_reason = None
             if self._accept_item(event.item_id, event.tool_call_id):
                 await self._dispatch_tool_call(event)
             return False
@@ -3259,12 +3273,24 @@ class RealtimeSession:
         # before the pump processes any later event, without the pump ever waiting on user tool code.
         await validation_done.wait()
 
+    def _settle_deferred_response(self) -> None:
+        """Record a response held open for a tool call that didn't come next, as the response it was.
+
+        Only history is settled: the provider said the exchange continues, so the turn boundary and
+        `wait_for_reply()` keep waiting for the terminal that ends it.
+        """
+        if (finish_reason := self._deferred_response_finish_reason) is None:
+            return
+        self._deferred_response_finish_reason = None
+        self._finalize_response(finish_reason=finish_reason, response_occurred=True)
+
     async def _handle_non_tool_pump_event(self, event: RealtimeCodecEvent) -> bool:
         """Process an upstream event other than a tool call; return `True` to stop the pump."""
         # `_handle_pump_event` routes every `ToolCall` to `_dispatch_tool_call`, so the remaining union
         # is what `_translate_event` accepts; asserted rather than re-tested so a future codec event
         # that slips past the dispatcher fails loudly instead of reaching the wrong translator.
         assert not isinstance(event, ToolCall)
+        self._settle_deferred_response()
         if isinstance(event, ConversationCreated):
             return False
         if isinstance(event, ConversationItemCreated):
