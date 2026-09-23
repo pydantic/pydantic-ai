@@ -1228,7 +1228,8 @@ To make a custom capability usable in [agent specs](../agent-spec.md), it needs 
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, AgentSpec
+from pydantic_ai.agent.spec import CapabilitySpec
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -1242,7 +1243,10 @@ class RateLimit(AbstractCapability[Any]):
 # In YAML: `- RateLimit: {rpm: 30}`
 # In Python:
 agent = Agent.from_spec(
-    {'model': 'test', 'capabilities': [{'RateLimit': {'rpm': 30}}]},
+    AgentSpec(
+        model='test',
+        capabilities=[CapabilitySpec(name='RateLimit', arguments={'rpm': 30})],
+    ),
     custom_capability_types=[RateLimit],
 )
 ```
