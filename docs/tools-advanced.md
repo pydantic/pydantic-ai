@@ -278,8 +278,10 @@ The following example changes the `name` parameter's description based on the va
 
 For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.tools.Tool] dataclass.
 
-```python {title="customize_name.py"}
+```python {title="customize_name.py" typecheck="skip - deps_type=Literal needs TypeForm, see #8690"}
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
 from pydantic_ai.models.test import TestModel
@@ -290,7 +292,7 @@ def greet(name: str) -> str:
 
 
 async def prepare_greet(
-    ctx: RunContext[str], tool_def: ToolDefinition
+    ctx: RunContext[Literal['human', 'machine']], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
     d = f'Name of the {ctx.deps} to greet.'
     tool_def.parameters_json_schema['properties']['name']['description'] = d
@@ -299,7 +301,7 @@ async def prepare_greet(
 
 greet_tool = Tool(greet, prepare=prepare_greet)
 test_model = TestModel()
-agent = Agent(test_model, tools=[greet_tool], deps_type=str)
+agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machine'])
 
 result = agent.run_sync('testing...', deps='human')
 print(result.output)
