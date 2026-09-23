@@ -10,10 +10,12 @@ from typing import Annotated, Any, Literal, cast
 import httpx2
 import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BoolCriteria,
     CachePoint,
     Choices,
     CompactionPart,
@@ -1564,6 +1566,246 @@ async def test_a_field_with_more_options_than_jev_picks_from_is_refused(
         await Agent(typesafe_model, output_type=Routed).run('anything')
 
 
+class Refunded(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back."""
+
+    yes = True
+    """Money was returned to the customer."""
+    no = False
+    """No refund was issued."""
+
+
+class OnlyYesDescribed(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back."""
+
+    yes = True
+    """Money was returned to the customer."""
+    no = False
+
+
+class OnlyNoDescribed(UseEnumMemberDocstrings, Enum):
+    """Whether the money went back."""
+
+    yes = True
+    no = False
+    """No refund was issued."""
+
+
+@pytest.mark.parametrize(
+    'member,criteria',
+    [
+        pytest.param(OnlyYesDescribed, {'true': 'Money was returned to the customer.'}, id='only yes'),
+        pytest.param(OnlyNoDescribed, {'false': 'No refund was issued.'}, id='only no'),
+    ],
+)
+async def test_a_true_false_enum_sends_the_meaning_that_was_written(
+    allow_model_requests: None, member: type[Enum], criteria: dict[str, str]
+):
+    """Describing one answer and not the other is a partial rubric, not a broken one: what is written is sent.
+
+    A pair that describes neither is a plain yes/no and never reaches the criteria at all.
+    """
+    seen: list[dict[str, Any]] = []
+
+    class Settled(BaseModel):
+        """Review the transcript."""
+
+        refunded: member = Field(description='Was a refund issued?')  # type: ignore[valid-type]
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(refunded={'type': 'noul', 'noul': 0.9})
+
+    await Agent(mock_model(record), output_type=Settled).run('we sent the money back')
+
+    assert seen[0]['questions']['refunded']['criteria'] == criteria
+
+
+async def test_a_true_false_enum_says_what_each_answer_means(allow_model_requests: None):
+    """`True` and `False` are a yes/no's own two options, so an enum of them is that question with criteria."""
+    seen: list[dict[str, Any]] = []
+
+    class Settled(BaseModel):
+        """Review the transcript."""
+
+        refunded: Refunded = Field(description='Was a refund issued?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(refunded={'type': 'noul', 'noul': 0.9})
+
+    result = await Agent(mock_model(record), output_type=Settled).run('we sent the money back')
+
+    assert result.output == snapshot(Settled(refunded=Refunded.yes))
+    assert seen[0]['questions'] == snapshot(
+        {
+            'refunded': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'refunded',
+                    'question': 'Was a refund issued?',
+                    'goal': 'Review the transcript.',
+                },
+                'criteria': {
+                    'true': 'Money was returned to the customer.',
+                    'false': 'No refund was issued.',
+                },
+            }
+        }
+    )
+
+
+async def test_a_true_false_literal_is_the_same_question_with_nothing_said_about_its_answers(
+    allow_model_requests: None,
+):
+    """A `Literal` of the two has no docstrings to carry meanings, so it asks what a bare `bool` asks."""
+    seen: list[dict[str, Any]] = []
+
+    class Settled(BaseModel):
+        """Review the transcript."""
+
+        apologised: Literal[True, False] = Field(description='Did the agent apologise?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(apologised={'type': 'noul', 'noul': 0.9})
+
+    result = await Agent(mock_model(record), output_type=Settled).run('sorry about that')
+
+    assert result.output == snapshot(Settled(apologised=True))
+    assert seen[0]['questions']['apologised'] == snapshot(
+        {
+            'type': 'noul',
+            'instructions': {
+                'field': 'apologised',
+                'question': 'Did the agent apologise?',
+                'goal': 'Review the transcript.',
+            },
+        }
+    )
+
+
+async def test_a_true_false_enum_that_describes_its_answers_asks_something_on_its_own(allow_model_requests: None):
+    """What the two answers mean is a question in itself, as a pick-one's options are: no description needed."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    result = await Agent(mock_model(record), output_type=Refunded).run('we sent the money back')
+
+    assert result.output is Refunded.yes
+    assert seen[0]['questions']['response'] == snapshot(
+        {
+            'type': 'noul',
+            'instructions': 'Whether the money went back.',
+            'criteria': {
+                'true': 'Money was returned to the customer.',
+                'false': 'No refund was issued.',
+            },
+        }
+    )
+
+
+class Delivered(UseEnumMemberDocstrings, Enum):
+    arrived = True
+    """The parcel reached the customer."""
+    lost = False
+    """The parcel did not reach the customer."""
+
+
+async def test_meanings_alone_are_enough_for_a_yes_no_with_nothing_else_to_go_on(allow_model_requests: None):
+    """A bare `bool` with no question asks Jev nothing; two described answers are the question."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    result = await Agent(mock_model(record), output_type=Delivered).run('it turned up on Tuesday')
+
+    assert result.output is Delivered.arrived
+    # No class docstring, no field description and no agent instructions, so the criteria are all there is.
+    assert seen[0]['questions']['response'] == snapshot(
+        {
+            'type': 'noul',
+            'criteria': {
+                'true': 'The parcel reached the customer.',
+                'false': 'The parcel did not reach the customer.',
+            },
+        }
+    )
+
+
+class SettledByBoolCriteria(BaseModel):
+    """Review the transcript."""
+
+    refunded: Annotated[
+        bool, BoolCriteria(true='Money was returned to the customer.', false='No refund was issued.')
+    ] = Field(description='Was a refund issued?')
+
+
+async def test_bool_criteria_describe_both_answers_and_give_back_a_plain_bool(allow_model_requests: None):
+    """`BoolCriteria` puts the two meanings in the schema without an `Enum`, so the value stays a `bool`."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(refunded={'type': 'noul', 'noul': 0.9})
+
+    result = await Agent(mock_model(record), output_type=SettledByBoolCriteria).run('we sent the money back')
+
+    # A real `bool`, not an enum member needing `.value`: `BoolCriteria` is a marker, not a type.
+    assert result.output.refunded is True
+    assert seen[0]['questions']['refunded'] == snapshot(
+        {
+            'type': 'noul',
+            'instructions': {
+                'field': 'refunded',
+                'question': 'Was a refund issued?',
+                'goal': 'Review the transcript.',
+            },
+            'criteria': {
+                'true': 'Money was returned to the customer.',
+                'false': 'No refund was issued.',
+            },
+        }
+    )
+
+
+async def test_bool_criteria_on_anything_but_a_bool_is_refused(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """The two meanings are a `bool`'s two answers, so on any other type they describe nothing."""
+
+    class Misplaced(BaseModel):
+        refunded: Annotated[str, BoolCriteria(true='Yes.', false='No.')]
+
+    with pytest.raises(UserError, match='`BoolCriteria` says what each answer of a `bool` means'):
+        await Agent(typesafe_model, output_type=Misplaced).run('anything')
+
+
+@pytest.mark.parametrize('literal', [Literal[True], Literal[False], Literal[True, False]])
+async def test_bool_criteria_on_a_bool_literal_is_refused(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, literal: object
+):
+    """A `Literal` already pins its values, which the two meanings would contradict or be dropped in favor of."""
+    output_type = Annotated[literal, BoolCriteria(true='Yes.', false='No.')]
+    with pytest.raises(UserError, match='can only annotate a plain `bool`, not a `Literal`'):
+        await Agent(typesafe_model, output_type=output_type).run('anything')  # type: ignore[arg-type]
+
+
+async def test_a_true_false_literal_that_says_nothing_anywhere_is_refused(allow_model_requests: None):
+    """With neither meanings nor a description, the two options say no more than a bare `bool` with no question."""
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('no request should be made')
+
+    with pytest.raises(UserError, match='asks Jev nothing'):
+        await Agent(mock_model(unreachable), output_type=Literal[True, False]).run('anything')
+
+
 async def test_a_rubric_with_more_levels_than_jev_scores_against_is_refused(
     allow_model_requests: None, typesafe_model: TypeSafeModel
 ):
@@ -1745,6 +1987,138 @@ async def test_the_none_option_stays_clear_of_an_option_named_none(allow_model_r
     assert list(seen[0]['questions']['plan']['criteria']) == ['none', 'some', 'none_']
 
 
+def none_of_these(request: httpx2.Request) -> httpx2.Response:
+    """Jev answering "None of these." to every question that offers it, and the first option to any other."""
+    questions: dict[str, dict[str, Any]] = json.loads(request.content)['questions']
+    return answers(
+        **{
+            name: tool_answers_for('none' if 'none' in question['criteria'] else next(iter(question['criteria'])))
+            for name, question in questions.items()
+        }
+    )
+
+
+class Placement(BaseModel):
+    area: Literal['billing', 'shipping'] | None = 'shipping'
+
+
+class Routing(BaseModel):
+    """Route a support ticket."""
+
+    team: Literal['billing', 'shipping'] | None = Field('shipping', description='Which team, if any?')
+    owner: Literal['billing', 'shipping'] | Annotated[None, Field(description='Nobody owns it yet.')] = Field(
+        'billing', description='Which team owns it?'
+    )
+    named: Literal['billing', 'shipping'] | None = Field(description='Which team is named, if any?')
+    unset: Literal['billing', 'shipping'] | None = Field(None, description='Which team is asked for, if any?')
+    fallback: Literal['billing', 'shipping'] | None = Field(
+        default_factory=lambda: 'billing', description='Which team is next, if any?'
+    )
+    queue: Literal['billing', 'shipping'] = Field('shipping', description='Which queue?')
+    placement: Placement
+
+
+async def test_none_of_these_leaves_a_default_to_apply(allow_model_requests: None):
+    """ "None of these." is the absence of an answer: a field with a default gets it, and one without gets `None`.
+
+    A described `None` is the same option under the user's wording, so it leaves the default to apply too. A
+    `default_factory` renders no default in the schema, which is all the model sees, so it is a field without one.
+    """
+    result = await Agent(mock_model(none_of_these), output_type=Routing).run('Hello.')
+    assert result.output == Routing(
+        team='shipping',
+        owner='billing',
+        named=None,
+        unset=None,
+        fallback=None,
+        queue='billing',
+        placement=Placement(area='shipping'),
+    )
+    assert result.response.parts == [
+        ToolCallPart(
+            'final_result',
+            {'named': None, 'fallback': None, 'queue': 'billing', 'placement': {}},
+            tool_call_id=IsStr(),
+        )
+    ]
+
+
+async def test_none_of_these_is_none_for_a_key_that_may_be_left_out(allow_model_requests: None):
+    """A `NotRequired` key has no default to apply, so it gets `None` rather than being left out."""
+
+    class Routed(TypedDict):
+        """Route a support ticket."""
+
+        team: NotRequired[Literal['billing', 'shipping'] | None]
+
+    result = await Agent(mock_model(none_of_these), output_type=Routed).run('Hello.')
+    assert result.output == {'team': None}
+
+
+async def test_none_of_these_leaves_a_tool_argument_default_to_apply(allow_model_requests: None):
+    """An argument Jev fills for a tool gets its default the same way a field of the output does."""
+    called: list[str | None] = []
+    requests = 0
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 2:
+            # The second request fills `assign`, which Jev picked in the first.
+            return none_of_these(request)
+        return tool_answers('assign' if requests == 1 else 'final_result', 0.9)
+
+    def assign(team: Literal['billing', 'shipping'] | None = 'shipping') -> None:
+        """Assign the ticket.
+
+        Args:
+            team: Which team should take it, if any?
+        """
+        called.append(team)
+
+    await Agent(mock_model(handle), output_type=Ticket, tools=[assign]).run('Charged twice.')
+    assert called == ['shipping']
+
+
+async def test_the_none_option_says_what_the_user_wrote_about_none(allow_model_requests: None):
+    """`Annotated[None, Field(description=...)]` says what picking nothing means on this field, so it is the option.
+
+    The description lands beside the `None` branch's `{'type': 'null'}`, not on the field, whose own description
+    is still the question.
+    """
+    seen: list[dict[str, Any]] = []
+
+    class Triage(BaseModel):
+        """Triage a support ticket."""
+
+        area: Literal['billing', 'shipping'] | Annotated[None, Field(description='Nothing here needs routing.')] = (
+            Field(description='Which area?')
+        )
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            area={
+                'type': 'choice',
+                'choice': 'none',
+                'confidence': 0.9,
+                'probabilities': {'none': 0.9, 'billing': 0.05, 'shipping': 0.05},
+            }
+        )
+
+    result = await Agent(mock_model(record), output_type=Triage).run('Thanks, all sorted.')
+    assert result.output == Triage(area=None)
+    assert seen[0]['questions'] == snapshot(
+        {
+            'area': {
+                'type': 'choice',
+                'criteria': {'billing': None, 'shipping': None, 'none': 'Nothing here needs routing.'},
+                'instructions': {'field': 'area', 'question': 'Which area?', 'goal': 'Triage a support ticket.'},
+            }
+        }
+    )
+
+
 async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
     class Touches(BaseModel):
         areas: list[Literal['billing', 'bug']] = Field(description='Which teams?')
@@ -1763,6 +2137,11 @@ async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
     [
         pytest.param('list[str]', 'a list must be of two or more string options', id='list of text'),
         pytest.param('bool | None', 'only a `Literal` or `Enum` of strings can be optional', id='optional yes/no'),
+        pytest.param(
+            "Annotated[bool, BoolCriteria(true='Yes.', false='No.')] | None",
+            'only a `Literal` or `Enum` of strings can be optional',
+            id='optional described yes/no',
+        ),
         pytest.param('Customer | None', 'is not supported by this model', id='optional model'),
     ],
 )
@@ -2446,9 +2825,7 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
             ),
         )
 
-    # `None` in an `output_type` list is not spelled out in the overloads, so the output type is named here;
-    # it runs on every model.
-    agent: Agent[None, Ticket | None] = Agent(mock_model(record), output_type=[Ticket, None])  # type: ignore[arg-type]
+    agent = Agent(mock_model(record), output_type=[Ticket, None])
     result = await agent.run('Nothing here needs handling.')
 
     assert result.output is None
@@ -2477,13 +2854,46 @@ async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_
 
     agent = Agent(
         mock_model(record),
-        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],  # type: ignore[arg-type]
+        output_type=[Ticket, ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')],
     )
     result = await agent.run('Thanks, all sorted.')
 
     assert result.output is None
     assert seen[0]['questions']['tool']['criteria'] == snapshot(
         {'final_result_Ticket': 'Triage a support ticket.', 'nothing': 'Nothing needs doing here.'}
+    )
+
+
+async def test_a_described_none_route_keeps_what_the_user_said_about_it(allow_model_requests: None):
+    """`Annotated[None, Field(description=...)]` in the union says the same thing `ToolOutput` does.
+
+    The description lands on the `null` property Pydantic AI wraps `None` in rather than on the tool, and the
+    route question reads it from there, as it does for any wrapped output type. `OutputSpec` does not accept an
+    `Annotated` member, which is why the documented spelling is `ToolOutput`, but this one reaches Jev too.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.1},
+            tool=_route('final_result_None', {'final_result_Ticket': 0.05, 'final_result_None': 0.95}),
+        )
+
+    output_type: list[Any] = [Ticket, Annotated[None, Field(description='Nothing needs doing here.')]]
+    agent = Agent(mock_model(record), output_type=output_type)
+    result = await agent.run('Thanks, all sorted.')
+
+    assert result.output is None
+    assert seen[0]['questions']['tool'] == snapshot(
+        {
+            'type': 'choice',
+            'criteria': {
+                'final_result_Ticket': 'Triage a support ticket.',
+                'final_result_None': 'Nothing needs doing here.',
+            },
+            'instructions': 'Which of these does this call for?',
+        }
     )
 
 
@@ -2637,7 +3047,7 @@ async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_m
 
     agent: Agent[None, Ticket | None] = Agent(
         mock_model(record),
-        output_type=[Ticket, None],  # type: ignore[arg-type]
+        output_type=[Ticket, None],
         tools=[refund],
     )
     result = await agent.run('Refund me maybe.')
@@ -2667,7 +3077,7 @@ async def test_a_none_route_left_on_its_own_is_taken_without_asking(allow_model_
     ]
     agent: Agent[None, str | None] = Agent(
         mock_model(unreachable),
-        output_type=[approve, None],  # type: ignore[arg-type]
+        output_type=[approve, None],
         tools=[refund],
     )
     result: AgentRunResult[str | None] = await agent.run(None, message_history=history)
