@@ -1084,8 +1084,8 @@ def _questions(
         if none_key is not None:
             if options is not None and _rubric(options) is not None:
                 raise UserError(
-                    f'Output field {name!r} is not supported by this model: it is a rubric, and a rubric cannot be '
-                    f'optional, since its levels are ordered and `None` is not one of them. {_UNSUPPORTED_FIELD_HINT}'
+                    f'Output field {name!r} is a rubric, and a rubric cannot be optional: its levels are ordered and '
+                    f'`None` is not one of them.'
                 )
             if options is None or not _pickable(options):
                 raise UserError(
