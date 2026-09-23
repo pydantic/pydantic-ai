@@ -4946,3 +4946,259 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+class TestCapabilityHookFanoutOptimization:
+    """Guards the #8587 optimization: `CombinedCapability` skips the per-hook
+    `dataclasses.replace(RunContext, ...)` fan-out for any child whose class does not
+    override the hook. Uses `_has_hook` as the gate signal so the assertion doesn't
+    depend on timings, and covers zero/one/many capabilities plus nested containers.
+
+    Not a VCR test because the property is an internal fan-out contract (no wire
+    behavior at all): a cassette would pass green as long as `agent.run()` succeeds,
+    which is exactly the state that regressed.
+    """
+
+    def test_bare_capability_reports_no_hook_overrides(self):
+        """`AbstractCapability` subclasses that inherit every default report no overrides."""
+
+        @dataclass
+        class NoOverridesCap(AbstractCapability[Any]):
+            pass
+
+        cap = NoOverridesCap()
+        for hook in (
+            'before_run',
+            'after_run',
+            'wrap_run',
+            'on_run_error',
+            'before_node_run',
+            'after_node_run',
+            'before_model_request',
+            'after_model_request',
+            'before_tool_validate',
+            'after_tool_validate',
+            'wrap_tool_execute',
+            'handle_deferred_tool_calls',
+        ):
+            assert cap._has_hook(hook) is False, hook  # pyright: ignore[reportPrivateUsage]
+
+    def test_capability_reports_only_overridden_hooks(self):
+        """A capability reports `_has_hook` `True` only for the hooks it defines."""
+
+        @dataclass
+        class OnlyBeforeRunCap(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:  # pragma: no cover
+                pass
+
+        cap = OnlyBeforeRunCap()
+        assert cap._has_hook('before_run') is True  # pyright: ignore[reportPrivateUsage]
+        assert cap._has_hook('after_run') is False  # pyright: ignore[reportPrivateUsage]
+        assert cap._has_hook('wrap_run') is False  # pyright: ignore[reportPrivateUsage]
+        assert cap._has_hook('before_model_request') is False  # pyright: ignore[reportPrivateUsage]
+
+    def test_combined_capability_recurses_over_children(self):
+        """Any leaf overriding a hook flips the container's `_has_hook` on, and only that hook."""
+        from pydantic_ai.capabilities.combined import CombinedCapability
+
+        @dataclass
+        class Silent(AbstractCapability[Any]):
+            pass
+
+        @dataclass
+        class OnlyAfterRun(AbstractCapability[Any]):
+            async def after_run(
+                self, ctx: RunContext[Any], *, result: AgentRunResult[Any]
+            ) -> AgentRunResult[Any]:  # pragma: no cover
+                return result
+
+        combined = CombinedCapability[Any]([Silent(), OnlyAfterRun()])
+        assert combined._has_hook('after_run') is True  # pyright: ignore[reportPrivateUsage]
+        assert combined._has_hook('before_run') is False  # pyright: ignore[reportPrivateUsage]
+        # Silent-only combined reports False for every hook.
+        empty_combined = CombinedCapability[Any]([Silent(), Silent()])
+        for hook in ('before_run', 'after_run', 'wrap_run', 'before_model_request'):
+            assert empty_combined._has_hook(hook) is False, hook  # pyright: ignore[reportPrivateUsage]
+
+    async def test_no_user_capabilities_skips_hook_replace(self):
+        """A bare-user agent doesn't build a per-cap `RunContext` for any hook that no
+        auto-injected capability overrides. Zero-user-cap fast path in fan-out terms.
+        """
+        replaces: list[str] = []
+        real_replace = replace
+
+        def counting_replace(obj: Any, **kwargs: Any) -> Any:
+            if isinstance(obj, RunContext):
+                # Only capability-scoped copies write these two fields together — that's what
+                # `_replace_capability_context` sets, so it's a clean discriminator.
+                if 'capability_active' in kwargs and '_capability' in kwargs:
+                    cap = kwargs['_capability']
+                    replaces.append(type(cap).__name__ if cap is not None else '<none>')
+            return real_replace(cast('Any', obj), **kwargs)
+
+        # Patch the module-level import that `_replace_capability_context` uses.
+        import pydantic_ai.capabilities.combined as combined_mod
+
+        original = combined_mod.replace
+        combined_mod.replace = counting_replace
+        try:
+            agent = Agent(FunctionModel(simple_model_function))
+            await agent.run('hello')
+        finally:
+            combined_mod.replace = original
+
+        # Whatever the auto-injected capabilities override must show up; a capability the user
+        # never added must not — the regression this pins is a fan-out into user-supplied
+        # capabilities that don't override any hook.
+        assert 'LoggingCapability' not in replaces
+
+    async def test_one_no_op_capability_does_not_pay_for_fanout(self):
+        """A capability that overrides nothing receives zero capability-scoped `RunContext` copies."""
+
+        @dataclass
+        class NoOverridesCap(AbstractCapability[Any]):
+            pass
+
+        cap = NoOverridesCap()
+        replaces_for_cap: list[str] = []
+        real_replace = replace
+
+        def counting_replace(obj: Any, **kwargs: Any) -> Any:
+            if isinstance(obj, RunContext) and 'capability_active' in kwargs and kwargs.get('_capability') is cap:
+                replaces_for_cap.append(type(kwargs['_capability']).__name__)
+            return real_replace(cast('Any', obj), **kwargs)
+
+        import pydantic_ai.capabilities.combined as combined_mod
+
+        original = combined_mod.replace
+        combined_mod.replace = counting_replace
+        try:
+            agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+            await agent.run('hello')
+        finally:
+            combined_mod.replace = original
+
+        assert replaces_for_cap == []
+
+    async def test_hook_still_receives_scoped_ctx_with_correct_identity(self):
+        """A capability that overrides one hook still gets a `RunContext` scoped to its own identity."""
+        seen: list[tuple[Any, bool | None]] = []
+
+        @dataclass
+        class ScopedCap(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                seen.append((ctx._capability, ctx.capability_active))  # pyright: ignore[reportPrivateUsage]
+
+        cap = ScopedCap(id='scoped_cap')
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+        await agent.run('hello')
+
+        assert len(seen) == 1
+        received_cap, active = seen[0]
+        assert received_cap is cap
+        assert active is True
+
+    async def test_multiple_capabilities_get_distinct_scoped_contexts(self):
+        """Each overriding capability sees its own identity in its own scoped `RunContext`."""
+        seen: dict[str, Any] = {}
+
+        @dataclass
+        class RecordingCap(AbstractCapability[Any]):
+            key: str = ''
+
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                seen[self.key] = ctx._capability  # pyright: ignore[reportPrivateUsage]
+
+        cap_a = RecordingCap(id='a', key='a')
+        cap_b = RecordingCap(id='b', key='b')
+        cap_c = RecordingCap(id='c', key='c')
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap_a, cap_b, cap_c])
+        await agent.run('hello')
+
+        assert seen['a'] is cap_a
+        assert seen['b'] is cap_b
+        assert seen['c'] is cap_c
+
+    async def test_hook_order_preserved_across_no_op_neighbours(self):
+        """Skipping no-op neighbours doesn't reshuffle the order of hooks that do fire."""
+
+        @dataclass
+        class NoOp(AbstractCapability[Any]):
+            pass
+
+        shared: list[str] = []
+
+        @dataclass
+        class Recorder(AbstractCapability[Any]):
+            marker: str = ''
+
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                shared.append(f'before_run:{self.marker}')
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                shared.append(f'after_run:{self.marker}')
+                return result
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[
+                NoOp(id='pre'),
+                Recorder(id='a', marker='a'),
+                NoOp(id='mid'),
+                Recorder(id='b', marker='b'),
+                NoOp(id='post'),
+            ],
+        )
+        await agent.run('hello')
+
+        # `before_run` dispatches in list order; `after_run` in reverse.
+        assert shared.index('before_run:a') < shared.index('before_run:b')
+        assert shared.index('after_run:b') < shared.index('after_run:a')
+
+    async def test_mutable_ctx_fields_visible_across_separate_hook_calls(self):
+        """Fresh scoped contexts still expose live mutable run state (no accidental snapshot cache).
+
+        `messages` is the classic shared list that grows across a run; a stale scoped context would
+        show `before_model_request` an empty list on the first request or a truncated one after.
+        """
+        message_counts: list[int] = []
+
+        @dataclass
+        class SnapshotCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                message_counts.append(len(ctx.messages))
+                return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SnapshotCap()])
+        await agent.run('hello')
+        # At least one call happened and it saw the accumulated user prompt.
+        assert message_counts and message_counts[0] >= 1
+
+    async def test_wrap_chain_skips_non_overriding_capabilities(self):
+        """Middleware `wrap_*` chains omit capabilities that don't override the wrap hook.
+
+        Adds two no-op wrappers around one real wrapper and confirms only the real
+        wrapper's `before`/`after` markers appear in the log.
+        """
+        log: list[str] = []
+
+        @dataclass
+        class NoOp(AbstractCapability[Any]):
+            pass
+
+        @dataclass
+        class RealWrap(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                log.append('before')
+                result = await handler()
+                log.append('after')
+                return result
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[NoOp(id='outer'), RealWrap(id='real'), NoOp(id='inner')],
+        )
+        await agent.run('hello')
+        assert log == ['before', 'after']

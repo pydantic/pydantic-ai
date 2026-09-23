@@ -139,6 +139,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not WrapperCapability.wrap_node_run or self.wrapped._has_wrap_node_run
 
+    def _has_hook(self, name: str) -> bool:
+        # `WrapperCapability` overrides every hook to delegate to `self.wrapped`, so
+        # "did this class override the base?" has to check against `WrapperCapability`'s
+        # delegating default, not `AbstractCapability`'s bare no-op.
+        return getattr(type(self), name) is not getattr(WrapperCapability, name) or self.wrapped._has_hook(name)
+
     @property
     def _has_on_node_run_error(self) -> bool:
         return (

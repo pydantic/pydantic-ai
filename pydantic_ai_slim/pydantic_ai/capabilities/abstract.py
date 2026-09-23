@@ -334,6 +334,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def _has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
 
+    def _has_hook(self, name: str) -> bool:
+        """Whether calling `self.<name>` would reach a user-defined override.
+
+        `CombinedCapability` gates every capability-hook fan-out on this, so a child that inherits
+        the pure-passthrough default from `AbstractCapability` doesn't pay for a `dataclasses.replace`
+        on `RunContext` just to be handed to a no-op (see #8587). The base defaults are pure identity
+        — value-returning hooks return their input, error hooks re-raise, `wrap_*` hooks `await
+        handler(...)`, `handle_deferred_tool_calls` returns `None` — so nothing observable is skipped.
+        `on_event` stays gated on `listens_to(event)`, which additionally covers `@on_event`-marked
+        methods that don't override the `on_event` attribute itself.
+
+        Overridden by `CombinedCapability` (any child overrides) and `WrapperCapability` (this
+        wrapper's own class overrode, or the wrapped capability does).
+        """
+        return getattr(type(self), name) is not getattr(AbstractCapability, name)
+
     @property
     def _has_on_node_run_error(self) -> bool:
         return type(self).on_node_run_error is not AbstractCapability.on_node_run_error
