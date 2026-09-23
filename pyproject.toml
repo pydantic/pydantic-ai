@@ -253,7 +253,7 @@ coverage = [
 lint = [
     "griffecli>=2.1.0,<3",
     "mypy>=1.11.2",
-    "pyright>=1.1.408",
+    "pyright>=1.1.414",
     "ruff>=0.14.14",
 ]
 [tool.hatch.build.targets.wheel]

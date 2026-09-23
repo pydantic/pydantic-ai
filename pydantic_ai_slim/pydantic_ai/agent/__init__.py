@@ -531,58 +531,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # running loop and avoids issues with Temporal's workflow sandbox.
         return anyio.Lock()
 
-    # `__init__` keeps an overload pair purely so Pyright resolves a class-union `output_type`
-    # (`Foo | Bar`) as `type[Foo | Bar]` rather than a bare `UnionType`; on a non-overloaded
-    # signature Pyright rejects the union argument. The two overloads are intentionally
-    # identical, so the second one overlaps the first.
-    @overload
-    def __init__(
-        self,
-        model: models.Model | models.KnownModelName | str | None = None,
-        *,
-        output_type: OutputSpec[OutputDataT] = str,
-        instructions: AgentInstructions[AgentDepsT] = None,
-        system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
-        name: str | None = None,
-        description: TemplateStr[AgentDepsT] | str | None = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int | AgentRetries | None = None,
-        validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
-        defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'graceful',
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        tool_timeout: float | None = None,
-        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-    ) -> None: ...
-
-    @overload
-    def __init__(  # pyright: ignore[reportOverlappingOverload]
-        self,
-        model: models.Model | models.KnownModelName | str | None = None,
-        *,
-        output_type: OutputSpec[OutputDataT] = str,
-        instructions: AgentInstructions[AgentDepsT] = None,
-        system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
-        name: str | None = None,
-        description: TemplateStr[AgentDepsT] | str | None = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        retries: int | AgentRetries | None = None,
-        validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
-        defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'graceful',
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        tool_timeout: float | None = None,
-        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-    ) -> None: ...
-
     def __init__(
         self,
         model: models.Model | models.KnownModelName | str | None = None,
