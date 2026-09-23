@@ -12,7 +12,6 @@
         - ModelResolutionContext
         - ModelSelectionContext
         - Model
-        - AbstractToolDefinition
         - StreamedResponse
         - ALLOW_MODEL_REQUESTS
         - check_allow_model_requests
