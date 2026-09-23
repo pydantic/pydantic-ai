@@ -340,6 +340,13 @@ class _Delegation:
     nothing is owed and no tool call is unanswered, which is what keeps the turn clock suspended
     across a tool round instead of ending the turn while the backend is still working.
     """
+    owes_usage: bool = False
+    """Whether the backend response in flight asked for tool calls whose usage the session awaits.
+
+    Those calls are reported as `response_usage_follows`, so their `ModelResponse` stays open for the
+    usage on the response's terminal event. That terminal must then always produce a usage event,
+    even an empty one, or the calls would wait on it for the rest of the session.
+    """
 
 
 class OpenAILiveConnection(RealtimeConnection):
@@ -632,9 +639,13 @@ class OpenAILiveConnection(RealtimeConnection):
         nested_type = nested.get('type')
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if nested_type in _TERMINAL_DELEGATED_RESPONSE_EVENTS:
+            events = self._map_backend_usage(nested.get('response'))
             if delegation is not None:
+                if delegation.owes_usage and not events:
+                    events = [SessionUsage(RequestUsage())]
+                delegation.owes_usage = False
                 self._settle_delegation(delegation, gave_up=nested_type != 'response.completed')
-            return self._map_backend_usage(nested.get('response'))
+            return events
         if nested_type != 'response.output_item.done':
             return []
         raw_item = nested.get('item')
@@ -646,6 +657,7 @@ class OpenAILiveConnection(RealtimeConnection):
         call_id = cast('str', item['call_id'])
         if delegation is not None:
             delegation.pending_tool_calls.add(call_id)
+            delegation.owes_usage = True
             self._call_delegations[call_id] = delegation.id
         return [
             *self._open_response(),
@@ -653,8 +665,11 @@ class OpenAILiveConnection(RealtimeConnection):
                 call_id,
                 tool_name=cast('str', item['name']),
                 args=cast('str', item.get('arguments') or '{}'),
-                # Live reports no per-response token usage, so nothing follows the call.
-                response_usage_follows=False,
+                # The backend response that asked for the call reports its tokens on its terminal event,
+                # after the call. Without this the call's `ModelResponse` is finalized empty and those
+                # tokens land on the spoken reply that follows. A call we can't correlate to a
+                # delegation has no terminal we will see, so nothing follows it.
+                response_usage_follows=delegation is not None,
             ),
         ]
 

@@ -486,6 +486,23 @@ async def test_a_result_for_an_abandoned_call_is_not_sent() -> None:
     assert sent == []
 
 
+@pytest.mark.parametrize('nested_type', ['response.completed', 'response.failed'])
+def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
+    """Delegated calls wait for their response's usage, so its terminal must always report some.
+
+    A backend that fails, or reports no usage, would otherwise leave the call's `ModelResponse` open
+    and hold back queued messages for the rest of the session.
+    """
+    connection = _connection()
+    _open_delegation(connection, call_ids=('c1',))
+
+    events = connection._map_response_event({'type': nested_type}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+
+    assert events == [SessionUsage(RequestUsage())]
+    # Only the response that asked for calls owes usage; the next one reports only what it has.
+    assert connection._map_response_event({'type': nested_type}, delegation_id='d1') == []  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_parallel_tool_calls_continue_once_every_result_is_in() -> None:
     """The backend resumes from all of its outputs together, so the first result is not the cue."""
     sent: list[dict[str, Any]] = []

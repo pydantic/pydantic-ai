@@ -110,6 +110,12 @@ async def test_audio_in_delegated_tool_round(
     assert session.usage.input_tokens > 0
     assert session.usage.output_tokens > 0
     assert 'billable_audio_seconds' not in session.usage.details
+    # Those tokens belong to the backend response that asked for the tool, so they land on the
+    # tool-call `ModelResponse` — as in a standard run — not on the spoken reply that follows it.
+    tool_call_response, spoken_reply = messages[1], messages[3]
+    assert isinstance(tool_call_response, ModelResponse) and isinstance(spoken_reply, ModelResponse)
+    assert tool_call_response.usage.input_tokens == session.usage.input_tokens
+    assert spoken_reply.usage.input_tokens == 0
 
 
 async def test_text_reaches_the_model_as_context(
