@@ -25,5 +25,9 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
             openai_responses_requires_streaming=True,
             openai_responses_requires_store_false=True,
             openai_supports_input_token_counting=False,
+            # `OpenAIProvider` sets this rather than `openai_model_profile`, so compatible endpoints don't
+            # inherit it, but this backend is OpenAI's own. Without it, native tool search goes on the wire
+            # with its deferred corpus withheld, and the API rejects the request.
+            tool_deferral_mode='with_tool_search',
         ),
     )

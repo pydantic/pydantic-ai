@@ -10,6 +10,7 @@ from vcr.cassette import Cassette
 from vcr.record_mode import RecordMode
 
 from pydantic_ai import Agent
+from pydantic_ai.toolsets import FunctionToolset
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
@@ -40,6 +41,11 @@ def codex_credentials(vcr: Cassette) -> OpenAICodexCredentials:
     )
 
 
+async def reject_refresh(request: httpx2.Request) -> None:
+    # Recording must not consume the CLI's single-use refresh token.
+    assert request.url.host != 'auth.openai.com', 'Run `codex login` before recording to obtain a fresh access token.'
+
+
 @pytest.mark.parametrize('stream', [False, True])
 async def test_codex_tool_roundtrip(
     allow_model_requests: None,
@@ -49,13 +55,6 @@ async def test_codex_tool_roundtrip(
     stream: bool,
 ):
     """Astra calls a local tool and consumes its result over the authenticated Codex SSE API."""
-
-    async def reject_refresh(request: httpx2.Request) -> None:
-        # Recording must not consume the CLI's single-use refresh token.
-        assert request.url.host != 'auth.openai.com', (
-            'Run `codex login` before recording to obtain a fresh access token.'
-        )
-
     request_capture.client.event_hooks['request'].insert(0, reject_refresh)
     logfire.instrument_httpx(request_capture.client)
     logfire.instrument_pydantic_ai()
@@ -138,5 +137,51 @@ async def test_codex_tool_roundtrip(
             {'name': 'POST', 'operation': None, 'model': None},
             {'name': 'chat gpt-6-astra', 'operation': 'chat', 'model': 'gpt-6-astra'},
             {'name': 'invoke_agent agent', 'operation': 'invoke_agent', 'model': None},
+        ]
+    )
+
+
+async def test_codex_deferred_tool_search(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    codex_credentials: OpenAICodexCredentials,
+):
+    """Astra finds a deferred tool through native tool search, then calls it.
+
+    Tool search is only valid with at least one `defer_loading` tool beside it: without a deferral mode
+    the corpus was withheld instead, and the backend rejected every request with
+    `tools.tool_search requires at least one deferred tool`.
+    """
+    request_capture.client.event_hooks['request'].insert(0, reject_refresh)
+    provider = OpenAICodexProvider(credentials=codex_credentials, http_client=request_capture.client)
+    toolset = FunctionToolset()
+    calls: list[str] = []
+
+    @toolset.tool_plain
+    def moo() -> str:
+        """Return a cheerful cow sound."""
+        calls.append('moo')
+        return 'Moo!'
+
+    agent = Agent(
+        OpenAICodexModel('gpt-6-astra', provider=provider),
+        toolsets=[toolset.defer_loading()],
+        instructions='Find a tool that makes a cow sound, call it exactly once, then reply with its result verbatim and nothing else.',
+    )
+
+    output = (await agent.run('Make a cow sound.')).output
+
+    assert {'output': output, 'tool_calls': calls} == snapshot({'output': 'Moo!', 'tool_calls': ['moo']})
+    assert [body['tools'] for body in request_capture.bodies('/responses')][0] == snapshot(
+        [
+            {'type': 'tool_search'},
+            {
+                'name': 'moo',
+                'parameters': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'type': 'function',
+                'description': 'Return a cheerful cow sound.',
+                'strict': False,
+                'defer_loading': True,
+            },
         ]
     )

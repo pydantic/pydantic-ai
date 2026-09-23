@@ -548,6 +548,7 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
+            'tool_deferral_mode': 'with_tool_search',
         }
     )
 
