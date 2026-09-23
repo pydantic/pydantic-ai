@@ -404,9 +404,7 @@ print(f'Cache write tokens: {usage.cache_write_tokens}')
 print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
-When Anthropic reports the cache-write duration split, `usage.details` also contains
-`cache_write_5m_tokens` and `cache_write_1h_tokens`. `cache_write_tokens` remains the total,
-and cost calculations apply the separate rates.
+`cache_write_tokens` counts all cache writes. When some of them used a one-hour TTL, which Anthropic bills at a higher rate than five-minute writes, their count is also in `usage.details['ephemeral_1h_input_tokens']`, and the cost is calculated at the one-hour rate for those tokens.
 
 ### Cache Point Limits
 
