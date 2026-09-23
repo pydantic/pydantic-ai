@@ -31,6 +31,7 @@ from .command_context import CommandContext, CommandProvider
 from .commands import Command, Commands, config_command, config_completions, is_command_input, set_completions
 from .config import PluginSettings, Settings
 from .customization import customization_guide
+from .errors import error_message
 from .image_input import ImageInput
 from .input_history import input_history
 from .interrupts import Interrupts
@@ -686,7 +687,7 @@ async def _run_prompt(
         raise
     except Exception as exc:  # noqa: BLE001 -- interactive boundary reports plugin/provider failures.
         await renderer.finish()
-        console.print(f'{type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False)
+        console.print(f'{type(exc).__name__}: {error_message(exc)}', style=theme.color(theme.ERROR), markup=False)
         console.print(
             'Turn failed. Retained history may include partial progress. External tool side effects may already have occurred.',
             style=theme.color(theme.MUTED),

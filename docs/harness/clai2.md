@@ -121,6 +121,11 @@ Installing or selecting a plaintext backend can store tokens in plaintext. Core 
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
+If Codex cannot refresh your login, CLAI tells you to run `/login openai-codex`
+in an interactive session, then retry your message. This replaces the generic
+connection error that can hide an expired login. Headless runs show the same
+advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
+
 The default Coder shell runs under your OS identity, without a sandbox. Commands
 can read files and access credential backends available to that identity, including
 CLAI's tokens. Keyring is storage, not isolation from model-controlled commands.

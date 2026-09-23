@@ -515,6 +515,11 @@ Retained failed turns and restored interrupted sessions are marked interrupted s
 core can close unanswered tool calls on the next prompt without replaying them.
 A prompt cancelled by `turn_start` never starts an agent run and is not retained.
 
+Codex token-refresh failures show `/login openai-codex` recovery advice, including
+when the SDK wraps them as connection errors. This changes only the terminal
+message: `turn_end.error` still contains the original exception and its chain.
+Headless runs show the same advice on stderr and exit with code 1.
+
 Every other name is a Pydantic AI lifecycle hook, spelled exactly as on core's
 `Hooks().on`, with the same handler signature. The ones people reach for:
 

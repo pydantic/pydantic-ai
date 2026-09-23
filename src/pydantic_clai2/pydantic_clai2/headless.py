@@ -10,6 +10,7 @@ from rich.console import Console
 
 from ._app import DEFAULT_PLUGINS, create_agent, create_shell
 from .config import Settings
+from .errors import error_message
 from .plugins import SessionEndReason, TurnEnd, TurnStart
 from .project_settings import ProjectSettings
 from .settings_store import SettingsStore
@@ -60,12 +61,14 @@ async def run_headless(
                         with CancelScope(shield=True):
                             await shell.loader.fire(ended)
                     if ended.outcome != 'completed':
-                        raise RuntimeError(str(ended.error or start.cancel_reason or 'Turn cancelled by a plugin'))
+                        if ended.error is not None:
+                            raise ended.error
+                        raise RuntimeError(start.cancel_reason or 'Turn cancelled by a plugin')
                     assert ended.result is not None
                     answer = str(ended.result.output)
                     reason = 'exit'
                 except Exception as exc:  # noqa: BLE001 -- CLI boundary, stdout must remain answer-only.
-                    Console(stderr=True).print(str(exc), markup=False, highlight=False)
+                    Console(stderr=True).print(error_message(exc), markup=False, highlight=False)
                     return 1
                 finally:
                     with CancelScope(shield=True):  # pragma: no branch -- this scope is never cancelled.
