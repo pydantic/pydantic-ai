@@ -639,12 +639,14 @@ class OpenAILiveConnection(RealtimeConnection):
         nested_type = nested.get('type')
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if nested_type in _TERMINAL_DELEGATED_RESPONSE_EVENTS:
-            events = self._map_backend_usage(nested.get('response'))
+            events: list[RealtimeCodecEvent] = self._map_backend_usage(nested.get('response'))
             if delegation is not None:
                 if delegation.owes_usage and not events:
                     events = [SessionUsage(RequestUsage())]
                 delegation.owes_usage = False
                 self._settle_delegation(delegation, gave_up=nested_type != 'response.completed')
+            if nested_type != 'response.completed':
+                events.append(_delegation_stopped(nested_type, nested.get('response')))
             return events
         if nested_type != 'response.output_item.done':
             return []
@@ -710,7 +712,7 @@ class OpenAILiveConnection(RealtimeConnection):
             return []
         try:
             parsed = _responses_adapter.validate_python(response)
-        except ValidationError:  # pragma: no cover
+        except ValidationError:
             return []
         mapped = map_openai_usage(parsed, self._provider_name, self._provider_url, parsed.model)
         if not mapped.has_values():
@@ -761,6 +763,29 @@ async def _recv(ws: ClientConnection) -> str | bytes:
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
+
+
+def _delegation_stopped(nested_type: str | None, response: Any) -> RealtimeSessionErrorEvent:
+    """Report a delegated backend that failed or stopped short.
+
+    The turn itself still ends — Live keeps talking and the silence clock closes it — so without this
+    the caller would see an ordinary turn boundary and no sign that the delegated work never finished.
+    Recoverable, because the session is fine: only this one piece of delegated work was lost.
+    """
+    details = cast('dict[str, Any]', response) if isinstance(response, dict) else {}
+    error = details.get('error')
+    incomplete = details.get('incomplete_details')
+    if isinstance(error, dict):
+        error_details = cast('dict[str, Any]', error)
+        reason = f'{error_details.get("code")}: {error_details.get("message")}'
+    elif isinstance(incomplete, dict):
+        reason = f'incomplete: {cast("dict[str, Any]", incomplete).get("reason")}'
+    else:
+        reason = nested_type
+    return RealtimeSessionErrorEvent(
+        message=f'The delegated OpenAI Responses backend did not finish ({reason}).',
+        code='live_delegation_failed' if nested_type == 'response.failed' else 'live_delegation_incomplete',
+    )
 
 
 def _is_voiced(pcm: bytes) -> bool:

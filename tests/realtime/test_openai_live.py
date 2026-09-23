@@ -498,9 +498,45 @@ def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
 
     events = connection._map_response_event({'type': nested_type}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
-    assert events == [SessionUsage(RequestUsage())]
+    assert events[0] == SessionUsage(RequestUsage())
     # Only the response that asked for calls owes usage; the next one reports only what it has.
-    assert connection._map_response_event({'type': nested_type}, delegation_id='d1') == []  # pyright: ignore[reportPrivateUsage]
+    later = connection._map_response_event({'type': nested_type}, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    assert not any(isinstance(event, SessionUsage) for event in later)
+
+
+@pytest.mark.parametrize(
+    ('nested', 'code', 'reason'),
+    [
+        (
+            {'type': 'response.failed', 'response': {'error': {'code': 'server_error', 'message': 'boom'}}},
+            'live_delegation_failed',
+            'server_error: boom',
+        ),
+        (
+            {'type': 'response.incomplete', 'response': {'incomplete_details': {'reason': 'max_output_tokens'}}},
+            'live_delegation_incomplete',
+            'incomplete: max_output_tokens',
+        ),
+        ({'type': 'response.failed'}, 'live_delegation_failed', 'response.failed'),
+    ],
+)
+def test_a_backend_that_gives_up_is_reported(nested: dict[str, Any], code: str, reason: str) -> None:
+    """Live keeps talking and the turn still ends, so the failure has to be said out loud.
+
+    Otherwise the caller sees an ordinary turn boundary and no sign the delegated work was lost.
+    """
+    connection = _connection()
+    _open_delegation(connection)
+
+    events = connection._map_response_event(nested, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+
+    assert events == [
+        RealtimeSessionErrorEvent(
+            message=f'The delegated OpenAI Responses backend did not finish ({reason}).', code=code
+        )
+    ]
+    error = events[0]
+    assert isinstance(error, RealtimeSessionErrorEvent) and error.recoverable is True
 
 
 async def test_parallel_tool_calls_continue_once_every_result_is_in() -> None:
