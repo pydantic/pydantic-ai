@@ -341,7 +341,8 @@ if MYPY:
     none_output_agent = Agent[object, Foo | Bar | None](output_type=[Foo, Bar, None])
     assert_type(none_output_agent, Agent[object, Foo | Bar | None])
 
-    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type]
+    # Whether mypy accepts the union as a `TypeForm` depends on the Python version it checks against
+    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[arg-type,unused-ignore]
     complex_output_agent = Agent[object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]](
         output_type=[str, Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker, TextOutput(str_to_regex)]
     )
