@@ -1138,7 +1138,9 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             processor = ObjectOutputProcessor(output=output, strict=strict)
             object_def = processor.object_def
 
-            object_key = object_def.name or output.__name__
+            # Unions are flattened before this point, and `Annotated[...]` or `Literal[...]` has a `__name__` at
+            # run time that `TypeForm` doesn't declare.
+            object_key = object_def.name or getattr(output, '__name__')
             i = 1
             original_key = object_key
             while object_key in self._processors:
