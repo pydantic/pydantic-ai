@@ -389,6 +389,9 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
 class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
+    _reads_text_candidates: ClassVar[bool] = False
+    """Whether this model reads the `TextCandidates` keyword, which `customize_request_parameters` otherwise strips."""
+
     supported_tool_deferral_modes: ClassVar[frozenset[ToolDeferralMode]] = frozenset()
     """`tool_deferral_mode` values this adapter's renderer implements.
 
@@ -606,7 +609,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         meant for [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] alone, so an override should
         call it rather than replace it.
         """
-        model_request_parameters = _without_text_candidates(model_request_parameters)
+        if not self._reads_text_candidates:
+            model_request_parameters = _without_text_candidates(model_request_parameters)
         if transformer := self.profile.get('json_schema_transformer'):
             model_request_parameters = replace(
                 model_request_parameters,

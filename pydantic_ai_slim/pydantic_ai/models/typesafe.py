@@ -14,7 +14,7 @@ from collections.abc import (
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 from pydantic import GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -335,6 +335,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     _provider: Provider[AsyncTypeSafeClient] = field(repr=False)
     _text_extractors: Mapping[str, TypeSafeTextExtractor] = field(repr=False)
 
+    # The `TextCandidates` keyword every other model strips is the one this model answers string fields with.
+    _reads_text_candidates: ClassVar[bool] = True
+
     def __init__(
         self,
         model_name: TypeSafeModelName,
@@ -369,11 +372,6 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     @property
     def client(self) -> AsyncTypeSafeClient:
         return self._provider.client
-
-    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        # The `TextCandidates` keyword every other model strips is the one this model reads, and Jev's profile has
-        # no schema transformer to apply, so the parameters are used as they are.
-        return model_request_parameters
 
     @property
     def base_url(self) -> str:

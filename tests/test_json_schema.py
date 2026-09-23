@@ -573,7 +573,8 @@ def test_without_text_candidates_removes_only_the_keyword():
     """A unit test because the names under `properties` and the data under `default` or `enum` are not keywords.
 
     A property can be called the same as the keyword, and a default can be a dict holding it: neither is a
-    marker, and stripping them would change what the schema asks for.
+    marker, and stripping them would change what the schema asks for. `dependentRequired` is keyed by property
+    names too.
     """
     key = TEXT_CANDIDATES_KEY
     schema: dict[str, Any] = {
@@ -585,6 +586,7 @@ def test_without_text_candidates_removes_only_the_keyword():
             'cases': {'type': 'array', 'items': {'anyOf': [{'type': 'string', key: 'cases'}, {'type': 'null'}]}},
         },
         '$defs': {'Case': {'type': 'string', key: 'cases'}},
+        'dependentRequired': {key: ['cases']},
     }
     original = deepcopy(schema)
 
@@ -598,6 +600,7 @@ def test_without_text_candidates_removes_only_the_keyword():
                 'cases': {'type': 'array', 'items': {'anyOf': [{'type': 'string'}, {'type': 'null'}]}},
             },
             '$defs': {'Case': {'type': 'string'}},
+            'dependentRequired': {'x-pydantic-ai-text-candidates': ['cases']},
         }
     )
     assert schema == original

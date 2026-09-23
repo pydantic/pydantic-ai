@@ -251,9 +251,11 @@ provider receives it.
 
 # Keywords whose value maps names to subschemas. The names are not keywords: a property can be called anything,
 # `TEXT_CANDIDATES_KEY` included.
-_SUBSCHEMA_MAP_KEYWORDS = frozenset({'properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas'})
+_SUBSCHEMA_MAP_KEYWORDS = frozenset(
+    {'properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas', 'dependencies'}
+)
 # Keywords whose value is data rather than a schema, so nothing under them is a keyword either.
-_DATA_KEYWORDS = frozenset({'const', 'default', 'enum', 'examples'})
+_DATA_KEYWORDS = frozenset({'const', 'default', 'enum', 'examples', 'dependentRequired'})
 
 
 def without_text_candidates(schema: JsonSchema) -> JsonSchema:
