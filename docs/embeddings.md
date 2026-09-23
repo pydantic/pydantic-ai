@@ -262,7 +262,7 @@ embedder = Embedder('vllm:intfloat/e5-mistral-7b-instruct')
 
 The `vllm:` shorthand uses `VLLM_BASE_URL` and, for authenticated servers, `VLLM_API_KEY`. The server must be running an [embedding model supported by vLLM](https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/#embeddings-api).
 
-See [OpenAI-compatible Models](models/compatible-apis.md) for the full list of supported providers.
+See the [provider directory](models/overview.md#provider-directory) for setup guides, and check that your provider serves the embedding model you want to use.
 
 ### Google
 
