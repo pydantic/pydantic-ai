@@ -53,6 +53,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -560,6 +561,7 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
     [
         WorkspaceTimeoutError('slow', stdout='partial', stderr='err', timeout=1.5),
         WorkspaceUnavailableError('gone'),
+        WorkspaceReadOnlyError('read-only'),
         WorkspaceError('broken'),
         FileNotFoundError('/missing'),
         NotADirectoryError('/file'),

@@ -44,6 +44,7 @@ from pydantic_ai.workspaces import (
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceFileEntry,
+    WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceResult,
     WorkspaceTimeoutError,
@@ -287,6 +288,7 @@ class WorkspaceOperationSpec:
 WorkspaceErrorKind: TypeAlias = Literal[
     'timeout',
     'unavailable',
+    'read_only',
     'workspace',
     'not_found',
     'not_a_directory',
@@ -333,6 +335,7 @@ class WorkspaceOperationResult(Generic[ValueT]):
 
 
 _ERROR_TYPES: dict[WorkspaceErrorKind, type[Exception]] = {
+    'read_only': WorkspaceReadOnlyError,
     'not_found': FileNotFoundError,
     'not_a_directory': NotADirectoryError,
     'is_a_directory': IsADirectoryError,
@@ -349,9 +352,11 @@ _ERROR_TYPES: dict[WorkspaceErrorKind, type[Exception]] = {
 def workspace_operation_error(error: Exception) -> WorkspaceOperationError | None:
     """Map an exception a workspace is expected to raise to its data form, or `None` for anything else.
 
-    Subclasses are checked before their bases: a `WorkspaceTimeoutError` is also a `WorkspaceError`
-    and a `UnicodeDecodeError` is also a `ValueError`. `WorkspaceUnavailableError` crosses as data
-    too: retrying the same unit cannot succeed, so the caller must get to decide, not the engine.
+    Subclasses are checked before their bases: `WorkspaceTimeoutError`, `WorkspaceUnavailableError`,
+    and `WorkspaceReadOnlyError` are also `WorkspaceError`s, while `WorkspaceReadOnlyError` is also a
+    `PermissionError` and `UnicodeDecodeError` is also a `ValueError`. `WorkspaceUnavailableError`
+    crosses as data too: retrying the same unit cannot succeed, so the caller must get to decide,
+    not the engine.
     """
     if isinstance(error, WorkspaceTimeoutError):
         return WorkspaceOperationError(
@@ -359,6 +364,8 @@ def workspace_operation_error(error: Exception) -> WorkspaceOperationError | Non
         )
     if isinstance(error, WorkspaceUnavailableError):
         return WorkspaceOperationError(kind='unavailable', message=str(error))
+    if isinstance(error, WorkspaceReadOnlyError):
+        return WorkspaceOperationError(kind='read_only', message=str(error))
     if isinstance(error, WorkspaceError):
         return WorkspaceOperationError(kind='workspace', message=str(error))
     if isinstance(error, UnicodeDecodeError):
