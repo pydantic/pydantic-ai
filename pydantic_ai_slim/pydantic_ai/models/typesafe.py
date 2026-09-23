@@ -738,12 +738,14 @@ def _answers(
             value, field_confidence, field_probabilities = _chosen_candidate(name, answers.get(name), extracted)
             confidence[name] = field_confidence
             probabilities[name] = field_probabilities
-            if value is not None or extracted.optional:
+            if value is not None or (extracted.optional and 'default' not in properties[name]):
                 _set(args, name, value)
             elif extracted.required:
                 unanswered.append(name)
-            # A field that is neither answered nor required has a default, and leaving it out of the
-            # arguments entirely is what lets Pydantic apply it; `None` would be rejected by a `str`.
+            # No value and a default, as for a pick-one's "None of these": the field is left out for Pydantic to
+            # fill in, which for a `str` is also the only thing a missing value can be, since it rejects `None`.
+            # The model holding it is not put in place here: a required one is by the `_nest` below, and an
+            # optional one left out keeps a default of its own rather than being rebuilt from its fields'.
             continue
         if keys := _mapping_options(prop):
             # A mapping keeps every option with the answer it got, unlike a list.
@@ -771,7 +773,15 @@ def _answers(
                 _set(args, name, chosen)
                 confidence[name] = sureness
         elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
-            _set(args, name, None if answer.choice in none_option else answer.choice)
+            if answer.choice not in none_option:
+                _set(args, name, answer.choice)
+            elif 'default' in properties[name]:
+                # "None of these" is the absence of an answer, and a default says what to use when there is
+                # none, so the field is left out for Pydantic to fill in. The model it belongs to is still put
+                # in place, to apply the default in.
+                _slot(args, name)
+            else:
+                _set(args, name, None)
             confidence[name] = answer.confidence
             probabilities[name] = answer.probabilities
         elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
@@ -1061,10 +1071,16 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
     """Put a flattened field's answer back where it belongs, `outer.inner` under `outer`."""
+    parent, leaf = _slot(args, name)
+    parent[leaf] = value
+
+
+def _slot(args: dict[str, Any], name: str) -> tuple[dict[str, Any], str]:
+    """Where a flattened field's answer goes: the arguments of the model it belongs to, put in place, and its name there."""
     *path, leaf = name.split('.')
     for part in path:
         args = args.setdefault(part, {})
-    args[leaf] = value
+    return args, leaf
 
 
 def _nest(args: dict[str, Any], name: str) -> None:
