@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal, cast
 import httpx2
 import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -1774,19 +1775,38 @@ class Routing(BaseModel):
 
 
 async def test_none_of_these_leaves_a_default_to_apply(allow_model_requests: None):
-    """ "None of these." is the absence of an answer: a field with a default gets it, and one without gets `None`."""
+    """ "None of these." is the absence of an answer: a field with a default gets it, and one without gets `None`.
+
+    A `default_factory` renders no default in the schema, which is all the model sees, so it is a field without one.
+    """
     result = await Agent(mock_model(none_of_these), output_type=Routing).run('Hello.')
     assert result.output == Routing(
         team='shipping',
         named=None,
         unset=None,
-        fallback='billing',
+        fallback=None,
         queue='billing',
         placement=Placement(area='shipping'),
     )
     assert result.response.parts == [
-        ToolCallPart('final_result', {'named': None, 'queue': 'billing', 'placement': {}}, tool_call_id=IsStr())
+        ToolCallPart(
+            'final_result',
+            {'named': None, 'fallback': None, 'queue': 'billing', 'placement': {}},
+            tool_call_id=IsStr(),
+        )
     ]
+
+
+async def test_none_of_these_is_none_for_a_key_that_may_be_left_out(allow_model_requests: None):
+    """A `NotRequired` key has no default to apply, so it gets `None` rather than being left out."""
+
+    class Routed(TypedDict):
+        """Route a support ticket."""
+
+        team: NotRequired[Literal['billing', 'shipping'] | None]
+
+    result = await Agent(mock_model(none_of_these), output_type=Routed).run('Hello.')
+    assert result.output == {'team': None}
 
 
 async def test_none_of_these_leaves_a_tool_argument_default_to_apply(allow_model_requests: None):
