@@ -26,7 +26,7 @@ _T = TypeVar('_T')
 
 
 def _failure(rule: str, symptom: str) -> str:
-    return f'{symptom}\nRule: “{rule}”'
+    return f'{symptom}\nRule: "{rule}"'
 
 
 def _commands(backend: WorkspaceBackend) -> SupportsCommands:
