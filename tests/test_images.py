@@ -1523,6 +1523,27 @@ async def test_google_cloud_image_generation_forwards_gcs_references(monkeypatch
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_cloud_image_generation_force_download_on_gcs_url_is_not_downloadable():
+    """`force_download=True` takes a `gs://` URL out of the `fileData` shortcut, and then cannot fetch it.
+
+    The Gemini-side counterpart, `test_google_image_generation_force_download_beats_files_api_shortcut`,
+    pins that an explicit download wins over the shortcut. Here honouring it is fatal rather than merely
+    wasteful: `download_item` speaks only http(s), so the request never reaches the model. Nothing is
+    monkeypatched — the real scheme check is what the docs promise, and it runs before any network I/O.
+    """
+    model = GoogleImageGenerationModel(
+        'gemini-3.1-flash-image',
+        provider=GoogleCloudProvider(client=GoogleClient(vertexai=True, api_key='test-api-key')),
+    )
+
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
+        await model.generate(
+            'composite the logo',
+            images=[ImageUrl('gs://bucket/brand/logo.png', force_download=True)],
+        )
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_cloud_image_generation_requires_media_type_for_extensionless_gcs_url():
     """A `gs://` `ImageUrl` whose object name carries no extension needs an explicit `media_type`.
 

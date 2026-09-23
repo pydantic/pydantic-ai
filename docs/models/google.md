@@ -385,9 +385,10 @@ The direct adapter accepts inline images and downloadable image URLs on both API
 transport hosts itself as a `fileData` part instead of downloading it, exactly as [`GoogleModel`][pydantic_ai.models.google.GoogleModel]
 does: on the Gemini Developer API that is a Files API URI, as an [`UploadedFile`][pydantic_ai.messages.UploadedFile] or an
 `ImageUrl`; on Vertex AI, where the Files API is not available, it is a Cloud Storage `gs://bucket/path` URI, as an
-`UploadedFile` whose `file_id` starts with `gs://` or an `ImageUrl` whose URL does. Vertex reads the object server-side, so
-a multi-megabyte reference never passes through your process, and neither transport accepts the other's references:
-a Files API id on Vertex raises [`UserError`][pydantic_ai.exceptions.UserError]. Which API a model talks to is read off the
+`UploadedFile` whose `file_id` starts with `gs://` or an `ImageUrl` whose URL does and that isn't `force_download`.
+Vertex reads the object server-side, so a multi-megabyte reference never passes through your process, and neither
+transport accepts the other's references: a Files API id on Vertex raises
+[`UserError`][pydantic_ai.exceptions.UserError]. Which API a model talks to is read off the
 client, not the provider name, so a Vertex-backed client passed to
 [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] is treated as Vertex, and a Gemini Developer API client
 passed to [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] keeps Files API support. See the
