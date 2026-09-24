@@ -1581,7 +1581,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
                     elif part.inline_data is not None:
-                        if part.thought:  # pragma: no cover
+                        if part.thought:
                             # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
                             # > The model generates up to two interim images to test composition and logic. The last image within Thinking is also the final rendered image.
                             # We currently don't expose these image thoughts as they can't be represented with `ThinkingPart`
@@ -1953,6 +1953,11 @@ def _process_part(
     elif part.tool_response:
         item = _map_tool_response(part.tool_response, provider_name)
     elif inline_data := part.inline_data:
+        if part.thought:
+            # Mirrors the streaming guard in `_get_event_iterator`: the model generates interim
+            # images to test composition and logic. We don't expose these image thoughts as they
+            # can't be represented with `ThinkingPart`.
+            return None, code_execution_tool_call_id
         data = inline_data.data
         mime_type = inline_data.mime_type
         assert data and mime_type, 'Inline data must have data and mime type'
