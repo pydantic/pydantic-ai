@@ -98,7 +98,7 @@ jobs:
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
             case "$1" in
-              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
+              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
               *) return 1 ;;
             esac
           }
@@ -147,12 +147,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
-      # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim),
-      # which imports pydantic-ai-harness. The harness depends on pydantic-ai-slim,
-      # whose name is shadowed by the workspace member, so keeping it in the
-      # universal lock breaks the lowest-direct re-resolution. Install it into the
-      # synced venv out-of-band instead (--no-deps: pydantic-ai-slim is already
-      # present from the workspace).
+      # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim, via
+      # .github/scripts/pyrightconfig.json), which imports pydantic-ai-harness. The
+      # harness depends on pydantic-ai-slim, whose name is shadowed by the workspace
+      # member, so keeping it in the universal lock breaks the lowest-direct
+      # re-resolution. Install it into the synced venv out-of-band instead (--no-deps:
+      # pydantic-ai-slim is already present from the workspace).
       - run: uv pip install --no-deps "pydantic-ai-harness==${PYDANTIC_AI_HARNESS_VERSION}"
 
       - name: Test GitHub agentic workflow policy

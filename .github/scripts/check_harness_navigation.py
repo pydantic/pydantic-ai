@@ -30,7 +30,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import yaml
@@ -91,9 +91,10 @@ def navigation_harness_paths(navigation: Any) -> dict[str, str]:
         for entry in entries or ():
             if not isinstance(entry, dict):  # pragma: no cover - manifest is schema-checked
                 continue
-            if entry.get('source') == 'harness' and 'path' in entry:
-                paths[entry['path']] = entry.get('slug', '')
-            walk(entry.get('contents'))
+            node = cast(dict[str, Any], entry)
+            if node.get('source') == 'harness' and 'path' in node:
+                paths[node['path']] = node.get('slug', '')
+            walk(node.get('contents'))
 
     walk(navigation.get('navigation'))
     return paths
