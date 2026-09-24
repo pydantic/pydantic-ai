@@ -174,7 +174,7 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
     )
     assert result.response.provider_details == snapshot(
         {
-            'confidence': {'verdict': 0.55, 'irreversible': 0.10000000000000009},
+            'confidence': {'verdict': 0.55, 'irreversible': 0.1},
             'probabilities': {'verdict': {'run': 0.17, 'ask': 0.69, 'reject': 0.14}},
             'scores': {},
         }
@@ -225,7 +225,7 @@ async def test_bare_bool_output(
 
     assert result.output == snapshot(True)
     assert result.response.provider_details == snapshot(
-        {'confidence': {'response': 0.9199999999999999}, 'probabilities': {}, 'scores': {}}
+        {'confidence': {'response': 0.92}, 'probabilities': {}, 'scores': {}}
     )
     assert request_capture.body('/v1/systemone')['questions'] == snapshot(
         {
@@ -756,7 +756,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
         {
             'confidence': {
                 'team': 0.9,
-                'urgent': 0.8999999999999999,
+                'urgent': 0.9,
                 'channels': 0.8,
                 'window': 0.8,
                 'contact.method': 0.9,
@@ -1100,12 +1100,12 @@ async def test_a_boolean_threshold_outside_zero_to_one_is_refused_before_the_req
 @pytest.mark.parametrize(
     'threshold,expected,expected_confidence',
     [
-        pytest.param(None, True, 0.3999999999999999, id='the default rounds a 0.7 to yes'),
-        pytest.param(0.5, True, 0.3999999999999999, id='the default, passed explicitly'),
-        pytest.param(0.75, False, 0.06666666666666672, id='a raised bar turns the same answer into a no'),
+        pytest.param(None, True, 0.4, id='the default rounds a 0.7 to yes'),
+        pytest.param(0.5, True, 0.4, id='the default, passed explicitly'),
+        pytest.param(0.75, False, 0.066667, id='a raised bar turns the same answer into a no'),
         pytest.param(0.7, True, 0.0, id='an answer exactly at the bar is a yes, and the least sure one'),
         pytest.param(0.0, True, 0.7, id='a bar of zero takes every answer as a yes'),
-        pytest.param(1.0, False, 0.30000000000000004, id='a bar of one takes nothing short of certainty'),
+        pytest.param(1.0, False, 0.3, id='a bar of one takes nothing short of certainty'),
     ],
 )
 async def test_the_boolean_threshold_decides_what_a_probability_of_yes_rounds_to(
@@ -1149,7 +1149,7 @@ async def test_the_boolean_threshold_applies_to_each_option_of_a_list(allow_mode
     result = await agent.run('x', model_settings=TypeSafeModelSettings(decision_boolean_threshold=0.65))
     assert result.output == Routing(channels=['email'])
     # The field is as sure as its least sure option, which is the `sms` that only just missed the bar.
-    assert (result.response.provider_details or {})['confidence'] == {'channels': snapshot(0.07692307692307698)}
+    assert (result.response.provider_details or {})['confidence'] == {'channels': snapshot(0.076923)}
 
 
 async def test_the_boolean_threshold_leaves_a_probability_field_alone(allow_model_requests: None):
@@ -2006,7 +2006,7 @@ async def test_nested_fields_lists_and_optionals(
     )
     assert result.response.provider_details == snapshot(
         {
-            'confidence': {'customer.angry': 0.98, 'areas': 0.19999999999999996, 'plan': 1.0},
+            'confidence': {'customer.angry': 0.98, 'areas': 0.2, 'plan': 1.0},
             'probabilities': {
                 'areas': {'billing': 0.97, 'account': 0.76, 'bug': 0.6},
                 'plan': {'pro': 1.0, 'free': 0.0, 'enterprise': 0.0, 'none': 0.0},

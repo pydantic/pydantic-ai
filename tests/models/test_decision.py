@@ -524,7 +524,7 @@ async def test_the_function_tools_together_below_the_bar_are_a_lean(allow_model_
     assert len(model.requests) == 1
     assert result.response.provider_details == snapshot(
         {
-            'confidence': {'urgent': 0.6000000000000001, 'action': 0.9},
+            'confidence': {'urgent': 0.6, 'action': 0.9},
             'probabilities': {'action': {'approve': 0.0, 'review': 1.0}},
             'scores': {},
             'route': {

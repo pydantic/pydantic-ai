@@ -621,8 +621,13 @@ def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
         raise UnexpectedModelBehavior(f'Unexpected probability from the model: {probability!r}')
     if probability >= threshold:
         # An answer exactly at the bar is the least sure one there is, including when the bar is certainty.
-        return True, (probability - threshold) / (1 - threshold) if threshold < 1 else 0.0
-    return False, (threshold - probability) / threshold
+        sureness = (probability - threshold) / (1 - threshold) if threshold < 1 else 0.0
+    else:
+        sureness = (threshold - probability) / threshold
+    # The arithmetic leaves float noise, as 0.8600000000000001 for 0.86, which six places remove without losing
+    # anything a probability from the model carries. A fanned-out field's confidence is the least of these, so it
+    # is rounded too.
+    return probability >= threshold, round(sureness, 6)
 
 
 def _answers(
