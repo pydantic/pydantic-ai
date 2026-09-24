@@ -12,8 +12,10 @@ what you want, you're done.
 
 `clai2 --help` parses arguments without loading the agent or plugins. Interactive
 startup defers model menus and provider integrations until you open those menus,
-log in, or run a prompt. The first use can therefore take longer. Enabled plugins
-still load before the first prompt; their initialization contributes to startup time.
+log in, or run a prompt. Once the prompt is ready, a background thread imports
+them, so the first prompt usually finds them loaded; if it arrives sooner, it waits
+for the rest of those imports. Enabled plugins still load before the first prompt;
+their initialization contributes to startup time.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
