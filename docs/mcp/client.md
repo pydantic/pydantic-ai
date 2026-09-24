@@ -13,6 +13,8 @@ You need to either install [`pydantic-ai`](../install.md), or [`pydantic-ai-slim
 pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
+That installs the MCP client only. To run the example servers on this page, also install the full [`fastmcp`](https://gofastmcp.com) package: `pip install fastmcp`.
+
 !!! note "FastMCP 4"
     The command above installs FastMCP 4, which `MCPToolset` supports alongside FastMCP 3. Its
     modern protocol mode does not support server-initiated sampling or elicitation, and cannot

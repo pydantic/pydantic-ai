@@ -122,6 +122,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
+    from fastmcp import FastMCP
     from fastmcp.client.transports import StdioTransport
 
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2
@@ -813,8 +814,24 @@ async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_req
 
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset returning an MCPToolset works with Temporal workflows.
-# Uses an HTTP-based MCP server rather than subprocess-based since the subprocess transports
-# don't play nicely with Temporal's sandbox.
+# The server is an in-process stand-in for DeepWiki's MCP server, whose tools the recorded model
+# responses call: a recorded remote handshake can't replay on both MCP SDK v1 and v2.
+deepwiki_stand_in = FastMCP('deepwiki')
+
+
+@deepwiki_stand_in.tool
+def read_wiki_structure(repoName: str) -> str:
+    return f'{repoName}: Overview, Agents, Tools, Models'
+
+
+@deepwiki_stand_in.tool
+def read_wiki_contents(repoName: str) -> str:
+    return f'{repoName} is a Python agent framework built by the Pydantic team.'
+
+
+@deepwiki_stand_in.tool
+def ask_question(repoName: str, question: str) -> str:
+    return f'{repoName} is a Python agent framework built by the Pydantic team.'
 
 
 mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset_agent')
@@ -823,7 +840,7 @@ mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset
 @mcptoolset_dynamic_toolset_agent.toolset(id='mcptoolset_dynamic')
 def my_mcptoolset_dynamic_toolset(ctx: RunContext) -> MCPToolset:
     """Dynamic toolset that returns an `MCPToolset` — exercises lifecycle + `TemporalMCPToolset`."""
-    return MCPToolset('https://mcp.deepwiki.com/mcp')
+    return MCPToolset(deepwiki_stand_in)
 
 
 mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
@@ -1277,7 +1294,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
 mcptoolset_agent = Agent(
     model,
     name='mcptoolset_agent',
-    toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+    toolsets=[MCPToolset(deepwiki_stand_in, id='deepwiki')],
 )
 
 

@@ -4,7 +4,7 @@ Pydantic AI models can also be used within MCP Servers.
 
 ## MCP Server
 
-Here's a simple example of a [FastMCP](https://gofastmcp.com) server using Pydantic AI within a tool call:
+Here's a simple example of a [FastMCP](https://gofastmcp.com) server using Pydantic AI within a tool call. It needs the full `fastmcp` package (`pip install fastmcp`); the `mcp` optional group installs only the client.
 
 ```py {title="mcp_server.py"}
 from fastmcp import FastMCP
