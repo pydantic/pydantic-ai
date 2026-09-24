@@ -1119,6 +1119,14 @@ class GoogleModel(Model[Client]):
             url_context_metadata=url_context_metadata,
         )
 
+    @property
+    def _streamed_response_cls(self) -> type[GeminiStreamedResponse]:
+        """Returns the `StreamedResponse` type that will be used for streamed responses.
+
+        This method may be overridden by subclasses of `GoogleModel` to provide their own `StreamedResponse` type.
+        """
+        return GeminiStreamedResponse
+
     async def _process_streamed_response(
         self, response: AsyncIterator[GenerateContentResponse], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
@@ -1136,7 +1144,7 @@ class GoogleModel(Model[Client]):
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
-        return GeminiStreamedResponse(
+        return self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
