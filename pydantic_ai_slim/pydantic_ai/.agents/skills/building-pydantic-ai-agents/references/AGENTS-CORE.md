@@ -46,6 +46,39 @@ If the user is choosing between output modes:
 - `TextOutput` for custom text parsing
 - `NativeOutput` or `ToolOutput` when they need explicit output-mode control
 
+### Extract existing strings with TypeSafe Jev
+
+`typesafe:jev-latest` answers typed questions but does not generate text. It can fill a `str` output field only by
+choosing a whole candidate extracted deterministically from the state. Use the supported `email` or `uri` schema
+format, or name an extractor on the field's type and register the function under that name on the model:
+
+```python
+import re
+from typing import Annotated
+
+from pydantic_ai.models.typesafe import TextCandidates, TypeSafeModel
+
+
+def cases(state: object) -> list[str]:
+    return re.findall(r'CASE-\d{4}', str(state))
+
+
+CaseId = Annotated[str, TextCandidates('case_id')]
+model = TypeSafeModel('jev-latest', text_extractors={'case_id': cases})
+```
+
+One alias serves every field it annotates, nested ones included, and a name not registered on the model raises
+`UserError`. Other models strip the marker, so the same output type works behind Jev in a `FallbackModel`. A schema
+`pattern` is not read as an extractor and raises: running a regex the library did not write against text it did not
+write can backtrack for exponential time, so an extractor has to be code you registered. The callable receives Jev's
+string or JSON-compatible conversation state and returns an iterable of strings. Fields filled after a route is
+picked — a tool's arguments, a chosen union member's fields — have no extractors behind them.
+
+Every extraction includes a no-match option. A required field with no value raises `NoTextCandidate`, a
+`ModelAPIError` a `FallbackModel` hands to the model behind Jev, rather than inventing text; `str | None` returns
+`None`, and a field with a default takes it. This is for selecting identifiers, addresses, amounts, and other
+values already present, not for summaries or replies. Use a language model when the answer has to be written.
+
 ## Picking One of a Run-Time Set
 
 Use `Choices({key: description})` when the model has to pick one of a set that only exists once the run is under

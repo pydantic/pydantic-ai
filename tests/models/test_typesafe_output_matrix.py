@@ -110,9 +110,9 @@ def probe(name: str, annotation: Any, **field: Any) -> Any:
 
 # The remedy every "not supported" message ends with, spelled out once: a rewording is one failure, not twenty.
 SUPPORTED_FIELDS = (
-    'Use `bool`, a `Literal` or `Enum` of two or more strings or whole numbers, a `float` bounded with `ge=0` and '
-    '`le=1`, a `list` of a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its '
-    'schema, or a model of these.'
+    'Use `bool`, a `Literal` or `Enum` of two or more strings or whole numbers, a `str` with a candidate extractor, '
+    'a `float` bounded with `ge=0` and `le=1`, a `list` of a `Literal` or `Enum`, a rubric of whole numbers from 0 '
+    'with a description per level in its schema, or a model of these.'
 )
 
 
@@ -136,7 +136,10 @@ def contains_itself(field: str) -> str:
     )
 
 
-NOT_OPTIONAL = ': only a pick-one of strings or whole numbers can be optional, since `None` is one more option to pick'
+NOT_OPTIONAL = (
+    ': only a pick-one of strings or whole numbers, or a `str` with a candidate extractor, can be optional, '
+    'since `None` is one more option to pick'
+)
 NOT_A_LIST = ': a list must be of two or more string options'
 
 

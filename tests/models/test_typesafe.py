@@ -2,6 +2,8 @@ from __future__ import annotations as _annotations
 
 import json
 import pickle
+import re
+import time
 from collections.abc import Callable
 from decimal import Decimal
 from enum import Enum, IntEnum
@@ -31,10 +33,12 @@ from pydantic_ai import (
     PromptedOutput,
     RetryPromptPart,
     RunContext,
+    StructuredDict,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    Tool,
     ToolCallPart,
     ToolOutput,
     ToolReturnPart,
@@ -42,6 +46,7 @@ from pydantic_ai import (
     UserPromptPart,
     WebSearchTool,
 )
+from pydantic_ai._json_schema import TEXT_CANDIDATES_KEY
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
@@ -60,11 +65,30 @@ with try_import() as evals_imports_successful:
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import Classifier
 
-with try_import() as imports_successful:
-    from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
-    from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel, TypeSafeModelSettings
+with try_import() as imports_successful:
+    from typesafe_sdk import AsyncTypeSafeClient, JSONContent, RetryPolicy
+
+    from pydantic_ai.models.typesafe import (
+        NoTextCandidate,
+        TextCandidates,
+        ToolCallProposed,
+        TypeSafeModel,
+        TypeSafeModelSettings,
+        TypeSafeTextExtractor,
+        _extract_emails,  # pyright: ignore[reportPrivateUsage]
+        _extract_uris,  # pyright: ignore[reportPrivateUsage]
+        _trimmed_uri,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.typesafe import TypeSafeProvider
+
+    # Inside the guard, since the marker lives in the TypeSafe module; without it the models below that use these
+    # aliases are left unbuilt rather than failing the import, and the module is skipped.
+    CaseId = Annotated[str, TextCandidates('cases')]
+    Amount = Annotated[str, TextCandidates('amounts')]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='typesafe-sdk not installed'),
@@ -102,6 +126,29 @@ class EnumAndProbability(BaseModel):
     p_harmful: float = Field(ge=0, le=1, description='Is this request harmful?')
 
 
+EmailText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'email'})]
+UriText = Annotated[str, WithJsonSchema({'type': 'string', 'format': 'uri'})]
+
+
+class ExtractedDetails(BaseModel):
+    """Extract details from a support ticket without writing new text."""
+
+    customer_email: EmailText = Field(description='Which email address belongs to the customer?')
+    open_case: CaseId = Field(description='Which case is still open?')
+    account_page: UriText = Field(description="Which URI is the customer's account page?")
+    overcharge: Amount = Field(description='Which amount is the overcharge?')
+
+
+def extract_amounts(state: JSONContent) -> list[str]:
+    assert isinstance(state, str)
+    return re.findall(r'\$\d+\.\d{2}', state)
+
+
+def extract_cases(state: JSONContent) -> list[str]:
+    assert isinstance(state, str)
+    return re.findall(r'CASE-\d+', state)
+
+
 def rubric(*levels: tuple[int, str]) -> WithJsonSchema:
     """A rubric's levels with a description each, as the schema an `IntEnum` with member docstrings will render."""
     return WithJsonSchema(
@@ -136,11 +183,17 @@ def typesafe_model(typesafe_api_key: str, request_capture: RequestCapture) -> Ty
     return TypeSafeModel('jev-latest', provider=provider)
 
 
-def mock_model(handler: Callable[[httpx2.Request], httpx2.Response]) -> TypeSafeModel:
+def mock_model(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+    *,
+    text_extractors: dict[str, TypeSafeTextExtractor] | None = None,
+) -> TypeSafeModel:
     """A model whose HTTP goes to `handler`, with the SDK's own retries off."""
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     client = AsyncTypeSafeClient(api_key='api-key', http_client=http_client, retry=RetryPolicy(max_retries=0))
-    return TypeSafeModel('jev-latest', provider=TypeSafeProvider(typesafe_client=client))
+    return TypeSafeModel(
+        'jev-latest', provider=TypeSafeProvider(typesafe_client=client), text_extractors=text_extractors
+    )
 
 
 def answers(**answers: dict[str, object]) -> httpx2.Response:
@@ -260,6 +313,106 @@ async def test_enum_and_probability_output(
             'p_harmful': {
                 'type': 'noul',
                 'instructions': {'field': 'p_harmful', 'question': 'Is this request harmful?'},
+            },
+        }
+    )
+
+
+@pytest.mark.vcr
+async def test_text_candidate_output(
+    allow_model_requests: None,
+    typesafe_api_key: str,
+    request_capture: RequestCapture,
+):
+    """A string field is a pick-one over candidates taken out of the state, never text Jev wrote."""
+    provider = TypeSafeProvider(api_key=typesafe_api_key, http_client=request_capture.client)
+    model = TypeSafeModel(
+        'jev-latest',
+        provider=provider,
+        text_extractors={'amounts': extract_amounts, 'cases': extract_cases},
+    )
+    agent = Agent(model, output_type=ExtractedDetails)
+    result = await agent.run(
+        'Customer Mira uses mira@example.com; the agent uses lee@example.org. '
+        'CASE-1042 is closed; CASE-2048 is still open. The customer account is '
+        'https://accounts.example.com/mira; documentation is https://docs.example.com. '
+        'The invoice was $80.00 but should have been $60.00, so the overcharge is $20.00.'
+    )
+
+    assert result.output == snapshot(
+        ExtractedDetails(
+            customer_email='mira@example.com',
+            open_case='CASE-2048',
+            account_page='https://accounts.example.com/mira',
+            overcharge='$20.00',
+        )
+    )
+    details = cast(dict[str, Any], result.response.provider_details)
+    assert {
+        name: (details['confidence'][name], max(details['probabilities'][name], key=details['probabilities'][name].get))
+        for name in details['confidence']
+    } == snapshot(
+        {
+            'customer_email': (1.0, 'mira@example.com'),
+            'open_case': (1.0, 'CASE-2048'),
+            'account_page': (1.0, 'https://accounts.example.com/mira'),
+            'overcharge': (1.0, '$20.00'),
+        }
+    )
+    assert request_capture.body('/v1/systemone')['questions'] == snapshot(
+        {
+            'customer_email': {
+                'type': 'choice',
+                'criteria': {
+                    'mira@example.com': None,
+                    'lee@example.org': None,
+                    'none': 'None of these candidate values answers the field.',
+                },
+                'instructions': {
+                    'field': 'customer_email',
+                    'question': 'Which email address belongs to the customer?',
+                    'goal': 'Extract details from a support ticket without writing new text.',
+                },
+            },
+            'open_case': {
+                'type': 'choice',
+                'criteria': {
+                    'CASE-1042': None,
+                    'CASE-2048': None,
+                    'none': 'None of these candidate values answers the field.',
+                },
+                'instructions': {
+                    'field': 'open_case',
+                    'question': 'Which case is still open?',
+                    'goal': 'Extract details from a support ticket without writing new text.',
+                },
+            },
+            'account_page': {
+                'type': 'choice',
+                'criteria': {
+                    'https://accounts.example.com/mira': None,
+                    'https://docs.example.com': None,
+                    'none': 'None of these candidate values answers the field.',
+                },
+                'instructions': {
+                    'field': 'account_page',
+                    'question': "Which URI is the customer's account page?",
+                    'goal': 'Extract details from a support ticket without writing new text.',
+                },
+            },
+            'overcharge': {
+                'type': 'choice',
+                'criteria': {
+                    '$80.00': None,
+                    '$60.00': None,
+                    '$20.00': None,
+                    'none': 'None of these candidate values answers the field.',
+                },
+                'instructions': {
+                    'field': 'overcharge',
+                    'question': 'Which amount is the overcharge?',
+                    'goal': 'Extract details from a support ticket without writing new text.',
+                },
             },
         }
     )
@@ -456,6 +609,778 @@ async def test_unsupported_output_fields(
     agent = Agent(typesafe_model, output_type=output_type)
     with pytest.raises(UserError, match=match):
         await agent.run('anything')
+
+
+async def test_schema_format_candidates_include_the_whole_state_and_keep_first_seen_order(
+    allow_model_requests: None,
+):
+    """Built-in extractors walk nested history and the latest text, without duplicating repeated values."""
+    seen: list[dict[str, Any]] = []
+
+    class Selected(BaseModel):
+        email: EmailText = Field(description='Which address appears in the latest message?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            email={
+                'type': 'choice',
+                'choice': 'new@example.com',
+                'confidence': 0.9,
+                'probabilities': {'old@example.com': 0.05, 'new@example.com': 0.9, 'none': 0.05},
+            }
+        )
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Old address: old@example.com')]),
+        ModelResponse(parts=[ToolCallPart('lookup', {'attempt': 2, 'email': 'old@example.com'}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'Found old@example.com', 'call_1')]),
+    ]
+    result = await Agent(mock_model(record), output_type=Selected).run(
+        'New address: new@example.com', message_history=history
+    )
+
+    assert result.output.email == 'new@example.com'
+    assert list(seen[0]['questions']['email']['criteria']) == ['old@example.com', 'new@example.com', 'none']
+
+
+async def test_a_named_extractor_replaces_the_one_the_format_implies(allow_model_requests: None):
+    """The `email` format would find addresses in this text; the extractor the field names is what is offered."""
+    seen: list[dict[str, Any]] = []
+
+    class Selected(BaseModel):
+        contact: Annotated[EmailText, TextCandidates('desks')] = Field(description='Which contact should be used?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            contact={
+                'type': 'choice',
+                'choice': 'desk+two@example.net',
+                'confidence': 0.9,
+                'probabilities': {'desk+one@example.net': 0.1, 'desk+two@example.net': 0.9, 'none': 0.0},
+            }
+        )
+
+    def desks(_state: JSONContent) -> list[str]:
+        return ['desk+one@example.net', 'desk+two@example.net', 'desk+two@example.net', '']
+
+    model = mock_model(record, text_extractors={'desks': desks})
+    result = await Agent(model, output_type=Selected).run('Write to mira@example.com or lee@example.org.')
+
+    assert result.output.contact == 'desk+two@example.net'
+    # Neither address in the text is on offer, and the repeat and the blank were dropped.
+    assert list(seen[0]['questions']['contact']['criteria']) == [
+        'desk+one@example.net',
+        'desk+two@example.net',
+        'none',
+    ]
+
+
+async def test_one_alias_answers_a_nested_field_and_a_top_level_one(allow_model_requests: None):
+    """The field names its extractor, so a nested field needs no path and one alias serves every field it types.
+
+    Both fields go out as their own question over the same candidates, and each answer lands in its own place.
+    """
+    seen: list[dict[str, Any]] = []
+
+    class Inner(BaseModel):
+        identifier: CaseId = Field(description='Which case is open?')
+
+    class Outer(BaseModel):
+        inner: Inner
+        closed: CaseId = Field(description='Which case is closed?')
+
+    def pick(choice: str) -> dict[str, object]:
+        return {
+            'type': 'choice',
+            'choice': choice,
+            'confidence': 0.9,
+            'probabilities': {'CASE-1': 0.05, 'CASE-2': 0.05, choice: 0.9, 'none': 0.0},
+        }
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(**{'inner.identifier': pick('CASE-2'), 'closed': pick('CASE-1')})
+
+    model = mock_model(record, text_extractors={'cases': extract_cases})
+    result = await Agent(model, output_type=Outer).run('CASE-1 is closed and CASE-2 is open.')
+
+    assert result.output == Outer(inner=Inner(identifier='CASE-2'), closed='CASE-1')
+    assert {name: list(question['criteria']) for name, question in seen[0]['questions'].items()} == snapshot(
+        {'inner.identifier': ['CASE-1', 'CASE-2', 'none'], 'closed': ['CASE-1', 'CASE-2', 'none']}
+    )
+
+
+def test_a_uri_candidate_keeps_what_belongs_to_it():
+    """A `(` in a URI is part of the address; one that closes nothing came from the prose around it."""
+    assert list(_extract_uris('See https://en.wikipedia.org/wiki/Function_(mathematics) for more.')) == snapshot(
+        ['https://en.wikipedia.org/wiki/Function_(mathematics)']
+    )
+    assert list(_extract_uris('Docs at (https://example.com/a) and https://example.com/b.')) == snapshot(
+        ['https://example.com/a', 'https://example.com/b']
+    )
+
+    # The scheme's `:` is never trimmed, so a real match cannot vanish; the guard is for a caller's own string.
+    assert _trimmed_uri('...') == ''
+
+
+async def test_an_ipv6_authority_is_one_candidate(allow_model_requests: None):
+    """The brackets around an IPv6 host are part of the address, so the candidate cannot stop at the `[`."""
+    seen: list[dict[str, Any]] = []
+
+    class Selected(BaseModel):
+        page: UriText = Field(description='Which page?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            page={
+                'type': 'choice',
+                'choice': 'https://[2001:db8::1]:8080/account',
+                'confidence': 0.9,
+                'probabilities': {'https://[2001:db8::1]:8080/account': 0.9, 'http://[::1]/health': 0.1, 'none': 0.0},
+            }
+        )
+
+    result = await Agent(mock_model(record), output_type=Selected).run(
+        'The account is at https://[2001:db8::1]:8080/account and health at http://[::1]/health.'
+    )
+
+    assert result.output.page == 'https://[2001:db8::1]:8080/account'
+    assert list(seen[0]['questions']['page']['criteria']) == [
+        'https://[2001:db8::1]:8080/account',
+        'http://[::1]/health',
+        'none',
+    ]
+
+
+def test_extraction_over_a_long_word_stays_linear():
+    """Extraction runs before the request, so no HTTP timeout bounds it: the patterns have to bound themselves.
+
+    A hyphenated run is a scheme as far as a URI pattern is concerned until the `:` that never comes. Left
+    unbounded, giving those characters back one at a time is quadratic, and a regex holds the GIL while it does,
+    so a state like this one would stall the whole event loop. The complete extractors are timed, not the
+    trimmer they hand off to: the cost is in the matching.
+    """
+    hostile = 'a-' * 50_000
+    started = time.perf_counter()
+    assert list(_extract_uris(hostile)) == []
+    assert list(_extract_emails(hostile)) == []
+    assert time.perf_counter() - started < 1.0
+
+
+async def test_a_schema_pattern_says_why_it_is_not_an_extractor(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """A `pattern` reads like it would be used, so the refusal names it and says what to pass instead."""
+
+    class Cased(BaseModel):
+        """Find the case number."""
+
+        case: str = Field(pattern=r'CASE-\d+', description='Which case?')
+
+    with pytest.raises(UserError, match=r'has a schema `pattern`.*Run the same expression yourself'):
+        await Agent(typesafe_model, output_type=Cased).run('CASE-1 is open.')
+
+
+async def test_options_and_a_pattern_together_are_still_a_pick_one(allow_model_requests: None):
+    """A field with a finite set of options is answered from them, whatever else its schema carries."""
+    seen: list[dict[str, Any]] = []
+
+    class Graded(BaseModel):
+        grade: Annotated[str, WithJsonSchema({'type': 'string', 'enum': ['A', 'B'], 'pattern': '^[AB]$'})] = Field(
+            description='Which grade?'
+        )
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            grade={'type': 'choice', 'choice': 'B', 'confidence': 0.8, 'probabilities': {'A': 0.2, 'B': 0.8}}
+        )
+
+    result = await Agent(mock_model(record), output_type=Graded).run('The grade is B.')
+
+    assert result.output.grade == 'B'
+    assert seen[0]['questions']['grade']['criteria'] == {'A': None, 'B': None}
+
+
+async def test_no_candidates_answers_none_for_an_optional_field_without_a_request(allow_model_requests: None):
+    class Selected(BaseModel):
+        identifier: CaseId | None = Field(default=None, description='Which case, if any?')
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the request should not be sent')
+
+    model = mock_model(unreachable, text_extractors={'cases': extract_cases})
+    result = await Agent(model, output_type=Selected).run('No case number was supplied.')
+    assert result.output.identifier is None
+    assert not result.response.usage.has_values()
+    assert result.response.provider_details == snapshot(
+        {
+            'confidence': {'identifier': 1.0},
+            'probabilities': {'identifier': {'none': 1.0}},
+            'scores': {},
+        }
+    )
+
+
+async def test_a_described_none_is_what_the_no_match_option_means(allow_model_requests: None):
+    """`Annotated[None, Field(description=...)]` says what picking nothing means, for extracted candidates too.
+
+    It replaces the stock no-match wording, as it does for a `Literal` pick-one, and picking it still answers `None`.
+    """
+    seen: list[dict[str, Any]] = []
+
+    class Selected(BaseModel):
+        identifier: CaseId | Annotated[None, Field(description='The customer has not opened a case yet.')] = Field(
+            description='Which case is the customer asking about?'
+        )
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(
+            identifier={
+                'type': 'choice',
+                'choice': 'none',
+                'confidence': 0.8,
+                'probabilities': {'CASE-1000': 0.2, 'none': 0.8},
+            }
+        )
+
+    model = mock_model(record, text_extractors={'cases': extract_cases})
+    result = await Agent(model, output_type=Selected).run('CASE-1000 belongs to someone else.')
+
+    assert result.output.identifier is None
+    assert seen[0]['questions']['identifier']['criteria'] == snapshot(
+        {'CASE-1000': None, 'none': 'The customer has not opened a case yet.'}
+    )
+
+
+@pytest.mark.parametrize('optional', [False, True])
+@pytest.mark.parametrize('extracted', [False, True])
+async def test_a_defaulted_field_falls_back_to_its_default_rather_than_failing(
+    allow_model_requests: None, extracted: bool, optional: bool
+):
+    """A `str` field with a default is not required, so nothing to pick means the default, not a failure.
+
+    Optionality is the schema's `required` set, not whether the annotation admits `None`: `str = 'unknown'`
+    takes neither a value Jev invented nor a `None` Pydantic would reject, so the field is left out of the
+    arguments entirely and Pydantic fills it in. `str | None = 'unknown'` is left out the same way, as a
+    pick-one's "None of these" is: a default says what to use when there is no answer, which `None` would override.
+    """
+
+    class Required(BaseModel):
+        identifier: CaseId = Field(default='unknown', description='Which case is open?')
+
+    class Nullable(BaseModel):
+        identifier: CaseId | None = Field(default='unknown', description='Which case is open?')
+
+    Selected = Nullable if optional else Required
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if not extracted:  # pragma: no cover
+            raise AssertionError('the request should not be sent')
+        return answers(
+            identifier={
+                'type': 'choice',
+                'choice': 'none',
+                'confidence': 0.8,
+                'probabilities': {'CASE-1000': 0.2, 'none': 0.8},
+            }
+        )
+
+    model = mock_model(handler, text_extractors={'cases': extract_cases})
+    prompt = 'CASE-1000 is closed; there is no open case.' if extracted else 'Nothing was filed.'
+    result = await Agent(model, output_type=Selected).run(prompt)
+
+    assert result.output.identifier == 'unknown'
+    assert result.response.parts == snapshot([ToolCallPart('final_result', {}, tool_call_id=IsStr())])
+
+
+def extract_cases_anywhere(state: JSONContent) -> list[str]:
+    """`extract_cases`, but it survives the retry a missing required field would cause.
+
+    The state is a bare string on the first request and the whole history on a retry, so an extractor that
+    only reads the string would fail on the second for a reason of its own. Reading both keeps a test that
+    asserts the first request is the only one honest about why a second happened.
+    """
+    return re.findall(r'CASE-\d+', json.dumps(state))
+
+
+@pytest.mark.parametrize('extracted', [False, True])
+async def test_a_required_nested_model_is_sent_even_when_every_field_under_it_takes_its_default(
+    allow_model_requests: None, extracted: bool
+):
+    """Leaving a defaulted field out cannot leave the model holding it out too.
+
+    A field is left out of the arguments so Pydantic can apply its default, and the nested model it lives in is
+    built from those arguments: with every field under `details` left out, an absent `details` is a missing
+    required field rather than one Pydantic fills from the defaults inside it.
+    """
+
+    class Details(BaseModel):
+        identifier: CaseId = Field(default='unknown', description='Which case is open?')
+
+    class Report(BaseModel):
+        """Summarise what was filed."""
+
+        details: Details
+
+    no_match: dict[str, object] = {
+        'type': 'choice',
+        'choice': 'none',
+        'confidence': 0.8,
+        'probabilities': {'CASE-1000': 0.2, 'none': 0.8},
+    }
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if not extracted:  # pragma: no cover
+            raise AssertionError('the request should not be sent')
+        return answers(**{'details.identifier': no_match})
+
+    model = mock_model(handler, text_extractors={'cases': extract_cases_anywhere})
+    prompt = 'CASE-1000 is closed; there is no open case.' if extracted else 'Nothing was filed.'
+    result = await Agent(model, output_type=Report).run(prompt)
+
+    assert result.output == snapshot(Report(details=Details(identifier='unknown')))
+    assert result.response.parts == snapshot([ToolCallPart('final_result', {'details': {}}, tool_call_id=IsStr())])
+
+
+async def test_a_nested_model_with_a_default_of_its_own_is_left_out_like_any_other_defaulted_field(
+    allow_model_requests: None,
+):
+    """The conservative direction: only a *required* nested model is sent empty.
+
+    `details` has a default of its own, so leaving it out is what applies that default — sending `{}` would
+    build a `Details` from its fields' defaults instead and quietly throw the outer one away.
+    """
+
+    class Details(BaseModel):
+        identifier: CaseId = Field(default='unknown', description='Which case is open?')
+
+    class Report(BaseModel):
+        """Summarise what was filed."""
+
+        details: Details = Details(identifier='nothing filed')
+
+    def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
+        raise AssertionError('the request should not be sent')
+
+    model = mock_model(unreachable, text_extractors={'cases': extract_cases_anywhere})
+    result = await Agent(model, output_type=Report).run('Nothing was filed.')
+
+    assert result.output == snapshot(Report(details=Details(identifier='nothing filed')))
+    assert result.response.parts == snapshot([ToolCallPart('final_result', {}, tool_call_id=IsStr())])
+
+
+async def test_a_nested_model_with_a_default_is_left_out_when_its_only_text_field_has_no_candidate(
+    allow_model_requests: None,
+):
+    """With nothing extracted for the one field under it, the nested model gets its own default.
+
+    The field is left out for its default like a pick-one's "None of these", and the model holding it, having
+    a default and nothing answered under it, is left out too, rather than rebuilt from the field's default.
+    """
+
+    class Details(BaseModel):
+        identifier: CaseId | None = Field(default=None, description='Which case is open?')
+
+    class Report(BaseModel):
+        """Summarise what was filed."""
+
+        urgent: bool = Field(description='Is it urgent?')
+        details: Details = Details(identifier='nothing filed')
+
+    model = mock_model(
+        lambda _: answers(urgent={'type': 'noul', 'noul': 0.9}), text_extractors={'cases': extract_cases}
+    )
+    result = await Agent(model, output_type=Report).run('Nothing was filed, but it is urgent.')
+
+    assert result.output == snapshot(Report(urgent=True, details=Details(identifier='nothing filed')))
+    assert result.response.parts == snapshot([ToolCallPart('final_result', {'urgent': True}, tool_call_id=IsStr())])
+
+
+@pytest.mark.parametrize('optional', [False, True])
+async def test_the_no_match_option_never_becomes_an_invented_value(allow_model_requests: None, optional: bool):
+    # The marker on the union rather than on its `str`, which puts it beside `anyOf` in the schema.
+    annotation = Annotated[str | None, TextCandidates('cases')] if optional else CaseId
+    Selected = type(
+        'Selected',
+        (BaseModel,),
+        {
+            '__annotations__': {'identifier': annotation},
+            'identifier': Field(description='Which case is open?'),
+        },
+    )
+    model = mock_model(
+        lambda _: answers(
+            identifier={
+                'type': 'choice',
+                'choice': 'none',
+                'confidence': 0.8,
+                'probabilities': {'CASE-1000': 0.2, 'none': 0.8},
+            }
+        ),
+        text_extractors={'cases': extract_cases},
+    )
+    agent = Agent(model, output_type=Selected)
+    if optional:
+        result = await agent.run('CASE-1000 is closed; there is no open case.')
+        assert getattr(result.output, 'identifier') is None
+    else:
+        with pytest.raises(NoTextCandidate, match=r"no candidate value for required output field 'identifier'"):
+            await agent.run('CASE-1000 is closed; there is no open case.')
+
+
+@pytest.mark.parametrize('prompt', ['CASE-1000 is closed; there is no open case.', 'Nothing was filed.'])
+async def test_a_fallback_model_takes_a_field_jev_cannot_answer(allow_model_requests: None, prompt: str):
+    """Whether the state held no candidate or Jev rejected the ones it held is the text's doing, not the agent's.
+
+    Both are a `ModelAPIError`, so the language model behind Jev answers the step it could not, rather than the
+    run dying on a `UserError` that no fallback sees — after Jev has already been charged for the question.
+    """
+
+    class Selected(BaseModel):
+        identifier: CaseId = Field(description='Which case is open?')
+
+    jev = mock_model(
+        lambda _: answers(
+            identifier={
+                'type': 'choice',
+                'choice': 'none',
+                'confidence': 0.8,
+                'probabilities': {'CASE-1000': 0.2, 'none': 0.8},
+            }
+        ),
+        text_extractors={'cases': extract_cases},
+    )
+    agent = Agent(FallbackModel(jev, TestModel(custom_output_args={'identifier': 'CASE-4242'})), output_type=Selected)
+    result = await agent.run(prompt)
+    assert result.output.identifier == 'CASE-4242'
+
+
+def lookup_customer() -> str:
+    """Look the customer up in the billing system."""
+    return 'Mira is on the annual plan, at mira@example.com.'
+
+
+@pytest.mark.parametrize(
+    'prompt,rejected',
+    [
+        pytest.param('The customer wants to know about their plan.', {}, id='nothing to extract'),
+        pytest.param(
+            'Write to mira@example.com about their plan.',
+            {
+                'customer_email': {
+                    'type': 'choice',
+                    'choice': 'none',
+                    'confidence': 0.8,
+                    'probabilities': {'mira@example.com': 0.2, 'none': 0.8},
+                }
+            },
+            id='candidates Jev rejected',
+        ),
+    ],
+)
+async def test_a_field_jev_cannot_answer_does_not_take_the_tool_it_picked_away(
+    allow_model_requests: None, prompt: str, rejected: dict[str, dict[str, object]]
+):
+    """The output is one route among the tools, so a field it could not fill only fails the turn if it wins.
+
+    Failing earlier — while building the questions, or on reading the answers — throws away the tool Jev picked
+    and, in the second case, the request that was already paid for, even though the tool is what supplies the
+    address the field was missing.
+    """
+
+    class Reply(BaseModel):
+        """Draft the reply to the customer."""
+
+        customer_email: EmailText = Field(description='Which address is the customer at?')
+
+    sent: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        if 'tool' in sent[-1]['questions']:
+            return answers(
+                tool={
+                    'type': 'choice',
+                    'choice': 'lookup_customer',
+                    'confidence': 0.9,
+                    'probabilities': {'lookup_customer': 0.9, 'final_result': 0.1},
+                },
+                **rejected,
+            )
+        return answers(
+            customer_email={
+                'type': 'choice',
+                'choice': 'mira@example.com',
+                'confidence': 0.9,
+                'probabilities': {'mira@example.com': 0.9, 'none': 0.1},
+            }
+        )
+
+    result = await Agent(mock_model(record), output_type=Reply, tools=[lookup_customer]).run(prompt)
+
+    assert result.output.customer_email == 'mira@example.com'
+    assert [
+        part.tool_name
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolCallPart | ToolReturnPart)
+    ] == snapshot(['lookup_customer', 'lookup_customer', 'final_result', 'final_result'])
+    # The turn that picked the tool asked the tool question; whether it also asked the string field depends only
+    # on whether there was anything to offer for it.
+    assert [sorted(request['questions']) for request in sent] == snapshot(
+        [sorted(['tool', *rejected]), ['customer_email']]
+    )
+
+
+def _one_value(_state: JSONContent) -> list[str]:
+    return ['value']
+
+
+def _one_string(_state: JSONContent) -> str:
+    return 'CASE-1'
+
+
+def _non_string(_state: JSONContent) -> list[object]:
+    return ['CASE-1', 2]
+
+
+def _too_many(_state: JSONContent) -> list[str]:
+    return [f'CASE-{i}' for i in range(255)]
+
+
+@pytest.mark.parametrize(
+    'extractor,match',
+    [
+        pytest.param(_one_string, 'iterable of strings, not one string', id='one string'),
+        pytest.param(_non_string, 'every candidate must be a string', id='non-string'),
+        pytest.param(_too_many, 'more than 254 candidates', id='too many'),
+    ],
+)
+async def test_invalid_extractor_results_are_refused(
+    allow_model_requests: None,
+    extractor: TypeSafeTextExtractor,
+    match: str,
+):
+    """What an extractor hands back is the caller's code misbehaving, so it is a `UserError` before the request."""
+
+    class Selected(BaseModel):
+        identifier: CaseId = Field(description='Which identifier?')
+
+    model = mock_model(lambda _: pytest.fail('the request should not be sent'), text_extractors={'cases': extractor})
+    with pytest.raises(UserError, match=match):
+        await Agent(model, output_type=Selected).run('CASE-1')
+
+
+async def test_an_extractor_failure_is_named_for_its_field(allow_model_requests: None):
+    class Selected(BaseModel):
+        identifier: CaseId = Field(description='Which identifier?')
+
+    def fail(_state: JSONContent) -> list[str]:
+        raise RuntimeError('parser unavailable')
+
+    model = mock_model(lambda _: pytest.fail('the request should not be sent'), text_extractors={'cases': fail})
+    with pytest.raises(UserError, match="extractor for output field 'identifier' failed: parser unavailable"):
+        await Agent(model, output_type=Selected).run('CASE-1')
+
+
+class WithMarkedBool(BaseModel):
+    flag: Annotated[bool, TextCandidates('cases')] = Field(description='Is it flagged?')
+
+
+@pytest.mark.parametrize(
+    'output_type,match',
+    [
+        pytest.param(
+            ExtractedDetails,
+            r"text extractor 'amounts', which is not registered on this model",
+            id='unregistered name',
+        ),
+        pytest.param(
+            # A raw schema names an extractor too, and a name that happens to match a built-in is not one: the
+            # `email` format is right there, and it is still the registry and nothing else that a name selects from.
+            StructuredDict(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'contact': {'type': 'string', 'format': 'email', TEXT_CANDIDATES_KEY: 'email'},
+                    },
+                    'required': ['contact'],
+                },
+                name='Contact',
+            ),
+            r"text extractor 'email', which is not registered on this model",
+            id='built-in name',
+        ),
+        pytest.param(WithMarkedBool, r'requires a plain `str` field', id='non-string field'),
+    ],
+)
+async def test_an_extractor_a_field_names_must_be_registered_and_fit_the_field(
+    allow_model_requests: None,
+    output_type: type[Any],
+    match: str,
+):
+    """Only `cases` is registered, so every other name is refused before the request rather than looked up."""
+    model = mock_model(lambda _: pytest.fail('the request should not be sent'), text_extractors={'cases': _one_value})
+    with pytest.raises(UserError, match=match):
+        await Agent(model, output_type=output_type).run('anything')
+
+
+class CaseCustomer(BaseModel):
+    case: CaseId = Field(description='Which case is the customer asking about?')
+
+
+class CaseEscalation(BaseModel):
+    """Escalate a support ticket."""
+
+    customer: CaseCustomer
+    closed: CaseId | None = Field(default=None, description='Which case is closed, if any?')
+
+
+def look_up_case(case: CaseId) -> CaseCustomer:
+    """Look a case up."""
+    return CaseCustomer(case=case)  # pragma: no cover
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param(ToolOutput(CaseEscalation, strict=True), id='strict tool output'),
+        pytest.param(CaseEscalation, id='tool output'),
+        pytest.param(NativeOutput(CaseEscalation), id='native output'),
+    ],
+)
+async def test_another_model_never_sends_the_text_candidates_keyword(allow_model_requests: None, output_type: Any):
+    """The keyword a `TextCandidates` marker adds is for Jev: a provider model strips it from everything it sends.
+
+    Stripped before the profile's schema transformer runs, so OpenAI's strict-mode transformer never sees it and a
+    strict output tool stays strict. The output type, a function tool's arguments and its return schema, which
+    OpenAI puts in the tool's description, all carry the marker here.
+    """
+    sent: list[dict[str, Any]] = []
+    output = {'customer': {'case': 'CASE-2'}, 'closed': 'CASE-1'}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        if isinstance(output_type, NativeOutput):
+            message: dict[str, Any] = {'role': 'assistant', 'content': json.dumps(output)}
+        else:
+            call = {
+                'id': 'call_1',
+                'type': 'function',
+                'function': {'name': 'final_result', 'arguments': json.dumps(output)},
+            }
+            message = {'role': 'assistant', 'content': None, 'tool_calls': [call]}
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'chatcmpl-1',
+                'object': 'chat.completion',
+                'created': 0,
+                'model': 'gpt-5.2',
+                'choices': [{'index': 0, 'finish_reason': 'stop', 'message': message}],
+            },
+        )
+
+    provider = OpenAIProvider(
+        api_key='api-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    )
+    agent = Agent(
+        OpenAIChatModel('gpt-5.2', provider=provider),
+        output_type=output_type,
+        tools=[Tool(look_up_case, include_return_schema=True)],
+    )
+    result = await agent.run('CASE-1 is closed; the customer is asking about CASE-2.')
+
+    assert result.output == CaseEscalation(customer=CaseCustomer(case='CASE-2'), closed='CASE-1')
+    assert TEXT_CANDIDATES_KEY not in json.dumps(sent)
+    if isinstance(output_type, ToolOutput):
+        tools = {tool['function']['name']: tool['function'] for tool in sent[0]['tools']}
+        assert tools['final_result'].get('strict') == (output_type.strict or None)
+
+
+async def test_a_text_candidates_member_of_an_output_union_is_a_hand_off(allow_model_requests: None):
+    """A union member is filled after it is picked, where no extractor runs, so picking a `CaseId` member hands off.
+
+    The `|` form keeps the member's `Annotated` metadata, and with it the marker, but a bare `str` has no docstring
+    to say what the route is for, so it is refused before any request; a `ToolOutput` description supplies one.
+    """
+    sent: list[dict[str, Any]] = []
+
+    class Escalate(BaseModel):
+        """Escalate the ticket."""
+
+        urgent: bool = Field(description='Is it urgent?')
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return answers(
+            tool={
+                'type': 'choice',
+                'choice': 'final_result_str',
+                'confidence': 0.9,
+                'probabilities': {'final_result_str': 0.9, 'final_result_Escalate': 0.1},
+            }
+        )
+
+    model = mock_model(record, text_extractors={'cases': extract_cases})
+    with pytest.raises(UserError, match="'final_result_str' says nothing about itself"):
+        await Agent(model, output_type=CaseId | Escalate).run('CASE-1 is open.')
+
+    described = [ToolOutput(CaseId, description='Name the open case.'), Escalate]
+    with pytest.raises(ToolCallProposed, match="'final_result_str'"):
+        await Agent(model, output_type=described).run('CASE-1 is open.')
+    assert [sorted(request['questions']) for request in sent] == [['tool']]
+
+
+async def test_a_format_without_an_extractor_leaves_the_field_unsupported(allow_model_requests: None):
+    """`email` and `uri` are the formats with an extractor behind them; another one implies nothing."""
+
+    class Selected(BaseModel):
+        value: Annotated[str, WithJsonSchema({'type': 'string', 'format': 'uuid'})] = Field(description='Which id?')
+
+    model = mock_model(lambda _: pytest.fail('the request should not be sent'))
+    with pytest.raises(UserError, match="Output field 'value' is not supported by this model"):
+        await Agent(model, output_type=Selected).run('anything')
+
+
+@pytest.mark.parametrize(
+    'answer,match',
+    [
+        pytest.param({'type': 'noul', 'noul': 0.9}, 'Unexpected answer.*extracted output field', id='wrong kind'),
+        pytest.param(
+            {
+                'type': 'choice',
+                'choice': 'CASE-9999',
+                'confidence': 0.9,
+                'probabilities': {'CASE-1000': 0.1, 'CASE-9999': 0.9},
+            },
+            'was not one of its candidates',
+            id='unoffered value',
+        ),
+    ],
+)
+async def test_an_unexpected_extracted_answer(
+    allow_model_requests: None,
+    answer: dict[str, object],
+    match: str,
+):
+    class Selected(BaseModel):
+        identifier: CaseId = Field(description='Which case?')
+
+    model = mock_model(lambda _: answers(identifier=answer), text_extractors={'cases': extract_cases})
+    with pytest.raises(UnexpectedModelBehavior, match=match):
+        await Agent(model, output_type=Selected).run('CASE-1000')
+
+
+def test_no_text_candidate_pickles():
+    exc = pickle.loads(pickle.dumps(NoTextCandidate('jev-latest', 'customer_email')))
+    assert (exc.model_name, exc.field_name) == ('jev-latest', 'customer_email')
 
 
 async def test_rubric_levels_are_read_in_level_order(allow_model_requests: None):
@@ -2311,12 +3236,10 @@ async def test_a_list_answer_of_the_wrong_kind(allow_model_requests: None):
     'annotation,match',
     [
         pytest.param('list[str]', 'a list must be of two or more string options', id='list of text'),
-        pytest.param(
-            'bool | None', 'only a pick-one of strings or whole numbers can be optional', id='optional yes/no'
-        ),
+        pytest.param('bool | None', 'only a pick-one of strings or whole numbers', id='optional yes/no'),
         pytest.param(
             "Annotated[bool, BoolCriteria(true='Yes.', false='No.')] | None",
-            'only a pick-one of strings or whole numbers can be optional',
+            'only a pick-one of strings or whole numbers',
             id='optional described yes/no',
         ),
         # A rubric's levels are ordered, and `None` has no place among them.

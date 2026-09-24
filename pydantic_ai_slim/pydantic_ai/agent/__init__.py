@@ -3708,6 +3708,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 function_tools=tool_defs,
                 native_tools=native_tools,
             )
+            # A realtime model sends these schemas as they are, with no `customize_request_parameters` step, so
+            # the keyword only `TypeSafeModel` reads is stripped here instead.
+            model_request_parameters = models._without_text_candidates(  # pyright: ignore[reportPrivateUsage]
+                model_request_parameters
+            )
             # Resolve `include_return_schema` exactly as `Model.prepare_request` does: return schemas
             # are cleared on tools that didn't opt in, kept as-is for a model that renders them
             # natively (Gemini Live's function-declaration `response` schema), and injected into the

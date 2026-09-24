@@ -1,15 +1,29 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+import re
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Collection,
+    Container,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
+from pydantic import GetJsonSchemaHandler
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 from typing_extensions import assert_never
 
 from .. import _utils, usage
 from .._http import to_httpx2_timeout
+from .._json_schema import TEXT_CANDIDATES_KEY
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
@@ -77,7 +91,10 @@ __all__ = (
     'TypeSafeModelName',
     'TypeSafeModelSettings',
     'TypeSafeStreamedResponse',
+    'TypeSafeTextExtractor',
+    'TextCandidates',
     'LatestTypeSafeModelNames',
+    'NoTextCandidate',
     'ToolCallProposed',
 )
 
@@ -89,6 +106,37 @@ threshold has been tuned against one. https://docs.typesafe.ai/models"""
 TypeSafeModelName = str | LatestTypeSafeModelNames
 """Possible TypeSafe model names."""
 
+TypeSafeTextExtractor = Callable[[JSONContent], Iterable[str]]
+"""Candidate values for a string output field, taken from the state Jev judges.
+
+The state is a string when the latest prompt stands alone, and the mapping of `history` and `text` otherwise.
+Jev picks one of the strings returned, or the no-match option, and never writes or alters one.
+"""
+
+
+@dataclass(frozen=True)
+class TextCandidates:
+    """Mark a `str` field as answered by picking one of the candidates a named text extractor returns.
+
+    Use it in `Annotated`, as in `CaseId = Annotated[str, TextCandidates('case_id')]`, and register the function
+    under the same name on the model: `TypeSafeModel('jev-latest', text_extractors={'case_id': cases})`. One alias
+    serves every field it annotates, nested ones included. See
+    [extracting a string already in the text](../../models/typesafe.md#extracting-a-string-already-in-the-text).
+
+    The marker adds only the name to the field's JSON schema, under a reserved keyword, because a schema is all a
+    model is given and all that crosses a durable execution boundary. Every model other than
+    [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] strips that keyword before a request, so the
+    same output type works on a language model unchanged. A name that is not registered on the model is refused
+    rather than looked up anywhere else, so a schema can only choose among functions the application registered.
+    """
+
+    extractor: str
+    """The name the extractor is registered under in `TypeSafeModel`'s `text_extractors`."""
+
+    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        return {**handler(core_schema), TEXT_CANDIDATES_KEY: self.extractor}
+
+
 # Jev picks from at most this many options in one question; a 256th is a 400 from the API.
 # https://docs.typesafe.ai/model-jaggedness/jev-1.13
 _MAX_CHOICE_OPTIONS = 255
@@ -98,9 +146,22 @@ _MAX_CHOICE_OPTIONS = 255
 _MAX_SCORE_LEVELS = 10
 
 _UNSUPPORTED_FIELD_HINT = (
-    'Use `bool`, a `Literal` or `Enum` of two or more strings or whole numbers, a `float` bounded with `ge=0` and '
-    '`le=1`, a `list` of a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its '
-    'schema, or a model of these.'
+    'Use `bool`, a `Literal` or `Enum` of two or more strings or whole numbers, a `str` with a candidate extractor, '
+    'a `float` bounded with `ge=0` and `le=1`, a `list` of a `Literal` or `Enum`, a rubric of whole numbers from 0 '
+    'with a description per level in its schema, or a model of these.'
+)
+
+# Every quantifier here is bounded or anchored to a character that cannot repeat, because these run over text the
+# library did not write: an unbounded run that has to be given back one character at a time turns a long word into
+# quadratic work, and a regex holds the GIL, so there is no timeout and no other task runs while it does.
+_EMAIL_PATTERN = re.compile(r'(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?![A-Za-z0-9_%+-])')
+# A scheme is at most 32 characters, so a long hyphenated word is rejected after a bounded look instead of being
+# walked back character by character. A bracketed IPv6 host is matched before the general tail, which stops at `[`.
+# Parentheses are legal in a URI and common in one (`.../Function_(mathematics)`), so they are matched and then
+# balanced off the end by `_trimmed_uri`.
+_URI_PATTERN = re.compile(
+    r'(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}:'
+    r"""(?://\[[0-9A-Fa-f:.]{2,45}\][^\s<>"'\[\]{}]*|[^\s<>"'\[\]{}]+)"""
 )
 
 # A pick-one or a rubric still says what it is asking through its options; a yes/no may have nothing else,
@@ -170,6 +231,31 @@ class ToolCallProposed(ModelAPIError):
         return self.__class__, (self.model_name, self.tool_name, self.probability)
 
 
+class NoTextCandidate(ModelAPIError):
+    """A required string output field was left without a value: nothing was extracted, or Jev picked no match.
+
+    Jev never writes a string, so neither is something it can answer around, and both depend on the text rather
+    than on how the agent is built. A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind Jev hands it the
+    whole step, and only the requests Jev cannot answer cost a language model call.
+    """
+
+    field_name: str
+    """The output field left without a value."""
+
+    def __init__(self, model_name: str, field_name: str):
+        self.field_name = field_name
+        super().__init__(
+            model_name,
+            f'Jev found no candidate value for required output field {field_name!r} and cannot write one. '
+            f'Make the field optional, give it a default, widen its extractor, or put a model that can write '
+            f'behind it: `FallbackModel(jev, llm)` hands it this request.',
+        )
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.field_name)
+
+
 @dataclass(init=False)
 class TypeSafeModel(Model[AsyncTypeSafeClient]):
     """A model that fills a structured `output_type`, and supported tool arguments after choosing a tool.
@@ -201,6 +287,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     |---|---|---|
     | `bool` | yes or no | `True` when Jev's probability is at least 0.5 |
     | `Literal[...]` or `Enum` of strings | pick one | the chosen option |
+    | `str` with a supported `format` or a [`TextCandidates`][pydantic_ai.models.typesafe.TextCandidates] marker | pick one candidate extracted from the state | the candidate |
     | `float` with `ge=0` and `le=1` | yes or no | Jev's probability |
     | whole numbers 0, 1, 2, … with a description per level in the schema | score against a rubric | the nearest level |
     | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
@@ -211,6 +298,13 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
     as context. An option is described by a description on its value in the schema, and by its name without one.
     A bare `bool`, `Literal` or `float` output has no field to describe, so there the agent's instructions are the
     question.
+    A string field is selection, not writing: the `email` or `uri` schema format that Pydantic's own `EmailStr`
+    and `AnyUrl` declare, or a [`TextCandidates`][pydantic_ai.models.typesafe.TextCandidates] marker naming an
+    extractor registered in `text_extractors`, supplies whole candidates from the state before the request, and
+    Jev picks one of them or the no-match option.
+    A schema `pattern` is not read as an extractor. A required field left without a value is raised as
+    [`NoTextCandidate`][pydantic_ai.models.typesafe.NoTextCandidate]; an optional one answers `None`, and one
+    with a default takes it.
     Confidence per field, from 0 for undecided to 1, is in
     [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `confidence`,
     the full distribution of each pick-one and rubric field under `probabilities`, and each rubric field's
@@ -248,6 +342,10 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
 
     _model_name: TypeSafeModelName = field(repr=False)
     _provider: Provider[AsyncTypeSafeClient] = field(repr=False)
+    _text_extractors: Mapping[str, TypeSafeTextExtractor] = field(repr=False)
+
+    # The `TextCandidates` keyword every other model strips is the one this model answers string fields with.
+    _reads_text_candidates: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -256,6 +354,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         provider: Literal['typesafe'] | Provider[AsyncTypeSafeClient] = 'typesafe',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
+        text_extractors: Mapping[str, TypeSafeTextExtractor] | None = None,
     ):
         """Initialize a TypeSafe model.
 
@@ -265,12 +364,17 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                 'typesafe' or an instance of `Provider[AsyncTypeSafeClient]`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Model-specific settings that will be used as defaults for this model.
+            text_extractors: [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor]s by
+                name. A `str` field annotated with [`TextCandidates`][pydantic_ai.models.typesafe.TextCandidates]
+                is answered with the one registered under the name it gives, and a name missing here is an error.
+                The `email` and `uri` schema formats supply an extractor without one; a marker takes precedence.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
+        self._text_extractors = dict(text_extractors or {})
 
         super().__init__(settings=settings, profile=profile)
 
@@ -339,18 +443,34 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                 'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
                 'it from this model.'
             )
-        ask = _Ask.about(output_tool, instructions) if output_tool else _Ask.nothing()
+        ask = (
+            _Ask.about(output_tool, instructions, extract=(state, self._text_extractors))
+            if output_tool
+            else _Ask.nothing()
+        )
         tool_key = _tool_question(ask.questions, output_tools, tools, instructions)
 
-        response = await self._system_one(state, ask.questions, settings)
-        response_usage = _request_usage(response)
-        args, provider_details = ask.answers(response, boolean_threshold)
+        unanswerable = next((name for name, extracted in ask.candidates.items() if extracted.unanswerable), None)
+        if unanswerable is not None and tool_key is None:
+            # There is no route to choose instead, so nothing an answer could change: fail before billing for one.
+            raise NoTextCandidate(self._model_name, unanswerable)
+
+        if ask.questions:
+            response = await self._system_one(state, ask.questions, settings)
+            answers, response_usage, response_model = response.answers, _request_usage(response), response.model
+        else:
+            # Every question was an optional string field whose extractor found nothing, so each answer is `None`
+            # and there is nothing left to ask. This is also what keeps an absent value from becoming a made-up one.
+            answers, response_usage, response_model = {}, usage.RequestUsage(), self._model_name
+
+        args, provider_details, unanswered = ask.answers(answers, boolean_threshold)
         parts: list[ModelResponsePart] = []
+        output_taken = output_tool is not None
         if output_tool:
             parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
         if tool_key is not None:
             picked = _tool_call(
-                response.answers.get(tool_key),
+                answers.get(tool_key),
                 output_tools,
                 tools,
                 {tool.name for tool in hand_offs},
@@ -359,7 +479,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
             )
             if isinstance(picked, ToolCallPart):
                 parts = [picked]
+                output_taken = False
             elif picked is not None and picked is not output_tool:
+                output_taken = False
                 # `_tool_call` tolerates an offered route missing from `probabilities` when it falls back to
                 # the likeliest one, so the route it returns is not necessarily one Jev priced.
                 probability = provider_details['tool']['probabilities'].get(picked.name, 0.0)
@@ -374,10 +496,15 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                 provider_details['requests'] = 2
                 parts = [ToolCallPart(picked.name, args, _utils.generate_tool_call_id())]
 
+        if output_taken and unanswered:
+            # An output field Jev could not answer only fails the turn once the output is the route taken: a tool
+            # Jev picked instead is a valid answer to the same request, and was already paid for.
+            raise NoTextCandidate(self._model_name, unanswered[0])
+
         return ModelResponse(
             parts=parts,
             usage=response_usage,
-            model_name=response.model,
+            model_name=response_model,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             provider_details=provider_details,
@@ -433,6 +560,9 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         This is why a union may hold a member Jev cannot express while a lone `output_type` may not: with one
         output type there is no other route the run could have taken, so an unfillable one can only ever fail,
         and it is refused before any request. Offered beside others, it is a route like any other.
+
+        Candidate extraction answers the output fields of the route the run is already on, so a string field is
+        unsupported here, and makes a route that has one a hand-off like any other field Jev cannot write.
         """
         try:
             ask = _Ask.about(tool, instructions, picked=True)
@@ -441,7 +571,7 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
 
         try:
             response = await self._system_one(state, ask.questions, settings)
-            args, provider_details = ask.answers(response, boolean_threshold)
+            args, provider_details, _ = ask.answers(response.answers, boolean_threshold)
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
             # could silently choose another route, so a failure while filling is terminal and names that route.
@@ -587,17 +717,39 @@ def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
 def _answers(
     answers: Mapping[str, object],
     properties: dict[str, dict[str, Any]],
+    required: Collection[str],
     questions: dict[str, Noul | Choice | Score],
+    candidates: Mapping[str, _TextCandidates],
     boolean_threshold: float,
     defaulted: frozenset[str],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The output's arguments and `provider_details` from Jev's answers to the field questions."""
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    """The arguments, `provider_details` and unanswered required fields from Jev's answers to the field questions.
+
+    A required string field is left unanswered rather than raised on, because whether that fails the turn depends
+    on whether the output is the route Jev takes.
+    """
     args: dict[str, Any] = {}
     confidence: dict[str, float] = {}
     probabilities: dict[str, dict[str, float]] = {}
     scores: dict[str, float] = {}
+    unanswered: list[str] = []
     for name, prop in properties.items():
         prop, none_option = _optional(prop)
+        if (extracted := candidates.get(name)) is not None:
+            value, field_confidence, field_probabilities = _chosen_candidate(name, answers.get(name), extracted)
+            confidence[name] = field_confidence
+            probabilities[name] = field_probabilities
+            if value is not None or (extracted.optional and 'default' not in properties[name]):
+                _set(args, name, value)
+            elif extracted.required:
+                unanswered.append(name)
+            else:
+                # No value and a default, as for a pick-one's "None of these": the field is left out for Pydantic
+                # to fill in, which for a `str` is also the only thing a missing value can be, since it rejects
+                # `None`. The model holding it is put in place like a pick-one's, and `_leave_out_unanswered`
+                # takes it out again when it has a default of its own and nothing under it was answered.
+                _slot(args, name)
+            continue
         if keys := _mapping_options(prop):
             # A mapping keeps every option with the answer it got, unlike a list.
             verdicts, labelled = _fanned_in(name, keys, answers, boolean_threshold)
@@ -649,7 +801,37 @@ def _answers(
         else:
             raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
     _leave_out_unanswered(args, properties, defaulted)
-    return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
+    for name in sorted(set(required) - properties.keys()):
+        # A required nested model every one of whose fields was left out for its default: the fields are
+        # Pydantic's to fill, but the model itself has to be there for it to fill them into.
+        _nest(args, name)
+    return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}, unanswered
+
+
+def _chosen_candidate(
+    name: str, answer: object, extracted: _TextCandidates
+) -> tuple[str | None, float, dict[str, float]]:
+    """The candidate Jev picked for one string field, its confidence and the distribution behind it.
+
+    `None` means no value: either nothing was extracted, so no question went out, or Jev picked the no-match
+    option. Whether that is an answer or a failure is the caller's to decide.
+    """
+    if not extracted.values:
+        # Nothing was on offer, so the answer is settled without asking and is certain in the only sense
+        # there is: there was no candidate to pick.
+        return None, 1.0, {extracted.no_match: 1.0}
+    if not isinstance(answer, ChoiceAnswer):
+        raise UnexpectedModelBehavior(
+            f'Unexpected answer from TypeSafe for extracted output field {name!r}: {answer!r}'
+        )
+    if answer.choice == extracted.no_match:
+        return None, answer.confidence, answer.probabilities
+    if answer.choice not in extracted.values:
+        raise UnexpectedModelBehavior(
+            f'TypeSafe returned {answer.choice!r} for extracted output field {name!r}, but that value was not one '
+            'of its candidates.'
+        )
+    return answer.choice, answer.confidence, answer.probabilities
 
 
 def _request_usage(response: SystemOneResponse) -> usage.RequestUsage:
@@ -724,7 +906,10 @@ def _tool_call(
 
 
 def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
-    """Whether Jev could fill this route's fields, asked without sending anything."""
+    """Whether Jev could fill this route's fields, asked without sending anything.
+
+    A route is filled by `_fill`, which offers no candidates, so neither does the question asked here.
+    """
     try:
         _Ask.about(tool, instructions)
     except UserError:
@@ -733,6 +918,7 @@ def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
 
 
 _NONE_OF_THESE = 'None of these.'
+_NO_CANDIDATE_MATCHES = 'None of these candidate values answers the field.'
 
 
 def _null(schema: dict[str, Any]) -> bool:
@@ -815,19 +1001,30 @@ def _output_tools(
     return with_fields, hand_offs
 
 
-def _properties(schema: dict[str, Any]) -> dict[str, Any]:
-    """A schema's properties, through the top-level `$ref` Pydantic renders a model that refers to itself as."""
+def _object_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """A schema through the top-level `$ref` Pydantic renders a model that refers to itself as."""
     if ref := schema.get('$ref'):
         schema = schema['$defs'][ref.removeprefix('#/$defs/')]
-    return schema.get('properties', {})
+    return schema
 
 
-def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], frozenset[str]]:
+def _properties(schema: dict[str, Any]) -> dict[str, Any]:
+    """A schema's properties, through the top-level `$ref` Pydantic renders a model that refers to itself as."""
+    return _object_schema(schema).get('properties', {})
+
+
+def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], set[str], frozenset[str]]:
     """The output schema's fields, flattened, with `$ref`s to `$defs` (how Pydantic renders an `Enum` or a model) resolved.
 
     A nested model is its fields, named `outer.inner`: Jev answers questions, and a field of a field is still one
-    question. The answers are nested back into place by `_set`. The nested models with a default in the schema
-    come back alongside, by the same names, for `_leave_out_unanswered`.
+    question. The answers are nested back into place by `_set`.
+
+    The schema's `required` set comes back alongside, flattened the same way: a field with a default is not
+    required, and leaving it out of the arguments is what lets Pydantic apply that default. A required nested
+    model is in that set under its own name, beside the fields under it, because an absent model is a missing
+    field rather than an empty one Pydantic fills from the defaults inside it.
+
+    The nested models with a default in the schema come back too, by the same names, for `_leave_out_unanswered`.
     """
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
@@ -844,9 +1041,9 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], fro
             prop = {**prop, 'propertyNames': resolve(prop['propertyNames'])}
         return prop
 
-    def flatten(properties: dict[str, Any], prefix: str, seen: frozenset[str]) -> dict[str, dict[str, Any]]:
-        fields: dict[str, dict[str, Any]] = {}
-        for name, prop in properties.items():
+    def flatten(object_schema: dict[str, Any], prefix: str, inside_required: bool, seen: frozenset[str]) -> None:
+        required_here: set[str] = set(object_schema.get('required', []))
+        for name, prop in object_schema.get('properties', {}).items():
             if '.' in name:
                 raise UserError(
                     f'Output field {prefix + name!r} is not supported by this model: a dot in a field name is how '
@@ -854,6 +1051,9 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], fro
                 )
             ref = prop.get('$ref')
             prop = resolve(prop)
+            # A field of a field is only required when the field holding it is: an absent optional model
+            # takes its default whole, fields and all.
+            here = inside_required and name in required_here
             if prop.get('type') == 'object' and prop.get('properties'):
                 if ref is not None and ref in seen:
                     # A model that contains itself with no way out is infinitely many questions, so there is no
@@ -864,15 +1064,21 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], fro
                         'itself has no end to fill, and Jev asks a fixed set of questions. Give the field a type '
                         'that does not contain itself.'
                     )
+                if here:
+                    required.add(f'{prefix}{name}')
                 if 'default' in prop:
                     defaulted.add(f'{prefix}{name}')
-                fields.update(flatten(prop['properties'], f'{prefix}{name}.', seen | {ref} if ref else seen))
+                flatten(prop, f'{prefix}{name}.', here, seen | {ref} if ref else seen)
             else:
                 fields[f'{prefix}{name}'] = prop
-        return fields
+                if here:
+                    required.add(f'{prefix}{name}')
 
+    fields: dict[str, dict[str, Any]] = {}
+    required: set[str] = set()
     defaulted: set[str] = set()
-    return flatten(_properties(schema), '', frozenset()), frozenset(defaulted)
+    flatten(_object_schema(schema), '', True, frozenset())
+    return fields, required, frozenset(defaulted)
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
@@ -887,6 +1093,12 @@ def _slot(args: dict[str, Any], name: str) -> tuple[dict[str, Any], str]:
     for part in path:
         args = args.setdefault(part, {})
     return args, leaf
+
+
+def _nest(args: dict[str, Any], name: str) -> None:
+    """Put a nested model into the arguments without answering anything under it, leaving what is there alone."""
+    for part in name.split('.'):
+        args = args.setdefault(part, {})
 
 
 def _leave_out_unanswered(
@@ -926,11 +1138,10 @@ def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     none = next(option for option in options if _null(option))
     inner = next(option for option in options if not _null(option))
     prop = {**inner, **{k: v for k, v in prop.items() if k not in ('anyOf', 'default')}}
-    key = 'none'
-    while key in (_options(prop) or {}):
-        key += '_'
     meaning = none.get('description')
-    return prop, {key: meaning if isinstance(meaning, str) and meaning else _NONE_OF_THESE}
+    return prop, {
+        _no_match_key(_options(prop) or {}): meaning if isinstance(meaning, str) and meaning else _NONE_OF_THESE
+    }
 
 
 def _list_options(name: str, prop: dict[str, Any]) -> dict[Any, str | None]:
@@ -1012,6 +1223,176 @@ def _options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
     return None
 
 
+def _no_match_key(taken: Iterable[object]) -> str:
+    """The name of the extra "none of these" option, kept clear of the ones already on offer."""
+    key = 'none'
+    taken = set(taken)
+    while key in taken:
+        key += '_'
+    return key
+
+
+@dataclass(frozen=True)
+class _TextCandidates:
+    """What one string output field can be answered with, worked out before anything is asked of Jev."""
+
+    values: tuple[str, ...]
+    no_match: str
+    no_match_meaning: str
+    optional: bool
+    required: bool
+
+    @property
+    def unanswerable(self) -> bool:
+        """A required field with nothing to pick from, which no answer from Jev can settle."""
+        return not self.values and not self.optional and self.required
+
+
+def _iter_strings(value: object) -> Iterable[str]:
+    """Every string in the state, in the order it appears, so an extractor sees the history as well as the text."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for nested in cast('Mapping[str, object]', value).values():
+            yield from _iter_strings(nested)
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        for nested in cast('Sequence[object]', value):
+            yield from _iter_strings(nested)
+
+
+def _extract_emails(state: JSONContent) -> Iterable[str]:
+    return (match.group() for text in _iter_strings(state) for match in _EMAIL_PATTERN.finditer(text))
+
+
+def _extract_uris(state: JSONContent) -> Iterable[str]:
+    return (_trimmed_uri(match.group()) for text in _iter_strings(state) for match in _URI_PATTERN.finditer(text))
+
+
+def _trimmed_uri(uri: str) -> str:
+    """Drop the sentence punctuation a URI collected, keeping parentheses that belong to it.
+
+    `(mathematics)` is part of the address; the `)` in `see (https://example.com)` is not. Trailing `)` comes
+    off only while it closes nothing inside what is left. The counts are taken once and the end walked back, so
+    a match ending in many `)` costs one pass rather than one count and one copy per character.
+    """
+    opens = uri.count('(')
+    closes = uri.count(')')
+    end = len(uri)
+    while end:
+        char = uri[end - 1]
+        if char in '.,;!?':
+            end -= 1
+        elif char == ')' and opens < closes:
+            closes -= 1
+            end -= 1
+        else:
+            break
+    return uri[:end]
+
+
+_FORMAT_EXTRACTORS: Mapping[str, TypeSafeTextExtractor] = {'email': _extract_emails, 'uri': _extract_uris}
+
+
+def _text_extractor(
+    name: str,
+    prop: dict[str, Any],
+    options: dict[Any, str | None] | None,
+    text_extractors: Mapping[str, TypeSafeTextExtractor],
+) -> TypeSafeTextExtractor | None:
+    """The extractor for one field: the registered one its `TextCandidates` names, or the one its `format` implies.
+
+    The name comes from the schema, and schemas are not always the application's own: `StructuredDict` takes a
+    raw one. So a name only ever selects from `text_extractors`, which the application wrote, and one missing
+    there is an error rather than a lookup of anything else, the built-in extractors included.
+
+    A `pattern` is deliberately not used. Running it would mean matching a regular expression we did not write
+    against text we did not write: an innocent-looking pattern such as `(a+)+$` backtracks for exponential time
+    on an input chosen to make it, and since a regex holds the GIL, that blocks the event loop and no timeout
+    applies. An extractor the caller passes is their own code and carries its own risk, as a tool function does;
+    a `pattern` in a schema does not read like code that is about to run, so it is refused rather than obeyed.
+    """
+    extractor_name = prop.get(TEXT_CANDIDATES_KEY)
+    if prop.get('type') != 'string' or options is not None:
+        # A field with a finite set of options is a pick-one whatever else its schema says, so neither an
+        # extractor nor the refusal below applies to it.
+        if extractor_name is None:
+            return None
+        raise UserError(
+            f'`TextCandidates` on output field {name!r} requires a plain `str` field, not another field type or a '
+            'finite set of options.'
+        )
+    if extractor_name is not None:
+        if isinstance(extractor_name, str) and (extractor := text_extractors.get(extractor_name)):
+            return extractor
+        raise UserError(
+            f'Output field {name!r} is answered by the text extractor {extractor_name!r}, which is not registered '
+            f'on this model. Register it: `TypeSafeModel(..., text_extractors={{{extractor_name!r}: ...}})`.'
+        )
+    if isinstance(format_name := prop.get('format'), str) and (extractor := _FORMAT_EXTRACTORS.get(format_name)):
+        return extractor
+    if prop.get('pattern') is not None:
+        raise UserError(
+            f'Output field {name!r} has a schema `pattern`, which this model does not read as a candidate '
+            'extractor: it would mean running a regular expression Pydantic AI did not write over text it did '
+            'not write. Run the same expression yourself, in a text extractor the field names with `TextCandidates`.'
+        )
+    return None
+
+
+def _extract(name: str, extractor: TypeSafeTextExtractor, state: JSONContent) -> tuple[str, ...]:
+    """One field's candidates, in first-seen order, without blanks or repeats."""
+    candidates: list[str] = []
+    try:
+        extracted = extractor(state)
+        if isinstance(extracted, str):
+            raise TypeError('an extractor must return an iterable of strings, not one string')
+        seen: set[str] = set()
+        for value in extracted:
+            if not isinstance(value, str):
+                raise TypeError(f'every candidate must be a string, not {type(value).__name__}')
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            candidates.append(value)
+            if len(candidates) == _MAX_CHOICE_OPTIONS:
+                # One past what Jev can be offered beside the no-match option already makes the question
+                # invalid, and an extractor may be generating without end, so nothing is gained by reading on.
+                raise ValueError(
+                    f'more than {_MAX_CHOICE_OPTIONS - 1} candidates, which is as many as Jev picks from beside '
+                    'the no-match option'
+                )
+    except Exception as e:
+        raise UserError(f'Text candidate extractor for output field {name!r} failed: {e}') from e
+    return tuple(candidates)
+
+
+def _text_candidates(
+    properties: Mapping[str, dict[str, Any]],
+    required: Container[str],
+    state: JSONContent,
+    text_extractors: Mapping[str, TypeSafeTextExtractor],
+) -> dict[str, _TextCandidates]:
+    """What each string output field can be answered with, extracted from the state before anything is asked."""
+    candidates: dict[str, _TextCandidates] = {}
+    for name, prop in properties.items():
+        prop, none_option = _optional(prop)
+        extractor = _text_extractor(name, prop, _options(prop), text_extractors)
+        if extractor is None:
+            continue
+        values = _extract(name, extractor, state)
+        # A described `None` says what picking nothing means on this field, as it does for a pick-one; the stock
+        # phrase is replaced by one that says the options on offer were extracted rather than written.
+        meaning = next(iter(none_option.values()), _NONE_OF_THESE)
+        candidates[name] = _TextCandidates(
+            values,
+            _no_match_key(values),
+            _NO_CANDIDATE_MATCHES if meaning == _NONE_OF_THESE else meaning,
+            optional=bool(none_option),
+            required=name in required,
+        )
+    return candidates
+
+
 def _pickable(options: dict[Any, str | None]) -> bool:
     """Whether every option is a string or a whole number, which is what a pick-one can offer by name."""
     # `bool` is an `int` in Python, but `True` is not a label, and a pick-one of booleans is a yes/no.
@@ -1066,8 +1447,9 @@ def _with_none(name: str, options: dict[Any, str | None] | None, none_option: di
         )
     if options is None or not _pickable(options):
         raise UserError(
-            f'Output field {name!r} is not supported by this model: only a pick-one of strings or whole '
-            f'numbers can be optional, since `None` is one more option to pick. {_UNSUPPORTED_FIELD_HINT}'
+            f'Output field {name!r} is not supported by this model: only a pick-one of strings or whole numbers, '
+            f'or a `str` with a candidate extractor, can be optional, since `None` is one more option to pick. '
+            f'{_UNSUPPORTED_FIELD_HINT}'
         )
     return {**options, **none_option}
 
@@ -1112,48 +1494,87 @@ class _Ask:
     """
 
     properties: dict[str, dict[str, Any]]
+    required: set[str]
     questions: dict[str, Noul | Choice | Score]
+    candidates: Mapping[str, _TextCandidates]
     defaulted: frozenset[str]
 
     @classmethod
-    def about(cls, tool: ToolDefinition, instructions: str | None, *, picked: bool = False) -> _Ask:
+    def about(
+        cls,
+        tool: ToolDefinition,
+        instructions: str | None,
+        *,
+        picked: bool = False,
+        extract: tuple[JSONContent, Mapping[str, TypeSafeTextExtractor]] | None = None,
+    ) -> _Ask:
         """The questions this route's fields become, or a `UserError` if Jev cannot express one of them.
 
         `picked` is for the second request of a turn that chose a route first: those questions name the
         route they belong to, which the first request's questions have no reason to.
+
+        `extract` is the state a string field's candidates are pulled out of, with the extractors that do it.
+        Left out, there is no extraction at all, which is not the same as extracting with none of the user's
+        own: a `format` on the field supplies an extractor by itself. A route being filled is past the point
+        where a candidate could be offered, so `_fill` leaves it out and a string field there is a hand-off.
         """
-        properties, defaulted = _fields(tool)
-        return cls(properties, _questions(properties, tool, instructions, picked=picked), defaulted)
+        properties, required, defaulted = _fields(tool)
+        candidates = _text_candidates(properties, required, *extract) if extract else {}
+        questions = _questions(properties, tool, instructions, candidates, picked=picked)
+        return cls(properties, required, questions, candidates, defaulted)
 
     @classmethod
     def nothing(cls) -> _Ask:
         """No fields to fill: a turn that only picks a route still reports the same empty details."""
-        return cls({}, {}, frozenset())
+        return cls({}, set(), {}, {}, frozenset())
 
-    def answers(self, response: SystemOneResponse, boolean_threshold: float) -> tuple[dict[str, Any], dict[str, Any]]:
-        return _answers(response.answers, self.properties, self.questions, boolean_threshold, self.defaulted)
+    def answers(
+        self, answers: Mapping[str, object], boolean_threshold: float
+    ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+        return _answers(
+            answers,
+            self.properties,
+            self.required,
+            self.questions,
+            self.candidates,
+            boolean_threshold,
+            self.defaulted,
+        )
+
+
+def _field_options(
+    name: str, prop: dict[str, Any], *, extracted: bool
+) -> tuple[dict[str, Any], dict[Any, str | None] | None]:
+    """A field's schema without its `None` branch, and the options it picks from with "none of these" among them.
+
+    A string field with extracted candidates takes its no-match option from `_TextCandidates` instead, so its
+    `None` branch adds nothing here.
+    """
+    prop, none_option = _optional(prop)
+    options = _options(prop)
+    if options and all(isinstance(option, bool) for option in options) and not any(options.values()):
+        # `Literal[True, False]` spells out the two values a `bool` already has and says nothing about
+        # either, so there is nothing to pick between that a yes/no does not ask, and the schema says
+        # `boolean` too. Two booleans that *are* described are that same yes/no with criteria, below.
+        options = None
+    if none_option and (options is not None or not extracted):
+        options = _with_none(name, options, none_option)
+    return prop, options
 
 
 def _questions(
     properties: dict[str, dict[str, Any]],
     output_tool: ToolDefinition,
     instructions: str | None,
+    candidates: Mapping[str, _TextCandidates],
     *,
     picked: bool = False,
 ) -> dict[str, Noul | Choice | Score]:
-    """One Jev question per output field."""
+    """One Jev question per output field, except a string field whose extractor found nothing to offer."""
     questions: dict[str, Noul | Choice | Score] = {}
     for name, prop in properties.items():
         ask = _ask(name, prop, output_tool, instructions, picked=picked)
-        prop, none_option = _optional(prop)
-        options = _options(prop)
-        if options and all(isinstance(option, bool) for option in options) and not any(options.values()):
-            # `Literal[True, False]` spells out the two values a `bool` already has and says nothing about
-            # either, so there is nothing to pick between that a yes/no does not ask, and the schema says
-            # `boolean` too. Two booleans that *are* described are that same yes/no with criteria, below.
-            options = None
-        if none_option:
-            options = _with_none(name, options, none_option)
+        prop, options = _field_options(name, prop, extracted=name in candidates)
 
         # A single value needs no labelling, and TypeSafe's advice is to start with a string; the object
         # form earns its keys only once there is more than one thing in it.
@@ -1199,9 +1620,26 @@ def _questions(
             if not ask:
                 raise UserError(_ASKS_NOTHING.format(name=name))
             questions[name] = Noul(instructions=asked)
-        else:
-            raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
+        elif (question := _candidate_question(name, candidates.get(name), asked)) is not None:
+            questions[name] = question
     return questions
+
+
+def _candidate_question(name: str, extracted: _TextCandidates | None, asked: JSONContent | None) -> Choice | None:
+    """The question a string field becomes, asked over the candidates extracted for it.
+
+    Every other shape has been tried by the time a field reaches here, so a field with no extractor behind it
+    is where an unsupported field is refused. With an extractor that found nothing there is nothing to pick
+    between, so no question goes out and `_answers` settles the field as `None` on its own.
+    """
+    if extracted is None:
+        raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
+    if not extracted.values:
+        return None
+    # Jev picks one candidate whole, or says none of them fits; it is never asked to write one.
+    criteria: dict[str, str | None] = dict.fromkeys(extracted.values)
+    criteria[extracted.no_match] = extracted.no_match_meaning
+    return Choice(instructions=asked, criteria=criteria)
 
 
 def _route_name(tool: ToolDefinition) -> str | None:

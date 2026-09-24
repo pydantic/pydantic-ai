@@ -1,0 +1,113 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1677'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        account_page:
+          criteria:
+            https://accounts.example.com/mira: null
+            https://docs.example.com: null
+            none: None of these candidate values answers the field.
+          instructions:
+            field: account_page
+            goal: Extract details from a support ticket without writing new text.
+            question: Which URI is the customer's account page?
+          type: choice
+        customer_email:
+          criteria:
+            lee@example.org: null
+            mira@example.com: null
+            none: None of these candidate values answers the field.
+          instructions:
+            field: customer_email
+            goal: Extract details from a support ticket without writing new text.
+            question: Which email address belongs to the customer?
+          type: choice
+        open_case:
+          criteria:
+            CASE-1042: null
+            CASE-2048: null
+            none: None of these candidate values answers the field.
+          instructions:
+            field: open_case
+            goal: Extract details from a support ticket without writing new text.
+            question: Which case is still open?
+          type: choice
+        overcharge:
+          criteria:
+            $20.00: null
+            $60.00: null
+            $80.00: null
+            none: None of these candidate values answers the field.
+          instructions:
+            field: overcharge
+            goal: Extract details from a support ticket without writing new text.
+            question: Which amount is the overcharge?
+          type: choice
+      state: Customer Mira uses mira@example.com; the agent uses lee@example.org. CASE-1042 is closed; CASE-2048 is still
+        open. The customer account is https://accounts.example.com/mira; documentation is https://docs.example.com. The invoice
+        was $80.00 but should have been $60.00, so the overcharge is $20.00.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '760'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        account_page:
+          choice: https://accounts.example.com/mira
+          confidence: 1.0
+          probabilities:
+            https://accounts.example.com/mira: 1.0
+            https://docs.example.com: 0.0
+            none: 0.0
+          type: choice
+        customer_email:
+          choice: mira@example.com
+          confidence: 1.0
+          probabilities:
+            lee@example.org: 0.0
+            mira@example.com: 1.0
+            none: 0.0
+          type: choice
+        open_case:
+          choice: CASE-2048
+          confidence: 1.0
+          probabilities:
+            CASE-1042: 0.0
+            CASE-2048: 1.0
+            none: 0.0
+          type: choice
+        overcharge:
+          choice: $20.00
+          confidence: 1.0
+          probabilities:
+            $20.00: 1.0
+            $60.00: 0.0
+            $80.00: 0.0
+            none: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 751
+        output_tokens: 215
+    status:
+      code: 200
+      message: OK
+version: 1

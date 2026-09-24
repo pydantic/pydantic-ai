@@ -4,7 +4,7 @@ import re
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 from .exceptions import UserError
 
@@ -240,6 +240,55 @@ class JsonSchemaTransformer(ABC):
                 return [cases[0]]
 
         return cases
+
+
+TEXT_CANDIDATES_KEY = 'x-pydantic-ai-text-candidates'
+"""The schema keyword under which `TextCandidates` names the text extractor a string field is answered with.
+
+Only `TypeSafeModel` reads it. Every other model strips it in `Model.customize_request_parameters`, so no
+provider receives it.
+"""
+
+# Keywords whose value maps names to subschemas. The names are not keywords: a property can be called anything,
+# `TEXT_CANDIDATES_KEY` included.
+_SUBSCHEMA_MAP_KEYWORDS = frozenset(
+    {'properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas', 'dependencies'}
+)
+# Keywords whose value is data rather than a schema, so nothing under them is a keyword either.
+_DATA_KEYWORDS = frozenset({'const', 'default', 'enum', 'examples', 'dependentRequired'})
+
+
+def without_text_candidates(schema: JsonSchema) -> JsonSchema:
+    """`schema` with every `TEXT_CANDIDATES_KEY` keyword removed, or `schema` itself when it carries none.
+
+    Returning the same object when there is nothing to remove keeps every schema without the marker exactly
+    as it was, identity included.
+    """
+
+    def strip(node: Any, is_schema: bool) -> Any:
+        if isinstance(node, list):
+            node = cast('list[Any]', node)
+            items = [strip(item, is_schema) for item in node]
+            return node if all(new is old for new, old in zip(items, node)) else items
+        if not isinstance(node, dict):
+            return node
+        node = cast('dict[str, Any]', node)
+        changed = is_schema and TEXT_CANDIDATES_KEY in node
+        stripped: dict[str, Any] = {}
+        for key, value in node.items():
+            if is_schema and key == TEXT_CANDIDATES_KEY:
+                continue
+            if is_schema and key in _DATA_KEYWORDS:
+                new = value
+            else:
+                # A keyword's value is a schema, or a list of them, except a name-to-schema map's: that is keyed
+                # by names, and it is the map's values that are schemas again.
+                new = strip(value, not is_schema or key not in _SUBSCHEMA_MAP_KEYWORDS)
+            changed = changed or new is not value
+            stripped[key] = new
+        return stripped if changed else node
+
+    return strip(schema, True)
 
 
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):

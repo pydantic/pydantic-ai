@@ -10,18 +10,20 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from threading import Event as ThreadEvent
-from typing import Any, Literal, TypeVar, cast
+from typing import Annotated, Any, Literal, TypeVar, cast
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
 from opentelemetry.context import Context
+from pydantic import WithJsonSchema
 from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._instrumentation import get_instructions
+from pydantic_ai._json_schema import TEXT_CANDIDATES_KEY
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -6360,6 +6362,32 @@ async def test_agent_realtime_session_wires_tools_and_instructions() -> None:
     assert model.last_instructions == 'You are a helpful assistant.'
     assert model.last_tools is not None
     assert 'greet' in [t.name for t in model.last_tools]
+
+
+async def test_agent_realtime_session_strips_the_text_candidates_keyword() -> None:
+    """A realtime model sends tool schemas as they are, so the keyword only `TypeSafeModel` reads is stripped first."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def look_up(case: Annotated[str, WithJsonSchema({'type': 'string', TEXT_CANDIDATES_KEY: 'cases'})]) -> str:
+        """Look a case up."""
+        return case  # pragma: no cover
+
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(model).session() as session:
+        _ = [e async for e in session]
+
+    assert model.last_tools is not None
+    assert [tool.parameters_json_schema for tool in model.last_tools] == snapshot(
+        [
+            {
+                'additionalProperties': False,
+                'properties': {'case': {'type': 'string'}},
+                'required': ['case'],
+                'type': 'object',
+            }
+        ]
+    )
 
 
 async def test_agent_realtime_session_seeds_message_history() -> None:

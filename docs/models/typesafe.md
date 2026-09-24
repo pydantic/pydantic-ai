@@ -154,6 +154,7 @@ Each field of the output type is a question, and all of them go out in a single 
 |---|---|---|
 | `bool`, or `Literal[True, False]` | yes or no | `True` when Jev's probability is at least `typesafe_boolean_threshold` (0.5) |
 | `Literal[...]` or `Enum` of strings or whole numbers, other than a rubric | pick one | the chosen option |
+| `str` with a supported `format` or a [`TextCandidates`](#extracting-a-string-already-in-the-text) marker | pick one candidate extracted from the state | the candidate |
 | `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | Jev's probability, unrounded, in the field's own units |
 | an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
 | `list` of a `Literal` or `Enum` | one yes or no per option | the options Jev said yes to |
@@ -181,7 +182,7 @@ Unless the schema describes an option, Jev sees it by its name alone, so name `L
 
 The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as Jev gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones Jev said yes to.
 
-An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, and a field without one gets `None`. The same goes for a nested model with a default when nothing under it was answered: it gets its own default, not one built from the defaults of the fields inside it. A `default_factory` is not in the schema, which is all Jev's answers are read against, so it counts as no default. Any pick-one, of strings or whole numbers, can be optional; a rubric cannot, since its levels are ordered and `None` is not one of them. To say what picking nothing means on this field rather than take the stock phrase, describe the `None` itself: `Area | Annotated[None, Field(description='Nothing here needs routing.')]` makes that description the option's meaning.
+An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, and a field without one gets `None`. The same goes for a nested model with a default when nothing under it was answered: it gets its own default, not one built from the defaults of the fields inside it. A `default_factory` is not in the schema, which is all Jev's answers are read against, so it counts as no default. Any pick-one, of strings or whole numbers, can be optional, and so can a [`str` with a candidate extractor](#extracting-a-string-already-in-the-text); a rubric cannot, since its levels are ordered and `None` is not one of them. To say what picking nothing means on this field rather than take the stock phrase, describe the `None` itself: `Area | Annotated[None, Field(description='Nothing here needs routing.')]` makes that description the option's meaning.
 
 A yes/no is a `bool`, which says what is being asked but nothing about what a yes or a no would mean. That is the one place Jev is asked to judge without being told what it is judging against: a `Choice` carries a description per option and a `Score` one per level, while a `Noul` has only the question unless the two answers are spelled out. [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells them out as `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime:
 
@@ -287,6 +288,98 @@ print(result.response.provider_details['scores'])
 ```
 
 A nested model is its fields, asked as `outer.inner` and put back in place; the parent field's description is not sent, so put the context each question needs on the field that asks it. A dot in a field name is how a nested field is named, so a field whose own name contains one is refused. Lists and nested models round-trip faithfully, but their accuracy against labels is not measured, so check them on your own data before relying on either.
+
+### Extracting a string already in the text
+
+Jev cannot write text, but it can pick one string that is already there. A `str` field is answerable only when Pydantic AI can extract its candidates deterministically before the request.
+
+The JSON Schema formats `email` and `uri` carry built-in extractors, so a field that declares one is answerable with nothing added: the model is the plain `typesafe:jev-latest` string, and the field's description is what tells Jev which of the addresses in the text is the one being asked for. Pydantic's own [`EmailStr`](https://docs.pydantic.dev/latest/api/networks/#pydantic.networks.EmailStr) and [`AnyUrl`](https://docs.pydantic.dev/latest/api/networks/#pydantic.networks.AnyUrl) declare exactly those formats, so there is nothing to annotate by hand — `EmailStr` needs `pydantic[email]`, which Pydantic AI does not pull in, and any field whose schema carries the `format` works just as well without it. These are the two formats Pydantic AI tests; another format does not imply extraction support.
+
+```python {title="pick_a_contact.py"}
+from pydantic import AnyUrl, BaseModel, EmailStr, Field
+
+from pydantic_ai import Agent
+
+
+class CustomerContact(BaseModel):
+    customer_email: EmailStr = Field(
+        description='Which email address is the customer, rather than our own staff?'
+    )
+    account_page: AnyUrl = Field(
+        description="Which URI is the customer's own account page?"
+    )
+
+
+agent = Agent('typesafe:jev-latest', output_type=CustomerContact)
+result = agent.run_sync(
+    'Mira (mira@example.com) wrote in, cc billing@ourcompany.example. '
+    'Her account is at https://app.example.com/8812, and our '
+    'billing policy is at https://ourcompany.example/policy.'
+)
+print(result.output)
+"""
+customer_email='mira@example.com' account_page=AnyUrl('https://app.example.com/8812')
+"""
+```
+
+For a shape Pydantic AI does not know — a case number, an invoice amount, an order id — write the extractor yourself. A [`TypeSafeTextExtractor`][pydantic_ai.models.typesafe.TypeSafeTextExtractor] is an ordinary function of yours that returns the candidate strings. Register it on [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] under a name, in `text_extractors`, and give each field it answers a [`TextCandidates`][pydantic_ai.models.typesafe.TextCandidates] marker with that name. The marker goes on the type, so an alias such as `CaseId = Annotated[str, TextCandidates('case_id')]` serves every field it annotates, in a nested model as much as at the top. A marker takes the place of the extractor a `format` would imply, though the selected value must still pass the field's Pydantic validation.
+
+The marker puts only the name in the field's JSON schema, because a schema is all a model is given, and under [durable execution](../durable_execution/overview.md) all that crosses into the activity that makes the request. A name the model has no extractor registered under is refused with a [`UserError`][pydantic_ai.exceptions.UserError], never looked up anywhere else, so a schema you did not write, such as one passed to [`StructuredDict`][pydantic_ai.output.StructuredDict], can only select a function your application registered. Every other model strips the marker before a request, so the same output type runs unchanged on a language model, including one behind Jev in a [`FallbackModel`](overview.md#fallback-model).
+
+A field's schema `pattern` is deliberately not used as an extractor, and is refused rather than obeyed. Running one would mean matching a regular expression Pydantic AI did not write against text it did not write, and a pattern that looks harmless can backtrack for exponential time on an input chosen to make it, holding the interpreter while it does. An extractor you register is your own code, like a tool function.
+
+Extractors receive the state Jev judges: a string when the latest prompt stands alone, or the JSON-compatible mapping of `history` and `text` described under [judging a conversation](#judging-a-conversation). They are synchronous and must return an iterable of strings. Candidates are de-duplicated in first-seen order, and at most 254 are accepted because the no-match option is the 255th Jev supports.
+
+The two kinds mix in one output type: `customer_email` below needs no extractor, while `open_case` and `closed_case` share one and `overcharge` has its own.
+
+```python {title="extract_invoice_details.py"}
+import json
+import re
+from typing import Annotated
+
+from pydantic import BaseModel, EmailStr, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.models.typesafe import TextCandidates, TypeSafeModel
+
+CaseId = Annotated[str, TextCandidates('case_id')]
+Amount = Annotated[str, TextCandidates('amount')]
+
+
+class InvoiceDetails(BaseModel):
+    customer_email: EmailStr = Field(
+        description='Which email address belongs to the customer?'
+    )
+    open_case: CaseId = Field(description='Which case is still open?')
+    closed_case: CaseId = Field(description='Which case is closed?')
+    overcharge: Amount = Field(description='Which amount is the overcharge?')
+
+
+def amounts(state: object) -> list[str]:
+    return re.findall(r'\$\d+\.\d{2}', json.dumps(state))
+
+
+def cases(state: object) -> list[str]:
+    return re.findall(r'CASE-\d{4}', json.dumps(state))
+
+
+model = TypeSafeModel(
+    'jev-latest', text_extractors={'case_id': cases, 'amount': amounts}
+)
+agent = Agent(model, output_type=InvoiceDetails)
+result = agent.run_sync(
+    'Customer mira@example.com says CASE-1042 is closed and CASE-2048 is open. '
+    'The invoice was $80.00 instead of $60.00, an overcharge of $20.00.'
+)
+print(result.output)
+"""
+customer_email='mira@example.com' open_case='CASE-2048' closed_case='CASE-1042' overcharge='$20.00'
+"""
+```
+
+Every extraction question includes an explicit "none of these candidate values" option. For `str | None`, both finding no candidate and Jev picking that option answer `None`, and when no other question needs Jev no request is made. A field with a default, such as `open_case: str = 'unknown'`, is left out of the arguments in the same two cases, so Pydantic applies the default. For a required field both raise [`NoTextCandidate`][pydantic_ai.models.typesafe.NoTextCandidate], a `ModelAPIError` rather than a refusal, because whether a value is there to pick depends on the text and not on how the agent is built: a [`FallbackModel`](overview.md#fallback-model) with a language model behind Jev answers that step instead. With tools attached the output is one route among them, so a field Jev could not answer only fails the turn when the output is the route it took. A candidate outside the extracted set is never accepted.
+
+This is selection, not generation. An extractor cannot make Jev summarise the material, compose a reply, normalise a value, or copy arbitrary text that was not offered as one whole candidate. A `str` field without an available extractor remains unsupported, as does a field filled after a route is picked: neither [a picked tool's arguments](#tools-jev-picks-and-calls-what-it-can) nor [a chosen union member's fields](#a-union-of-output-types) have extractors behind them, so a string there still makes the pick a hand-off.
 
 ### Routes: which thing to do
 
@@ -1040,7 +1133,7 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 Jev does not write text or read files, and it only fills tool arguments that map to the [typed questions](#what-jev-can-answer) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
-- The `output_type` must be made of the field types above: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-jev-picks-and-calls-what-it-can) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
+- The `output_type` must be made of the field types above: no `str` without candidate extraction, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-jev-picks-and-calls-what-it-can) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to Jev; supported arguments are [filled after it is picked](#tools-jev-picks-and-calls-what-it-can), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
 - A pick-one needs two or more options, each a string or a whole number: one option leaves nothing to pick, and `True` is not a label.
