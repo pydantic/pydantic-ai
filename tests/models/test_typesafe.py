@@ -548,15 +548,15 @@ async def test_a_tool_is_proposed_not_called(
     with pytest.raises(ToolCallProposed) as exc_info:
         await agent.run('You charged my card twice for the same month. Put the second one back.')
     assert exc_info.value.tool_name == 'refund'
-    assert exc_info.value.probability == snapshot(0.99)
+    assert exc_info.value.probability == snapshot(1.0)
     assert str(exc_info.value) == snapshot(
-        "jev-latest proposed calling 'refund' (probability 0.99) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step."
+        "jev-latest proposed calling 'refund' (probability 1.00) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step."
     )
     assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['route'] == snapshot(
         {
             'type': 'choice',
             'criteria': {'Ticket': 'Triage a support ticket.', 'refund': 'Return a payment to the customer.'},
-            'instructions': 'Which of these does this call for?',
+            'instructions': "Which of these does the user's request call for?",
         }
     )
 
@@ -3064,7 +3064,7 @@ async def test_a_described_none_route_keeps_what_the_user_said_about_it(allow_mo
         {
             'type': 'choice',
             'criteria': {'Ticket': 'Triage a support ticket.', 'None': 'Nothing needs doing here.'},
-            'instructions': 'Which of these does this call for?',
+            'instructions': "Which of these does the user's request call for?",
         }
     )
 

@@ -1369,6 +1369,9 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> li
     return [tool for tool in tools if tool.name not in returned]
 
 
+_ROUTE_QUESTION = "Which of these does the user's request call for?"
+
+
 def _route_question(
     questions: dict[str, DecisionQuestion],
     routes: dict[str, ToolDefinition],
@@ -1380,7 +1383,9 @@ def _route_question(
     """With tools attached, one more question: which route the text calls for, the output types among them.
 
     The question is keyed `route`, with `_` appended while a field already has that name, and each option is a
-    route's label from `routes`.
+    route's label from `routes`. It names what it is about, the user's request, which is the text under judgement
+    when there is one and the request that started the turn once a tool result has taken its place, and it carries
+    the agent's instructions beside it like a field's question does.
 
     The model first picks the route, then fills a selected tool's arguments in a separate request when their schema
     maps to questions; an unsupported argument leaves the call to a model behind it. The output types are the first
@@ -1421,7 +1426,9 @@ def _route_question(
             f'{len(criteria)} routes: each output type counts as one beside the tools. Attach fewer tools, or '
             'withhold some of them until they are needed.'
         )
-    questions[key] = ChoiceQuestion(instructions='Which of these does this call for?', criteria=criteria)
+    # The agent's instructions frame the pick as they frame every field, under the same label.
+    asked: JsonValue = {'question': _ROUTE_QUESTION, 'instructions': instructions} if instructions else _ROUTE_QUESTION
+    questions[key] = ChoiceQuestion(instructions=asked, criteria=criteria)
     return key
 
 

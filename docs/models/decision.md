@@ -221,7 +221,7 @@ A nested model is its fields, asked as `outer.inner` and put back in place; the 
 
 ### Routes: which thing to do
 
-Fields are what the model fills. When there is more than one *thing* the text could call for, the model is asked one more question, the route question: which of these does this call for. The options are the output type (or each member of a [union](#a-union-of-output-types)) and every [tool](#tools-pick-then-fill) on offer, each described by its docstring.
+Fields are what the model fills. When there is more than one *thing* the text could call for, the model is asked one more question, the route question: which of these does the user's request call for, framed by the agent's `instructions` like every other question. The options are the output type (or each member of a [union](#a-union-of-output-types)) and every [tool](#tools-pick-then-fill) on offer, each described by its docstring.
 
 Each option goes by the name you gave the route:
 

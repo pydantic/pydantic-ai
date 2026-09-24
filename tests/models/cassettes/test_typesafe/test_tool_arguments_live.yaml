@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '538'
+      - '552'
       content-type:
       - application/json
       host:
@@ -21,7 +21,7 @@ interactions:
           criteria:
             output: Classify a message that does not request a navigation action.
             set_direction: Set the navigation direction requested in the message.
-          instructions: Which of these does this call for?
+          instructions: Which of these does the user's request call for?
           type: choice
         urgent:
           instructions:
@@ -51,7 +51,7 @@ interactions:
           type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 389
+        input_tokens: 392
         output_tokens: 49
     status:
       code: 200

@@ -371,7 +371,7 @@ async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_
                 questions={
                     'route': ChoiceQuestion(
                         criteria={'Escalation': 'Hand the ticket to a person.', 'Triage': 'Triage a support ticket.'},
-                        instructions='Which of these does this call for?',
+                        instructions="Which of these does the user's request call for?",
                     )
                 },
             ),
@@ -606,3 +606,12 @@ async def test_a_boolean_schema_is_an_unsupported_output_field(allow_model_reque
             None,
             ModelRequestParameters(output_tools=[output_tool], output_mode='tool', allow_text_output=False),
         )
+
+
+@pytest.mark.anyio
+async def test_the_route_question_carries_the_agent_instructions(allow_model_requests: None):
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=Triage, tools=[refund], instructions='Handle support tickets.').run('Charged twice.')
+    assert route_question(model).instructions == snapshot(
+        {'question': "Which of these does the user's request call for?", 'instructions': 'Handle support tickets.'}
+    )
