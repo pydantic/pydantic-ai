@@ -42,6 +42,7 @@ from pydantic_ai import (
     UserPromptPart,
     WebSearchTool,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request
@@ -63,6 +64,7 @@ with try_import() as evals_imports_successful:
 with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
+    from pydantic_ai.models import typesafe as typesafe_module
     from pydantic_ai.models.typesafe import ToolCallProposed, TypeSafeModel, TypeSafeModelSettings
     from pydantic_ai.providers.typesafe import TypeSafeProvider
 
@@ -447,7 +449,7 @@ class WithUndescribedBool(BaseModel):
         pytest.param(WithOptional, "Output field 'ok' is not supported", id='optional'),
         pytest.param(WithOneOption, 'options are not two or more strings', id='one-option'),
         pytest.param(WithUnboundedFloat, "Output field 'score' is not supported", id='unbounded-float'),
-        pytest.param(bool, "Output field 'response' asks Jev nothing", id='bare-bool-no-question'),
+        pytest.param(bool, "Output field 'response' asks the model nothing", id='bare-bool-no-question'),
     ],
 )
 async def test_unsupported_output_fields(
@@ -548,7 +550,7 @@ async def test_a_tool_is_proposed_not_called(
     assert exc_info.value.tool_name == 'refund'
     assert exc_info.value.probability == snapshot(1.0)
     assert str(exc_info.value) == snapshot(
-        "Jev proposed calling 'refund' (probability 1.00) and cannot call tools itself. Put a model that can behind it: `FallbackModel(jev, llm)` hands it this request."
+        "jev-latest proposed calling 'refund' (probability 1.00) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step."
     )
     assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['tool'] == snapshot(
         {
@@ -963,7 +965,7 @@ async def test_tool_arguments_live(
     'probability,settings',
     [
         pytest.param(0.59, None, id='below the default threshold'),
-        pytest.param(0.9, {'typesafe_tool_call_threshold': 0.95}, id='below a raised threshold'),
+        pytest.param(0.9, {'decision_tool_call_threshold': 0.95}, id='below a raised threshold'),
     ],
 )
 async def test_a_tool_below_the_threshold_is_a_lean(
@@ -1028,16 +1030,16 @@ async def test_the_tool_question_stays_clear_of_a_field_named_tool(allow_model_r
     'tool,match',
     [
         pytest.param(
-            {'type': 'noul', 'noul': 0.9}, 'Unexpected answer from TypeSafe for the tool question', id='not a choice'
+            {'type': 'noul', 'noul': 0.9}, 'Unexpected answer from the model for the route question', id='not a choice'
         ),
         pytest.param(
             {'type': 'choice', 'choice': 'refund', 'confidence': 0.8, 'probabilities': {'final_result': 0.1}},
-            'Unexpected answer from TypeSafe for the tool question',
+            'Unexpected answer from the model for the route question',
             id='no probability for the choice',
         ),
         pytest.param(
             {'type': 'choice', 'choice': 'cancel', 'confidence': 0.8, 'probabilities': {'cancel': 0.9}},
-            "TypeSafe picked a tool it was not offered: 'cancel'",
+            "The model picked a route it was not offered: 'cancel'",
             id='a tool that was not offered',
         ),
         pytest.param(
@@ -1047,7 +1049,7 @@ async def test_the_tool_question_stays_clear_of_a_field_named_tool(allow_model_r
                 'confidence': 0.8,
                 'probabilities': {'refund': 1.7, 'final_result': -0.7},
             },
-            'Unexpected answer from TypeSafe for the tool question',
+            'Unexpected answer from the model for the route question',
             id='a probability outside 0 to 1',
         ),
     ],
@@ -1078,8 +1080,8 @@ async def test_a_threshold_outside_zero_to_one_is_refused_before_the_request(
     allow_model_requests: None, typesafe_model: TypeSafeModel, threshold: float
 ):
     agent = Agent(typesafe_model, output_type=Ticket, tools=[refund])
-    with pytest.raises(UserError, match='`typesafe_tool_call_threshold` must be between 0 and 1'):
-        await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_tool_call_threshold=threshold))
+    with pytest.raises(UserError, match='`decision_tool_call_threshold` must be between 0 and 1'):
+        await agent.run('anything', model_settings=TypeSafeModelSettings(decision_tool_call_threshold=threshold))
 
 
 @pytest.mark.parametrize('threshold', [-0.1, 1.5, float('nan')])
@@ -1087,8 +1089,8 @@ async def test_a_boolean_threshold_outside_zero_to_one_is_refused_before_the_req
     allow_model_requests: None, typesafe_model: TypeSafeModel, threshold: float
 ):
     agent = Agent(typesafe_model, output_type=Ticket)
-    with pytest.raises(UserError, match='`typesafe_boolean_threshold` must be between 0 and 1'):
-        await agent.run('anything', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=threshold))
+    with pytest.raises(UserError, match='`decision_boolean_threshold` must be between 0 and 1'):
+        await agent.run('anything', model_settings=TypeSafeModelSettings(decision_boolean_threshold=threshold))
 
 
 @pytest.mark.parametrize(
@@ -1110,7 +1112,7 @@ async def test_the_boolean_threshold_decides_what_a_probability_of_yes_rounds_to
     def record(request: httpx2.Request) -> httpx2.Response:
         return answers(urgent={'type': 'noul', 'noul': 0.7})
 
-    settings = None if threshold is None else TypeSafeModelSettings(typesafe_boolean_threshold=threshold)
+    settings = None if threshold is None else TypeSafeModelSettings(decision_boolean_threshold=threshold)
     agent = Agent(mock_model(record), output_type=Ticket)
     result = await agent.run('Is this urgent?', model_settings=settings)
 
@@ -1140,7 +1142,7 @@ async def test_the_boolean_threshold_applies_to_each_option_of_a_list(allow_mode
     agent = Agent(mock_model(record), output_type=Routing)
     assert (await agent.run('x')).output == Routing(channels=['email', 'sms'])
 
-    result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.65))
+    result = await agent.run('x', model_settings=TypeSafeModelSettings(decision_boolean_threshold=0.65))
     assert result.output == Routing(channels=['email'])
     # The field is as sure as its least sure option, which is the `sms` that only just missed the bar.
     assert (result.response.provider_details or {})['confidence'] == {'channels': snapshot(0.07692307692307698)}
@@ -1158,7 +1160,7 @@ async def test_the_boolean_threshold_leaves_a_probability_field_alone(allow_mode
         return answers(risk={'type': 'noul', 'noul': 0.7})
 
     agent = Agent(mock_model(record), output_type=Scored)
-    result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.95))
+    result = await agent.run('x', model_settings=TypeSafeModelSettings(decision_boolean_threshold=0.95))
 
     assert result.output == Scored(risk=0.7)
     assert (result.response.provider_details or {})['confidence'] == {}
@@ -1706,7 +1708,7 @@ class Delivered(UseEnumMemberDocstrings, Enum):
 
 
 async def test_meanings_alone_are_enough_for_a_yes_no_with_nothing_else_to_go_on(allow_model_requests: None):
-    """A bare `bool` with no question asks Jev nothing; two described answers are the question."""
+    """A bare `bool` with no question asks this model nothing; two described answers are the question."""
     seen: list[dict[str, Any]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
@@ -1792,7 +1794,7 @@ async def test_a_true_false_literal_that_says_nothing_anywhere_is_refused(allow_
     def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
         raise AssertionError('no request should be made')
 
-    with pytest.raises(UserError, match='asks Jev nothing'):
+    with pytest.raises(UserError, match='asks the model nothing'):
         await Agent(mock_model(unreachable), output_type=Literal[True, False]).run('anything')
 
 
@@ -2367,7 +2369,7 @@ async def test_a_nested_field_jev_cannot_answer_is_named_in_full(
 async def test_one_output_function_alone_leaves_nothing_to_ask(
     allow_model_requests: None, typesafe_model: TypeSafeModel
 ):
-    with pytest.raises(UserError, match='nothing to ask Jev'):
+    with pytest.raises(UserError, match='nothing to ask the model'):
         await Agent(typesafe_model, output_type=[approve]).run('anything')
 
 
@@ -2699,7 +2701,7 @@ async def test_unexpected_answer_type(allow_model_requests: None, answer: dict[s
         return answers(response=answer)
 
     model = mock_model(wrong_kind)
-    with pytest.raises(UnexpectedModelBehavior, match="Unexpected answer from TypeSafe for output field 'response'"):
+    with pytest.raises(UnexpectedModelBehavior, match="Unexpected answer from the model for output field 'response'"):
         await Agent(model, output_type=bool, instructions='Is this fine?').run('anything')
 
 
@@ -3347,7 +3349,7 @@ async def test_a_union_with_one_fillable_member_is_still_offered(allow_model_req
     assert set(seen[0]['questions']['tool']['criteria']) == {'final_result_Ticket', 'final_result_DraftedReply'}
 
 
-@pytest.mark.parametrize('setting', ['typesafe_tool_call_threshold', 'typesafe_boolean_threshold'])
+@pytest.mark.parametrize('setting', ['decision_tool_call_threshold', 'decision_boolean_threshold'])
 async def test_a_bad_threshold_is_refused_before_the_forced_route_spends_a_request(
     allow_model_requests: None, setting: str
 ):
@@ -3388,5 +3390,50 @@ async def test_a_probability_outside_zero_to_one_is_a_model_error_not_a_crash(al
     something the model reports, like every other unexpected answer, rather than a `ZeroDivisionError`.
     """
     agent = Agent(mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': noul})), output_type=Ticket)
-    with pytest.raises(UnexpectedModelBehavior, match=f'Unexpected probability from TypeSafe: {noul}'):
-        await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0))
+    with pytest.raises(UnexpectedModelBehavior, match=f'Unexpected probability from the model: {noul}'):
+        await agent.run('x', model_settings=TypeSafeModelSettings(decision_boolean_threshold=0))
+
+
+async def test_deprecated_threshold_is_mapped(allow_model_requests: None):
+    agent = Agent(mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': 0.7})), output_type=Ticket)
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`typesafe_boolean_threshold` is deprecated; use `decision_boolean_threshold` instead',
+    ):
+        result = await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=0.8))
+
+    assert result.output == Ticket(urgent=False)
+
+
+async def test_decision_threshold_wins_over_deprecated_alias(allow_model_requests: None):
+    agent = Agent(mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': 0.7})), output_type=Ticket)
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`typesafe_boolean_threshold` is deprecated'):
+        result = await agent.run(
+            'x',
+            model_settings=TypeSafeModelSettings(
+                typesafe_boolean_threshold=0.9,
+                decision_boolean_threshold=0.6,
+            ),
+        )
+
+    assert result.output == Ticket(urgent=True)
+
+
+async def test_bad_deprecated_threshold_names_alias(allow_model_requests: None):
+    agent = Agent(mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': 0.7})), output_type=Ticket)
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`typesafe_boolean_threshold` is deprecated'):
+        with pytest.raises(UserError, match=r'`typesafe_boolean_threshold` must be between 0 and 1'):
+            await agent.run('x', model_settings=TypeSafeModelSettings(typesafe_boolean_threshold=1.5))
+
+
+def test_unknown_sdk_answer_type():
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected answer from TypeSafe'):
+        typesafe_module._from_typesafe_answer(object())  # pyright: ignore[reportPrivateUsage]
+
+
+def test_unexpected_decision_question_type():
+    with pytest.raises(AssertionError, match='Expected code to be unreachable'):
+        typesafe_module._to_typesafe_question(object())  # pyright: ignore[reportArgumentType, reportPrivateUsage]
