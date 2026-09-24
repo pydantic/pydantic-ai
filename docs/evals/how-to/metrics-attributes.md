@@ -307,7 +307,7 @@ def call_api(ctx: RunContext, endpoint: str) -> str:
 # Evaluate tool usage
 @dataclass
 class ToolUsageEvaluator(Evaluator):
-    def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool | int]:
+    def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool | float]:
         db_searches = ctx.metrics.get('db_searches', 0)
         api_calls = ctx.metrics.get('api_calls', 0)
 

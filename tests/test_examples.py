@@ -6,18 +6,23 @@ import os
 import re
 import shutil
 import ssl
+import subprocess
 import sys
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from inspect import FrameInfo
 from pathlib import Path
+from textwrap import indent
 from typing import Any
 
 import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
+from dirty_equals import IsStr
 from genai_prices import UpdatePrices
 from genai_prices.data_snapshot import get_snapshot
 from pytest_examples import CodeExample, EvalExample, find_examples
@@ -84,10 +89,12 @@ code_examples: dict[str, CodeExample] = {}
 
 
 @pytest.fixture(autouse=True)
-def blockbuster_enabled(example: CodeExample) -> bool:
+def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
     """Skip the detector for pytest-examples' synchronous output-file reader."""
-    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
-        return False
+    if 'example' in request.fixturenames:
+        example: CodeExample = request.getfixturevalue('example')
+        if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+            return False
     return True
 
 
@@ -230,15 +237,198 @@ def _patch_realtime_models(mocker: MockerFixture) -> None:
         mocker.patch.object(model_class, 'connect', new=_mock_realtime_connect)
 
 
-def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+def _python_version_skip_reason(min_version: str | None, max_version: str | None) -> str | None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
         if sys.version_info < min_info:
-            pytest.skip(f'Python version {min_version} required')  # pragma: lax no cover
+            return f'Python version {min_version} required'  # pragma: lax no cover
     if max_version:
         max_info = tuple(int(v) for v in max_version.split('.'))
         if sys.version_info[:2] > max_info:
-            pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
+            return f'Python version <= {max_version} required'  # pragma: lax no cover
+    return None
+
+
+def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+    if reason := _python_version_skip_reason(min_version, max_version):
+        pytest.skip(reason)  # pragma: lax no cover
+
+
+_TYPECHECK_TIMEOUT = 600
+"""Seconds allowed for type-checking the examples, including any wait for another xdist worker doing it."""
+
+
+def _typecheck_enabled() -> bool:
+    """Whether to type-check the examples: pyright is installed and `TYPECHECK_EXAMPLES` isn't `false`.
+
+    Pyright comes with the default `lint` dependency group. CI leaves the check on only in the docs-only
+    job and the Python 3.14 all-extras jobs, rather than repeating it across the matrix.
+    """
+    return os.getenv('TYPECHECK_EXAMPLES') != 'false' and find_spec('pyright') is not None
+
+
+def _typecheck_skipped(prefix_settings: dict[str, str]) -> bool:
+    """Type checking runs wherever linting does, unless the fence also says `typecheck="skip"`."""
+    return prefix_settings.get('lint', '').startswith('skip') or prefix_settings.get('typecheck', '').startswith('skip')
+
+
+def _example_key(example: CodeExample) -> str:
+    return f'{example.path}:{example.start_line}'
+
+
+def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict[str, list[str]]:
+    """Type-check the examples with pyright, returning each example's errors by `_example_key`.
+
+    Each example gets its own directory (and pyright execution environment), holding the examples it
+    `requires` as sibling modules, the way `tmp_path_cwd` makes them importable at runtime. Only the
+    example's own errors are reported, with their location in the Markdown or docstring it came from.
+
+    There is one pyright run per Python version the examples target (`py="3.11"` on the fence), run
+    concurrently: an execution environment's `pythonVersion` doesn't carry over to the installed packages
+    it imports, so a 3.11 example catching a library's exception with `except*` would still fail.
+    """
+    root_dir = Path(__file__).parent.parent
+    files: dict[Path, CodeExample] = {}
+    environments: dict[str, list[dict[str, Any]]] = {}
+    for index, example in enumerate(examples):
+        prefix_settings = example.prefix_settings()
+        python_version = prefix_settings.get('py', '3.10')
+        example_dir = work_dir / f'py{python_version}' / str(index)
+        example_dir.mkdir(parents=True)
+        for req in filter(None, prefix_settings.get('requires', '').split(',')):
+            (example_dir / req).write_text(code_examples[req].source, encoding='utf-8')
+        title = prefix_settings.get('title', '')
+        file = example_dir / (title if title.endswith('.py') else 'example.py')
+        file.write_text(example.source, encoding='utf-8')
+        files[file.resolve()] = example
+        environments.setdefault(python_version, []).append(
+            {'root': str(example_dir), 'extraPaths': [str(root_dir / 'tests' / 'example_modules')]}
+        )
+
+    # `COVERAGE_*` is dropped so `[tool.coverage.run] patch = ["subprocess"]` leaves pyright alone.
+    env = {k: v for k, v in os.environ.items() if not k.startswith('COVERAGE_')}
+    env['PYRIGHT_PYTHON_IGNORE_WARNINGS'] = '1'
+    processes: list[subprocess.Popen[str]] = []
+    for python_version, version_environments in environments.items():
+        project_dir = work_dir / f'py{python_version}'
+        config = {
+            'pythonVersion': python_version,
+            'typeCheckingMode': 'standard',
+            'reportUnnecessaryTypeIgnoreComment': 'error',
+            'reportMissingModuleSource': False,
+            'executionEnvironments': version_environments,
+        }
+        (project_dir / 'pyrightconfig.json').write_text(json.dumps(config), encoding='utf-8')
+        processes.append(
+            subprocess.Popen(
+                [sys.executable, '-m', 'pyright', '--outputjson', '--pythonpath', sys.executable, '-p', project_dir],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+            )
+        )
+
+    deadline = time.monotonic() + _TYPECHECK_TIMEOUT
+    errors: dict[str, list[str]] = {}
+    try:
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=max(deadline - time.monotonic(), 0))
+            if process.returncode not in (0, 1):  # pragma: no cover
+                raise RuntimeError(f'pyright exited with code {process.returncode}:\n{stderr or stdout}')
+            for diagnostic in json.loads(stdout)['generalDiagnostics']:
+                example = files.get(Path(diagnostic['file']).resolve())
+                if example is None or diagnostic['severity'] != 'error':
+                    continue
+                start = diagnostic['range']['start']
+                line = example.start_line + start['line'] + 1
+                column = example.indent + start['character'] + 1
+                rule = f' [{rule}]' if (rule := diagnostic.get('rule')) else ''
+                errors.setdefault(_example_key(example), []).append(
+                    f'{example.path}:{line}:{column}: {diagnostic["message"]}{rule}'
+                )
+    finally:
+        for process in processes:
+            if process.poll() is None:  # pragma: no cover
+                process.kill()
+                process.wait()
+    return errors
+
+
+def _check_types(example: CodeExample, examples_type_errors: dict[str, list[str]] | None) -> None:
+    if examples_type_errors is None or _typecheck_skipped(example.prefix_settings()):
+        return
+    if type_errors := examples_type_errors.get(_example_key(example)):
+        pytest.fail('pyright failed:\n' + indent('\n'.join(type_errors), '  '), pytrace=False)
+
+
+@pytest.fixture(scope='session')
+def examples_type_errors(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> dict[str, list[str]] | None:
+    """The pyright errors of the selected examples, or `None` when type checking is off (see `_typecheck_enabled`).
+
+    One pyright run covers every selected example, in `standard` mode. Under xdist, the first worker
+    to get here runs it and the others wait for its result.
+    """
+    if not _typecheck_enabled():
+        return None
+
+    examples: list[CodeExample] = []
+    for item in request.session.items:
+        if (
+            isinstance(item, pytest.Function)
+            and item.originalname == 'test_docs_examples'
+            and isinstance(example := item.callspec.params['example'], CodeExample)
+        ):
+            prefix_settings = example.prefix_settings()
+            if not _typecheck_skipped(prefix_settings) and not _python_version_skip_reason(
+                prefix_settings.get('py'), prefix_settings.get('max_py')
+            ):
+                examples.append(example)
+
+    if os.environ.get('PYTEST_XDIST_WORKER') is None:
+        return _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))  # pragma: lax no cover
+
+    # All workers of a session share the parent of their base temp directory.
+    shared_dir = tmp_path_factory.getbasetemp().parent
+    result_file = shared_dir / 'docs-examples-pyright.json'
+    try:
+        os.close(os.open(shared_dir / 'docs-examples-pyright.lock', os.O_CREAT | os.O_EXCL))
+    except FileExistsError:
+        # Allow for the other worker's writing and pyright's startup on top of its own deadline.
+        deadline = time.monotonic() + _TYPECHECK_TIMEOUT + 60
+        while not result_file.exists():
+            if time.monotonic() > deadline:  # pragma: no cover
+                raise TimeoutError('Timed out waiting for another xdist worker to type-check the examples')
+            time.sleep(0.5)
+    else:
+        try:
+            result: dict[str, Any] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
+        except Exception as e:  # pragma: no cover
+            result = {'failure': repr(e)}
+        tmp_file = result_file.with_suffix('.tmp')
+        tmp_file.write_text(json.dumps(result), encoding='utf-8')
+        tmp_file.replace(result_file)
+
+    result = json.loads(result_file.read_text(encoding='utf-8'))
+    if failure := result.get('failure'):  # pragma: no cover
+        raise RuntimeError(f'Type-checking the examples failed: {failure}')
+    return result['errors']
+
+
+@pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
+def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
+    """A type error is reported at its line and column in the Markdown or docstring the example came from."""
+    example = CodeExample.create("x: int = 'a'\n", path=Path('docs/example.md'), start_line=10, indent=4)
+
+    errors = _typecheck_examples([example], tmp_path)
+
+    assert errors == {
+        'docs/example.md:10': [IsStr(regex=r'docs/example\.md:11:14: .* \[reportAssignmentType\]', regex_flags=re.S)]
+    }
+    with pytest.raises(pytest.fail.Exception, match='pyright failed:'):
+        _check_types(example, errors)
 
 
 @pytest.mark.parametrize('example', list(find_filter_examples()))
@@ -250,6 +440,7 @@ def test_docs_examples(
     env: TestEnv,
     tmp_path_cwd: Path,
     vertex_provider_auth: None,
+    examples_type_errors: dict[str, list[str]] | None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
@@ -406,6 +597,8 @@ def test_docs_examples(
         else:
             eval_example.lint_ruff(example)
 
+    _check_types(example, examples_type_errors)
+
     if opt_test.startswith('skip'):
         pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
     elif opt_test.startswith('ci_only') and os.getenv('GITHUB_ACTIONS', '').lower() != 'true':
@@ -507,6 +700,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'large_market': True, 'technically_feasible': True, 'differentiated': False},
     ),
+    'We have sent the 40 pounds back to your card.': ToolCallPart(tool_name='final_result', args={'refunded': True}),
     'The app crashes every time I open the reports tab.': ToolCallPart(
         tool_name='final_result', args={'urgent': False}
     ),
@@ -740,6 +934,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Create a person': ToolCallPart(
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
+    ),
+    'The kettle leaks everywhere. I just want my money back.': ToolCallPart(
+        tool_name='final_result', args={'intent': 'refund', 'summary': 'Leaking kettle, customer wants a refund.'}
     ),
     'The blender arrived smashed. Just send me another one.': ToolCallPart(
         tool_name='final_result', args={'response': 'replace'}
@@ -1047,7 +1244,7 @@ async def model_logic(  # noqa: C901
                 provider_details={'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}},
             )
         elif m.content == 'The secret is 1234':
-            return ModelResponse(parts=[TextPart('The secret is safe with me')])
+            return ModelResponse(parts=[TextPart('The secret is safe with me')], provider_response_id='resp_1234')
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
         elif m.content == 'Summarize the conversation.':

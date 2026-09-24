@@ -207,11 +207,11 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     from pydantic_ai.tools import RunContext
 
 
-    class Audit(AbstractCapability[None]):
+    class Audit(AbstractCapability):
         id = 'audit'
 
         @durable_operation(name='record')
-        async def record(self, ctx: RunContext[None], message: str) -> bool:
+        async def record(self, ctx: RunContext, message: str) -> bool:
             return bool(message)
     ```
 
