@@ -92,7 +92,7 @@ request_logging_hooks = Hooks(
 
 @request_logging_hooks.on.before_model_request
 async def log_request(
-    ctx: RunContext[None],
+    ctx: RunContext,
     request_context: ModelRequestContext,
 ) -> ModelRequestContext:
     print(f'Model request at step {ctx.run_step}: {len(request_context.messages)} messages')
@@ -544,7 +544,7 @@ hooks = Hooks()
 
 @hooks.on.tool_execute_error
 async def convert_upstream_errors(
-    ctx: RunContext[None],
+    ctx: RunContext,
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,

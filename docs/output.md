@@ -98,7 +98,7 @@ from pydantic_ai import Agent
 
 agent = Agent[object, list[str] | list[int]](
     'openai:gpt-5-mini',
-    output_type=list[str] | list[int],  # type: ignore # (1)!
+    output_type=list[str] | list[int],  # (1)!
     instructions='Extract either colors or sizes from the shapes provided.',
 )
 
@@ -739,7 +739,7 @@ class InvalidRequest(BaseModel):
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
     'google:gemini-3-flash-preview',
-    output_type=Output,  # type: ignore
+    output_type=Output,
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
 )

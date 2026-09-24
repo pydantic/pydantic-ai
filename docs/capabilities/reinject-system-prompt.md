@@ -9,7 +9,13 @@ Useful when `message_history` comes from a source that doesn't round-trip system
 ```python {title="reinject_system_prompt.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ReinjectSystemPrompt
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 
 agent = Agent('test', system_prompt='You are a helpful assistant.', capabilities=[ReinjectSystemPrompt()])
 
@@ -24,7 +30,9 @@ history = [
 result = agent.run_sync('Follow up', message_history=history)
 first_request = result.all_messages()[0]
 assert isinstance(first_request, ModelRequest)
-assert first_request.parts[0].content == 'You are a helpful assistant.'
+system_prompt = first_request.parts[0]
+assert isinstance(system_prompt, SystemPromptPart)
+assert system_prompt.content == 'You are a helpful assistant.'
 ```
 
 _(This example is complete, it can be run "as is")_

@@ -114,7 +114,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 
     @agent.tool
-    def recent_reviews(ctx: RunContext[None], product: str) -> list[str]:
+    def recent_reviews(ctx: RunContext, product: str) -> list[str]:
         """Fetch recent review snippets for a product."""
         return ['The new release fixed everything I complained about!']
 

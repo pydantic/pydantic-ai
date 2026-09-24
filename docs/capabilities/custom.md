@@ -56,7 +56,7 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     label: str
 ```
 
@@ -66,7 +66,7 @@ If you define a custom `__init__`, set only the metadata you want to expose. The
 from pydantic_ai.capabilities import AbstractCapability
 
 
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     def __init__(
         self,
         label: str,
@@ -888,15 +888,15 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.models.test import TestModel
 
 
-class Summaries(AbstractCapability[None]):
+class Summaries(AbstractCapability):
     id = 'summaries'
 
-    async def before_run(self, ctx: RunContext[None]) -> None:
+    async def before_run(self, ctx: RunContext) -> None:
         summary = await self.summarize(ctx, ['one', 'two'])
         assert summary == '2 messages'
 
     @durable_operation(name='summarize')
-    async def summarize(self, ctx: RunContext[None], messages: list[str]) -> str:
+    async def summarize(self, ctx: RunContext, messages: list[str]) -> str:
         return f'{len(messages)} messages'
 
 
@@ -988,7 +988,7 @@ To register a dynamic capability, pass a function that takes [`RunContext`][pyda
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequest, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 
@@ -1018,7 +1018,9 @@ def user_skill(ctx: RunContext[str]) -> AbstractCapability[str] | None:
 agent = Agent(TestModel(), deps_type=str, capabilities=[user_skill])
 
 result = agent.run_sync('hi', deps='alice')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 #> You can use the refunds skill (role: admin).
 ```
 
@@ -1227,6 +1229,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, AgentSpec
+from pydantic_ai.agent.spec import CapabilitySpec
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -1240,7 +1243,10 @@ class RateLimit(AbstractCapability[Any]):
 # In YAML: `- RateLimit: {rpm: 30}`
 # In Python:
 agent = Agent.from_spec(
-    AgentSpec(model='test', capabilities=[{'RateLimit': {'rpm': 30}}]),
+    AgentSpec(
+        model='test',
+        capabilities=[CapabilitySpec(name='RateLimit', arguments={'rpm': 30})],
+    ),
     custom_capability_types=[RateLimit],
 )
 ```
