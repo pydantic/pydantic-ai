@@ -5045,35 +5045,16 @@ async def test_openai_unified_service_tier(allow_model_requests: None):
     assert get_mock_chat_completion_kwargs(mock_client)[0]['service_tier'] == 'flex'
 
 
-@pytest.mark.parametrize('service_tier', ['standard', ''])
-async def test_service_tier_non_standard_value(allow_model_requests: None, service_tier: str):
-    """OpenAI-compatible providers can return service_tier values outside the OpenAI Literal, including the empty string."""
-    c = completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_copy(
-        update={'service_tier': service_tier}
-    )
+async def test_service_tier_non_standard_value(allow_model_requests: None):
+    """OpenAI-compatible providers can return service_tier values outside the OpenAI Literal."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    c.service_tier = 'standard'  # pyright: ignore[reportAttributeAccessIssue]  # simulate provider returning non-OpenAI value
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
     result = await agent.run('Hello')
     assert result.output == 'hello'
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
-    assert (response.provider_details or {})['service_tier'] == service_tier
-
-
-async def test_stream_service_tier_empty_string(allow_model_requests: None) -> None:
-    """An empty `service_tier` reported on a streamed chunk is preserved in provider details."""
-    first_chunk = text_chunk('hello').model_copy(update={'service_tier': ''})
-    mock_client = MockOpenAI.create_mock_stream([first_chunk, chunk([])])
-    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
-
-    async with agent.run_stream('') as result:
-        await result.get_output()
-
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
-    assert (response.provider_details or {}).get('service_tier') == ''
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:

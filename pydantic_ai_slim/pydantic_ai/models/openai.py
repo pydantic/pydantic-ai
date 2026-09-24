@@ -1240,7 +1240,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         provider_details = self._process_provider_details(response) or {}
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
-        if response.service_tier is not None:
+        if response.service_tier:
             provider_details['service_tier'] = response.service_tier
 
         # Handle refusal responses (structured output safety filter)
@@ -2517,7 +2517,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
-        if response.service_tier is not None:
+        if response.service_tier:
             provider_details['service_tier'] = response.service_tier
 
         state = _response_status_to_state(response.status, background=bool(response.background))
@@ -3989,7 +3989,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                         **(self.provider_details or {}),
                         'moderation': chunk.moderation.model_dump(),
                     }
-                if chunk.service_tier is not None:
+                if chunk.service_tier:
                     self.provider_details = {**(self.provider_details or {}), 'service_tier': chunk.service_tier}
 
                 # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
@@ -4303,7 +4303,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             responses.ResponseFailedEvent,
                             responses.ResponseIncompleteEvent,
                         ),
-                    ) and (service_tier := chunk.response.service_tier) is not None:
+                    ) and (service_tier := chunk.response.service_tier):
                         self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
