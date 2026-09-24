@@ -16,7 +16,7 @@ from pydantic_core import to_json
 
 from ..._utils import now_utc
 from ..._uuid import uuid7
-from ...exceptions import RunCancelled, UserError
+from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
     CustomEvent,
@@ -62,6 +62,7 @@ from ._utils import (
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
     dump_tool_return_content,
     parse_ag_ui_version,
+    parse_protocol_declaration,
     tool_kind_encrypted_value,
 )
 
@@ -196,22 +197,25 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         """Whether the client declared AG-UI 1.0 or newer on `RunAgentInput.protocolVersion`.
 
         The field only exists on 1.0 SDKs, and a stream is constructible with no run input at all, so an
-        absent declaration means a peer from before the protocol carried a version. A declaration we
-        cannot read is handled like a newer one, as the spec requires.
+        absent declaration means a peer from before the protocol carried a version. A declaration this
+        server cannot read, or one newer than the version its SDK speaks, is handled like a newer one
+        with a warning, as the spec requires.
         """
         declared = getattr(self.run_input, 'protocol_version', None)
         if not isinstance(declared, str):
             return False
-        try:
-            return parse_ag_ui_version(declared) >= LIFECYCLE_1_0_VERSION
-        except UserError:
+        version = parse_protocol_declaration(declared)
+        # `PROTOCOL_VERSION` is set whenever this runs: `_emit_1_0_fields` gates the call on the 1.0 SDK.
+        spoken = parse_protocol_declaration(PROTOCOL_VERSION)
+        if version is None or spoken is None or version > spoken:
             warnings.warn(
-                f'Unrecognized AG-UI protocol version {declared!r} on the run input; treating the client as '
-                'newer than this server.',
+                f'AG-UI protocol version {declared!r} on the run input is not one this server speaks '
+                f'(up to {PROTOCOL_VERSION}); treating the client as newer than this server.',
                 UserWarning,
                 stacklevel=4,
             )
             return True
+        return version >= LIFECYCLE_1_0_VERSION
 
     @property
     def _event_encoder(self) -> EventEncoder:

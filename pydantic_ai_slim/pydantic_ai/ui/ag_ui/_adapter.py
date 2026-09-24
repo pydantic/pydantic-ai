@@ -191,6 +191,32 @@ def _new_message_id() -> str:
     return str(uuid.uuid4())
 
 
+def _input_content_to_user_content(content: Sequence[InputContent]) -> list[UserContent]:
+    """Convert a message's typed content parts to Pydantic AI content.
+
+    A part the installed `ag-ui-protocol` accepts but Pydantic AI cannot use, such as a `file` source
+    with no known provider, is dropped with a warning.
+    """
+    converted: list[UserContent] = []
+    for part in content:
+        match part:
+            case TextInputContent(text=text):
+                converted.append(text)
+            case _ if isinstance(part, BinaryInputContent):
+                # A guard, not a class pattern: AG-UI 1.0 retired the part from the content union,
+                # but an install below 1.0 still sends it.
+                if (legacy := legacy_binary_to_content(part)) is not None:
+                    converted.append(legacy)
+            case ImageInputContent() | AudioInputContent() | VideoInputContent() | DocumentInputContent():
+                from ._multimodal import multimodal_input_to_content
+
+                if (media := multimodal_input_to_content(part)) is not None:
+                    converted.append(media)
+            case _:
+                assert_never(part)
+    return converted
+
+
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
@@ -286,8 +312,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def build_run_input(cls, body: bytes) -> RunAgentInput:
         """Build an AG-UI run input object from the request body.
 
-        A message `role` or input content `type` introduced by a protocol version newer than the
-        installed `ag-ui-protocol` is skipped with a warning rather than failing the whole request,
+        A message `role`, input content `type` or media `source` type introduced by a protocol version
+        newer than the installed `ag-ui-protocol` is skipped with a warning rather than failing the whole request,
         per the backwards-compatibility policy in `pydantic_ai/ui/AGENTS.md`. Only items the
         installed models cannot dispatch at all are skipped: a body that is invalid for any other
         reason still raises, so a client bug isn't converted into silent misbehavior.
@@ -426,38 +452,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 case UserMessage(content=content):
                     if isinstance(content, str):
                         builder.add(UserPromptPart(content=content))
-                    else:
-                        user_prompt_content: list[UserContent] = []
-                        for part in content:
-                            match part:
-                                case TextInputContent(text=text):
-                                    user_prompt_content.append(text)
-                                case _ if isinstance(part, BinaryInputContent):
-                                    # A guard, not a class pattern: AG-UI 1.0 retired the part from
-                                    # the content union, but an install below 1.0 still sends it.
-                                    user_prompt_content.append(legacy_binary_to_content(part))
-                                case (
-                                    ImageInputContent()
-                                    | AudioInputContent()
-                                    | VideoInputContent()
-                                    | DocumentInputContent()
-                                ):
-                                    from ._multimodal import (
-                                        multimodal_input_to_content,
-                                    )
-
-                                    if (converted := multimodal_input_to_content(part)) is not None:
-                                        user_prompt_content.append(converted)
-                                case _:
-                                    assert_never(part)
-
-                        if user_prompt_content:
-                            content_to_add = (
-                                user_prompt_content[0]
-                                if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
-                                else user_prompt_content
-                            )
-                            builder.add(UserPromptPart(content=content_to_add))
+                    elif user_prompt_content := _input_content_to_user_content(content):
+                        content_to_add = (
+                            user_prompt_content[0]
+                            if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
+                            else user_prompt_content
+                        )
+                        builder.add(UserPromptPart(content=content_to_add))
 
                 case SystemMessage(content=content) | DeveloperMessage(content=content):
                     builder.add(SystemPromptPart(content=content))
@@ -507,9 +508,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if tool_name is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
-                    # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
-                    # multimodal content comes back as real types; see `rehydrate_tool_return_content`.
-                    content = rehydrate_tool_return_content(tool_msg.content)
+                    if isinstance(tool_msg.content, list):
+                        # From 1.0 a tool message can carry content parts. A text part holds what string
+                        # content holds (a structured return serialized to text), so it rehydrates the same
+                        # way; media parts load as they do in a user message, so `sanitize_messages` sees
+                        # them as typed content rather than as opaque JSON.
+                        parts = [
+                            rehydrate_tool_return_content(item) if isinstance(item, str) else item
+                            for item in _input_content_to_user_content(tool_msg.content)
+                        ]
+                        content = parts[0] if len(parts) == 1 else parts
+                    else:
+                        # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
+                        # multimodal content comes back as real types; see `rehydrate_tool_return_content`.
+                        content = rehydrate_tool_return_content(tool_msg.content)
 
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
                     # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error

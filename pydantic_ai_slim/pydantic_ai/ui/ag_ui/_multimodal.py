@@ -38,7 +38,7 @@ else:
     try:
         from ag_ui.core import FileSource
     except ImportError:  # pragma: lax no cover
-        # Only reachable on 0.1.15 to 0.1.19, which no CI lane installs.
+        # Only reachable on 0.1.15 to 0.1.22, which no CI lane installs.
 
         class FileSource:
             """Stub for SDKs without `FileSource`."""
@@ -138,7 +138,7 @@ def multimodal_input_to_content(
             f'AG-UI file content with {got} was skipped; set `provider` on the file source '
             f'to one of {sorted(_UPLOADED_FILE_PROVIDERS)} so the file can be passed to that provider.',
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
         return None
     return UploadedFile(

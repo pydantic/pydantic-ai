@@ -3,10 +3,10 @@
 Our `ag-ui-protocol` floor is `>=0.1.10` and the policy (see `pydantic_ai/ui/AGENTS.md`) is that an
 older install skips new functionality rather than erroring on it. AG-UI's models set `extra='allow'`,
 so a *field* added to an existing type already parses and is ignored, but `Message` (discriminated on
-`role`) and `InputContent` (discriminated on `type`) are tagged unions: a `role` or `type` the
-installed models don't know is rejected outright, which fails validation for the whole request.
-`ReasoningMessage` (0.1.11) and typed multimodal input content (0.1.15) both sit above the floor, so
-a client that is merely newer than the server trips this.
+`role`), `InputContent` (discriminated on `type`) and a media part's `source` (also on `type`) are
+tagged unions: a tag the installed models don't know is rejected outright, which fails validation for
+the whole request. `ReasoningMessage` (0.1.11), typed multimodal input content (0.1.15) and the `file`
+source (1.0) all sit above the floor, so a client that is merely newer than the server trips this.
 
 This module reduces such a body to the items the installed models *can* dispatch, so the rest of the
 run still parses. It deliberately removes nothing else: an item whose tag is known stays untouched
@@ -50,24 +50,55 @@ def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
     )
 
 
+def _known_source_tags(tagged_union: object) -> dict[str, frozenset[str]]:
+    """The `source.type` tags each media member of `tagged_union` knows, keyed by the member's own `type` tag.
+
+    Empty below 0.1.15, where no member carries a `source`.
+    """
+    members: tuple[type[BaseModel], ...] = get_union_args(tagged_union)
+    return {
+        tag: _known_tags(member.model_fields['source'].annotation, 'type')
+        for member in members
+        if 'source' in member.model_fields
+        for tag in get_args(member.model_fields['type'].annotation)
+        if isinstance(tag, str)
+    }
+
+
 # The discriminator names themselves are AG-UI wire constants, stable across every version in range.
 _KNOWN_MESSAGE_ROLES = _known_tags(Message, 'role')
 _KNOWN_INPUT_CONTENT_TYPES = _known_tags(InputContent, 'type')
+_KNOWN_SOURCE_TYPES_BY_CONTENT_TYPE = _known_source_tags(InputContent)
 
 HAS_BINARY_INPUT_PART = 'binary' in _KNOWN_INPUT_CONTENT_TYPES
 """Whether the installed SDK still accepts the retired `binary` input part."""
 
 
-def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozenset[str]) -> str | None:
+def _unknown_tag(
+    item: dict[str, JsonValue], discriminator: str, known: frozenset[str], *, label: str | None = None
+) -> str | None:
     """A `"role='reasoning'"`-style label when `item`'s discriminator value is one the installed models don't know.
 
     `None` for an item that carries no string tag: that isn't new functionality, it's malformed, and
-    validation should still report it.
+    validation should still report it. `label` names the tag in place of `discriminator` when the tag
+    sits below the item, as `source.type` does.
     """
     tag = item.get(discriminator)
     if isinstance(tag, str) and tag not in known:
-        return f'{discriminator}={tag!r}'
+        return f'{label or discriminator}={tag!r}'
     return None
+
+
+def _unknown_source_tag(item: dict[str, JsonValue]) -> str | None:
+    """A `"source.type='file'"` label when a media part's source is one the installed models don't know."""
+    content_type = item.get('type')
+    if not isinstance(content_type, str):
+        return None
+    known_sources = _KNOWN_SOURCE_TYPES_BY_CONTENT_TYPE.get(content_type)
+    source = item.get('source')
+    if known_sources is None or not isinstance(source, dict):
+        return None
+    return _unknown_tag(source, 'type', known_sources, label='source.type')
 
 
 def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
@@ -147,6 +178,9 @@ def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | N
                             continue
                         # A retired part with nothing to translate is malformed: it stays in so
                         # validation reports it, like any malformed item under a known tag.
+                    elif isinstance(item, dict) and (unknown_source := _unknown_source_tag(item)) is not None:
+                        skipped.add(unknown_source)
+                        continue
                     kept_content.append(item)
                 message['content'] = kept_content
         kept_messages.append(message)

@@ -133,6 +133,20 @@ def parse_ag_ui_version(version: str) -> tuple[int, ...]:
     return tuple(int(x) for x in match.group(1).split('.'))
 
 
+_PROTOCOL_DECLARATION_RE = re.compile(r'(\d+)\.(\d+)')
+
+
+def parse_protocol_declaration(declared: str) -> tuple[int, int] | None:
+    """Parse a peer's `protocolVersion` declaration, or `None` when it is outside the `MAJOR.MINOR` grammar.
+
+    Stricter than `parse_ag_ui_version`, which reads installed package versions and tolerates
+    pre-release suffixes: the spec treats a declaration a peer cannot read as a newer one, so
+    `'1.0-next'` must not pass as `1.0`.
+    """
+    match = _PROTOCOL_DECLARATION_RE.fullmatch(declared)
+    return (int(match[1]), int(match[2])) if match else None
+
+
 def detect_ag_ui_version() -> str:
     """Detect the installed ag-ui-protocol version string.
 
