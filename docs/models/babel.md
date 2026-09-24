@@ -54,6 +54,7 @@ agent = Agent(model)
 - Deferred tools, tool search and capability-loading parts are not supported and raise a `UserError`.
 - Response metadata beyond the model name, response id and finish reason is not carried into `provider_details`, except for OpenAI's raw finish reason and timestamp, and Anthropic's raw finish reason, refusal details, container id and input transformations, which the native model's next request depends on.
 - Gemini's per-file `media_resolution` and `video_metadata` from a file's `vendor_metadata` are not sent; only OpenAI's image `detail` is carried.
+- Every `SystemPromptPart` in the history is sent as the request-level system prompt, as the Anthropic, Google and Bedrock models do; a system message placed later in a hand-built history is not kept in place for OpenAI as `OpenAIChatModel` keeps it.
 
 ## Building your own
 
