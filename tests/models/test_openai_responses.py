@@ -1309,6 +1309,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     provider_url='https://api.openai.com/v1/',
                     provider_details={
                         'finish_reason': 'completed',
+                        'service_tier': 'default',
                         'timestamp': IsDatetime(),
                     },
                     provider_response_id='resp_003440f5ba4dd7f1006a95f3e7961887d2ae83dcea20d24a32',

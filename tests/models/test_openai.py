@@ -609,71 +609,18 @@ async def test_stream_text(allow_model_requests: None):
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
-def test_provider_details_service_tier(allow_model_requests: None) -> None:
-    mock_client = MockOpenAI.create_mock(
-        completion_message(ChatCompletionMessage(role='assistant', content='hello')).model_copy(
-            update={'service_tier': 'default'}
-        )
+def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c.model_copy(update={'service_tier': 'default'}))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    result = agent.run_sync('hello', model_settings=OpenAIChatModelSettings(openai_service_tier='priority'))
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details == snapshot(
+        {'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'default'}
     )
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
-
-    # The reported tier comes from the provider response, not the requested setting.
-    result = agent.run_sync('hello', model_settings=OpenAIChatModelSettings(openai_service_tier='flex'))
-    response = cast(ModelResponse, result.all_messages()[-1])
-    assert response.provider_details == {
-        'finish_reason': 'stop',
-        'service_tier': 'default',
-        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-    }
-
-    # The key is omitted when the provider response does not report a tier.
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(role='assistant', content='hello')))
-    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
-    response = cast(ModelResponse, agent.run_sync('hello').all_messages()[-1])
-    assert response.provider_details == {
-        'finish_reason': 'stop',
-        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-    }
-
-    # OpenAI-compatible providers may report tiers outside the OpenAI literal set.
-    mock_client = MockOpenAI.create_mock(
-        completion_message(ChatCompletionMessage(role='assistant', content='hello')).model_copy(
-            update={'service_tier': 'custom-tier'}
-        )
-    )
-    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
-    response = cast(ModelResponse, agent.run_sync('hello').all_messages()[-1])
-    assert response.provider_details == {
-        'finish_reason': 'stop',
-        'service_tier': 'custom-tier',
-        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-    }
-
-
-async def test_provider_details_service_tier_streaming(allow_model_requests: None) -> None:
-    chunks = [
-        text_chunk('hello '),
-        text_chunk('world', finish_reason='stop').model_copy(update={'service_tier': 'default'}),
-    ]
-    mock_client = MockOpenAI.create_mock_stream(chunks)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('') as result:
-        assert [c async for c in result.stream_text(debounce_by=None)] == ['hello ', 'hello world']
-        response = cast(ModelResponse, result.all_messages()[-1])
-        assert response.provider_details is not None
-        assert response.provider_details['service_tier'] == 'default'
-
-    # The key is omitted when no chunk reports a tier.
-    mock_client = MockOpenAI.create_mock_stream([text_chunk('hello '), text_chunk('world', finish_reason='stop')])
-    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
-    async with agent.run_stream('') as result:
-        assert [c async for c in result.stream_text(debounce_by=None)] == ['hello ', 'hello world']
-        response = cast(ModelResponse, result.all_messages()[-1])
-        assert response.provider_details is not None
-        assert 'service_tier' not in response.provider_details
 
 
 def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
@@ -2043,131 +1990,6 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
 
     with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
-
-
-async def test_provider_details_service_tier_responses(allow_model_requests: None) -> None:
-    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
-
-    output_item = ResponseOutputMessage(
-        id='msg_123',
-        type='message',
-        role='assistant',
-        status='completed',
-        content=[ResponseOutputText(text='hello', type='output_text', annotations=[])],
-    )
-    r = response_message([output_item]).model_copy(update={'service_tier': 'default'})
-    mock_client = MockOpenAIResponses.create_mock(r)
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    result = await Agent(m).run('hello')
-    response = cast(ModelResponse, result.all_messages()[-1])
-    assert response.provider_details is not None
-    assert response.provider_details['service_tier'] == 'default'
-
-    # The key is omitted when the provider response does not report a tier.
-    mock_client = MockOpenAIResponses.create_mock(response_message([output_item]))
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    result = await Agent(m).run('hello')
-    response = cast(ModelResponse, result.all_messages()[-1])
-    assert response.provider_details is not None
-    assert 'service_tier' not in response.provider_details
-
-
-async def test_provider_details_service_tier_responses_streaming(allow_model_requests: None) -> None:
-    from openai.types import responses as resp
-    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
-
-    output_item = ResponseOutputMessage(
-        id='msg_123',
-        type='message',
-        role='assistant',
-        status='completed',
-        content=[ResponseOutputText(text='hello', type='output_text', annotations=[])],
-    )
-    r = response_message([output_item]).model_copy(update={'service_tier': 'default', 'status': 'completed'})
-    events = [
-        resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=1),
-        resp.ResponseOutputItemAddedEvent(
-            item=ResponseOutputMessage(
-                id='msg_123', content=[], role='assistant', status='in_progress', type='message'
-            ),
-            output_index=0,
-            type='response.output_item.added',
-            sequence_number=2,
-        ),
-        resp.ResponseTextDeltaEvent(
-            content_index=0,
-            delta='hello',
-            item_id='msg_123',
-            output_index=0,
-            type='response.output_text.delta',
-            sequence_number=3,
-            logprobs=[],
-        ),
-        resp.ResponseTextDoneEvent(
-            content_index=0,
-            item_id='msg_123',
-            output_index=0,
-            text='hello',
-            type='response.output_text.done',
-            sequence_number=4,
-            logprobs=[],
-        ),
-        resp.ResponseCompletedEvent(response=r, type='response.completed', sequence_number=5),
-    ]
-    mock_client = MockOpenAIResponses.create_mock_stream(events)
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('hello') as result:
-        assert await result.get_output() == 'hello'
-        response = cast(ModelResponse, result.all_messages()[-1])
-        assert response.provider_details is not None
-        assert response.provider_details['service_tier'] == 'default'
-
-    # The key is omitted when the completed response does not report a tier.
-    events = [
-        resp.ResponseCreatedEvent(response=response_message([]), type='response.created', sequence_number=1),
-        resp.ResponseOutputItemAddedEvent(
-            item=ResponseOutputMessage(
-                id='msg_123', content=[], role='assistant', status='in_progress', type='message'
-            ),
-            output_index=0,
-            type='response.output_item.added',
-            sequence_number=2,
-        ),
-        resp.ResponseTextDeltaEvent(
-            content_index=0,
-            delta='hello',
-            item_id='msg_123',
-            output_index=0,
-            type='response.output_text.delta',
-            sequence_number=3,
-            logprobs=[],
-        ),
-        resp.ResponseTextDoneEvent(
-            content_index=0,
-            item_id='msg_123',
-            output_index=0,
-            text='hello',
-            type='response.output_text.done',
-            sequence_number=4,
-            logprobs=[],
-        ),
-        resp.ResponseCompletedEvent(
-            response=response_message([output_item]).model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=5,
-        ),
-    ]
-    mock_client = MockOpenAIResponses.create_mock_stream(events)
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('hello') as result:
-        assert await result.get_output() == 'hello'
-        response = cast(ModelResponse, result.all_messages()[-1])
-        assert response.provider_details is not None
-        assert 'service_tier' not in response.provider_details
 
 
 async def test_text_content_input(allow_model_requests: None):

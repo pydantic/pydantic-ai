@@ -884,7 +884,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='3dd7f44c-de93-47d7-b2cb-d2269c3e29c4',
                     finish_reason='stop',
                     run_id=IsStr(),
