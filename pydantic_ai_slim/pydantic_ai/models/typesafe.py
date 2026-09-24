@@ -89,7 +89,7 @@ TypeSafeStreamedResponse = DecisionStreamedResponse
 
 @dataclass(init=False)
 class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
-    """A [decision model][pydantic_ai.models.decision.DecisionModel] backed by TypeSafe's Jev.
+    """The model class for TypeSafe's Jev, a [decision model][pydantic_ai.models.decision.DecisionModel].
 
     Jev answers typed questions about a text, each with a confidence, rather than writing text. An agent whose job is
     to decide something runs on it like on any other model, with the `output_type` as the questions:
@@ -113,7 +113,7 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
 
     See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for how an agent's output type and tools
     become questions, and [TypeSafe (Jev)](https://pydantic.dev/docs/ai/models/typesafe/) for setup, Jev's limits,
-    and what it answers well.
+    and what it answers badly.
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """

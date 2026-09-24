@@ -1,14 +1,35 @@
 # Decision models
 
-A decision model is not a language model. You give it a text and typed questions about it, and it answers each question with a probability or a distribution over the options. It does not write text.
+A decision model answers typed questions about a text: each question gets a probability, or a distribution over its options, and no text is written. An agent runs on one like on any other model, and uses it for the two things a decision can drive: filling a structured [output](../output.md), and picking which [tool](../tools.md) to call.
 
-[`DecisionModel`][pydantic_ai.models.decision.DecisionModel] lets an agent whose job is to decide something run on one like on any other model. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output, so a Pydantic model with several fields extracts several values in one request. Change the model name and the same agent runs on a language model, so you can compare the two.
+[`DecisionModel`][pydantic_ai.models.decision.DecisionModel] maps an agent run onto those questions. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output, so a Pydantic model with several fields extracts several values in one request. Tools, and the members of a union of output types, become routes: the model picks the one the text calls for, and fills that route's arguments or fields the same way. Change the model name and the same agent runs on a language model, so you can compare the two.
+
+The built-in decision model is TypeSafe's Jev, through [`TypeSafeModel`](typesafe.md), and the examples on this page use it. This page covers what `DecisionModel` does for any backend; the [TypeSafe page](typesafe.md) covers setup, Jev's own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
 
 Reach for one when the answer is a classification — a verdict, a route, a label, a score against a rubric — and you want it cheaper and faster than a language model gives it, with a confidence you can act on. Keep a language model for anything that has to be written: a `str` field, a reply, a summary. The two combine well: a [`FallbackModel`](overview.md#fallback-model) can hand a language model only the steps the decision model is unsure about or cannot answer.
 
-The one built-in decision model is [TypeSafe's Jev](typesafe.md), which the examples on this page use. Everything on this page is what [`DecisionModel`][pydantic_ai.models.decision.DecisionModel] does for any backend; the [TypeSafe page](typesafe.md) covers setup, Jev's own limits and what it answers well. To use another backend, [implement `decide`](#implementing-a-decision-model).
+## How an output type becomes questions
 
-## Where the question goes
+Each field of the output type is a question, and all of them go out in a single request. A field of a nested model is a question of its own, and a list of options fans out to one yes/no per option:
+
+| Field type | Question | Answer |
+|---|---|---|
+| `bool`, or `Literal[True, False]` | yes or no | `True` when the probability of yes is at least `decision_boolean_threshold` (0.5) |
+| `Literal[...]` or `Enum` of strings or whole numbers, other than a rubric | pick one | the chosen option |
+| `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | the probability, unrounded, in the field's own units |
+| an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
+| `list` of a `Literal` or `Enum` | one yes or no per option | the options answered yes |
+| `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer |
+| `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or the field's default, or `None` |
+| a nested model of these | its fields, asked as `outer.inner` | the model |
+
+A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type the model is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-pick-then-fill) the model cannot fill is not an error — it is still offered as a route, and picking it hands the step to the model behind it.
+
+A backend can also cap how many options a pick-one or how many levels a rubric may have, through [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels]. A pick-one over its cap is refused the same way, before a request is sent, while whole numbers with more levels than a rubric's cap are not a rubric, and are [a pick-one instead](#what-each-mapping-does). Jev's caps are on the [TypeSafe page](typesafe.md#limits).
+
+With tools attached, or a union of output types, there is more than one thing the text could call for, and one more question asks which: the [route question](#routes-which-thing-to-do).
+
+### Where the wording comes from
 
 A decision model takes two separate things: the material to judge, and the questions to ask about it. The material is the *state*: the content and the facts that support it. The questions are the judgements to make about that material. So **the prompt is only what is being judged, and the question belongs on the output type**.
 
@@ -39,62 +60,7 @@ print(result.output)
 #> urgent=True area='billing'
 ```
 
-For a single question an agent's `instructions` do the same job: they are sent as the question when there is no field to describe. Prefer the output type anyway: each field carries its own question, so several questions can be asked in one request. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
-
-## Ask one thing per field
-
-This is the one habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible answer with low confidence, and you find out later.
-
-So instead of one field asking `'Is this a good pitch?'`, ask three and combine them in code:
-
-```python
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent
-
-
-class Pitch(BaseModel):
-    """Assess a startup pitch."""
-
-    large_market: bool = Field(description='Does this address a market worth more than $1B a year?')
-    technically_feasible: bool = Field(description='Could a small team build this with current technology?')
-    differentiated: bool = Field(description='Does this do something competitors do not already do?')
-
-    @property
-    def promising(self) -> bool:
-        return sum([self.large_market, self.technically_feasible, self.differentiated]) >= 2
-
-
-agent = Agent('typesafe:jev-latest', output_type=Pitch)
-result = agent.run_sync('A dashboard that shows every SaaS subscription a company pays for.')
-print(result.output)
-#> large_market=True technically_feasible=True differentiated=False
-print(result.output.promising)
-#> True
-```
-
-Every field goes out in the same request, so a field you only need on some inputs costs no extra round trip. What it does cost depends on the backend: on Jev, an extra field [costs tokens rather than time](typesafe.md#limits).
-
-## How an output type becomes questions
-
-Each field of the output type is a question, and all of them go out in a single request. A field of a nested model is a question of its own, and a list of options fans out to one yes/no per option:
-
-| Field type | Question | Answer |
-|---|---|---|
-| `bool`, or `Literal[True, False]` | yes or no | `True` when the probability of yes is at least `decision_boolean_threshold` (0.5) |
-| `Literal[...]` or `Enum` of strings or whole numbers, other than a rubric | pick one | the chosen option |
-| `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | the probability, unrounded, in the field's own units |
-| an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
-| `list` of a `Literal` or `Enum` | one yes or no per option | the options answered yes |
-| `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer |
-| `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or the field's default, or `None` |
-| a nested model of these | its fields, asked as `outer.inner` | the model |
-
-A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type the model is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-pick-then-fill) the model cannot fill is not an error — it is still offered as a route, and picking it hands the step to the model behind it.
-
-A backend can also cap how many options a pick-one or how many levels a rubric may have, through [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels]. A pick-one over its cap is refused the same way, before a request is sent, while whole numbers with more levels than a rubric's cap are not a rubric, and are [a pick-one instead](#what-each-mapping-does). Jev's caps are on the [TypeSafe page](typesafe.md#limits).
-
-### Where the wording comes from
+Each part of what the model reads comes from one place in the agent:
 
 | What the model reads | Where it comes from |
 |---|---|
@@ -104,7 +70,7 @@ A backend can also cap how many options a pick-one or how many levels a rubric m
 | each option's meaning | a description on that option in the schema |
 | what "none of these" means | a description on the `None` itself, `Annotated[None, Field(description=...)]` |
 
-A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's instructions are the question, as in the [confidence example below](#confidence-and-thresholds).
+A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's `instructions` are sent as the question, as in the [confidence example below](#confidence-and-thresholds). Prefer an output type with fields anyway: each field carries its own question, so several questions can be asked in one request. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
 
 Unless the schema describes an option, the model sees it by its name alone, so name `Literal` and `Enum` options for what they mean. A `Literal` has nowhere to write a meaning per option; where the difference between two options needs explaining, use an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] and put a docstring under each member, which is what puts a description on each option in the schema.
 
@@ -229,6 +195,40 @@ The second request is about the same text as the first, which on its own would l
 
 The questions in one request are answered independently. A field cannot depend on another field's answer: two arguments of the same tool are decided separately, and neither sees the other. Where one judgement genuinely follows from another, they belong in different steps, not in two fields of the same call. That is the whole mechanism behind the [patterns below](#decision-models-inside-an-agent-run): an output function is a candidate the model can choose, and choosing it *is* calling it.
 
+## Ask one thing per field
+
+This is the other habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible answer with low confidence, and you find out later.
+
+So instead of one field asking `'Is this a good pitch?'`, ask three and combine them in code:
+
+```python
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Pitch(BaseModel):
+    """Assess a startup pitch."""
+
+    large_market: bool = Field(description='Does this address a market worth more than $1B a year?')
+    technically_feasible: bool = Field(description='Could a small team build this with current technology?')
+    differentiated: bool = Field(description='Does this do something competitors do not already do?')
+
+    @property
+    def promising(self) -> bool:
+        return sum([self.large_market, self.technically_feasible, self.differentiated]) >= 2
+
+
+agent = Agent('typesafe:jev-latest', output_type=Pitch)
+result = agent.run_sync('A dashboard that shows every SaaS subscription a company pays for.')
+print(result.output)
+#> large_market=True technically_feasible=True differentiated=False
+print(result.output.promising)
+#> True
+```
+
+Every field goes out in the same request, so a field you only need on some inputs costs no extra round trip. What it does cost depends on the backend: on Jev, an extra field [costs tokens rather than time](typesafe.md#limits).
+
 ## Confidence and thresholds
 
 Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field, so one threshold reads the same way across an output type. It is a margin, not a probability that the answer is right. For a yes/no it is how far the probability of yes sits from the threshold that decided it, scaled to run from 0 at the threshold to 1 at certainty — at the default of 0.5 that is the distance from the coin flip, doubled, so a `False` answered from a probability of 0.01 reports 0.98 and one answered from 0.45 reports 0.10. The bar it measures from is the one [actually used](#what-true-has-to-mean), so a yes at 0.8 under a threshold of 0.75 reports 0.2 rather than the 0.6 it would report against a coin flip, and a [fallback on low confidence](#falling-back-on-low-confidence) keeps meaning what it meant. For a pick-one or a rubric it is the confidence the backend reports, from how its probabilities are spread; for a list of options it is the least sure option's.
@@ -248,9 +248,14 @@ print(result.response.provider_details)
 #> {'confidence': {'response': 0.84}, 'probabilities': {}, 'scores': {}}
 ```
 
-Every bar on this page — the confidence you decide to act on, [`decision_boolean_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_boolean_threshold] and [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] — belongs to what its answer is used for rather than to the system as a whole: acting automatically deserves a higher one than flagging something for review. Calibrate each against labelled examples of your own, and once you have tuned one, pin the model version it was tuned against, since a new version can shift the numbers under you. Not every backend's probabilities are calibrated the same way, so a bar tuned on one backend does not carry over to another.
+Two thresholds turn a probability into what the agent does with it. They are [`DecisionModelSettings`][pydantic_ai.models.decision.DecisionModelSettings], set like any other [model settings](../agent.md#model-run-settings), and apply to every decision model:
 
-Both thresholds are read before the request is sent, so a value outside 0 to 1 is a [`UserError`][pydantic_ai.exceptions.UserError] rather than a wasted request. They are [`DecisionModelSettings`][pydantic_ai.models.decision.DecisionModelSettings], set like any other [model settings](../agent.md#model-run-settings).
+- [`decision_boolean_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_boolean_threshold], default 0.5, is how likely a yes has to be before a `bool` field is `True`: [what `True` has to mean](#what-true-has-to-mean).
+- [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold], default 0.6, is how likely a function tool's pick has to be before the tool is taken: [tools, pick then fill](#tools-pick-then-fill).
+
+Both are read before the request is sent, so a value outside 0 to 1 is a [`UserError`][pydantic_ai.exceptions.UserError] rather than a wasted request.
+
+Every bar on this page — the confidence you decide to act on, [`decision_boolean_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_boolean_threshold] and [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] — belongs to what its answer is used for rather than to the system as a whole: acting automatically deserves a higher one than flagging something for review. Calibrate each against labelled examples of your own, and once you have tuned one, pin the model version it was tuned against, since a new version can shift the numbers under you. Not every backend's probabilities are calibrated the same way, so a bar tuned on one backend does not carry over to another.
 
 ### What `True` has to mean
 
@@ -471,7 +476,7 @@ print(result.output)
 
 Here the decision model triages what it can, opens a case itself when the ticket calls for one and triages again with the case number in view, and leaves a refund's unbounded amount to the language model behind it. Most requests never leave the decision model; how many depends on your tickets and the threshold, and `provider_details['tool']` on each response is how to see it.
 
-Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what the tools are weighed against. Asking whether the model *can* answer, rather than what the text calls for, is a question about the question rather than about the text, and [on Jev](typesafe.md#calibration-notes) it hands off nearly everything.
+Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what the tools are weighed against. Asking whether the model *can* answer, rather than what the text calls for, is a question about the question rather than about the text, and [on Jev](typesafe.md#what-jev-answers-badly) it hands off nearly everything.
 
 ## A union of output types
 

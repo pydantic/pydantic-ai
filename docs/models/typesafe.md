@@ -1,8 +1,8 @@
 # TypeSafe (Jev)
 
-[Jev](https://typesafe.ai) is not a language model. You give it a text and typed questions, and it answers each one with a confidence. It does not write text.
+[Jev](https://typesafe.ai) is TypeSafe's model, and a [decision model](decision.md): it answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text. In Pydantic AI, an agent running on a decision model can use it both to produce a structured [output](../output.md) and to call [tools](../tools.md).
 
-[`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] is a [decision model](decision.md): an agent whose job is to decide something runs on Jev like on any other model. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output. **[Decision models](decision.md) covers how an agent's output type, tools and message history become Jev's questions**, and what the answers mean; this page covers setting Jev up and what is particular to it.
+[`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] is the Pydantic AI model class for Jev, and a subclass of [`DecisionModel`][pydantic_ai.models.decision.DecisionModel]. **[Decision models](decision.md) covers how an agent's output types, tools and message history map onto decision-model questions**, and what the answers mean; this page covers what is specific to Jev and TypeSafe: setup, Jev's limits, and what it answers badly.
 
 ## Install
 
@@ -89,18 +89,6 @@ What one request can carry is limited, and `TypeSafeModel` keeps to the first tw
 - **10 levels in one rubric.** An 11th is a 400 from the API, so eleven or more whole numbers from 0 are not a rubric, and are [asked as a pick-one](decision.md#what-each-mapping-does) instead.
 - **64k tokens** for the state and questions together on `jev-1.13`, with 32k for the state plus the longest question. Past that the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (`max_tokens_exceeded`), which a `FallbackModel` hands to the model behind Jev like any API error, so an over-long conversation quietly becomes a language model call. [Compact](decision.md#judging-a-conversation) earlier than a language model would need.
 
-## Calibration notes
-
-The defaults in Pydantic AI, and the claims on this page about what Jev answers well, come from a small internal set of support tickets: one domain, labelled by the maintainers, and too small to separate models with confidence. They say the mappings work, not how Jev will do on your task.
-
-- **The tool-call threshold.** At the default [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] of 0.6, Jev's tool picks agree with a frontier model as often as two frontier models agree with each other; higher takes fewer tools, and is right more often when it does.
-- **"None of these".** The explicit option an [optional pick-one field](decision.md#what-each-mapping-does) adds was as accurate as an `other` member written into the options, and more accurate than reading `None` off low confidence.
-- **How the route question is asked.** Asked whether it *can* answer, rather than what the text calls for, Jev hands off nearly everything, which is why the output type is offered as an action, [described by its docstring](decision.md#tools-pick-then-fill).
-- **Lists and nested models** round-trip faithfully, but their accuracy against labels is not measured, so check them on your own data before relying on either.
-
-!!! note "Measure on your own data"
-    Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.
-
 ## What Jev answers badly
 
 Everything below returns an answer rather than an error, which is what makes it worth knowing. TypeSafe publish these per model version, on their [jaggedness page for `jev-1.13`](https://docs.typesafe.ai/model-jaggedness/jev-1.13), and revise them as models change. TypeSafe's own guide also calls asking [one thing per field](decision.md#ask-one-thing-per-field) "probably the most important concept".
@@ -113,6 +101,10 @@ Everything below returns an answer rather than an error, which is what makes it 
 - **Deciding what it cannot see.** A tool that needs an argument the text does not state — a refund amount, a date — is one Jev will propose and a language model may decline to call; the two judge the same option differently, and language models disagree with each other on such picks about as often. Compare Jev with the model behind it on your own tickets before trusting either's hand-off rate.
 - **Adversarial text.** Jev treats the state as data, not as hostile: text written to steer the answer — an injected instruction, a misleading framing, an argument for its own classification — can move it. TypeSafe say they expect to improve this. A guard built on Jev belongs alongside deterministic checks, not instead of them, and is worth testing against your own adversarial inputs.
 - **Option order.** The order of a `Literal`'s options or an `Enum`'s members is part of what Jev sees, and reordering them can move the answer. If a classification matters, test it with the options in more than one order.
+- **A question about the question.** Asked whether it *can* answer, rather than what the text calls for, Jev hands off nearly everything, which is why the output type is offered as an action, [described by its docstring](decision.md#tools-pick-then-fill).
+
+!!! note "Measure on your own data"
+    Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.
 
 ## Asking Jev directly
 
@@ -220,10 +212,7 @@ See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this inte
 
 ## Model settings
 
-Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request. [`TypeSafeModelSettings`][pydantic_ai.models.typesafe.TypeSafeModelSettings] adds the two thresholds every decision model has:
-
-- `decision_tool_call_threshold` sets how sure Jev has to be before it [takes a tool](decision.md#tools-pick-then-fill).
-- `decision_boolean_threshold` sets [what `True` has to mean](decision.md#what-true-has-to-mean) for a `bool` field.
+Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request. [`TypeSafeModelSettings`][pydantic_ai.models.typesafe.TypeSafeModelSettings] adds the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_tool_call_threshold`. The tool-call default of 0.6 was chosen against Jev: there, its tool picks agree with a frontier model's as often as two frontier models agree with each other.
 
 The former `typesafe_tool_call_threshold` and `typesafe_boolean_threshold` names remain as deprecated aliases.
 
