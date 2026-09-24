@@ -322,6 +322,44 @@ print(result.response.provider_details['confidence'])
 
 The handler runs on every model in the chain, and a language model reports no `confidence`, so its answers pass through. A response handler on its own replaces the default exception fallback, which is why `ModelAPIError` is listed alongside it.
 
+The [route](#routes-which-thing-to-do) pick can be unsure too. The model has to pick one of the routes it is offered, so when none of them really fits the text — after a tool has returned, say, with only output types left to pick from — it still picks one, with a low probability, as a language model given the same choices would. A handler on `provider_details['route']` hands those steps to the language model instead:
+
+```python {title="unsure_route.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, ModelAPIError, ModelResponse
+from pydantic_ai.models.fallback import FallbackModel
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+class Escalation(BaseModel):
+    """Hand the ticket to a human specialist."""
+
+    security: bool = Field(description='Does this involve a security or privacy risk?')
+
+
+def unsure_route(response: ModelResponse) -> bool:
+    route = (response.provider_details or {}).get('route')
+    return route is not None and route['probabilities'].get(route['taken'], 0.0) < 0.7
+
+
+model = FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol', fallback_on=[ModelAPIError, unsure_route])
+agent = Agent(model, output_type=[Ticket, Escalation])
+result = agent.run_sync('Someone else can see my invoices when they log in.')
+print(result.output)
+#> security=True
+assert result.response.provider_details is not None
+print(result.response.provider_details['route']['taken'])
+#> Escalation
+```
+
+This makes up for routes that do not cover the texts they will see. The better fix is to cover them: a route with a `str` field, such as a `Reply` member, is one the decision model [cannot fill](#a-member-the-model-cannot-fill), so the text that fits nothing else can pick it and go to the language model on the pick.
+
 Watch how often the fallback fires, not only how accurate the pair is. A chain that hands off nearly everything is accurate and costs full price, and the rate is the only number that shows it.
 
 ## Tools: pick, then fill
