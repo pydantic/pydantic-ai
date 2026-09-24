@@ -30,9 +30,10 @@ if TYPE_CHECKING:
 
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsInstance(expected_type: type[RequestUsage], **kwargs: Any) -> RequestUsage: ...
+    def IsPartialDict(*args: Any, **kwargs: Any) -> dict[Any, Any]: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
 else:
-    from dirty_equals import IsDatetime, IsInstance, IsStr
+    from dirty_equals import IsDatetime, IsInstance, IsPartialDict, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -101,7 +102,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f83c1b21081969141bc089fa42e84',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -228,7 +229,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f84501d548196acac86c0fa44e665',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -400,7 +401,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f845bb5a0819693d55bb5431d3cff',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -592,7 +593,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f845f3fdc8196a12485e126e3140c',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -727,7 +728,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f8461704c81968b9c4059581c7f0b',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -789,7 +790,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f846e25b08196845460b1804c2e50',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -956,7 +957,7 @@ Frame handling improved but remains hazardous:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f8470c6c48196a3c2cd136ecc9f8a',
                 finish_reason='stop',
                 run_id=IsStr(),
