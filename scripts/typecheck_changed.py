@@ -21,6 +21,9 @@ unchanged tests. Only what leaves this script without a file list at all falls b
 `make typecheck-pyright`, the same full run CI performs: `CI` itself, an interpreter older than
 the 3.11 this needs to read `pyproject.toml`, and a Pyright configuration this cannot reproduce.
 
+Pyright never reports on a file under a dot directory from the root project, so `.github/scripts`
+is a project of its own, which runs whole whenever a change reaches a file under it.
+
 `PYRIGHT_TIME_BUDGET` fails a passing run that took longer than that many seconds, so a change
 that makes Pyright itself slow fails its own pull request rather than `main`.
 
@@ -58,13 +61,25 @@ Clock = Callable[[], float]
 # The checkpoint lives in the git directory, which is per-worktree and never tracked.
 CHECKPOINT_NAME = 'pyright-checkpoint.json'
 
+# Pyright never reports on a file under a dot directory from the root project, so each of these
+# directories is a project of its own, with a `pyrightconfig.json` that `make typecheck-pyright`
+# runs through `pyright -p`. A change that reaches any file under one checks that project whole:
+# it is small, and its files import each other as top-level modules the import roots here do not
+# model.
+_NESTED_PROJECTS = ('.github/scripts',)
+
 # Files that change what Pyright reports without appearing in its file list: its own
 # configuration, the locked dependency versions it resolves imports against, and the
 # recipe that invokes it.
-_CONFIGURATION_FILES = ('pyproject.toml', 'uv.lock', 'Makefile')
+_CONFIGURATION_FILES = (
+    'pyproject.toml',
+    'uv.lock',
+    'Makefile',
+    *(f'{project}/pyrightconfig.json' for project in _NESTED_PROJECTS),
+)
 
-# Pyright applies these to whatever an `include` entry sweeps up, but only while `exclude`
-# is unset; setting `exclude` replaces them rather than adding to them.
+# Pyright adds these to every `exclude`, and skips a path under a dot directory too, even when
+# an `include` entry or the command line names it.
 _SKIPPED_DIRECTORIES = frozenset({'__pycache__', 'node_modules'})
 
 _GLOB_CHARACTERS = frozenset('*?[')
@@ -222,14 +237,17 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
         if _is_checked(path, project) and (not path.startswith(_TESTS_PREFIX) or path in changed)
     ]
 
+    nested = [directory for directory in _NESTED_PROJECTS if Path(directory, 'pyrightconfig.json').is_file()]
     reason = _reason_to_check_everything(checkpoint, keys, stored, universe, project)
     imports: dict[str, list[str]] | None = None
     affected: list[str] = []
     if reason is None:
         imports = _parse_imports(changed, universe, project.import_roots)
         deleted = [path for path in stored if path not in hashes]
-        affected = _affected(changed, deleted, stored, imports, checkable)
-        if not affected:
+        reached = _reached(changed, deleted, stored, imports)
+        affected = sorted(reached.intersection(checkable))
+        nested = [directory for directory in nested if any(_covers(directory, path) for path in reached)]
+        if not affected and not nested:
             # Either nothing changed, or what changed is only read by files Pyright reports
             # nothing about, which comes to the same answer.
             print('Nothing to type-check: no change since Pyright last passed reaches a file it reports on.')
@@ -240,7 +258,8 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
     options = ['--pythonversion', requested_version] if requested_version else []
     if reason is None:
         paths = affected
-        print(f'Type-checking {len(affected)} of {len(checkable)} files, reached from {len(changed)} changed.')
+        if affected:
+            print(f'Type-checking {len(affected)} of {len(checkable)} files, reached from {len(changed)} changed.')
     else:
         paths = checkable
         if stored:
@@ -256,7 +275,7 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
     # outside `tests/`, but every worker is a full Node process that redoes the shared parse and
     # bind, and on a laptop they swap and come out slower than the single process; see
     # https://github.com/pydantic/pydantic-ai/pull/8075.
-    code = runner([sys.executable, '-m', 'pyright', *options, *paths])
+    code = _run_pyright(runner, options, paths, nested)
 
     if code != 0:
         # The checkpoint records what Pyright accepted, so a failing run leaves it alone.
@@ -276,6 +295,16 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
     }
     checkpoint_path.write_bytes(_CHECKPOINT_ADAPTER.dump_json(_Checkpoint(keys=keys, files=files)))
     return 0
+
+
+def _run_pyright(run: Runner, options: Sequence[str], paths: Sequence[str], nested: Sequence[str]) -> int:
+    """Check `paths` in the root project and each `nested` project whole, and return an exit code."""
+    code = run([sys.executable, '-m', 'pyright', *options, *paths]) if paths else 0
+    for project in nested:
+        print(f'Type-checking the `{project}` project.')
+        # Every project runs, so a failure in one does not hide the errors in another.
+        code = run([sys.executable, '-m', 'pyright', '-p', project, *options]) or code
+    return code
 
 
 def _check_everything(run: Runner, reason: str) -> int:
@@ -315,14 +344,13 @@ def _reason_to_check_everything(
     return None
 
 
-def _affected(
+def _reached(
     changed: Iterable[str],
     deleted: Sequence[str],
     stored: Mapping[str, _FileState],
     imports: Mapping[str, list[str]],
-    checkable: Sequence[str],
-) -> list[str]:
-    """Return the checkable files that changed, plus those transitively importing a changed or deleted one."""
+) -> set[str]:
+    """Return the files that changed or were deleted, plus those transitively importing one."""
     # Both graphs count: a deleted file has importers only in the stored one, and a file
     # that has just stopped importing another still has to be re-checked for having done so.
     importers: defaultdict[str, set[str]] = defaultdict(set)
@@ -338,7 +366,7 @@ def _affected(
             if importer not in reached:
                 reached.add(importer)
                 queue.append(importer)
-    return sorted(reached.intersection(checkable))
+    return reached
 
 
 def _parse_imports(paths: Iterable[str], universe: Sequence[str], roots: Sequence[str]) -> dict[str, list[str]]:
@@ -496,17 +524,11 @@ def _tracked_files() -> list[str]:
 
 def _is_checked(path: str, project: _Project) -> bool:
     """Say whether Pyright reports diagnostics for `path`, which is what makes it worth checking."""
+    if any(part.startswith('.') or part in _SKIPPED_DIRECTORIES for part in path.split('/')):
+        return False
     if any(_covers(entry, path) for entry in project.exclude):
         return False
-    for entry in project.include:
-        if not _covers(entry, path):
-            continue
-        if project.exclude:
-            return True
-        swept_up = path[len(entry) :].strip('/').split('/')
-        if not any(part.startswith('.') or part in _SKIPPED_DIRECTORIES for part in swept_up):
-            return True
-    return False
+    return any(_covers(entry, path) for entry in project.include)
 
 
 def _covers(entry: str, path: str) -> bool:
