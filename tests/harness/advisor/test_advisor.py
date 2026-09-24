@@ -95,6 +95,27 @@ class TestAdvisor:
         assert seen[0].function_tools == []
         assert seen[0].native_tools == [AdvisorTool(model='claude-opus-4-8', max_tokens=2048, caching='5m')]
 
+    async def test_local_advisor_run_belongs_to_the_executor_conversation(self) -> None:
+        advisor_conversations: set[str | None] = set()
+
+        def advisor_model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            advisor_conversations.update(m.conversation_id for m in messages)
+            return ModelResponse(parts=[TextPart('Use a staged rollout.')])
+
+        def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[ToolCallPart('advisor', {'prompt': 'Is this safe?'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(executor),
+            capabilities=[Advisor(FunctionModel(advisor_model), mode='local', forward_history=False)],
+        )
+
+        await agent.run('Review this plan.', conversation_id='conversation-1')
+
+        assert advisor_conversations == {'conversation-1'}
+
     async def test_model_instance_uses_local_advisor_and_preserves_identity(self) -> None:
         advisor_prompts: list[str] = []
         advisor_settings: list[ModelSettings | None] = []

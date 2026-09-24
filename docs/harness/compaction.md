@@ -174,6 +174,8 @@ history = await compact_now(
 
 A compaction that changes the history emits the same `compact_messages` span the in-run path emits, so an instrumented application sees one shape however compaction was triggered. Pass `tracer=` to record it; without one the span goes to a no-op tracer.
 
+Pass `conversation_id=` with the id of the conversation being compacted. It is set on the throwaway context, so the summary run of `SummarizingCompaction` is recorded under that conversation (its messages and its `gen_ai.conversation.id` span attribute) rather than under a fresh id of its own. Inside a run, the summary run takes the parent run's `conversation_id` without this.
+
 ## The recommended default: `TieredCompaction`
 
 The field consensus (Anthropic, OpenCode, Letta) is to clear and dedupe first, and summarize only when that is not enough. Summarization turns input tokens into output tokens, which are billed at a premium and generated serially, so it is genuinely expensive. The zero-LLM strategies touch only the cheaper input side.
@@ -381,7 +383,7 @@ Neither transport works everywhere, which is why this is a choice rather than a 
 
 ### Usage accounting
 
-The summary call is a real request to the model, so its full usage -- tokens **and** the request itself -- is folded into the run's `ctx.usage`. This is deliberate: it keeps cost honest, keeps the request count consistent (a model request that did not count as one would be the surprise), and lets a `UsageLimits` request limit catch a runaway compaction. The nested run receives the other parent limits unchanged; the finite request limit is reduced by one so it cannot spend the slot already approved for the parent request. A run-request or iteration limiter will therefore see compaction calls among its requests.
+The summary call is a real request to the model, so its full usage -- tokens **and** the request itself -- is folded into the run's `ctx.usage`. This is deliberate: it keeps cost honest, keeps the request count consistent (a model request that did not count as one would be the surprise), and lets a `UsageLimits` request limit catch a runaway compaction. The nested run receives the other parent limits unchanged; the finite request limit is reduced by one so it cannot spend the slot already approved for the parent request. The summary run is filed under the parent run's `conversation_id`, so its requests, spans, and cost group with the conversation it compacts. A run-request or iteration limiter will therefore see compaction calls among its requests.
 
 With a durable-execution capability attached, the summary call runs as a contributed durable
 operation, so replay uses the recorded summary instead of calling the model again. When `model` is

@@ -28,6 +28,7 @@ async def compact_now(
     model: Model | str,
     focus: str | None = None,
     usage: RunUsage | None = None,
+    conversation_id: str | None = None,
     tracer: Tracer | None = None,
     tokenizer: Callable[[str], int] | None = None,
 ) -> list[ModelMessage]: ...
@@ -42,6 +43,7 @@ async def compact_now(
     deps: AgentDepsT,
     focus: str | None = None,
     usage: RunUsage | None = None,
+    conversation_id: str | None = None,
     tracer: Tracer | None = None,
     tokenizer: Callable[[str], int] | None = None,
 ) -> list[ModelMessage]: ...
@@ -55,6 +57,7 @@ async def compact_now(
     focus: str | None = None,
     deps: Any = None,
     usage: RunUsage | None = None,
+    conversation_id: str | None = None,
     tracer: Tracer | None = None,
     tokenizer: Callable[[str], int] | None = None,
 ) -> list[ModelMessage]:
@@ -87,6 +90,10 @@ async def compact_now(
             has no way to expect.
         usage: Usage to accumulate into, so a summarization call can be billed to your own
             counter. A fresh `RunUsage` is used when omitted.
+        conversation_id: Conversation the compacted history belongs to, set on the throwaway
+            context so a model call the strategy makes (the summary run of
+            `SummarizingCompaction`, for one) is filed under that conversation. Without it, such
+            a run starts a conversation of its own.
         tracer: Tracer the `compact_messages` span is started on. Defaults to a no-op tracer,
             which records nothing.
         tokenizer: Tokenizer the span's before/after counts are measured with. Pass the one the
@@ -115,6 +122,7 @@ async def compact_now(
         deps=deps,
         model=infer_model(model) if isinstance(model, str) else model,
         usage=usage if usage is not None else RunUsage(),
+        conversation_id=conversation_id,
         tracer=tracer if tracer is not None else NoOpTracer(),
     )
     return await compact_with_span(

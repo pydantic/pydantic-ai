@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -95,6 +96,7 @@ def _ctx(model: Any = None) -> Any:
         usage_limits: UsageLimits | None = None
         model: Model = dataclasses.field(default_factory=TestModel)
         deps: None = None
+        conversation_id: str | None = None
         tracer: Tracer = dataclasses.field(default_factory=NoOpTracer)
         emitted: list[Any] = dataclasses.field(default_factory=list[Any])
 
@@ -1165,6 +1167,21 @@ class TestCompactNowSummarizes:
         result = await compact_now(strategy, _history(4), model=TestModel())
 
         assert len(result) < 8
+
+    async def test_files_the_summary_run_under_the_given_conversation(self):
+        summary_conversations: set[str | None] = set()
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summary_conversations.update(m.conversation_id for m in messages)
+            return ModelResponse(parts=[TextPart(content='the summary')])
+
+        strategy: SummarizingCompaction[None] = SummarizingCompaction(
+            max_messages=4, keep_messages=1, preserve_first_user_message=False
+        )
+
+        await compact_now(strategy, _history(5), model=FunctionModel(summarize), conversation_id='conversation-1')
+
+        assert summary_conversations == {'conversation-1'}
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

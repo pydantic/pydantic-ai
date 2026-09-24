@@ -326,7 +326,7 @@ for path in root.rglob('*'):
 A built-in `Summarize` call is a real request to the model, so its full usage -- tokens and the
 request itself -- folds into the run's `ctx.usage`, exactly like `SummarizingCompaction`. Its nested
 run receives the parent limits unchanged except that a finite request limit reserves one request for
-the pending parent request.
+the pending parent request, and is filed under the parent run's `conversation_id`.
 
 By default `Summarize` inherits the running agent's model (`ctx.model`). Pass a model id or
 instance to `Summarize(model=...)` to override, or a `summarize` callable to bypass the

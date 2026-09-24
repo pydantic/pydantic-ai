@@ -295,6 +295,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
             result = await self._judge.run(
                 prompt,
                 output_type=[AllGood, Steer],
+                conversation_id=ctx.conversation_id,
                 usage=ctx.usage,
                 usage_limits=_claim_offset_limits(ctx.usage_limits),
             )

@@ -121,7 +121,7 @@ The local fallback sends that prompt to the configured advisor model and provide
 
 ## Usage, failures, and observability
 
-Local advisor requests share the parent run's `RunUsage` and `UsageLimits`, so their requests and tokens count toward the agent tree's normal limits. Native providers report advisor usage according to their own protocol. Anthropic records advisor-specific values in `RequestUsage.details`, while OpenRouter exposes aggregate server-tool counts in response provider details.
+Local advisor requests share the parent run's `RunUsage` and `UsageLimits`, so their requests and tokens count toward the agent tree's normal limits. A local advisor run is also filed under the parent run's `conversation_id`, so its requests and spans group with the conversation it advises. Native providers report advisor usage according to their own protocol. Anthropic records advisor-specific values in `RequestUsage.details`, while OpenRouter exposes aggregate server-tool counts in response provider details.
 
 Invalid option combinations fail when `Advisor` is constructed. Executor and provider compatibility is validated when a run prepares its model request. Anthropic reports native advisor errors as tool results so the executor can continue. If a local advisor produces invalid model behavior, the executor receives a normal tool retry, matching Pydantic AI's other subagent-backed tools. Local model resolution, authentication, provider, request, and usage-limit errors otherwise propagate and can stop the run. When a local call exceeds `max_uses`, the tool returns a bounded message telling the executor to continue without more advice.
 

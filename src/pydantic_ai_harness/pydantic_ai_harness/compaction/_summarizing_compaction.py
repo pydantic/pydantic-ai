@@ -701,6 +701,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         )
         result = await agent.run(
             prompt,
+            conversation_id=ctx.conversation_id,
             usage=ctx.usage,
             usage_limits=reserved_usage_limits(ctx.usage_limits),
             event_stream_handler=self.event_stream_handler,

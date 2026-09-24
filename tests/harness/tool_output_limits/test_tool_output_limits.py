@@ -90,6 +90,7 @@ def _make_ctx(
         tool_call_id: str | None = 'call-1'
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
+        conversation_id: str | None = None
 
     ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry, usage_limits=usage_limits)
     if model is not None:
@@ -742,6 +743,25 @@ class TestSummarize:
         await agent.run('call the tool')
 
         assert 'tool_output_limits' in agent_run_names(capfire)
+
+    async def test_summarizer_run_belongs_to_the_tool_caller_conversation(self):
+        summary_conversations: set[str | None] = set()
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summary_conversations.update(m.conversation_id for m in messages)
+            return ModelResponse(parts=[TextPart(content='THE SUMMARY')])
+
+        def large_output() -> str:
+            return 'x' * 100
+
+        agent = Agent(
+            TestModel(call_tools='all'),
+            capabilities=[ToolOutputLimits(bands=[Band(over=5, action=Summarize(model=FunctionModel(summarize)))])],
+            toolsets=[FunctionToolset(tools=[large_output], id='large-output')],
+        )
+        await agent.run('call the tool', conversation_id='conversation-1')
+
+        assert summary_conversations == {'conversation-1'}
 
     async def test_model_summarizer_dispatches_as_durable_operation(self):
         def large_output() -> str:

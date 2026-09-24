@@ -352,7 +352,12 @@ class LLMReminder(Generic[AgentDepsT]):
         if agent is None:
             agent = Agent(self.model, name='system_reminders', instructions=self.instructions, output_type=str)
             self._agent = agent
-        result = await agent.run(transcript, usage=ctx.usage, usage_limits=reserved_usage_limits(ctx.usage_limits))
+        result = await agent.run(
+            transcript,
+            conversation_id=ctx.conversation_id,
+            usage=ctx.usage,
+            usage_limits=reserved_usage_limits(ctx.usage_limits),
+        )
         text = result.output.strip()
         return text or None
 

@@ -615,6 +615,22 @@ class TestLLMReminder:
 
         assert 'system_reminders' in agent_run_names(capfire)
 
+    async def test_generation_run_belongs_to_the_reminded_conversation(self) -> None:
+        generation_conversations: set[str | None] = set()
+
+        def generate(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            generation_conversations.update(m.conversation_id for m in messages)
+            return ModelResponse(parts=[TextPart('refocus')])
+
+        agent = Agent(
+            TestModel(call_tools=[]),
+            capabilities=[SystemReminders(dynamic_reminders=[LLMReminder(model=FunctionModel(generate))])],
+        )
+
+        await agent.run('stay focused', conversation_id='conversation-1')
+
+        assert generation_conversations == {'conversation-1'}
+
     async def test_generation_dispatches_as_durable_operation(self) -> None:
         durability = RecordingDurability()
         capability = SystemReminders(

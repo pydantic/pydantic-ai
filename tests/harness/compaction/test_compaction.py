@@ -124,6 +124,7 @@ def _make_ctx(
         usage_limits: UsageLimits | None = None
         model: Model = dataclasses.field(default_factory=TestModel)
         deps: None = None
+        conversation_id: str | None = None
         tracer: Tracer = dataclasses.field(default_factory=NoOpTracer)
         # A declared field, like the real `RunContext`: a strategy reached from
         # `before_model_request` sees a context rebuilt for the request's model, and an
@@ -2451,6 +2452,31 @@ class TestPublicPath:
         return 'asyncio'
 
     @pytest.mark.anyio
+    async def test_summary_run_belongs_to_the_compacted_conversation(self):
+        summary_conversations: set[str | None] = set()
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summary_conversations.update(m.conversation_id for m in messages)
+            return ModelResponse(parts=[TextPart(content='the summary')])
+
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            TestModel(),
+            capabilities=[
+                SummarizingCompaction(
+                    FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
+                )
+            ],
+        )
+
+        result = await agent.run('next', message_history=history, conversation_id='conversation-1')
+
+        assert result.conversation_id == 'conversation-1'
+        assert summary_conversations == {'conversation-1'}
+
+    @pytest.mark.anyio
     async def test_capabilities_wired_into_agent(self):
 
         agent = Agent(
@@ -2667,6 +2693,28 @@ class TestCompactionSpan:
         # A full agent.run only needs the asyncio backend; trio hits a TestModel
         # event-loop quirk in core unrelated to compaction.
         return 'asyncio'
+
+    @pytest.mark.anyio
+    @pytest.mark.usefixtures('instrument_all_agents')
+    async def test_summary_run_spans_carry_the_parent_conversation_id(self, capfire: CaptureLogfire) -> None:
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        summarizer = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart(content='the summary')]))
+        agent = Agent(
+            TestModel(),
+            name='outer',
+            capabilities=[
+                SummarizingCompaction(summarizer, max_messages=4, keep_messages=1, preserve_first_user_message=False)
+            ],
+        )
+
+        await agent.run('next', message_history=history, conversation_id='conversation-1')
+
+        spans = capfire.exporter.exported_spans_as_dict()
+        summary_run = next(s for s in spans if s['attributes'].get('agent_name') == 'summarizing_compaction')
+        assert summary_run['attributes']['gen_ai.conversation.id'] == 'conversation-1'
+        assert 'baggage_conflict.gen_ai.conversation.id' not in summary_run['attributes']
 
     @pytest.mark.anyio
     async def test_span_emitted_when_threshold_exceeded(self, capfire: CaptureLogfire) -> None:

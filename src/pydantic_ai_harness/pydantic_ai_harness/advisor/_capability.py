@@ -168,6 +168,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                     result = await advisor_agent.run(
                         prompt,
                         message_history=ctx.messages[:-1] if forward_history else None,
+                        conversation_id=ctx.conversation_id,
                         usage=ctx.usage,
                         usage_limits=ctx.usage_limits,
                     )

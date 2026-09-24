@@ -108,7 +108,7 @@ agent = Agent(
 
 ## Cost and failure semantics
 
-- The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight.
+- The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
 - An evaluation failure is raised on the run at the next cadence tick or at run end; judge failures are never silently dropped. If you need a judge to degrade instead, give it a fallback model through `agent` (for example a `FallbackModel`): resilience policy belongs to the judge agent, not to fields on the capability.
 - A judged run inside a [durable execution](/ai/capabilities/durable_execution/overview/) workflow or flow (Temporal, DBOS, Prefect) is rejected with `UserError` before the first model request: the evaluation is launched from a capability hook in orchestration context, so its model calls would not be checkpointed and could repeat on replay. A durable-capable agent run outside its workflow or flow is unaffected. Run judged work outside durable execution.
 

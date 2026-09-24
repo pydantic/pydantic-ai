@@ -237,6 +237,33 @@ class TestSteering:
         assert 'user: do the thing' in seen[0]
         assert 'assistant called tool work' in seen[0]
 
+    async def test_judge_run_belongs_to_the_judged_conversation(self) -> None:
+        judged = asyncio.Event()
+        judge_conversations: set[str | None] = set()
+
+        def judge_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            judge_conversations.update(m.conversation_id for m in messages)
+            return _all_good_response()
+
+        def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('work', {})])
+            return _text_response('done')
+
+        agent = Agent(
+            FunctionModel(main_fn),
+            capabilities=[TrajectoryJudge(model=FunctionModel(judge_fn), every=1, on_verdict=lambda _: judged.set())],
+        )
+
+        @agent.tool_plain
+        async def work() -> str:
+            await asyncio.wait_for(judged.wait(), timeout=_WAIT)
+            return 'worked'
+
+        await agent.run('do the thing', conversation_id='conversation-1')
+
+        assert judge_conversations == {'conversation-1'}
+
     async def test_all_good_injects_nothing(self) -> None:
         delivered = asyncio.Event()
         verdicts: list[TrajectoryVerdict] = []
