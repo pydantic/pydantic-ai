@@ -17,7 +17,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [OpenAI Codex](openai-codex.md) (via your ChatGPT/Codex subscription)
 * [OpenRouter](openrouter.md)
 * [Snowflake Cortex](snowflake.md)
-* [TypeSafe (Jev)](typesafe.md)
+* [TypeSafe (Jev)](typesafe.md), a [decision model](decision.md)
 * [Z.AI](zai.md)
 
 ## OpenAI-compatible Providers
