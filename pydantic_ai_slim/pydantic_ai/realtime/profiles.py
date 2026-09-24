@@ -32,6 +32,13 @@ class RealtimeModelProfile(TypedDict, total=False):
     """Whether the model accepts discrete image/video frames via
     image [`BinaryContent`][pydantic_ai.messages.BinaryContent] passed to
     [`send`][pydantic_ai.realtime.RealtimeSession.send]."""
+    image_input_requires_response: bool
+    """Whether an image is only taken as the start of a response, rather than as context.
+
+    When `True`, [`send`][pydantic_ai.realtime.RealtimeSession.send] accepts an image only with
+    `respond=True`, and does so without the model supporting general manual turn control; a context-only
+    image raises. OpenAI GPT-Live sets it: its voice model sees no images, and an image reaches the
+    delegated backend only when that backend runs on it. Default: `False`."""
     supports_manual_turn_control: bool
     """Whether the model supports manual turn-taking — [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio],
     [`clear_audio`][pydantic_ai.realtime.RealtimeSession.clear_audio], and
@@ -141,6 +148,7 @@ DEFAULT_AUDIO_SAMPLE_RATE = 24000
 
 DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_image_input': False,
+    'image_input_requires_response': False,
     'supports_manual_turn_control': False,
     'supports_interruption': False,
     'supports_output_truncation': False,

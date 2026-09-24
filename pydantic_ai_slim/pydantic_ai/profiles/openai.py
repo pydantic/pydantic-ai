@@ -495,11 +495,13 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for an OpenAI GPT-Live model.
 
     Live is far more constrained than the Realtime API: it owns turn-taking entirely (no manual
-    turns, no server-side interruption or truncation), speaks rather than writes, takes no images,
-    and seeds from text alone. It also has no end-of-turn frame, so Pydantic AI infers the boundary.
+    turns, no server-side interruption or truncation), speaks rather than writes, takes an image only
+    for its delegated backend to respond to, and seeds from text alone. It also has no end-of-turn frame, so Pydantic AI infers the boundary.
     """
     return {
-        'supports_image_input': False,
+        # Images go to the delegated backend, which only sees one when it runs on it.
+        'supports_image_input': True,
+        'image_input_requires_response': True,
         'supports_manual_turn_control': False,
         'supports_interruption': False,
         'supports_output_truncation': False,

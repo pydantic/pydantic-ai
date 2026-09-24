@@ -310,8 +310,9 @@ Key facts for building realtime agents:
   `RealtimeModelProfile`, the realtime counterpart to `ModelProfile`) reports
   `supports_manual_turn_control`, `supports_interruption`, `supports_image_input`,
   `supports_output_truncation`, and `supports_session_seeding`. OpenAI Realtime and Azure OpenAI
-  support all of these; OpenAI GPT-Live supports only `supports_session_seeding` (from text), since it
-  owns turn-taking and takes no images; Gemini Live lacks `supports_manual_turn_control`,
+  support all of these; OpenAI GPT-Live supports only `supports_session_seeding` (from text) and
+  `supports_image_input` with `image_input_requires_response` (an image goes to its backend, sent with
+  `respond=True`), since it owns turn-taking; Gemini Live lacks `supports_manual_turn_control`,
   `supports_interruption`, and `supports_output_truncation` (automatic VAD only). Calling an unsupported method raises `UserError` up front.
 - **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
   silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or

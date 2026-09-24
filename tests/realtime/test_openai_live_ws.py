@@ -17,6 +17,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
+    BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelRequest,
@@ -205,3 +206,44 @@ async def test_history_seeding(
     user_speech, reply = messages[2].parts[0], messages[3].parts[0]
     assert isinstance(user_speech, SpeechPart) and 'Marcelo' in (user_speech.transcript or '')
     assert isinstance(reply, SpeechPart) and reply.speaker == 'assistant' and reply.transcript
+
+
+async def test_an_image_is_described_by_the_backend(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    image_content: BinaryImage,
+    realtime_recording: bool,
+) -> None:
+    """Live's voice model sees no images, but the backend it delegates to does, and Live speaks for it.
+
+    With `respond=True` the image goes to the backend as ordinary Responses input and the backend runs
+    on it straight away; the microphone keeps streaming meanwhile, since that is what moves Live's
+    timeline along.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    agent = Agent(_BACKEND, instructions='Say what is in images the user shares, in one short sentence.')
+
+    async def silence(frames: int) -> None:
+        for _ in range(frames):
+            await cassette.before_audio_send()
+            await session.send_audio(b'\x00' * 4800)
+            if realtime_recording:  # pragma: no branch
+                await anyio.sleep(0.1)  # pragma: no cover  # only while recording
+
+    async with agent.realtime(model).session() as session:
+        await silence(10)
+        await session.send(image_content, respond=True)
+        await silence(_TRAILING_SILENCE_FRAMES)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    spoken = ' '.join(
+        part.transcript or ''
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'kiwi' in spoken.lower()

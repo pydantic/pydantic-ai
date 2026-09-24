@@ -269,6 +269,7 @@ def test_profile() -> None:
     """xAI supports cancellation-based interruption but not output truncation, and no image input."""
     assert _model().profile == RealtimeModelProfile(
         supports_image_input=False,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=False,

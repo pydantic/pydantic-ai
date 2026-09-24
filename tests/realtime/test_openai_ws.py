@@ -969,6 +969,7 @@ def test_profile_allow_seeding() -> None:
     profile = OpenAIRealtimeModel('gpt-realtime').profile
     assert profile == RealtimeModelProfile(
         supports_image_input=True,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=True,

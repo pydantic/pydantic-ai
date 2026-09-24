@@ -20,6 +20,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    BinaryImage,
     FilePart,
     ModelRequest,
     ModelResponse,
@@ -117,7 +118,8 @@ def test_live_model_names_route_to_the_live_protocol(env: Any) -> None:
 def test_profile(model: OpenAILiveModel) -> None:
     """Live is far more constrained than the Realtime API, and the profile is what says so."""
     assert model.profile == RealtimeModelProfile(
-        supports_image_input=False,
+        supports_image_input=True,
+        image_input_requires_response=True,
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_output_truncation=False,
@@ -229,18 +231,58 @@ async def test_unsupported_settings_raise_before_connecting(model: OpenAILiveMod
             pass  # pragma: no cover
 
 
-@pytest.mark.parametrize(
-    'verb', [CommitAudio(), ClearAudio(), CreateResponse(), CancelResponse(), TruncateOutput(audio_end_ms=10)]
-)
+@pytest.mark.parametrize('verb', [CommitAudio(), ClearAudio(), CancelResponse(), TruncateOutput(audio_end_ms=10)])
 async def test_turn_control_is_rejected(verb: Any) -> None:
-    """Live owns turn-taking, so every manual turn verb fails rather than being dropped."""
+    """Live owns turn-taking, so every manual turn verb fails rather than being dropped.
+
+    `CreateResponse` is the exception: the session only sends one right after an image, and on Live it
+    runs the delegated backend on that image.
+    """
     with pytest.raises(UserError, match='drives turn-taking itself'):
         await _connection().send(verb)
 
 
-async def test_images_are_rejected(image_content: Any) -> None:
-    with pytest.raises(UserError, match='does not accept image input'):
-        await _connection().send(image_content)
+async def test_an_image_goes_to_the_backend_that_runs_on_it() -> None:
+    """The voice model sees no images; the delegated backend does, as ordinary Responses input."""
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Sink(object())  # pyright: ignore[reportArgumentType]
+    await connection.send(BinaryImage(data=b'png', media_type='image/png'))
+    await connection.send(CreateResponse())
+
+    assert sent == snapshot(
+        [
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_image', 'image_url': 'data:image/png;base64,cG5n'}],
+                },
+            },
+            {'type': 'response.create'},
+        ]
+    )
+
+
+async def test_an_image_needs_respond_true(model: OpenAILiveModel) -> None:
+    """Queued as context alone, an image goes unseen: Live's voice model answers questions about it blind."""
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    image = BinaryImage(data=b'png', media_type='image/png')
+
+    with _patched_connect(ws):
+        async with Agent().realtime(model).session() as session:
+            with pytest.raises(UserError, match='only takes an image to respond to it'):
+                await session.send(image)
+            # Without manual turn control, which Live doesn't have.
+            await session.send(image, respond=True)
+
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['response.item.create', 'response.create']
 
 
 def test_seeding_projects_history_to_text() -> None:

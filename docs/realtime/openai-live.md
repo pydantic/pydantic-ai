@@ -6,8 +6,8 @@ the Live model runs the spoken conversation and hands the thinking to a *backend
 AI configures with the agent's instructions and tools. Start with the
 [realtime quickstart](overview.md#quickstart) for the shape of a session.
 
-A Live session is more constrained than a Realtime one. It owns turn-taking entirely, takes no
-images, and bills by the second rather than by the token, so read
+A Live session is more constrained than a Realtime one. It owns turn-taking entirely, takes an image
+only for its backend to look at, and bills by the second rather than by the token, so read
 [Feature support and limitations](#feature-support-and-limitations) before porting code between the
 two.
 
@@ -210,6 +210,26 @@ seeded messages and 8,192 tokens in total, so seed a long conversation with its 
 session, Live manages its own context: once it nears the limit, it continues from a summary of the
 older conversation, so a long call does not keep every early detail verbatim.
 
+## Images go to the backend
+
+Live's voice model sees no images; its delegated backend does. Send one with `respond=True`, and the
+backend runs on it straight away: Live opens a delegation, and speaks what the backend makes of the
+image. The session tracks that like any other reply, so
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] waits for it.
+
+```python
+from pydantic_ai import BinaryImage
+from pydantic_ai.realtime import RealtimeSession
+
+
+async def show(session: RealtimeSession, photo: bytes) -> None:
+    await session.send(BinaryImage(data=photo, media_type='image/jpeg'), respond=True)
+```
+
+An image sent without `respond=True` raises rather than being added as context. Queued for the backend
+alone, it goes unseen until the backend next runs, and the voice model, not knowing it exists, answers
+a question about it without looking. The profile reports this as `image_input_requires_response=True`.
+
 ## Usage is measured in seconds
 
 Live bills audio duration, not tokens. The session reports a running total of billable seconds, and
@@ -247,7 +267,7 @@ the call with your own timer or by closing the session.
 | Audio format | Limited parameter support | Mono PCM16 at 24 kHz, input and output. The API also offers 16 kHz PCM and 8 kHz G.711, which Pydantic AI does not expose |
 | Text input | Limited parameter support | [Context, not a user turn](#text-is-context-not-a-user-turn); capped at 500 tokens and delivered only while audio flows |
 | Text output | Unsupported | Live always speaks, so `output_modality='text'` raises. Read the answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] |
-| Image input | Unsupported | The Live voice model takes audio and text only. The delegated backend can take images, but Pydantic AI does not route them there yet |
+| Image input | Limited parameter support | [For the backend, with `respond=True`](#images-go-to-the-backend) |
 | Manual turns | Unsupported | Live owns turn-taking; `turn_detection` and the [commit/create verbs](turns.md#push-to-talk) raise |
 | Interruption/truncation | Unsupported | [`interrupt()`](turns.md#barge-in) raises; Live handles barge-in itself |
 | Turn boundary | Limited parameter support | [Inferred from silence](#the-turn-boundary-is-inferred), not reported by the provider |
@@ -275,7 +295,8 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio],
   [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response], and
   [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt].
-- Sending an image, and seeding history that contains audio or images.
+- Sending an image without `respond=True` (see [Images go to the backend](#images-go-to-the-backend)),
+  and seeding history that contains audio or images.
 - A [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `content` carries media, which Pydantic AI
   does not route to the delegated backend yet. It is refused before anything is sent rather than
   reaching the backend without the material that explains it. Text `content` is sent to the backend as

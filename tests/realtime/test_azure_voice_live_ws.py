@@ -176,6 +176,7 @@ async def test_audio_in_server_vad_turn(
     # `azure_voice_live=True` selected Voice Live here.
     assert model.profile == RealtimeModelProfile(
         supports_image_input=True,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=True,

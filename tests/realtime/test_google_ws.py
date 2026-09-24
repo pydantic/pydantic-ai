@@ -475,6 +475,7 @@ def test_profile_allow_seeding() -> None:
     profile = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest').profile
     assert profile == RealtimeModelProfile(
         supports_image_input=True,
+        image_input_requires_response=False,
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_output_truncation=False,

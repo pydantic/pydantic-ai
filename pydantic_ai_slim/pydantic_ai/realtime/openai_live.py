@@ -49,6 +49,7 @@ from .._genai_prices import best_effort_price
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import (
+    BinaryImage,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -476,13 +477,31 @@ class OpenAILiveConnection(RealtimeConnection):
         if isinstance(content, ToolResult):
             await self._send_tool_result(content)
             return
-        if isinstance(content, (CommitAudio, ClearAudio, CreateResponse, CancelResponse, TruncateOutput)):
+        if isinstance(content, CreateResponse):
+            # Reaches the connection only right after an image: the profile's
+            # `image_input_requires_response` is what lets the session send one, and `create_response()`
+            # itself still needs manual turn control. Running the backend on the queued image is the
+            # response: Live opens a delegation for it and speaks the result.
+            await self._send_event({'type': 'response.create'})
+            return
+        if isinstance(content, (CommitAudio, ClearAudio, CancelResponse, TruncateOutput)):
             raise UserError(
                 'OpenAI GPT-Live drives turn-taking itself: manual turn control, cancellation, and '
                 'output truncation are not available.'
             )
-        if content.is_image:
-            raise UserError('OpenAI GPT-Live does not accept image input.')
+        if isinstance(content, BinaryImage):
+            # The voice model sees no images; the delegated backend does, as ordinary Responses input.
+            await self._send_event(
+                {
+                    'type': 'response.item.create',
+                    'item': {
+                        'type': 'message',
+                        'role': 'user',
+                        'content': [{'type': 'input_image', 'image_url': content.data_uri}],
+                    },
+                }
+            )
+            return
         await self._send_event({'type': 'session.input_audio.append', 'audio': _b64(content.data)})
 
     async def _send_tool_result(self, result: ToolResult) -> None:

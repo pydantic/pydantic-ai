@@ -164,6 +164,11 @@ bound local history; they do not change which frames the provider receives. See
 [Retaining images](history.md#retaining-images). Gemini-specific live-video settings belong on the
 [Gemini provider page](gemini.md#settings).
 
+A model whose profile reports
+[`image_input_requires_response`][pydantic_ai.realtime.RealtimeModelProfile.image_input_requires_response]
+takes an image only with `respond=True`, and a context-only image raises. OpenAI GPT-Live works this way,
+because only its delegated backend sees images; see [Images go to the backend](openai-live.md#images-go-to-the-backend).
+
 ## Edge cases
 
 - Audio and transcript iterators deliberately drop old buffered items when consumers fall behind.
