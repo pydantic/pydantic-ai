@@ -35,6 +35,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import TypeAliasType, TypeVar, assert_never
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
@@ -1306,7 +1307,31 @@ class _RequireUrlMediaType:
             choice = schema['choices'][kind]
             assert isinstance(choice, dict), choice
             schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._names_a_media_type(), choice])
+        metadata = schema.setdefault('metadata', {})
+        metadata.setdefault('pydantic_js_functions', []).append(cls._string_discriminator_mapping)
         return schema
+
+    @staticmethod
+    def _string_discriminator_mapping(
+        core_schema: pydantic_core.CoreSchema, handler: pydantic.GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        """Keep only `$ref` strings in the OpenAPI discriminator mapping.
+
+        A chained URL choice renders as an inline object rather than a `$ref`, and Pydantic then puts that
+        object in `discriminator.mapping`. OpenAPI requires mapping values to be strings, so FastAPI fails to
+        build `/openapi.json` ([issue #8679](https://github.com/pydantic/pydantic-ai/issues/8679)). The
+        mapping is optional, and a tag missing from it still resolves through `oneOf`.
+        """
+        json_schema = handler(core_schema)
+        discriminator = json_schema.get('discriminator')
+        if isinstance(discriminator, dict) and 'mapping' in discriminator:
+            mapping = cast(dict[str, Any], discriminator['mapping'])
+            string_mapping = {tag: ref for tag, ref in mapping.items() if isinstance(ref, str)}
+            if string_mapping:
+                discriminator['mapping'] = string_mapping
+            else:
+                del discriminator['mapping']
+        return json_schema
 
     @staticmethod
     def _names_a_media_type() -> pydantic_core.CoreSchema:

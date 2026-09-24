@@ -1740,6 +1740,35 @@ def test_message_json_schema_keeps_the_multimodal_definitions_intact():
     assert sorted(name for name in defs if 'ImageUrl' in name) == snapshot(['ImageUrl'])
 
 
+def _discriminator_mappings(node: Any) -> list[dict[str, Any]]:
+    if isinstance(node, dict):
+        found: list[dict[str, Any]] = []
+        discriminator = node.get('discriminator')
+        if isinstance(discriminator, dict) and 'mapping' in discriminator:
+            found.append(discriminator['mapping'])
+        for value in node.values():
+            found.extend(_discriminator_mappings(value))
+        return found
+    if isinstance(node, list):
+        return [mapping for item in node for mapping in _discriminator_mappings(item)]
+    return []
+
+
+@pytest.mark.parametrize('mode', ['validation', 'serialization'])
+def test_message_json_schema_discriminator_mappings_are_refs(mode: Literal['validation', 'serialization']):
+    """OpenAPI requires discriminator mapping values to be `$ref` strings.
+
+    The tool-return gate chains each URL choice, which renders inline, and an inline object in the mapping
+    made FastAPI fail to build `/openapi.json` (issue #8679).
+    """
+    schema = ModelMessagesTypeAdapter.json_schema(mode=mode)
+
+    mappings = _discriminator_mappings(schema)
+    assert mappings
+    for mapping in mappings:
+        assert all(isinstance(ref, str) for ref in mapping.values()), mapping
+
+
 # Run out-of-process because `PYDANTIC_DISABLE_PLUGINS` is read once, when pydantic is imported.
 _GATE_WITHOUT_PYDANTIC_PLUGINS = """
 from pydantic_ai.messages import ModelMessagesTypeAdapter
