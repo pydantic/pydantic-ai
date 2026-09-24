@@ -398,8 +398,9 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     results, which don't exist before the model is selected, so the messages end with that response.
     They also end with the response when it's a suspended one being continued, as no request is sent.
 
-    It's a new list, so adding or removing messages doesn't change the run's, but the messages in
-    it are the run's own.
+    It's a new list, so adding or removing messages doesn't change the run's. Don't change the
+    messages in it: they're the run's own, except for the request being routed on a run's first
+    step, which is built for selection, so changing it has no effect on what's sent.
     """
 
     usage: RunUsage
