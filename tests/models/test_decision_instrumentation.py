@@ -121,7 +121,6 @@ async def test_one_field(allow_model_requests: None, jev: TypeSafeModel, capfire
                                         }
                                     },
                                     'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-                                    'pydantic_ai.decision.route': 'final_result',
                                     'pydantic_ai.decision.state': 'Our whole team has been locked out of the dashboard since this morning, and we have a client demo in an hour.',
                                     'logfire.json_schema': {
                                         'type': 'object',
@@ -363,7 +362,6 @@ async def test_without_content(allow_model_requests: None, jev: TypeSafeModel, c
                                         'action': {'type': 'choice'},
                                     },
                                     'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-                                    'pydantic_ai.decision.route': 'final_result',
                                     'logfire.json_schema': {
                                         'type': 'object',
                                         'properties': {
@@ -432,7 +430,6 @@ async def test_streamed_run(allow_model_requests: None, jev: TypeSafeModel, capf
                                         }
                                     },
                                     'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-                                    'pydantic_ai.decision.route': 'final_result',
                                     'pydantic_ai.decision.state': 'Could you update the billing address on my account when you get a chance?',
                                     'logfire.json_schema': {
                                         'type': 'object',
@@ -502,7 +499,6 @@ async def test_api_error(allow_model_requests: None, typesafe_api_key: str, capf
                                         }
                                     },
                                     'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-                                    'pydantic_ai.decision.route': 'final_result',
                                     'pydantic_ai.decision.state': 'The export button does nothing when I click it.',
                                     'logfire.json_schema': {
                                         'type': 'object',
@@ -746,7 +742,6 @@ async def test_a_tool_wins_over_the_output_asked_beside_it(
                                         }
                                     },
                                     'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-                                    'pydantic_ai.decision.route': 'final_result',
                                     'pydantic_ai.decision.state': {
                                         'history': [
                                             {

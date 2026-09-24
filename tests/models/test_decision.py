@@ -168,7 +168,6 @@ async def test_decide_span(allow_model_requests: None, capfire: CaptureLogfire):
                 }
             },
             'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
-            'pydantic_ai.decision.route': 'final_result',
             'pydantic_ai.decision.state': {
                 'history': [{'user': 'The migration is reviewed.'}, {'assistant': 'Noted.'}],
                 'text': 'And the tests pass.',
@@ -252,6 +251,91 @@ async def test_decide_span_below_the_threshold_without_content(allow_model_reque
             'pydantic_ai.decision.confidence': {'urgent': 0.6000000000000001, 'action': 0.9},
             'pydantic_ai.decision.route_taken': 'final_result',
             'pydantic_ai.decision.route_reason': 'below_threshold',
+        }
+    )
+
+
+class TaggedReview(BaseModel):
+    """Review a support ticket."""
+
+    tags: list[Literal['billing', 'security']] = Field(description='Which teams does this concern?')
+    action: Literal['approve', 'review'] = Field(description='What should happen next?')
+    severity: Annotated[
+        Literal[0, 1, 2],
+        WithJsonSchema(
+            {'type': 'integer', 'anyOf': [{'const': level, 'description': f'Level {level}'} for level in range(3)]}
+        ),
+    ] = Field(description='How severe is it?')
+
+
+class TaggedReviewDecisionModel(InMemoryDecisionModel):
+    """Sure of one option of the list and unsure of the other, and answers the rubric near its top level."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['tags.billing'] = NoulAnswer(noul=0.95)
+        response.answers['tags.security'] = NoulAnswer(noul=0.4)
+        response.answers['severity'] = ScoreAnswer(
+            score=1.8, confidence=0.7, probabilities={0: 0.05, 1: 0.1, 2: 0.85}, legend={2: 'Level 2'}
+        )
+        return response
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_per_question_confidence_without_content(allow_model_requests: None, capfire: CaptureLogfire):
+    """Confidence is keyed like the questions, so each option of a list gets its own, not the field's least sure.
+
+    Without content, a score keeps its probabilities, which are keyed by level, but a choice does not, since its
+    are keyed by option label. With one output type and nothing to choose between, there is no `route`.
+    """
+    agent = Agent(
+        TaggedReviewDecisionModel(),
+        output_type=TaggedReview,
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    result = await agent.run('I was charged twice.')
+
+    assert result.output == TaggedReview(tags=['billing'], action='review', severity=2)
+    assert result.response.provider_details is not None
+    assert result.response.provider_details['confidence'] == snapshot(
+        {'tags': 0.19999999999999996, 'action': 0.9, 'severity': 0.7}
+    )
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert {
+        key: value for key, value in span['attributes'].items() if key.startswith('pydantic_ai.decision.')
+    } == snapshot(
+        {
+            'pydantic_ai.decision.questions': {
+                'tags.billing': {'type': 'noul'},
+                'tags.security': {'type': 'noul'},
+                'action': {'type': 'choice'},
+                'severity': {'type': 'score'},
+            },
+            'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+            'pydantic_ai.decision.usage.input_tokens': 4,
+            'pydantic_ai.decision.usage.output_tokens': 2,
+            'pydantic_ai.decision.answers': {
+                'tags.billing': {'type': 'noul', 'noul': 0.95},
+                'tags.security': {'type': 'noul', 'noul': 0.4},
+                'action': {'type': 'choice', 'confidence': 0.9},
+                'severity': {
+                    'type': 'score',
+                    'score': 1.8,
+                    'confidence': 0.7,
+                    'probabilities': {'0': 0.05, '1': 0.1, '2': 0.85},
+                },
+            },
+            'pydantic_ai.decision.confidence': {
+                'tags.billing': 0.8999999999999999,
+                'tags.security': 0.19999999999999996,
+                'action': 0.9,
+                'severity': 0.7,
+            },
         }
     )
 

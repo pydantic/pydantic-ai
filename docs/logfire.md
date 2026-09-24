@@ -448,8 +448,8 @@ A `decide` span is only emitted inside an instrumented model request, and only f
 | `pydantic_ai.decision.questions` | The questions as sent: `{name: {"type": ..., "instructions": ..., "criteria": ...}}`, where `type` is `noul` (yes/no), `choice` or `score` |
 | `pydantic_ai.decision.state` | The state as sent: the text being judged, or a JSON object that adds the conversation's `history` |
 | `pydantic_ai.decision.answers` | The answers as received: `{"type": "noul", "noul": ...}` for a yes/no, whose `noul` is the probability of yes, `{"type": "choice", "choice": ..., "confidence": ..., "probabilities": {...}}` for a pick, and `{"type": "score", "score": ..., "confidence": ..., "probabilities": {...}, "legend": {...}}` for a rubric |
-| `pydantic_ai.decision.route` | When the request asks a route's field questions, the name of that output tool or tool |
-| `pydantic_ai.decision.confidence` | When the request asks a route's field questions, each field's confidence as Pydantic AI derived it, keyed by field name: the same values as `provider_details['confidence']` on the response |
+| `pydantic_ai.decision.route` | When the request asks the field questions of a route that was chosen from others, the name of that output tool or tool: beside the route question, when filling a route picked by an earlier request, or when filling the one route left (`forced`). A request for a single output type with nothing to choose between has no `route` |
+| `pydantic_ai.decision.confidence` | When the request asks field questions, each question's confidence as Pydantic AI derived it after applying `decision_boolean_threshold`, keyed like the questions and answers. Each option of a `list` or mapping gets its own entry under `field.option`, where `provider_details['confidence']` on the response gives the field the least sure of its options. A `float` field that asks for a probability has no entry, since the probability is the answer |
 | `pydantic_ai.decision.route_question` | When the request asks which route to take, the key of that question: `tool`, with underscores appended if a field already has that name |
 | `pydantic_ai.decision.route_options` | When the request asks which route to take, the routes offered, in order, as a JSON array of output tool and tool names |
 | `pydantic_ai.decision.route_taken` | When the request asks which route to take, the route the run took, after applying `decision_tool_call_threshold` |
@@ -470,7 +470,7 @@ With [`include_content=False`](#excluding-prompts-and-completions), strings are 
 
 - `pydantic_ai.decision.state` is left out.
 - `pydantic_ai.decision.questions` keeps only each question's `type`, since the instructions and criteria are your own words.
-- `pydantic_ai.decision.answers` keeps only each answer's `type` and its numbers: `noul`, `score` and `confidence`. The picked `choice`, the `probabilities` keyed by option, and a rubric's `legend` are left out, since options can quote the text being judged. The answer to the route question is kept whole, since its options are tool names.
+- `pydantic_ai.decision.answers` keeps only each answer's `type` and its numbers: a yes/no's `noul`, a pick's `confidence`, and a rubric's `score`, `confidence` and `probabilities`, which are keyed by level number. A pick's `choice` and its `probabilities`, keyed by option, and a rubric's `legend` are left out, since options and level descriptions can quote the text being judged. The answer to the route question is kept whole, since its options are tool names.
 
 The route attributes and `pydantic_ai.decision.confidence` hold only names and numbers, so they're recorded either way.
 

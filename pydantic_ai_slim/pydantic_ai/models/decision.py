@@ -378,6 +378,7 @@ class DecisionModel(Model[InterfaceClient]):
         model_settings: DecisionModelSettings,
         *,
         route: str | None = None,
+        fields: bool = False,
         route_question: str | None = None,
         forced: bool = False,
     ) -> AsyncGenerator[tuple[DecisionResponse, Span]]:
@@ -387,8 +388,9 @@ class DecisionModel(Model[InterfaceClient]):
         answers before it closes. Nothing more is sent inside it: a request that fills a picked route is a sibling
         of the one that picked it, not its child. Outside an instrumented request the span is a non-recording one.
 
-        `route` is the tool or output route whose fields this request asks, `route_question` the key of the
-        question that picks between routes, and `forced` says the route was taken without one.
+        `route` is the tool or output route whose fields this request asks, when it was or is being picked from
+        others; `fields` says the request asks field questions at all, `route_question` is the key of the question
+        that picks between routes, and `forced` says the route was taken without one.
         """
         policy = open_request_policy()
         if policy is None:
@@ -403,6 +405,7 @@ class DecisionModel(Model[InterfaceClient]):
                     request,
                     model_settings,
                     route=route,
+                    fields=fields,
                     route_question=route_question,
                     forced=forced,
                     include_content=include_content,
@@ -477,10 +480,13 @@ class DecisionModel(Model[InterfaceClient]):
         async with self._decide(
             DecisionRequest(state=state, questions=ask.questions),
             settings,
-            route=output_tool.name if output_tool else None,
+            # The output's fields belong to a route only when there was another to choose: a lone output type
+            # with nothing beside it is filled, not picked.
+            route=output_tool.name if output_tool and tool_key is not None else None,
+            fields=output_tool is not None,
             route_question=tool_key,
         ) as (response, span):
-            args, provider_details = ask.answers(response, boolean_threshold)
+            args, provider_details, confidence = ask.answers(response, boolean_threshold)
             parts: list[ModelResponsePart] = []
             if output_tool:
                 parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
@@ -506,7 +512,7 @@ class DecisionModel(Model[InterfaceClient]):
                     taken = name, 'below_threshold'
                 else:
                     taken = name, 'selected'
-            _record_outcome(span, provider_details, fields=output_tool is not None, taken=taken)
+            _record_outcome(span, confidence if output_tool is not None else None, taken=taken)
 
         if to_fill is not None:
             # `_tool_call` tolerates an offered route missing from `probabilities` when it falls back to the
@@ -556,10 +562,14 @@ class DecisionModel(Model[InterfaceClient]):
         """
         try:
             async with self._decide(
-                DecisionRequest(state=state, questions=ask.questions), settings, route=tool.name, forced=forced
+                DecisionRequest(state=state, questions=ask.questions),
+                settings,
+                route=tool.name,
+                fields=True,
+                forced=forced,
             ) as (response, span):
-                args, provider_details = ask.answers(response, boolean_threshold)
-                _record_outcome(span, provider_details, fields=True)
+                args, provider_details, confidence = ask.answers(response, boolean_threshold)
+                _record_outcome(span, confidence)
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
             # could silently choose another route, so a failure while filling is terminal and names that route.
@@ -669,8 +679,14 @@ _DEFAULT_BOOLEAN_THRESHOLD = 0.5
 _RouteReason: TypeAlias = Literal['selected', 'below_threshold', 'handed_off', 'forced']
 """Why a `decide` span's route was taken: see `pydantic_ai.decision.route_reason` in the Logfire docs."""
 
-# What an answer says in numbers alone. The rest of it is labels, which can quote the text being judged.
-_NUMERIC_ANSWER_FIELDS = ('noul', 'score', 'confidence')
+# What each kind of answer keeps without content: its numbers, and what they are keyed by only where that is not
+# content. A score's probabilities are keyed by level numbers; a choice's are keyed by option labels, which can quote
+# the text being judged, as can the picked choice itself and a rubric's legend.
+_NUMERIC_ANSWER_FIELDS: dict[str, tuple[str, ...]] = {
+    'noul': ('noul',),
+    'choice': ('confidence',),
+    'score': ('score', 'confidence', 'probabilities'),
+}
 
 
 def _decide_span_attributes(
@@ -679,6 +695,7 @@ def _decide_span_attributes(
     settings: DecisionModelSettings,
     *,
     route: str | None,
+    fields: bool,
     route_question: str | None,
     forced: bool,
     include_content: bool,
@@ -706,6 +723,7 @@ def _decide_span_attributes(
     json_attributes = ['pydantic_ai.decision.questions', 'pydantic_ai.decision.thresholds']
     if route is not None:
         attributes['pydantic_ai.decision.route'] = route
+    if fields:
         # Set once the response is in, and declared here with the rest.
         json_attributes.append('pydantic_ai.decision.confidence')
     if forced:
@@ -744,8 +762,9 @@ def _decide_response_attributes(
     Usage is this request's alone, and deliberately not `gen_ai.usage.*`: the `chat` span above reports the sum of its
     requests there, and a backend that adds up usage across spans would count it twice.
 
-    Without content, an answer keeps its numbers and its type: its labels -- a picked option, the options a
-    distribution is keyed by, a rubric's levels -- can quote the state. The route question's answer is kept whole,
+    Without content, an answer keeps its type and numbers: a score its level probabilities too, which are keyed by
+    number, but not a choice its option probabilities, nor the picked option or a rubric's legend, which can quote
+    the state. The route question's answer is kept whole,
     since its labels are tool and output names.
     """
     attributes: dict[str, AttributeValue] = {
@@ -759,7 +778,8 @@ def _decide_response_attributes(
     for name, answer in response.answers.items():
         wire = _wire(answer)
         if not include_content and name != route_question:
-            wire = {key: value for key, value in wire.items() if key == 'type' or key in _NUMERIC_ANSWER_FIELDS}
+            kept = _NUMERIC_ANSWER_FIELDS[answer.type]
+            wire = {key: value for key, value in wire.items() if key == 'type' or key in kept}
         answers[name] = wire
     attributes['pydantic_ai.decision.answers'] = safe_to_json(answers).decode()
     return attributes
@@ -767,21 +787,20 @@ def _decide_response_attributes(
 
 def _record_outcome(
     span: Span,
-    provider_details: dict[str, Any],
+    confidence: dict[str, float] | None,
     *,
-    fields: bool,
     taken: tuple[str, _RouteReason] | None = None,
 ) -> None:
     """Record on a `decide` span what the run made of its answers, none of which is content.
 
-    `fields` says the span asked a route's field questions, whose thresholded confidence is recorded; `taken` is
-    the route taken on the span that asked the route question, and why.
+    `confidence` is the thresholded confidence per field question, keyed like the questions, when the span asked
+    any; `taken` is the route taken on the span that asked the route question, and why.
     """
     if not span.is_recording():
         return
     attributes: dict[str, AttributeValue] = {}
-    if fields:
-        attributes['pydantic_ai.decision.confidence'] = safe_to_json(provider_details['confidence']).decode()
+    if confidence is not None:
+        attributes['pydantic_ai.decision.confidence'] = safe_to_json(confidence).decode()
     if taken is not None:
         attributes['pydantic_ai.decision.route_taken'], attributes['pydantic_ai.decision.route_reason'] = taken
     span.set_attributes(attributes)
@@ -837,10 +856,15 @@ def _answers(
     questions: dict[str, DecisionQuestion],
     boolean_threshold: float,
     defaulted: frozenset[str],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The output's arguments and `provider_details` from the model's answers to the field questions."""
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, float]]:
+    """The output's arguments and `provider_details` from the model's answers to the field questions.
+
+    Also each question's confidence, keyed like the questions: `provider_details['confidence']` is keyed by field,
+    and gives a field that fans out the least sure of its options, where this keeps each option's own.
+    """
     args: dict[str, Any] = {}
     confidence: dict[str, float] = {}
+    by_question: dict[str, float] = {}
     probabilities: dict[str, dict[str, float]] = {}
     scores: dict[str, float] = {}
     for name, prop in properties.items():
@@ -850,6 +874,7 @@ def _answers(
             verdicts, labelled = _fanned_in(name, keys, answers, boolean_threshold)
             _set(args, name, {key: chosen for key, (chosen, _) in verdicts.items()})
             confidence[name] = min(sureness for _, sureness in verdicts.values())
+            by_question.update({f'{name}.{option}': sureness for option, (_, sureness) in verdicts.items()})
             probabilities[name] = labelled
             continue
         if prop.get('type') == 'array':
@@ -857,6 +882,7 @@ def _answers(
             verdicts, labelled = _fanned_in(name, _options(prop['items']) or {}, answers, boolean_threshold)
             _set(args, name, [option for option, (chosen, _) in verdicts.items() if chosen])
             confidence[name] = min(sureness for _, sureness in verdicts.values())
+            by_question.update({f'{name}.{option}': sureness for option, (_, sureness) in verdicts.items()})
             probabilities[name] = labelled
             continue
         answer = answers.get(name)
@@ -869,7 +895,7 @@ def _answers(
             else:
                 chosen, sureness = _verdict(answer.noul, boolean_threshold)
                 _set(args, name, chosen)
-                confidence[name] = sureness
+                confidence[name] = by_question[name] = sureness
         elif isinstance(questions[name], ChoiceQuestion) and isinstance(answer, ChoiceAnswer):
             if answer.choice not in none_option:
                 # The option itself is written back, looked up by its label rather than parsed out of it: `1`
@@ -883,20 +909,20 @@ def _answers(
                 _slot(args, name)
             else:
                 _set(args, name, None)
-            confidence[name] = answer.confidence
+            confidence[name] = by_question[name] = answer.confidence
             probabilities[name] = answer.probabilities
         elif isinstance(questions[name], ScoreQuestion) and isinstance(answer, ScoreAnswer):
             # `score` is a position along the rubric and falls between levels. The answer has to be one of them,
             # so it is rounded to the nearest; the likeliest level would throw away the ordering that makes a
             # rubric a rubric. A half goes up, unlike `round`.
             _set(args, name, min(int(answer.score + 0.5), max(answer.probabilities)))
-            confidence[name] = answer.confidence
+            confidence[name] = by_question[name] = answer.confidence
             probabilities[name] = {str(level): p for level, p in answer.probabilities.items()}
             scores[name] = answer.score
         else:
             raise UnexpectedModelBehavior(f'Unexpected answer from the model for output field {name!r}: {answer!r}')
     _leave_out_unanswered(args, properties, defaulted)
-    return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
+    return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}, by_question
 
 
 def _tool_call(
@@ -1381,7 +1407,9 @@ class _Ask:
         """No fields to fill: a turn that only picks a route still reports the same empty details."""
         return cls({}, {}, frozenset())
 
-    def answers(self, response: DecisionResponse, boolean_threshold: float) -> tuple[dict[str, Any], dict[str, Any]]:
+    def answers(
+        self, response: DecisionResponse, boolean_threshold: float
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, float]]:
         return _answers(response.answers, self.properties, self.questions, boolean_threshold, self.defaulted)
 
 
