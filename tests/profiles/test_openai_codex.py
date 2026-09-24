@@ -14,6 +14,8 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from pydantic_ai.profiles.openai import openai_model_profile
     from pydantic_ai.profiles.openai_codex import openai_codex_model_profile
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -44,4 +46,25 @@ def test_codex_profile_extends_the_standard_openai_profile():
     }
     assert {k: v for k, v in codex.items() if k not in overridden} == {
         k: v for k, v in base.items() if k not in overridden
+    }
+
+
+def test_codex_provider_layers_wire_dialect_over_first_party_profile():
+    """The Codex provider preserves first-party flags beneath its narrower wire dialect."""
+    openai = dict(OpenAIProvider.model_profile('gpt-5.6-luna') or {})
+    codex = dict(OpenAICodexProvider.model_profile('gpt-5.6-luna') or {})
+    dialect = {
+        'openai_unsupported_model_settings',
+        'openai_responses_requires_streaming',
+        'openai_responses_requires_store_false',
+        'openai_supports_input_token_counting',
+    }
+
+    assert {key: value for key, value in codex.items() if key not in dialect} == {
+        key: value for key, value in openai.items() if key not in dialect
+    }
+    assert codex['tool_addition_mode'] == 'with_definitions'
+    assert codex['tool_deferral_mode'] == 'with_tool_search'
+    assert {key: codex[key] for key in dialect} == {
+        key: openai_codex_model_profile('gpt-5.6-luna')[key] for key in dialect
     }
