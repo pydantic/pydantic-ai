@@ -194,9 +194,12 @@ logfire-api = false
 # TODO(DouweM): Remove after 2026-09-29 16:25 UTC. https://github.com/pydantic/pydantic-ai/issues/8636
 # This admits only the reviewed 1.8.0 artifacts; later Anthropic artifacts remain quarantined.
 anthropic = "2026-09-22T16:25:39Z"
-# OpenAI 3.8.0 is the first release listing `gpt-6-astra` in `ChatModel`/`ReasoningEffort('max')`.
-# TODO(dsfaccini): Remove after 2026-09-10 19:51 UTC.
-openai = "2026-09-03T19:51:09Z"
+# OpenAI 3.19.0 is the first release listing `gpt-rosalind-research`, and the `openai` floor.
+# TODO(adtyavrdhn): Remove after 2026-09-30 00:09 UTC.
+openai = "2026-09-23T00:08:49Z"
+# google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
+# TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
+google-genai = "2026-09-22T17:23:02Z"
 
 [dependency-groups]
 dev = [
