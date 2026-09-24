@@ -17,7 +17,7 @@ agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace(Path.cwd
 
 
 @agent.tool
-async def execute(ctx: RunContext[None], command: list[str]) -> str:
+async def execute(ctx: RunContext, command: list[str]) -> str:
     result = await ctx.workspace.run(command, timeout=60)
     return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
 
@@ -92,7 +92,7 @@ small for every workspace.
 from pydantic_ai import RunContext
 
 
-async def read_source(ctx: RunContext[None], path: str, offset: int = 1) -> str:
+async def read_source(ctx: RunContext, path: str, offset: int = 1) -> str:
     window = await ctx.workspace.read_file(path, offset=offset, limit=200)
     return window.text
 ```
@@ -416,8 +416,8 @@ from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 
 
-class ShareTree(AbstractCapability[None]):
-    async def before_run(self, ctx: RunContext[None]) -> None:
+class ShareTree(AbstractCapability):
+    async def before_run(self, ctx: RunContext) -> None:
         # Runs in workflow code: this write is one durable unit.
         await ctx.workspace.write_text('TASK.md', 'Summarize the repository.')
 
@@ -430,7 +430,7 @@ agent = Agent(
 
 
 @agent.tool
-async def read_task(ctx: RunContext[None]) -> str:
+async def read_task(ctx: RunContext) -> str:
     # Runs inside a durable unit: the workspace is used directly.
     return await ctx.workspace.read_text('TASK.md')
 ```
