@@ -24,6 +24,7 @@ _FACTORIES = (
     ('exa_agent', 'exa:ExaAgent'),
     ('exa_search', 'exa:ExaSearch'),
     ('filesystem', 'filesystem:FileSystem'),
+    ('github', 'github:GitHub'),
     ('input_guardrail', 'guardrails:InputGuardrail'),
     ('output_guardrail', 'guardrails:OutputGuardrail'),
     ('tool_guardrail', 'guardrails:ToolGuardrail'),

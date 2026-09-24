@@ -109,6 +109,9 @@ prompt-injection-defender = [
 prompt-injection-defender-ml = [
     "stackone-defender[onnx]>=0.7.3,<0.8 ; python_full_version >= '3.11'",
 ]
+github = [
+    "pydantic-ai-slim[mcp]>=2.44.0",
+]
 coder = [
     "ripgrep==14.1.0 ; sys_platform != 'android'",
 ]

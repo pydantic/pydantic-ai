@@ -107,7 +107,7 @@ _EXPERIMENTAL_MARKERS = ('HarnessExperimentalWarning', 'removed in any release',
 # Lifecycle hook names must not lead a page -- mechanism goes below the purpose.
 _LEAD_HOOK_NAMES = ('before_model_request', 'after_model_request', 'before_tool_execute', 'after_tool_execute')
 # ClassName-style headings are a smell, except where the class name IS the name.
-_ALLOWED_CLASSNAME_HEADINGS = {'FileSystem', 'LocalStack', 'StackOne'}
+_ALLOWED_CLASSNAME_HEADINGS = {'FileSystem', 'GitHub', 'LocalStack', 'StackOne'}
 _FORBIDDEN_HEADINGS = {'overflow', 'authoring', 'overflow capability', 'compaction capabilities'}
 
 
@@ -155,6 +155,7 @@ _CAPABILITY_PAGE_META = {
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
+    'github.md': ('github', 'GitHub'),
     'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
     'spend.md': ('spend', 'Spend'),
     'localstack.md': ('localstack', 'LocalStack'),
