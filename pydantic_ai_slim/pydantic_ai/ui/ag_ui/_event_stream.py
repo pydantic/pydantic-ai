@@ -205,10 +205,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if not isinstance(declared, str):
             return False
         version = parse_protocol_declaration(declared)
-        # `PROTOCOL_VERSION` is set whenever this runs: `_emit_1_0_fields` gates the call on the 1.0 SDK.
+        # `PROTOCOL_VERSION` is set whenever this runs, since `_emit_1_0_fields` gates the call on the 1.0
+        # SDK. The SDK generates it from its schema id, so a future release could take it outside the
+        # grammar this server reads; with nothing to compare against, a declared peer is handled as newer.
         spoken = parse_protocol_declaration(PROTOCOL_VERSION)
-        assert spoken is not None, f'the SDK generates {PROTOCOL_VERSION!r} from its schema id, in `MAJOR.MINOR` form'
-        if version is None or version > spoken:
+        if version is None or spoken is None or version > spoken:
             warnings.warn(
                 f'AG-UI protocol version {declared!r} on the run input is not one this server speaks '
                 f'(up to {PROTOCOL_VERSION}); treating the client as newer than this server.',

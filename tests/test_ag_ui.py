@@ -8417,12 +8417,10 @@ async def test_run_finished_cancelled_outcome() -> None:
     assert [entry['model'] for entry in run_finished['usage']] == ['test']
 
 
-@requires_ag_ui('1.0.0')
-async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
-    """With `include_usage`, `RUN_FINISHED.usage` has one entry per `(provider, model)`, summed across
-    responses, with every zero count left absent rather than reported as zero.
+def _three_response_agent() -> Agent:
+    """An agent whose run makes three model calls: two tool calls, then text.
 
-    `on_complete` runs before `RUN_FINISHED` is built, so it is where the test sets each response's usage.
+    `on_complete` runs before `RUN_FINISHED` is built, so a usage test sets each response's usage there.
     """
 
     async def stream_function(
@@ -8439,6 +8437,15 @@ async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
     @agent.tool_plain
     def tool() -> str:
         return 'called'
+
+    return agent
+
+
+@requires_ag_ui('1.0.0')
+async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
+    """With `include_usage`, `RUN_FINISHED.usage` has one entry per `(provider, model)`, summed across
+    responses, with every zero count left absent rather than reported as zero."""
+    agent = _three_response_agent()
 
     def set_usage(run_result: AgentRunResult[Any]) -> None:
         responses = [message for message in run_result.new_messages() if isinstance(message, ModelResponse)]
@@ -8503,27 +8510,14 @@ async def test_run_finished_usage_drops_counts_outside_the_wire_range() -> None:
     The bound applies to a `(provider, model)` pair's sum, so two responses that only overflow together
     are caught too, and `totalTokens` is the sum of the counts actually sent.
     """
-
-    async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
-    ) -> AsyncIterator[DeltaToolCalls | str]:
-        tool_returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
-        if tool_returns < 2:
-            yield {0: DeltaToolCall(name='tool', json_args='{}')}
-        else:
-            yield 'done'
-
-    agent = Agent(model=FunctionModel(stream_function=stream_function))
-
-    @agent.tool_plain
-    def tool() -> str:
-        return 'called'
+    agent = _three_response_agent()
 
     def set_usage(run_result: AgentRunResult[Any]) -> None:
         responses = [message for message in run_result.new_messages() if isinstance(message, ModelResponse)]
         assert len(responses) == 3
         responses[0].provider_name = 'provider-a'
         responses[0].model_name = 'model-a'
+        # A misreporting provider, or a bad cast upstream of one: `RequestUsage` doesn't bound its counts.
         responses[0].usage = RequestUsage(input_tokens=-5, output_tokens=10, cache_read_tokens=2**53)
         for response in responses[1:]:
             response.provider_name = 'provider-b'
@@ -8774,8 +8768,9 @@ def test_file_source_without_known_provider_is_skipped(provider: str | None, mat
 
 @requires_ag_ui('1.0.0')
 def test_tool_message_content_parts_load_as_typed_content(tiny_image: BinaryImage) -> None:
-    """From 1.0 a tool message can carry content parts: a lone text part rehydrates like string content, media
-    loads as the typed content a reloaded return has, and `sanitize_messages` checks it like a user message's.
+    """From 1.0 a tool message can carry content parts: a lone text part rehydrates like string content, one among
+    several stays text, media loads as the typed content a reloaded return has, and `sanitize_messages` checks it
+    like a user message's.
 
     A tool message left with no parts keeps its place with no content, so its call isn't orphaned.
     """
@@ -8785,7 +8780,7 @@ def test_tool_message_content_parts_load_as_typed_content(tiny_image: BinaryImag
             id='m2',
             tool_call_id='c1',
             content=[
-                TextInputContent(text='here is the chart'),
+                TextInputContent(text='[1, 2, 3]'),
                 ImageInputContent(
                     source=InputContentDataSource(value=tiny_image.base64, mime_type=tiny_image.media_type)
                 ),
@@ -8810,7 +8805,7 @@ def test_tool_message_content_parts_load_as_typed_content(tiny_image: BinaryImag
         loaded = AGUIAdapter.load_messages(messages)
     chart, lookup, fetch, emptied = tool_returns(loaded)
     image = BinaryImage(data=tiny_image.data, media_type=tiny_image.media_type, identifier=tiny_image.identifier)
-    assert chart.content == ['here is the chart', image]
+    assert chart.content == ['[1, 2, 3]', image]
     assert chart.files == [image]
     assert lookup.content == {'answer': 42}
     assert fetch.content == UploadedFile(file_id='file-1', provider_name='openai', media_type='image/png')
@@ -8818,7 +8813,7 @@ def test_tool_message_content_parts_load_as_typed_content(tiny_image: BinaryImag
 
     with pytest.warns(UserWarning, match='uploaded file'):
         sanitized = tool_returns(sanitize_messages(loaded))
-    assert [part.content for part in sanitized] == [['here is the chart', image], {'answer': 42}, None, None]
+    assert [part.content for part in sanitized] == [['[1, 2, 3]', image], {'answer': 42}, None, None]
 
 
 @pytestmark_interrupts
