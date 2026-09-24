@@ -37,6 +37,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load() == Settings(model='test', thinking=False)
     # Databases from before speculative execution keep it off.
     assert store.load().speculative_code_mode is False
+    # Databases from before `/spinner` keep the braille they always showed.
+    assert store.load().spinner == 'working'
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
@@ -100,6 +102,8 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('run.request_limit', '"10"'),
         ('run.request_limit', 'invalid json'),
         ('display.theme', '"light"'),
+        ('display.spinner', '""'),
+        ('display.spinner', '3'),
         ('run.speculative_code_mode', '"yes"'),
     ],
 )
@@ -184,3 +188,13 @@ def test_codex_speed_labels_preserve_existing_preferences(tmp_path: Path, tier: 
     source.reset(row)
     assert SettingsStore(path).model_settings(name) == {'openai_reasoning_effort': 'high', 'future_option': 42}
     assert source.current(row) == 'default'
+
+
+def test_saved_spinner_from_a_removed_plugin_is_kept(tmp_path: Path) -> None:
+    """Plugin and user spinners are unknown when settings load, so any saved name survives."""
+    path = tmp_path / 'config.db'
+    SettingsStore(path).set('display.spinner', 'wave')
+    store = SettingsStore(path)
+    assert store.load().spinner == 'wave'
+    config_command(store, ['set', 'display.thinking', 'false'])
+    assert SettingsStore(path).overrides() == {'display.spinner': 'wave', 'display.thinking': False}

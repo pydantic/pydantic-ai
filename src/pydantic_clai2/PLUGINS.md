@@ -894,6 +894,26 @@ readable text only; the colours in the row belong to CLAI. A fragment that raise
 shows its error name in the row instead, so one broken plugin cannot take the
 footer down.
 
+### Offer a spinner: `host.spinner(name, frames, *, interval, description)`
+
+Adds a working animation to `/spinner`. The user selects it there or with
+`/set display.spinner NAME`; registering does not select it.
+
+```python
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost[None]) -> None:
+    host.spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave')
+```
+
+Frames are capped at 40 characters and padded to one terminal width, and
+`interval` is clamped to 0.02-1 seconds per frame (0.2 by default). A blank or
+spaced name, an empty frame list, or a control character in a frame raises
+`ValueError` during activation. A plugin spinner replaces a builtin of the same
+name; the user's `spinners.json` replaces both. Unloading the plugin removes it,
+and a selected spinner that is gone shows the default `working`.
+
 ## Rules that keep plugins predictable
 
 - Handlers are `async`. There is no sync variant of anything.

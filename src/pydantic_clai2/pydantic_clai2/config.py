@@ -34,6 +34,11 @@ class Settings(BaseModel):
     theme: str = Field(
         default='default', description='Keep CLAI colours, or select a bundled Termflow palette with /theme.'
     )
+    spinner: str = Field(
+        default='working',
+        min_length=1,
+        description='Working animation; /spinner previews the choices. An unknown name shows working.',
+    )
     thinking: bool = Field(default=True, description="Show the model's thinking as it streams.")
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
     tool_output: bool = Field(
@@ -67,6 +72,7 @@ SETTING_FIELDS = {
     'run.request_limit': 'request_limit',
     'display.thinking': 'thinking',
     'display.theme': 'theme',
+    'display.spinner': 'spinner',
     'display.splash': 'splash',
     'display.tool_output': 'tool_output',
     'display.shell_lines': 'shell_lines',
@@ -77,6 +83,9 @@ SETTING_FIELDS = {
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
 }
+
+STRING_SETTINGS = frozenset({'model', 'display.theme', 'display.spinner'})
+"""Keys whose typed value is taken as text rather than parsed as JSON."""
 
 
 def resolve_settings(overrides: dict[str, JsonValue]) -> Settings:

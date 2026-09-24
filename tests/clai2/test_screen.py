@@ -90,14 +90,14 @@ async def test_paused_status_line_releases_and_reserves_the_row() -> None:
     async with StatusLine(console, Status()) as line:
         reserved = output.getvalue()
         assert '\x1b[1;20r' in reserved and '\x1b[?25l' in reserved
-        assert 'Working... Ctrl-C to interrupt' in reserved
+        assert '> Working ' in reserved
         async with line.paused():
             paused = output.getvalue()[len(reserved) :]
             cleared = ''.join(f'\x1b[{row};1H\x1b[2K' for row in range(21, 25))
             assert paused == f'\x1b7\x1b[r{cleared}\x1b8\x1b[?25h'
         resumed = output.getvalue()[len(reserved) + len(paused) :]
         assert '\x1b[1;20r' in resumed and '\x1b[?25l' in resumed
-        assert 'Working... Ctrl-C to interrupt' in resumed
+        assert '> Working ' in resumed
     assert output.getvalue().endswith('\x1b[?25h')
 
 

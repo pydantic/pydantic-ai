@@ -111,15 +111,21 @@ async def test_shimmer_without_spinner(monkeypatch: pytest.MonkeyPatch, truecolo
     output = io.StringIO()
     frames: list[str] = []
     original_sleep = asyncio.sleep
+    now = [0.0]
 
     async def tick(delay: float) -> None:
         frames.append(output.getvalue().split('\x1b[2K')[-1])
+        now[0] += delay
         if len(frames) == 11:
             raise asyncio.CancelledError
         await original_sleep(0)
 
     monkeypatch.setattr('pydantic_clai2.status.asyncio.sleep', tick)
-    async with StatusLine(Console(file=output, force_terminal=True, width=40, height=24), Status(model='test\x1b\n')):
+    async with StatusLine(
+        Console(file=output, force_terminal=True, width=40, height=24),
+        Status(model='test\x1b\n'),
+        clock=lambda: now[0],
+    ):
         while len(frames) < 11:
             await original_sleep(0)
     plain = [re.sub(r'\x1b\[[0-9;]*m|\x1b8', '', frame) for frame in frames]
@@ -142,12 +148,12 @@ async def test_row_reserved_before_margins_and_again_on_resize() -> None:
 
     output = Output()
     console = Console(file=output, force_terminal=True, width=40, height=24)
-    async with StatusLine(console, Status()):
+    async with StatusLine(console, Status(), clock=lambda: 0.0):
         painted.clear()
         await asyncio.wait_for(painted.wait(), timeout=5)
         first = output.getvalue()
         assert first.count('\x1bD' * 4 + '\x1b[4A\x1b7\x1b[1;20r') == 1
-        assert '│> Working... Ctrl-C to interrupt' in first
+        assert '│> Working ⠋ Ctrl-C to interrupt' in first
         assert first.count('\x1b[24;1H') >= 2
         console.height = 30
         painted.clear()
@@ -163,7 +169,7 @@ async def test_row_reserved_before_margins_and_again_on_resize() -> None:
         console.height = 24
         painted.clear()
         await asyncio.wait_for(painted.wait(), timeout=5)
-        assert 'Working... Ctrl-C to interrupt' in output.getvalue()[before:]
+        assert 'Ctrl-C to interrupt' in output.getvalue()[before:]
 
 
 async def test_tiny_terminal() -> None:

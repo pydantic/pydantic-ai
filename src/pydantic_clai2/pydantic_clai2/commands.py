@@ -15,8 +15,9 @@ from termflow.tui.completion import (  # pyright: ignore[reportMissingTypeStubs]
     Document,
 )
 
-from .config import SETTING_FIELDS, PluginSettings
+from .config import SETTING_FIELDS, STRING_SETTINGS, PluginSettings
 from .settings_store import SettingsStore
+from .spinners import BUILTIN_SPINNERS
 from .theme import names as theme_names
 
 
@@ -152,7 +153,7 @@ def config_command(store: SettingsStore, args: list[str]) -> str:
         store.reset(args[1])
     elif len(args) == 3 and args[0] == 'set':
         adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
-        value: JsonValue = args[2] if args[1] in ('model', 'display.theme') else adapter.validate_json(args[2])
+        value: JsonValue = args[2] if args[1] in STRING_SETTINGS else adapter.validate_json(args[2])
         store.set(args[1], value)
     else:
         raise ValueError('Usage: config show|get KEY|set KEY VALUE|reset KEY')
@@ -165,6 +166,8 @@ def set_completions(args: list[str]) -> Iterable[str]:
         return (*SETTING_FIELDS, 'api_key')
     if len(args) == 2 and args[0] == 'display.theme':
         return theme_names()
+    if len(args) == 2 and args[0] == 'display.spinner':
+        return tuple(BUILTIN_SPINNERS)
     if len(args) == 2 and args[0] == 'model':
         from .model_catalog import CODEX_MODELS  # noqa: PLC0415
 

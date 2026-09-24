@@ -945,6 +945,53 @@ The early splash retains its brand colours. Code uses the terminal foreground
 and ANSI syntax colours; bundled palettes use Termflow's default diff colours. Theme selection adds no
 model requests or telemetry.
 
+### Spinners
+
+```text
+/spinner
+/spinner puppy
+/spinner zoomies 0.1
+/spinner init
+/set display.spinner dots
+```
+
+The spinner is the animation in the `Working` title above the prompt while a turn
+runs. `working`, the braille CLAI has always shown, is the default. The catalogue
+also carries every Code Puppy builtin: `puppy`, `bone`, `zoomies`, `paws`, `dots`,
+`dotsWide`, `dots8Bit`, `dotsCircle`, `sand`, `growVertical`, `growHorizontal`,
+`noise`, `binary`, `chevrons`, `bouncingBar`, `bouncingBall`, `pong`, `fistBump`,
+and `aesthetic`.
+
+`/spinner` opens a searchable picker with an animated preview. `-`/`+` (or
+Left/Right) make the highlighted spinner slower or faster in steps of 0.02 seconds;
+Enter applies it, Esc keeps your current choice. `/spinner NAME [SECONDS]` applies
+by name, ignoring case, and Tab completes the names. The choice is saved as
+`display.spinner` and shows on the next frame, with no restart.
+
+A changed speed, from the picker or `SECONDS`, is saved as that spinner's
+`interval` in `spinners.json` next to CLAI's settings
+(`~/.config/pydantic-clai2/spinners.json`). The file is also where you add your
+own; `/spinner init` writes a starter:
+
+```json
+{
+  "sniffer": {
+    "frames": ["( .    ) ", "(  .   ) ", "(   .  ) ", "(    . ) "],
+    "interval": 0.1,
+    "description": "a very minimalist puppy"
+  },
+  "zoomies": {"interval": 0.2}
+}
+```
+
+An entry with `frames` defines a spinner; one without `frames` that names an
+existing spinner changes only its `interval` or `description`. Entries in the file
+replace builtins and plugin spinners of the same name. Intervals are clamped to
+0.02-1 seconds and frames to 40 characters, padded to one width so the title does
+not shift. Edits apply on the next frame. `/spinner` lists any entry it skipped
+and why. A saved name that no longer exists, such as a removed plugin's, shows
+`working`. Plugins add spinners with `host.spinner` (see `PLUGINS.md`).
+
 ### Streaming
 
 Streaming uses the defaults from [Code Puppy's smoothing adapters](https://github.com/mpfaffenberger/code_puppy/blob/a862bf478b63822c9d97093f81e4f827e1c53d6e/code_puppy/agents/smooth_stream.py):

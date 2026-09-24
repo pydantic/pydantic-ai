@@ -1,6 +1,6 @@
 """Everything a plugin can register, recorded on one host per plugin."""
 
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Generic, Literal, Protocol, TypeVar, get_args, overload
@@ -53,6 +53,7 @@ from typing_extensions import TypeVar as DefaultTypeVar
 
 from .commands import Commands
 from .config import Settings
+from .spinners import Spinner, make_spinner
 from .status import Status, StatusSegment
 
 DepsT = DefaultTypeVar('DepsT', default=None)
@@ -248,6 +249,7 @@ class PluginHost(Generic[DepsT]):
         self._handlers: list[Callable[[HostEvent], Awaitable[None]]] = []
         self._renderers: list[Renderer[AgentStreamEvent]] = []
         self._segments: list[StatusSegment] = []
+        self._spinners: list[Spinner] = []
 
     @property
     def capabilities(self) -> list[AgentCapability[DepsT]]:
@@ -268,6 +270,11 @@ class PluginHost(Generic[DepsT]):
     def status_segments(self) -> list[StatusSegment]:
         """Footer fragments; the shell appends them to the built-in status figures."""
         return list(self._segments)
+
+    @property
+    def spinners(self) -> list[Spinner]:
+        """Working animations added with `spinner`."""
+        return list(self._spinners)
 
     def summary(self) -> str:
         """One line for the `/plugins` menu."""
@@ -307,6 +314,17 @@ class PluginHost(Generic[DepsT]):
         """
         self._segments.append(func)
         return func
+
+    def spinner(self, name: str, frames: Iterable[str], /, *, interval: float = 0.2, description: str = '') -> Spinner:
+        """Offer a working animation in `/spinner`; select it there or with `/set display.spinner NAME`.
+
+        Frames are padded to one width and `interval` is clamped to 0.02-1 seconds per frame. A
+        plugin spinner replaces a builtin of the same name, and the user's `spinners.json` replaces
+        both. Unloading the plugin removes it; a selected spinner that is gone shows `working`.
+        """
+        spinner = make_spinner(name, frames, interval=interval, description=description, source='plugin')
+        self._spinners.append(spinner)
+        return spinner
 
     @overload
     def on(

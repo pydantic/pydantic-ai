@@ -34,6 +34,7 @@ from .plugins import (
     bare_screen,
 )
 from .settings_store import SettingsStore
+from .spinners import Spinner
 from .status import Status, StatusSegment
 
 _FOLDER_PACKAGE = 'pydantic_clai2_plugins'
@@ -204,6 +205,10 @@ class PluginLoader(Generic[DepsT]):
     def status_segments(self) -> list[StatusSegment]:
         """Appended to the status row, in load order."""
         return [segment for host in self._loaded.values() for segment in host.status_segments]
+
+    def spinners(self) -> list[Spinner]:
+        """Plugin spinners, in load order, so a later plugin wins a name collision."""
+        return [spinner for host in self._loaded.values() for spinner in host.spinners]
 
     async def load_all(self, *, fresh: bool = False) -> None:
         """Load enabled plugins, re-importing after a shell reload so host event types match."""

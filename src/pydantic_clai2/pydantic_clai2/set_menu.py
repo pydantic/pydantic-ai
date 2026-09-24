@@ -10,6 +10,7 @@ from .command_context import CommandContext
 from .config import SETTING_FIELDS, Settings
 from .field_menu import FieldMenu, FieldRow, first_error, run_flow, shown
 from .menu_worker import run_worker
+from .spinners import BUILTIN_SPINNERS
 from .theme import names
 
 
@@ -31,6 +32,8 @@ class SettingsSource:
                 choices: tuple[str, ...] = ('true', 'false')
             elif key == 'display.theme':
                 choices = names()
+            elif key == 'display.spinner':
+                choices = tuple(BUILTIN_SPINNERS)
             elif key == 'model':
                 choices = tuple(known_model_names())
             else:

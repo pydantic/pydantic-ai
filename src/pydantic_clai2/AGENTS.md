@@ -223,6 +223,9 @@ bundled palettes use Termflow defaults.
 | `sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
 | `theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
 | `theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
+| `spinners.py` | the working-animation catalogue: builtins, plugin `host.spinner`, the user's `spinners.json`, `Spinners` |
+| `spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
+| `spinner_picker.py` | `/spinner`: animated picker, by-name selection with speed, `init` |
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 

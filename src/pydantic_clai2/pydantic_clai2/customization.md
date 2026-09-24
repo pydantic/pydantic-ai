@@ -12,6 +12,9 @@ contract; this guide is shipped with the package for use without a checkout.
 - Add slash commands or a custom menu: host.commands.register(Command(...)).
 - Change tool output: host.render(EventClass), returning a Rich renderable.
 - Add a fragment to the status row: host.status_segment(fn), where fn returns a short string.
+- Add a working animation: host.spinner(name, frames, interval=..., description=...)
+  from a plugin, or an entry in spinners.json next to CLAI's settings (/spinner
+  init writes a starter). /spinner picks one; the choice persists as display.spinner.
 - React to prompts or session lifecycle: host.on with a typed handler.
 - Configure a plugin: host.settings with a Pydantic settings model.
 - Use a custom model/provider: supply a Pydantic AI Agent to chat from a Python
@@ -316,6 +319,20 @@ awaits, no printing. Return an empty string to contribute nothing that frame.
 Fragments are truncated from the right on narrow terminals and cannot set their
 own colours. host.status_segment adds to the row; replacing the row, prompt
 editor, splash, or adding custom palettes is still a CLAI source change.
+
+Offer a working animation with host.spinner; the user selects it with /spinner:
+
+```python
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost[None]) -> None:
+    host.spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave')
+```
+
+Frames are padded to one width and interval is clamped to 0.02-1 seconds. The
+user's spinners.json replaces a plugin spinner of the same name, and an entry
+without frames only retunes an existing spinner's interval or description.
 
 ## Custom TUI menus
 

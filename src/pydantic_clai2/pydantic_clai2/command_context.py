@@ -8,7 +8,7 @@ from pydantic import JsonValue, TypeAdapter
 from pydantic_ai.settings import ModelSettings
 
 from .commands import Command
-from .config import SETTING_FIELDS, Settings
+from .config import SETTING_FIELDS, STRING_SETTINGS, Settings
 from .project_settings import ProjectSettings
 from .settings_store import SettingsStore
 
@@ -59,7 +59,7 @@ class CommandContext:
         adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
         value: JsonValue = (
             raw
-            if key in ('model', 'display.theme') or (key == 'sessions.naming_model' and raw != 'null')
+            if key in STRING_SETTINGS or (key == 'sessions.naming_model' and raw != 'null')
             else adapter.validate_json(raw)
         )
         updated = self.settings.model_dump()
