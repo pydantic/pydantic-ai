@@ -615,12 +615,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
-                next_message = _messages.ModelRequest(
-                    parts=last_message.parts,
-                    run_id=last_message.run_id,
-                    conversation_id=last_message.conversation_id,
-                    metadata=last_message.metadata,
-                )
+                next_message = _resumed_request(last_message)
                 is_resuming_without_prompt = True
 
                 if (prompt := _request_prompt(last_message)) is not None:
@@ -799,6 +794,16 @@ def _repair_interrupted_tail(
     return messages
 
 
+def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
+    """The request a run resuming from `request` without a new prompt sends, before its instructions are added."""
+    return _messages.ModelRequest(
+        parts=request.parts,
+        run_id=request.run_id,
+        conversation_id=request.conversation_id,
+        metadata=request.metadata,
+    )
+
+
 def _request_prompt(request: _messages.ModelRequest) -> str | Sequence[_messages.UserContent] | None:
     """The user prompt a request carries, as a run resuming from it without a new prompt reports it."""
     user_prompt_parts = [part for part in request.parts if isinstance(part, _messages.UserPromptPart)]
@@ -836,10 +841,18 @@ def first_step_selection_messages(
     messages = _repair_interrupted_tail(messages, has_new_prompt=user_prompt is not None)
     if user_prompt is not None:
         return [*messages, _messages.ModelRequest(parts=[_messages.UserPromptPart(user_prompt)])], user_prompt
-    if messages and isinstance(last_message := messages[-1], _messages.ModelRequest):
+    last_message = messages[-1] if messages else None
+    if isinstance(last_message, _messages.ModelRequest):
         # Resuming without a new prompt: the trailing request is the one being sent.
-        return messages, _request_prompt(last_message)
-    return messages, None
+        return [*messages[:-1], _resumed_request(last_message)], _request_prompt(last_message)
+    if isinstance(last_message, _messages.ModelResponse) and (
+        last_message.tool_calls or last_message.state == 'suspended'
+    ):
+        # The step's request holds the results of tools that run with the selected model, or there is
+        # none: a suspended response is resumed rather than answered.
+        return messages, None
+    # Without a new prompt, the request carries only what the selected model adds to it.
+    return [*messages, _messages.ModelRequest(parts=[])], None
 
 
 async def _get_instructions(

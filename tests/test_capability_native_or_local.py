@@ -1644,19 +1644,23 @@ class TestGetModelHook:
         assert selected_steps == [1, 2]
         assert selection_history_lengths == [1, 3]
 
-    @pytest.mark.parametrize('case', ['fresh', 'history', 'resume'])
+    @pytest.mark.parametrize('case', ['fresh', 'history', 'resume', 'no_prompt', 'continue'])
     async def test_selection_context_matches_run_context(self, case: str):
         """On every step, the selector sees the `messages` and `prompt` the step's `RunContext` holds.
 
-        The only difference allowed is what's added once the model is selected: the step's request's
-        instructions and, on a fresh run's first step, its system prompt parts. The `resume` case is a run
-        with no new prompt whose history ends in a request, which is then the request being routed.
+        The only difference allowed is what's added to the step's request once the model is selected: its
+        instructions and, on a fresh run's first step, its system prompt parts, which are dropped from the
+        `RunContext` side only. `resume` is a run with no new prompt whose history ends in a request, which
+        is then the request being sent; `no_prompt` and `continue` send a request without a new prompt, on
+        a fresh run and after a finished one.
 
         Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
         """
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if isinstance(messages[-1].parts[-1], ToolReturnPart):
+            if isinstance(messages[-1], ModelRequest) and any(
+                isinstance(p, ToolReturnPart) for p in messages[-1].parts
+            ):
                 return make_text_response('done')
             return ModelResponse(parts=[ToolCallPart('advance', '{}')])
 
@@ -1664,16 +1668,14 @@ class TestGetModelHook:
         selected: list[tuple[int, Any, list[Any]]] = []
         sent: list[tuple[int, Any, list[Any]]] = []
 
-        def comparable(messages: list[ModelMessage]) -> list[Any]:
-            """Drop what the selected model adds to the last request, and what differs between two builds of it."""
-            *earlier, last = messages
-            if isinstance(last, ModelRequest):
-                last = replace(
-                    last,
-                    parts=[part for part in last.parts if not isinstance(part, SystemPromptPart)],
-                    instructions=None,
-                )
-            dumped = ModelMessagesTypeAdapter.dump_python([*earlier, last], mode='json')
+        def comparable(messages: list[ModelMessage], *, drop_added_by_model: bool = False) -> list[Any]:
+            """Drop what differs between two builds of a request, and optionally what the model adds to the last one."""
+            if drop_added_by_model:
+                *earlier, last = messages
+                assert isinstance(last, ModelRequest)
+                system_prompt_parts = [part for part in last.parts if isinstance(part, SystemPromptPart)]
+                messages = [*earlier, replace(last, parts=last.parts[len(system_prompt_parts) :], instructions=None)]
+            dumped = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
             for message in dumped:
                 for key in ('timestamp', 'run_id', 'conversation_id', 'metadata'):
                     message.pop(key, None)
@@ -1693,7 +1695,7 @@ class TestGetModelHook:
             async def before_model_request(
                 self, ctx: RunContext[None], request_context: ModelRequestContext
             ) -> ModelRequestContext:
-                sent.append((ctx.run_step, ctx.prompt, comparable(ctx.messages)))
+                sent.append((ctx.run_step, ctx.prompt, comparable(ctx.messages, drop_added_by_model=True)))
                 return request_context
 
         agent = Agent(
@@ -1708,24 +1710,26 @@ class TestGetModelHook:
         def advance() -> str:
             return 'advanced'
 
-        if case == 'fresh':
-            result = await agent.run('New question.')
-        elif case == 'history':
-            earlier = await Agent(_text_model('earlier'), instructions='Earlier.').run('Earlier question.')
-            result = await agent.run('New question.', message_history=earlier.all_messages())
-        else:
-            history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Resumed'), UserPromptPart('question.')])]
-            result = await agent.run(message_history=history)
+        earlier = (await Agent(_text_model('earlier'), instructions='Earlier.').run('Earlier question.')).all_messages()
+        resumed: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Resumed'), UserPromptPart('question.')], instructions='Earlier.')
+        ]
+        prompt, history = {
+            'fresh': ('New question.', None),
+            'history': ('New question.', earlier),
+            'resume': (None, resumed),
+            'no_prompt': (None, None),
+            'continue': (None, earlier),
+        }[case]
+        result = await agent.run(prompt, message_history=history)
         assert result.output == 'done'
 
-        assert [(step, prompt) for step, prompt, _ in selected] == (
-            [(1, ['Resumed', 'question.']), (2, ['Resumed', 'question.'])]
-            if case == 'resume'
-            else [(1, 'New question.'), (2, 'New question.')]
-        )
+        run_prompt = ['Resumed', 'question.'] if case == 'resume' else prompt
+        assert [(step, prompt) for step, prompt, _ in selected] == [(1, run_prompt), (2, run_prompt)]
         assert selected == sent
 
-    async def test_selection_context_with_tool_calls_to_run(self):
+    @pytest.mark.parametrize('deferred', [False, True])
+    async def test_selection_context_with_tool_calls_to_run(self, deferred: bool):
         """A run resuming from tool calls still to run is routed on the history ending in their response.
 
         The step's request holds the calls' results, which only exist once the tools have run with the
@@ -1739,7 +1743,7 @@ class TestGetModelHook:
 
         agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)])
 
-        @agent.tool_plain(requires_approval=True)
+        @agent.tool_plain(requires_approval=deferred)
         def delete_file() -> str:
             return 'deleted'
 
@@ -1747,11 +1751,14 @@ class TestGetModelHook:
             ModelRequest(parts=[UserPromptPart('Clean up.')]),
             ModelResponse(parts=[ToolCallPart('delete_file', {}, tool_call_id='call')]),
         ]
-        result = await agent.run(
-            'And then?', message_history=history, deferred_tool_results=DeferredToolResults(approvals={'call': True})
-        )
+        if deferred:
+            approvals = DeferredToolResults(approvals={'call': True})
+            result = await agent.run('And then?', message_history=history, deferred_tool_results=approvals)
+            assert selected[0] == ('And then?', history)
+        else:
+            result = await agent.run(message_history=history)
+            assert selected[0] == (None, history)
         assert result.output == 'done'
-        assert selected[0] == ('And then?', history)
 
     async def test_explicit_run_model_skips_selector(self):
         from unittest.mock import Mock
