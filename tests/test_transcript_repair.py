@@ -22,12 +22,10 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai._agent_graph import (
-    SYNTHESIZED_TOOL_RETURN_METADATA_KEY,
-    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
-)
 from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    SYNTHESIZED_TOOL_RETURN_METADATA_KEY,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -39,6 +37,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    repair_messages,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests
@@ -60,6 +60,71 @@ def capture_agent() -> tuple[Agent, list[list[ModelMessage]]]:
         return ModelResponse(parts=[TextPart('All done.')])
 
     return Agent(FunctionModel(model_function)), received
+
+
+async def test_repair_messages_repairs_last_response_by_default():
+    """The public helper accepts any sequence, returns a list, and repairs the live frontier by default."""
+    history: tuple[ModelMessage, ...] = (
+        ModelResponse(
+            parts=[ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1')], timestamp=TS
+        ),
+    )
+
+    repaired = repair_messages(history)
+    unrepaired = repair_messages(history, repair_last_response=False)
+
+    assert isinstance(repaired, list)
+    assert len(repaired) == 2
+    request = repaired[-1]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='get_weather',
+                content='The tool call was interrupted before a result was produced.',
+                tool_call_id='call_1',
+                metadata={'pydantic_ai_synthesized_tool_return': True},
+                timestamp=TS,
+                outcome='interrupted',
+            )
+        ]
+    )
+    assert unrepaired == list(history)
+
+
+async def test_repair_messages_allows_new_user_prompt():
+    """Repairing the final response closes calls that would otherwise block a new user prompt."""
+    history: tuple[ModelMessage, ...] = (
+        ModelResponse(
+            parts=[ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1')], timestamp=TS
+        ),
+    )
+    agent, received = capture_agent()
+
+    with pytest.raises(
+        UserError,
+        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls',
+    ):
+        await agent.run('Never mind.', message_history=history)
+
+    result = await agent.run('Never mind.', message_history=repair_messages(history))
+
+    assert result.output == 'All done.'
+    assert isinstance(received[0][-1], ModelRequest)
+    assert isinstance(received[0][-1].parts[-1], UserPromptPart)
+
+
+async def test_repair_messages_is_idempotent():
+    """Repairing an already-repaired history is a no-op."""
+    history: tuple[ModelMessage, ...] = (
+        ModelResponse(
+            parts=[ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1')], timestamp=TS
+        ),
+    )
+
+    repaired = repair_messages(history)
+
+    assert repair_messages(repaired) == repaired
 
 
 async def test_dangling_tool_call_gets_synthesized_return():
