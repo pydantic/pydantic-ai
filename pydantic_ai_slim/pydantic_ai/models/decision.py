@@ -768,14 +768,14 @@ def _expressible(tool: ToolDefinition, instructions: str | None, limits: _Limits
 _NONE_OF_THESE = 'None of these.'
 
 
-def _null(schema: dict[str, Any]) -> bool:
+def _null(schema: dict[str, Any] | bool) -> bool:
     """Whether a schema is `None`, whatever else the user wrote about it.
 
     Pydantic renders a bare `None` as `{'type': 'null'}`, but `Annotated[None, Field(description=...)]` — how a
     user says what returning nothing means — renders the description beside it. The type is what makes it `None`;
     the rest is the user's own words, and a route or a field is no less `None` for having some.
     """
-    return schema.get('type') == 'null'
+    return isinstance(schema, dict) and schema.get('type') == 'null'
 
 
 def _none_route(tool: ToolDefinition) -> bool:
@@ -817,7 +817,10 @@ def _purpose(tool: ToolDefinition) -> str | None:
     if described := _described(tool):
         return described
     wrapped = _wrapped(tool)
-    return wrapped.get('description') if wrapped else None
+    if wrapped is None:
+        return None
+    # An `Enum` is wrapped as a `$ref` to its own definition, which is where its docstring is.
+    return _resolved(wrapped, tool.parameters_json_schema).get('description')
 
 
 def _route_description(tool: ToolDefinition) -> str | None:
@@ -848,11 +851,27 @@ def _output_tools(
     return with_fields, hand_offs
 
 
-def _resolved(schema: dict[str, Any]) -> dict[str, Any]:
-    """A schema through the top-level `$ref` Pydantic renders a model that refers to itself as."""
-    if ref := schema.get('$ref'):
-        return schema['$defs'][ref.removeprefix('#/$defs/')]
-    return schema
+def _schema(node: dict[str, Any] | bool) -> dict[str, Any]:
+    """A schema as an object. JSON Schema allows `true` and `false` anywhere a schema goes, for anything and nothing.
+
+    Pydantic never renders them, but a hand-written schema, as `Tool.from_schema` takes, may (see #8621). As objects
+    they are `{}` and `{'not': {}}`, which ask the model nothing it can answer, so a field of either is unsupported.
+    """
+    if isinstance(node, bool):
+        return {} if node else {'not': {}}
+    return node
+
+
+def _resolved(schema: dict[str, Any], root: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A schema through its `$ref` to `root`'s `$defs`, with what the referring schema says beside it taking precedence.
+
+    `root` is the schema the `$defs` are on, which is `schema` itself for the top-level `$ref` Pydantic renders a
+    model that refers to itself as.
+    """
+    if not (ref := schema.get('$ref')):
+        return schema
+    definition = _schema((root or schema)['$defs'][ref.removeprefix('#/$defs/')])
+    return {**definition, **{k: v for k, v in schema.items() if k not in ('$ref', '$defs')}}
 
 
 def _properties(schema: dict[str, Any]) -> dict[str, Any]:
@@ -870,7 +889,8 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], fro
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
 
-    def resolve(prop: dict[str, Any]) -> dict[str, Any]:
+    def resolve(prop: dict[str, Any] | bool) -> dict[str, Any]:
+        prop = _schema(prop)
         if ref := prop.get('$ref'):
             prop = {**resolve(defs[ref.removeprefix('#/$defs/')]), **{k: v for k, v in prop.items() if k != '$ref'}}
         if 'items' in prop:
@@ -890,7 +910,7 @@ def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], fro
                     f'Output field {prefix + name!r} is not supported by this model: a dot in a field name is how '
                     'a nested field is named. Rename it.'
                 )
-            ref = prop.get('$ref')
+            ref = _schema(prop).get('$ref')
             prop = resolve(prop)
             if prop.get('type') == 'object' and prop.get('properties'):
                 if ref is not None and ref in seen:

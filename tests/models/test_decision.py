@@ -7,7 +7,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from pydantic_ai import Agent, RunContext, ToolOutput
+from pydantic_ai import Agent, RunContext, Tool, ToolOutput
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
@@ -23,6 +23,7 @@ from pydantic_ai.models.decision import (
     NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
+    ToolCallProposed,
 )
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -534,3 +535,74 @@ async def test_the_function_tools_together_below_the_bar_are_a_lean(allow_model_
             },
         }
     )
+
+
+class Reprioritise(str, Enum):
+    """Change how soon the ticket needs a reply."""
+
+    now = 'now'
+    later = 'later'
+
+
+@pytest.mark.anyio
+async def test_a_union_member_enum_is_described_by_its_docstring(allow_model_requests: None):
+    """An `Enum` is wrapped as a `$ref` to its definition, and its docstring is there rather than on the route."""
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=[Triage, Reprioritise]).run('Can this wait until Monday?')
+
+    assert route_question(model).criteria == snapshot(
+        {'Triage': 'Triage a support ticket.', 'Reprioritise': 'Change how soon the ticket needs a reply.'}
+    )
+
+
+def look_up(**kwargs: Any) -> str:
+    return 'found'  # pragma: no cover
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    'schema',
+    [
+        pytest.param({'$ref': '#/$defs/Anything'}, id='a `true` definition'),
+        pytest.param({'$ref': '#/$defs/Nothing'}, id='a `false` definition'),
+        pytest.param(True, id='a `true` property'),
+    ],
+)
+async def test_a_boolean_schema_is_an_unsupported_argument(allow_model_requests: None, schema: Any):
+    """JSON Schema allows `true` and `false` wherever a schema goes (#8621); an argument of either is proposed."""
+    tool = Tool.from_schema(
+        look_up,
+        name='look_up',
+        description='Look the order up.',
+        json_schema={
+            'type': 'object',
+            'properties': {'query': schema},
+            '$defs': {'Anything': True, 'Nothing': False},
+        },
+    )
+    model = RoutingDecisionModel({'Triage': 0.1, 'look_up': 0.9})
+
+    with pytest.raises(ToolCallProposed, match="proposed calling 'look_up'"):
+        await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('schema', [True, False, {'$ref': '#/$defs/Anything'}, {'$ref': '#/$defs/Nothing'}])
+async def test_a_boolean_schema_is_an_unsupported_output_field(allow_model_requests: None, schema: Any):
+    output_tool = ToolDefinition(
+        name='final_result',
+        description='Look the order up.',
+        kind='output',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'query': schema},
+            '$defs': {'Anything': True, 'Nothing': False},
+        },
+    )
+
+    with pytest.raises(UserError, match="Output field 'query' is not supported by this model"):
+        await InMemoryDecisionModel().request(
+            [ModelRequest(parts=[UserPromptPart('Where is my order?')])],
+            None,
+            ModelRequestParameters(output_tools=[output_tool], output_mode='tool', allow_text_output=False),
+        )
