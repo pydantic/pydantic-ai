@@ -9,6 +9,8 @@
 | The agent to remember what it learned about someone *across* conversations, not just within one | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | A run to survive the process dying mid-tool-call, and resume exactly where it stopped | [Durable execution](durable_execution/overview.md) | Core |
 
+Coming from LangGraph, where this is a checkpointer? The closest match is [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/), which saves every step of a run so you can continue it later or fork it from any step; to resume a run that crashed partway through a step, use [durable execution](durable_execution/overview.md).
+
 The first two rows are also the answer to "how do I give my agent memory?" for most of what people mean by it: an agent's memory of the conversation it is having *is* its message history. There is no separate memory system to add for that — storing the history and passing it back is the whole mechanism. Memory becomes [its own thing](#remembering-across-conversations) only once it has to outlive the thread.
 
 The rows compose: a durable engine keeps one run alive, `StepPersistence` records what each run did, a serialized history is what you hand to the next run, and `Memory` is what's left when the thread is over. Reaching for a durable engine because you wanted to store a chat thread is the common mistake — a `jsonb` column is enough for that.
@@ -84,4 +86,4 @@ Weigh it against a store of your own: it is one provider's feature, OpenAI docum
 
 ## What isn't here
 
-Pydantic AI does not checkpoint graph execution state, so there is no "rewind to step 4 of a half-finished run and replay from there" inside a single run. Snapshots are taken at settled boundaries between runs, not mid-node. For a run that must survive a crash *while it is executing*, that is what [durable execution](durable_execution/overview.md) is for.
+Nothing here snapshots state in the middle of a step, so there is no "rewind to step 4 of a half-finished run and replay from there" inside a single run. Snapshots are taken at settled boundaries between runs, not mid-node. For a run that must survive a crash *while it is executing*, that is what [durable execution](durable_execution/overview.md) is for.
