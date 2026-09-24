@@ -45,6 +45,7 @@ from pydantic_ai.workspaces import (
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
     WrapperWorkspace,
 )
 
@@ -212,6 +213,14 @@ async def test_realpath_resolves_symlinks_the_way_the_environment_does(tmp_path:
     workspace = Workspace(backend if native else RunOnlyWorkspaceBackend(backend))
 
     assert await workspace.realpath(path) == os.path.realpath(root.resolve() / path)
+
+
+async def test_shell_realpath_rejects_output_that_is_not_base64() -> None:
+    # This fake answers every unknown command with `connected`, which no real shell would print here.
+    workspace = Workspace(RunOnlyWorkspaceBackend(FakeWorkspace('garbled')))
+
+    with pytest.raises(WorkspaceError, match='invalid real path'):
+        await workspace.realpath('x')
 
 
 async def test_shell_realpath_stops_at_a_symlink_loop(tmp_path: Path) -> None:
@@ -838,6 +847,8 @@ async def test_binary_sniff_failure_falls_back_to_the_filesystem_read() -> None:
 class _SliceRefused(FakeWorkspace):
     """A backend that refuses the bounded slice's output, the way the local backend does past its output limit."""
 
+    error: WorkspaceError = WorkspaceError('output exceeded the limit')
+
     async def run(
         self,
         command: str | Sequence[str],
@@ -848,7 +859,7 @@ class _SliceRefused(FakeWorkspace):
         timeout: float | None = None,
     ) -> FakeWorkspaceResult:
         if isinstance(command, str) and command.startswith('sed -n '):
-            raise WorkspaceError('output exceeded the limit')
+            raise self.error
         return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
 
@@ -859,6 +870,15 @@ async def test_refused_slice_falls_back_to_the_filesystem_read() -> None:
 
     assert (window.lines, window.truncated_by) == (('one',), 'bytes')
     assert backend.reads == ['/workspace/data.txt']
+
+
+async def test_slice_on_a_gone_workspace_ends_the_read() -> None:
+    backend = _SliceRefused('gone', {'/workspace/data.txt': b'one\n'})
+    backend.error = WorkspaceUnavailableError('the sandbox is gone')
+
+    with pytest.raises(WorkspaceUnavailableError, match='the sandbox is gone'):
+        await Workspace(backend).read_file('data.txt')
+    assert backend.reads == []
 
 
 async def test_filesystem_fallback_byte_cap_drops_a_partial_line() -> None:
