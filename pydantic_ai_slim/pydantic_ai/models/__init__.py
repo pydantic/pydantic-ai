@@ -66,6 +66,7 @@ from ..messages import (
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
@@ -378,6 +379,13 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
 
     run_step: int
     """The request step being selected, starting at `1`."""
+
+    prompt: str | Sequence[UserContent] | None = None
+    """The user prompt passed to the run, the same on every step.
+
+    On the first step, it isn't in `messages` yet, so this is how a selector sees the request it's
+    choosing a model for. Mirrors [`RunContext.prompt`][pydantic_ai.tools.RunContext.prompt].
+    """
 
     messages: list[ModelMessage]
     """The message history available before this request step."""

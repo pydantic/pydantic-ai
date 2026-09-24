@@ -1568,6 +1568,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 deps=deps,
                 model=default_model,
                 run_step=1,
+                prompt=user_prompt,
                 messages=list(message_history) if message_history else [],
                 usage=usage,
             )
@@ -2304,6 +2305,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     deps=deps,
                     model=default_model,
                     run_step=1,
+                    prompt=prompt,
                     messages=messages,
                     usage=usage,
                 )

@@ -670,7 +670,7 @@ The argument's `Literal` becomes the pick-one question and its `Args:` entry bec
 
 ### Decide again on every step
 
-A run is not one decision. [`SelectModel`][pydantic_ai.capabilities.SelectModel] is evaluated before each step, so the same question can be asked of the conversation as it stands rather than of the first prompt alone — a run that starts simple and turns hard moves up when it turns:
+A run is not one decision. [`SelectModel`][pydantic_ai.capabilities.SelectModel] is evaluated before each step, so the same question can be asked of the conversation as it stands rather than once up front — a conversation that starts simple and turns hard moves up when it turns:
 
 ```python {title="select_the_model_per_step.py"}
 from typing import Literal
@@ -694,11 +694,7 @@ router = Agent(
 
 
 async def select_model(ctx: ModelSelectionContext) -> Model:
-    if not ctx.messages:
-        # `ctx.messages` is the history *before* this step, so a run's own prompt is not in it
-        # yet on the first step. A run given `message_history` does have something to read.
-        return fast
-    picked = await router.run(message_history=ctx.messages)
+    picked = await router.run(ctx.prompt, message_history=ctx.messages)
     return capable if picked.output == 'capable' else fast
 
 
@@ -720,7 +716,7 @@ async def main():
 
 The selector returns a [`Model`][pydantic_ai.models.Model] here, but a model ID string is equally fine — anything `Agent(model=...)` takes. Returning an instance lets each candidate be built once, with whatever provider or [settings](overview.md#per-model-settings) it needs, instead of being inferred again every step.
 
-The router is given the history rather than a prompt, which is the whole state it reads. That history is what existed *before* the step being selected, so a fresh run's first step has nothing to classify and takes a default — this routes a run that turns hard partway through, which is what a per-step hook is for. A run continuing an earlier conversation does have a history on its first step, which is why the guard reads `ctx.messages` rather than `ctx.step`. To route the very first step of a fresh run from the user's own question, ask before the run instead, as in the section above.
+The router reads the run's prompt as the text and the conversation so far as its history, which together are the whole state it judges. [`ctx.messages`][pydantic_ai.models.ModelSelectionContext.messages] is the history *before* the step being selected, so on a run's first step it doesn't hold the new request yet; [`ctx.prompt`][pydantic_ai.models.ModelSelectionContext.prompt] does. Routing on `ctx.messages` alone would judge the second run above by the first run's question, not by the redesign it asks for.
 
 Asking on every step is only affordable because the question is cheap; with a language model in the selector, the routing costs as much as the work it routes.
 

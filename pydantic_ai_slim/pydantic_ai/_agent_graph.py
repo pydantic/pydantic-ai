@@ -2514,6 +2514,7 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
         run_step=ctx.state.run_step,
+        prompt=ctx.deps.prompt,
         # The current request has already been appended, but selection describes the model
         # that will handle it. Expose the history available before this request step, matching
         # bootstrap selection, and do not let selectors mutate graph state through the context.

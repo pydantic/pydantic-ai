@@ -5,7 +5,7 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from importlib.util import find_spec
@@ -48,6 +48,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.models import (
@@ -1641,6 +1642,50 @@ class TestGetModelHook:
         assert selected_steps == [1, 2]
         assert selection_history_lengths == [0, 2]
 
+    @pytest.mark.parametrize('with_history', [False, True])
+    async def test_selector_sees_run_prompt(self, with_history: bool):
+        """`ctx.prompt` is the run's prompt on every step, even on step one, where `ctx.messages` lacks it.
+
+        Not a VCR test: the claim is about what the selector callback receives, which no provider sees.
+        """
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if isinstance(messages[-1].parts[-1], ToolReturnPart):
+                return make_text_response('done')
+            return ModelResponse(parts=[ToolCallPart('advance', '{}')])
+
+        model = FunctionModel(respond)
+        seen: list[tuple[int, str | Sequence[UserContent] | None, list[str]]] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            prompts = [
+                part.content
+                for message in ctx.messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+            ]
+            seen.append((ctx.run_step, ctx.prompt, prompts))
+            return model
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)])
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        history = (
+            (await Agent(_text_model('earlier')).run('Earlier question.')).all_messages() if with_history else None
+        )
+        result = await agent.run('New question.', message_history=history)
+        assert result.output == 'done'
+
+        earlier = ['Earlier question.'] if with_history else []
+        assert seen == [
+            (1, 'New question.', earlier),
+            (2, 'New question.', [*earlier, 'New question.']),
+        ]
+
     async def test_explicit_run_model_skips_selector(self):
         from unittest.mock import Mock
 
@@ -2089,7 +2134,11 @@ class TestGetModelHook:
         @dataclass
         class AdaptiveModel(AbstractCapability[str]):
             def get_model(self) -> Callable[[ModelSelectionContext[str]], Model]:
-                return lambda ctx: selected
+                def select(ctx: ModelSelectionContext[str]) -> Model:
+                    assert ctx.prompt == 'hello'
+                    return selected
+
+                return select
 
         agent = Agent(None, deps_type=str, capabilities=[AdaptiveModel()])
 
@@ -2099,7 +2148,7 @@ class TestGetModelHook:
             assert ctx.deps == 'tenant'
             return 'system prompt'
 
-        assert await agent.system_prompt_parts(deps='tenant') == snapshot(
+        assert await agent.system_prompt_parts(deps='tenant', prompt='hello') == snapshot(
             [SystemPromptPart(content='system prompt', timestamp=IsDatetime())]
         )
 
