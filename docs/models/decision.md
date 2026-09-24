@@ -694,7 +694,7 @@ router = Agent(
 
 
 async def select_model(ctx: ModelSelectionContext) -> Model:
-    picked = await router.run(ctx.prompt, message_history=ctx.messages)
+    picked = await router.run(message_history=ctx.messages)
     return capable if picked.output == 'capable' else fast
 
 
@@ -716,7 +716,7 @@ async def main():
 
 The selector returns a [`Model`][pydantic_ai.models.Model] here, but a model ID string is equally fine — anything `Agent(model=...)` takes. Returning an instance lets each candidate be built once, with whatever provider or [settings](overview.md#per-model-settings) it needs, instead of being inferred again every step.
 
-The router reads the run's prompt as the text and the conversation so far as its history, which together are the whole state it judges. [`ctx.messages`][pydantic_ai.models.ModelSelectionContext.messages] is the history *before* the step being selected, so on a run's first step it doesn't hold the new request yet; [`ctx.prompt`][pydantic_ai.models.ModelSelectionContext.prompt] does. Routing on `ctx.messages` alone would judge the second run above by the first run's question, not by the redesign it asks for.
+The router is given the messages the selected model will be sent, which are the whole state it reads. They end with the request being routed — the user's question on a run's first step, tool results on a later one — so every step, the first included, is routed on what the model is about to answer. What the selected model will add to that request, its instructions and a fresh run's system prompt, isn't there yet.
 
 Asking on every step is only affordable because the question is cheap; with a language model in the selector, the routing costs as much as the work it routes.
 

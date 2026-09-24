@@ -41,6 +41,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -54,6 +55,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import (
     KnownModelName,
     Model,
+    ModelRequestContext,
     ModelResolutionContext,
     ModelSelectionContext,
 )
@@ -68,7 +70,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage
 
@@ -1516,7 +1518,7 @@ class TestGetModelHook:
         def select(ctx: ModelSelectionContext[bool]) -> Model:
             seen_steps.append(ctx.run_step)
             assert ctx.model is None
-            assert ctx.messages == []
+            assert [message.parts for message in ctx.messages] == [[UserPromptPart('hello', timestamp=IsDatetime())]]
             return frontier if ctx.deps else small
 
         agent = Agent(None, deps_type=bool, capabilities=[SelectModel(select)])
@@ -1640,13 +1642,17 @@ class TestGetModelHook:
         result = await agent.run('hello', deps=42)
         assert result.output == 'done'
         assert selected_steps == [1, 2]
-        assert selection_history_lengths == [0, 2]
+        assert selection_history_lengths == [1, 3]
 
-    @pytest.mark.parametrize('with_history', [False, True])
-    async def test_selector_sees_run_prompt(self, with_history: bool):
-        """`ctx.prompt` is the run's prompt on every step, even on step one, where `ctx.messages` lacks it.
+    @pytest.mark.parametrize('case', ['fresh', 'history', 'resume'])
+    async def test_selection_context_matches_run_context(self, case: str):
+        """On every step, the selector sees the `messages` and `prompt` the step's `RunContext` holds.
 
-        Not a VCR test: the claim is about what the selector callback receives, which no provider sees.
+        The only difference allowed is what's added once the model is selected: the step's request's
+        instructions and, on a fresh run's first step, its system prompt parts. The `resume` case is a run
+        with no new prompt whose history ends in a request, which is then the request being routed.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
         """
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1655,36 +1661,97 @@ class TestGetModelHook:
             return ModelResponse(parts=[ToolCallPart('advance', '{}')])
 
         model = FunctionModel(respond)
-        seen: list[tuple[int, str | Sequence[UserContent] | None, list[str]]] = []
+        selected: list[tuple[int, Any, list[Any]]] = []
+        sent: list[tuple[int, Any, list[Any]]] = []
 
-        def select(ctx: ModelSelectionContext[None]) -> Model:
-            prompts = [
-                part.content
-                for message in ctx.messages
-                if isinstance(message, ModelRequest)
-                for part in message.parts
-                if isinstance(part, UserPromptPart) and isinstance(part.content, str)
-            ]
-            seen.append((ctx.run_step, ctx.prompt, prompts))
-            return model
+        def comparable(messages: list[ModelMessage]) -> list[Any]:
+            """Drop what the selected model adds to the last request, and what differs between two builds of it."""
+            *earlier, last = messages
+            if isinstance(last, ModelRequest):
+                last = replace(
+                    last,
+                    parts=[part for part in last.parts if not isinstance(part, SystemPromptPart)],
+                    instructions=None,
+                )
+            dumped = ModelMessagesTypeAdapter.dump_python([*earlier, last], mode='json')
+            for message in dumped:
+                for key in ('timestamp', 'run_id', 'conversation_id', 'metadata'):
+                    message.pop(key, None)
+                for part in message['parts']:
+                    part.pop('timestamp', None)
+            return dumped
 
-        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)])
+        @dataclass
+        class Recorder(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                def select(ctx: ModelSelectionContext[None]) -> Model:
+                    selected.append((ctx.run_step, ctx.prompt, comparable(ctx.messages)))
+                    return model
+
+                return select
+
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                sent.append((ctx.run_step, ctx.prompt, comparable(ctx.messages)))
+                return request_context
+
+        agent = Agent(
+            None,
+            deps_type=NoneType,
+            instructions='Be terse.',
+            system_prompt='You are terse.',
+            capabilities=[Recorder()],
+        )
 
         @agent.tool_plain
         def advance() -> str:
             return 'advanced'
 
-        history = (
-            (await Agent(_text_model('earlier')).run('Earlier question.')).all_messages() if with_history else None
-        )
-        result = await agent.run('New question.', message_history=history)
+        if case == 'fresh':
+            result = await agent.run('New question.')
+        elif case == 'history':
+            earlier = await Agent(_text_model('earlier'), instructions='Earlier.').run('Earlier question.')
+            result = await agent.run('New question.', message_history=earlier.all_messages())
+        else:
+            history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Resumed'), UserPromptPart('question.')])]
+            result = await agent.run(message_history=history)
         assert result.output == 'done'
 
-        earlier = ['Earlier question.'] if with_history else []
-        assert seen == [
-            (1, 'New question.', earlier),
-            (2, 'New question.', [*earlier, 'New question.']),
+        assert [(step, prompt) for step, prompt, _ in selected] == (
+            [(1, ['Resumed', 'question.']), (2, ['Resumed', 'question.'])]
+            if case == 'resume'
+            else [(1, 'New question.'), (2, 'New question.')]
+        )
+        assert selected == sent
+
+    async def test_selection_context_with_tool_calls_to_run(self):
+        """A run resuming from tool calls still to run is routed on the history ending in their response.
+
+        The step's request holds the calls' results, which only exist once the tools have run with the
+        selected model.
+        """
+        selected: list[tuple[str | Sequence[UserContent] | None, list[ModelMessage]]] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            selected.append((ctx.prompt, ctx.messages))
+            return _text_model('done')
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)])
+
+        @agent.tool_plain(requires_approval=True)
+        def delete_file() -> str:
+            return 'deleted'
+
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Clean up.')]),
+            ModelResponse(parts=[ToolCallPart('delete_file', {}, tool_call_id='call')]),
         ]
+        result = await agent.run(
+            'And then?', message_history=history, deferred_tool_results=DeferredToolResults(approvals={'call': True})
+        )
+        assert result.output == 'done'
+        assert selected[0] == ('And then?', history)
 
     async def test_explicit_run_model_skips_selector(self):
         from unittest.mock import Mock

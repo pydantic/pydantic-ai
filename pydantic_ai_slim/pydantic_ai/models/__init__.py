@@ -381,14 +381,24 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     """The request step being selected, starting at `1`."""
 
     prompt: str | Sequence[UserContent] | None = None
-    """The user prompt passed to the run, the same on every step.
+    """The run's user prompt, as [`RunContext.prompt`][pydantic_ai.tools.RunContext.prompt] holds it.
 
-    On the first step, it isn't in `messages` yet, so this is how a selector sees the request it's
-    choosing a model for. Mirrors [`RunContext.prompt`][pydantic_ai.tools.RunContext.prompt].
+    When a run resumes from a history ending in a request, without a new prompt, this is that request's prompt.
     """
 
     messages: list[ModelMessage]
-    """The message history available before this request step."""
+    """The messages the selected model will be sent for this step, ending with the request being routed.
+
+    This is what [`RunContext.messages`][pydantic_ai.tools.RunContext.messages] holds for the step, minus
+    what is only added once the model is selected: the request's
+    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] and, on a fresh run's first step,
+    its system prompt parts. Earlier requests keep the instructions they were sent with.
+
+    When a run resumes from a response with tool calls still to run, the step's request is their
+    results, which don't exist before the model is selected, so the messages end with that response.
+
+    It's a copy: changing it doesn't change the run's messages.
+    """
 
     usage: RunUsage
     """Usage accumulated by the run before this request step."""
