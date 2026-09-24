@@ -577,7 +577,7 @@ class Ticket(BaseModel):
 
 
 class Escalation(BaseModel):
-    """Hand the ticket to a human specialist."""
+    """Hand the ticket to a human specialist: security, privacy or legal problems."""
 
     security: bool = Field(description='Does this involve a security risk?')
 
@@ -755,7 +755,7 @@ class Ticket(BaseModel):
 
 
 class Escalation(BaseModel):
-    """Hand the ticket to a human specialist."""
+    """Hand the ticket to a human specialist: security, privacy or legal problems."""
 
     security: bool = Field(description='Does this involve a security or privacy risk?')
 
@@ -775,14 +775,14 @@ print(result.output)
 #> urgent=False
 assert result.response.provider_details is not None
 print(result.response.provider_details['route']['probabilities'])
-#> {'Ticket': 0.97, 'Escalation': 0.03}
+#> {'Ticket': 1.0, 'Escalation': 0.0}
 
-result = agent.run_sync('Can you recommend a good book about gardening?')
+result = agent.run_sync('Can you recommend a good restaurant near your office?')
 print(result.response.model_name)
 #> claude-opus-5-5
 ```
 
-Jev is sure the broken button is a ticket, so its pick stands. A book recommendation is neither, and Jev split its probability almost evenly between the two routes, so the language model took the step.
+Jev is sure the broken button is a ticket, so its pick stands. A restaurant recommendation is neither, and Jev split its probability almost evenly between the two routes, so the language model took the step.
 
 This makes up for routes that do not cover the texts they will see. The better fix is to [give every outcome a route](#give-every-outcome-a-route): a route the decision model cannot fill, such as the support desk's `Reply`, lets the text that fits nothing else pick it and go to the language model on the pick.
 

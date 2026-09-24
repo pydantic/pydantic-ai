@@ -1019,7 +1019,7 @@ async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) ->
         # docs/models/decision.md: Jev is unsure of both fields, so the language model behind it takes the request.
         # The mocked `FallbackModel` does not carry the example's `unsure` handler, so an API error stands in for it.
         raise ModelAPIError('jev-latest', 'unsure')
-    if isinstance(last, UserPromptPart) and last.content == 'Can you recommend a good book about gardening?':
+    if isinstance(last, UserPromptPart) and last.content == 'Can you recommend a good restaurant near your office?':
         # docs/models/decision.md: Jev splits the route pick almost evenly, so the language model behind it takes the
         # step. The mocked `FallbackModel` does not carry the example's `unsure_route` handler, so an API error stands
         # in for it.
@@ -1242,7 +1242,7 @@ async def model_logic(  # noqa: C901
                     'scores': {},
                     'route': {
                         'choice': 'None',
-                        'probabilities': {'Ticket': 0.03, 'Escalation': 0.01, 'None': 0.96},
+                        'probabilities': {'Ticket': 0.05, 'Escalation': 0.0, 'None': 0.95},
                         'offered': ['Ticket', 'Escalation', 'None'],
                         'taken': 'None',
                     },
@@ -1253,19 +1253,19 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})],
                 provider_details={
-                    'confidence': {'urgent': 0.64},
+                    'confidence': {'urgent': 0.4},
                     'probabilities': {},
                     'scores': {},
                     'requests': 2,
                     'route': {
                         'choice': 'Ticket',
-                        'probabilities': {'Ticket': 0.97, 'Escalation': 0.03},
+                        'probabilities': {'Ticket': 1.0, 'Escalation': 0.0},
                         'offered': ['Ticket', 'Escalation'],
                         'taken': 'Ticket',
                     },
                 },
             )
-        elif m.content == 'Can you recommend a good book about gardening?':
+        elif m.content == 'Can you recommend a good restaurant near your office?':
             # docs/models/decision.md: the language model behind Jev takes the step Jev's route pick was unsure of
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})]
