@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 import keyword
+import math
 import re
 import warnings
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from itertools import islice
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, TypeGuard, runtime_checkable
 
 from pydantic import Field, TypeAdapter
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
@@ -31,7 +32,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolDenied, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
-from pydantic_core import to_jsonable_python
+from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
 from typing_extensions import NotRequired, Self, TypedDict
 
 try:
@@ -1224,7 +1225,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Validate result to reconstruct multimodal types (e.g. BinaryContent from
         # serialized dicts) so they flow through to the model natively.
         if result is not None:
-            result = _TOOL_RETURN_CONTENT_TA.validate_python(result)
+            result = _model_safe_result(_TOOL_RETURN_CONTENT_TA.validate_python(result))
 
         return result
 
@@ -1340,6 +1341,54 @@ def _get_sigs_and_conflicting(
         assert td.function_signature is not None, f'function_signature missing for tool {td.name!r}'
         sigs.append(td.function_signature)
     return sigs, FunctionSignature.get_conflicting_type_names(sigs)
+
+
+# Scalars every tool-return serializer handles. Unlike `_SANDBOX_NATIVE_SCALARS` this leaves out
+# `Ellipsis`, which Monty holds but JSON has no form for.
+_MODEL_NATIVE_SCALARS = (str, bytes, bytearray, bool, int, float, type(None))
+
+
+def _model_safe_result(value: object) -> object:
+    """Render the parts of a snippet's result that have no JSON form as their `repr`.
+
+    Monty hands some sandbox values back as host objects: `type(x)` and `ValueError` arrive
+    as `type` objects, `len` as a builtin function, a bare exception instance as itself.
+    None of them serialize, so the tool return would abort the run in whichever layer
+    renders it first (`ToolOutputLimits`, or pydantic-ai building the model request). The
+    `repr` is what the snippet's author would have seen in a Python REPL. Non-finite floats
+    do serialize, but as `null`, which would hide the result, so they render as `repr` too.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return repr(value)
+    if isinstance(value, _MODEL_NATIVE_SCALARS) or is_multi_modal_content(value):
+        return value
+    if _is_mapping(value):
+        rendered = {
+            key if _serializes({key: None}) else repr(key): _model_safe_result(item) for key, item in value.items()
+        }
+        # A rendered key can equal an existing one (`{int: 1, "<class 'int'>": 2}`), and
+        # the dict would silently drop an entry; the whole mapping's `repr` loses nothing.
+        return rendered if len(rendered) == len(value) else repr(value)
+    if _is_list_or_tuple(value):
+        items = [_model_safe_result(item) for item in value]
+        return tuple(items) if isinstance(value, tuple) else items
+    return value if _serializes(value) else repr(value)
+
+
+def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
+    return isinstance(value, Mapping)
+
+
+def _is_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
+    return isinstance(value, (list, tuple))
+
+
+def _serializes(value: object) -> bool:
+    try:
+        to_json(value)
+    except PydanticSerializationError:
+        return False
+    return True
 
 
 def _contains_multimodal(value: Any) -> bool:

@@ -59,18 +59,20 @@ def to_bytes(value: object) -> bytes:
         return value.tobytes()
     if isinstance(value, (bytes, bytearray)):
         return bytes(value)
-    return to_json(value)
+    return to_json(value, fallback=repr)
 
 
 def to_text(value: object) -> str:
     """Render a non-binary tool return value as the text used for measuring and truncating.
 
     Strings pass through; structured values become JSON (truncating JSON is lossy, so prefer
-    spill or summarize for them -- see the README).
+    spill or summarize for them -- see the README). Leaves with no JSON form (a `type`, a
+    function) render as their `repr`: an exception here would abort the run and lose the
+    tool's output, the same reason a failing `serializer` falls back instead of raising.
     """
     if isinstance(value, str):
         return value
-    return to_json(value).decode('utf-8', errors='replace')
+    return to_json(value, fallback=repr).decode('utf-8', errors='replace')
 
 
 # A serializer callable for structured (non-string, non-binary) tool returns:

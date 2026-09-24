@@ -154,6 +154,13 @@ class TestPayloadHelpers:
         assert to_text('hi') == 'hi'
         assert to_text({'a': 1}) == '{"a":1}'
 
+    def test_values_without_json_form_render_as_repr(self):
+        """A `type` leaf must not abort the after-hook, which would lose the tool's output."""
+        value = {'kind': int, 'nested': [ValueError]}
+        expected = '{"kind":"<class \'int\'>","nested":["<class \'ValueError\'>"]}'
+        assert to_text(value) == expected
+        assert to_bytes(value) == expected.encode('utf-8')
+
     def test_indented_json(self):
         assert indented_json({'a': 1}) == '{\n  "a": 1\n}'
 
