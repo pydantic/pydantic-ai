@@ -9487,3 +9487,32 @@ async def test_a_user_interjecting_mid_stall_is_recorded_after_the_filler() -> N
         ('ModelRequest', 'Actually never mind'),
         ('ModelResponse', 'OK.'),
     ]
+
+
+async def test_a_reconnect_mid_stall_keeps_the_spoken_filler_complete() -> None:
+    """A drop between a filler and its tool call settles the filler as the complete response it was.
+
+    Gemini doesn't resume an in-flight generation on the re-dialed connection, so the tool call the
+    filler was held for can't arrive; the codec closes the lost remainder of the exchange with an
+    interrupted terminal before the reconnect, and the filler must not be folded into that.
+    """
+    session = RealtimeSession(
+        FakeRealtimeConnection(
+            [
+                OutputTranscript(text='Let me check.', is_final=True),
+                ResponseDone(more_expected=True),
+                ResponseDone(interrupted=True),
+                RealtimeSessionReconnectEvent(state_restored=True),
+                OutputTranscript(text='Here you go.', is_final=True),
+                ResponseDone(),
+            ]
+        )
+    )
+    async with session:
+        await drain_events(session)
+
+    assert [
+        (m.state, [p.transcript for p in m.parts if isinstance(p, SpeechPart)])
+        for m in session.all_messages()
+        if isinstance(m, ModelResponse)
+    ] == [('complete', ['Let me check.']), ('interrupted', []), ('complete', ['Here you go.'])]
