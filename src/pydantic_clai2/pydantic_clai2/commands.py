@@ -161,9 +161,11 @@ def set_completions(args: list[str]) -> Iterable[str]:
     if len(args) == 2 and args[0] == 'display.theme':
         return theme_names()
     if len(args) == 2 and args[0] == 'model':
+        from .model_catalog import CODEX_MODELS  # noqa: PLC0415
+
         names = known_model_names()
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})
-        return (*providers, 'openai-codex:gpt-6-astra', *names)
+        return tuple(dict.fromkeys((*providers, *CODEX_MODELS, *names)))
     if len(args) == 2 and args[0] in ('display.thinking', 'display.splash'):
         return ('true', 'false')
     return ()

@@ -12,6 +12,12 @@ from pydantic_ai.models import known_model_names
 
 from . import github_copilot
 
+CODEX_MODELS = tuple(
+    f'openai-codex:{model}'
+    for model in ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol')
+)
+"""Subscription models offered in the catalog and setting completions."""
+
 EXTRA_PROVIDERS = frozenset({'github-copilot', 'openai-codex'})
 """Provider prefixes core can run but does not list in `known_model_names()`."""
 
@@ -67,7 +73,7 @@ def catalog(*, include: Iterable[str] = (), discovered: Iterable[CatalogModel] =
     models = {model.name: model for model in genai_prices_models()}
     for name in (
         *known_model_names(),
-        *(f'openai-codex:{model}' for model in ('gpt-6-astra', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol')),
+        *CODEX_MODELS,
         *include,
     ):
         if name and name not in models:

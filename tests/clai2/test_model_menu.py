@@ -39,6 +39,7 @@ def test_catalog_merges_sources_and_only_lists_runnable_providers() -> None:
     names = [model.name for model in merged]
     assert names == sorted(set(names))
     assert priced_names <= set(names)
+    assert {'openai-codex:gpt-6-sol', 'openai-codex:gpt-6-luna'} <= set(names)
     astra = next(model for model in merged if model.name == 'openai-codex:gpt-6-astra')
     assert astra.provider == 'openai-codex' and astra.context_window is None and astra.prices is None
     sonnet = next(model for model in merged if model.name.startswith('anthropic:claude') and model.prices)

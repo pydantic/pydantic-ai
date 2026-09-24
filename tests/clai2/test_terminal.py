@@ -204,7 +204,13 @@ def test_set_autocomplete() -> None:
     models = list(commands.get_completions(Document('/set model anthropic:'), CompleteEvent()))
     assert models
     codex = list(commands.get_completions(Document('/set model openai-codex'), CompleteEvent()))
-    assert [item.text for item in codex] == ['openai-codex:', 'openai-codex:gpt-6-astra']
+    assert {item.text for item in codex} >= {
+        'openai-codex:',
+        'openai-codex:gpt-6-astra',
+        'openai-codex:gpt-6-sol',
+        'openai-codex:gpt-6-luna',
+    }
+    assert len(codex) == len({item.text for item in codex})
     assert codex[0].start_position == -len('openai-codex')
     assert all('anthropic:' in c.text for c in models)
 

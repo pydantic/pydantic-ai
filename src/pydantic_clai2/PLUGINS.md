@@ -968,6 +968,9 @@ Tab completes added models.
 on the next prompt. `r` resets a field; Esc or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
+The built-in model catalog and `/set model` completions include
+`openai-codex:gpt-6-sol` and `openai-codex:gpt-6-luna`.
+
 For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
