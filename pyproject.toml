@@ -117,12 +117,9 @@ required-version = ">=0.9.25"
 default-groups = ["dev", "lint"]
 exclude-newer = "7 days"
 conflicts = [
-    # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while the dev group
-    # deliberately locks FastMCP 3 (the FastMCP 4 CI job layers `--with` overrides onto the
-    # frozen lock). Lock-side forks only: pip resolves `[mcp,mcp-tasks]` together fine — in the
-    # mcp-tasks fork the extra's pre-release floor opts the shared `fastmcp-slim` range into the
-    # FastMCP 4 betas. Every `--all-extras` invocation in CI and the Makefile carries
-    # `--no-extra mcp-tasks` to stay on the dev side of the fork.
+    # The `mcp-tasks` extra requires FastMCP 4. Keeping it apart from the dev group lets the
+    # `lowest-direct` CI job resolve the dev group to FastMCP 3, so both majors stay tested. Every
+    # `--all-extras` invocation in CI and the Makefile carries `--no-extra mcp-tasks` to match.
     [
         { package = "pydantic-ai-slim", extra = "mcp-tasks" },
         { group = "dev" },
@@ -235,10 +232,12 @@ dev = [
     "opentelemetry-instrumentation-logging>=0.63b0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
-    # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
-    "fastmcp>=3.3.0,<5",
+    # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661). `[tasks]`
+    # adds the FastMCP 4 tasks extension the task-execution tests drive.
+    "fastmcp[tasks]>=3.3.0,<5",
     # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
-    # the compat readers' field-name pairs against the real v2 models while running against v1.
+    # the compat readers' field-name pairs against the real v2 models in the MCP SDK v1
+    # (lowest-versions) job too.
     "mcp-types>=2.0.0",
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
     "blockbuster>=1.5.26,<1.6",

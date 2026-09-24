@@ -52,9 +52,8 @@ except ImportError as _import_error:
     ) from _import_error
 
 # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
-# SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has,
-# but doesn't mark the re-export as public, so pyright must be told to allow the import.
-from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage]
+# SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has.
+from fastmcp.exceptions import McpError
 from mcp import types as mcp_types
 
 # In-process MCP servers (`FastMCP` / `FastMCP1Server`) live in the *server* halves of fastmcp /
@@ -64,7 +63,9 @@ from mcp import types as mcp_types
 if TYPE_CHECKING:
     from fastmcp.client.client import CallToolResult
     from fastmcp.server import FastMCP
-    from mcp.server.fastmcp import FastMCP as FastMCP1Server
+
+    # MCP SDK v1's bundled server. SDK v2 removed it, so it only exists at runtime on FastMCP 3.
+    FastMCP1Server: TypeAlias = Any
 else:
     try:
         from fastmcp.server import FastMCP
@@ -96,7 +97,7 @@ _CallToolTask = Callable[..., Awaitable[_ToolTask]]
 def _load_call_tool_task() -> _CallToolTask | None:
     """Load FastMCP's task extension when an `MCPToolset` is constructed."""
     try:
-        import fastmcp_tasks  # pyright: ignore[reportMissingImports]
+        import fastmcp_tasks
     except ImportError:
         return None
     return cast(_CallToolTask, fastmcp_tasks.call_tool_task)  # pyright: ignore[reportUnknownMemberType]
@@ -1245,7 +1246,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                                     message='The logging capability is deprecated.*',
                                     category=Warning,
                                 )
-                                await self.client.session.set_logging_level(self.log_level)
+                                await self.client.session.set_logging_level(self.log_level)  # pyright: ignore[reportDeprecated]
                     self._exit_stack = exit_stack.pop_all()
                     self._server_info = server_info
                     self._server_capabilities = server_capabilities
@@ -1366,7 +1367,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 self.client, name=name, arguments=args, meta=metadata, raise_on_error=raise_on_error
             )
         else:
-            tool_task = await self.client.call_tool(
+            # FastMCP 3's client-routed tasks (SEP-1686); FastMCP 4's `call_tool` has no `task` parameter.
+            tool_task: _ToolTask = await cast(Any, self.client).call_tool(
                 name=name, arguments=args, task=True, meta=metadata, raise_on_error=raise_on_error
             )
         return await tool_task.result()

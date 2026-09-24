@@ -1,8 +1,6 @@
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.session import ServerSessionT
-from mcp.shared.context import LifespanContextT, RequestT
+from fastmcp import Context, FastMCP
 
 mcp = FastMCP('Pydantic AI MCP Server')
 
@@ -14,7 +12,7 @@ async def get_weather_forecast(location: str) -> str:
 
 
 @mcp.tool()
-async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) -> dict[str, Any]:
+async def echo_deps(ctx: Context) -> dict[str, Any]:
     """Echo the run context.
 
     Args:
@@ -23,7 +21,7 @@ async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) ->
     Returns:
         Dictionary with an echo message and the deps.
     """
-
+    assert ctx.request_context is not None
     deps: Any = getattr(ctx.request_context.meta, 'deps')
     return {'echo': 'This is an echo message', 'deps': deps}
 

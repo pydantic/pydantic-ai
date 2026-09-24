@@ -30,6 +30,9 @@ def counting_mcp_server(*, instructions: str | None = None) -> tuple[FastMCP[Non
     class Counter(Middleware):
         async def on_message(self, context: MiddlewareContext[Any], call_next: Any) -> Any:
             method = context.method or '<unknown>'
+            # Each session opens with one handshake: `initialize` on MCP SDK v1, `server/discover` on v2.
+            if method in ('initialize', 'server/discover'):
+                method = 'handshake'
             counts[method] = counts.get(method, 0) + 1
             return await call_next(context)
 

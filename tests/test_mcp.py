@@ -62,11 +62,14 @@ with try_import() as imports_successful:
     from fastmcp.prompts import Message
     from fastmcp.server import Context, FastMCP
 
-    try:
-        from fastmcp.server.tasks import TaskConfig
-    except ImportError:
-        # FastMCP 4 moved `TaskConfig`.
+    # pyright resolves the FastMCP 4 location; FastMCP 3 keeps `TaskConfig` in `fastmcp.server.tasks`.
+    if TYPE_CHECKING:
         from fastmcp.utilities.tasks import TaskConfig
+    else:
+        try:
+            from fastmcp.utilities.tasks import TaskConfig
+        except ImportError:
+            from fastmcp.server.tasks import TaskConfig
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
 
@@ -90,7 +93,7 @@ with try_import() as imports_successful:
     ResourceLink = mcp_types.ResourceLink
     McpTextContent = mcp_types.TextContent
     TextResourceContents = mcp_types.TextResourceContents
-    from pydantic import AnyUrl, TypeAdapter
+    from pydantic import TypeAdapter
 
     from pydantic_ai._mcp_compat import is_mcp_sdk_v2, wire_name
     from pydantic_ai.mcp import (
@@ -124,16 +127,17 @@ def make_mcp_error(code: int, message: str) -> McpError:
     SDK v1 wraps an `ErrorData`; v2 takes the fields directly.
     """
     if MCP_SDK_V2:
-        # `cast` because the typecheck environment only knows the SDK v1 constructor signature.
-        return cast(Any, McpError)(code=code, message=message)
-    return McpError(mcp_types.ErrorData(code=code, message=message))
+        return McpError(code=code, message=message)
+    # `cast` because the typecheck environment only knows the SDK v2 constructor signature.
+    return cast(Any, McpError)(mcp_types.ErrorData(code=code, message=message))
 
 
 def wrap_server_notification(notification: Any) -> Any:
     """Wrap a notification in the SDK v1 root model; SDK v2 delivers the value unwrapped."""
     if MCP_SDK_V2:
         return notification
-    return mcp_types.ServerNotification(root=notification)
+    # `cast` because SDK v2 types `ServerNotification` as a plain union, not a root model.
+    return cast(Any, mcp_types.ServerNotification)(root=notification)
 
 
 def make_legacy_client(server: FastMCP[None]) -> Client[Any]:
@@ -412,14 +416,16 @@ class TestResourceTypeMapping:
     the wire-level field mapping so drifts from the MCP SDK schema are caught."""
 
     def test_resource_template_from_mcp_sdk(self):
-        sdk_template = mcp_types.ResourceTemplate(
-            uriTemplate='file:///{path}',
-            name='file',
-            title='File',
-            description='Read a file',
-            mimeType='application/octet-stream',
-            annotations=mcp_types.Annotations(audience=['user'], priority=0.7),
-            _meta={'origin': 'test'},
+        sdk_template = mcp_types.ResourceTemplate.model_validate(
+            {
+                'uriTemplate': 'file:///{path}',
+                'name': 'file',
+                'title': 'File',
+                'description': 'Read a file',
+                'mimeType': 'application/octet-stream',
+                'annotations': mcp_types.Annotations(audience=['user'], priority=0.7),
+                '_meta': {'origin': 'test'},
+            }
         )
         template = ResourceTemplate.from_mcp_sdk(sdk_template)
         assert template.uri_template == 'file:///{path}'
@@ -468,23 +474,23 @@ async def fastmcp_server() -> FastMCP[None]:
     async def image_tool() -> ImageContent:
         """A tool that returns an image content block."""
         encoded = base64.b64encode(b'fake_image_bytes').decode('utf-8')
-        return ImageContent(type='image', data=encoded, mimeType='image/png')
+        return ImageContent.model_validate({'type': 'image', 'data': encoded, 'mimeType': 'image/png'})
 
     @server.tool()
     async def embedded_blob_tool() -> EmbeddedResource:
         """A tool that returns an embedded blob resource."""
         encoded = base64.b64encode(b'fake_blob_bytes').decode('utf-8')
-        # SDK v2 retypes every `uri` from `AnyUrl` to `str` and rejects an `AnyUrl` instance, so the
-        # URIs here are plain strings, cast to satisfy the v1 annotation these tests type-check against.
+        # SDK v2 retypes every `uri` from `AnyUrl` to `str` and rejects an `AnyUrl` instance; SDK v1
+        # validates the plain string into an `AnyUrl`.
         return EmbeddedResource(
             type='resource',
-            resource=BlobResourceContents(uri=cast(AnyUrl, 'resource://blob.bin'), blob=encoded),
+            resource=BlobResourceContents(uri='resource://blob.bin', blob=encoded),
         )
 
     @server.tool()
     async def resource_link_tool() -> ResourceLink:
         """A tool that returns a resource link."""
-        return ResourceLink(type='resource_link', uri=cast(AnyUrl, 'resource://greeting.txt'), name='greeting')
+        return ResourceLink(type='resource_link', uri='resource://greeting.txt', name='greeting')
 
     @server.resource('resource://greeting.txt')
     async def greeting() -> str:
@@ -532,11 +538,13 @@ def _register_prompts(server: FastMCP[None]) -> None:
         """A prompt template with image content."""
         return [
             Message(
-                content=ImageContent(
-                    type='image',
-                    data=base64.b64encode(b'image-bytes').decode('utf-8'),
-                    mimeType='image/jpeg',
-                    annotations=Annotations(audience=['user'], priority=0.8),
+                content=ImageContent.model_validate(
+                    {
+                        'type': 'image',
+                        'data': base64.b64encode(b'image-bytes').decode('utf-8'),
+                        'mimeType': 'image/jpeg',
+                        'annotations': Annotations(audience=['user'], priority=0.8),
+                    }
                 )
             )
         ]
@@ -546,11 +554,13 @@ def _register_prompts(server: FastMCP[None]) -> None:
         """A prompt template with audio content."""
         return [
             Message(
-                content=AudioContent(
-                    type='audio',
-                    data=base64.b64encode(b'audio-bytes').decode('utf-8'),
-                    mimeType='audio/mpeg',
-                    annotations=Annotations(audience=['assistant'], priority=0.3),
+                content=AudioContent.model_validate(
+                    {
+                        'type': 'audio',
+                        'data': base64.b64encode(b'audio-bytes').decode('utf-8'),
+                        'mimeType': 'audio/mpeg',
+                        'annotations': Annotations(audience=['assistant'], priority=0.3),
+                    }
                 )
             )
         ]
@@ -562,10 +572,8 @@ def _register_prompts(server: FastMCP[None]) -> None:
             Message(
                 content=EmbeddedResource(
                     type='resource',
-                    resource=TextResourceContents(
-                        uri=cast(AnyUrl, 'resource://product_name.txt'),
-                        text='Pydantic AI',
-                        mimeType='text/plain',
+                    resource=TextResourceContents.model_validate(
+                        {'uri': 'resource://product_name.txt', 'text': 'Pydantic AI', 'mimeType': 'text/plain'}
                     ),
                     annotations=Annotations(audience=['user'], priority=0.5),
                 )
@@ -742,8 +750,8 @@ class TestMCPToolsetIntegration:
             return CallToolResult(
                 content=[
                     mcp_types.TextContent(type='text', text='bad input'),
-                    mcp_types.ImageContent(
-                        type='image', data=base64.b64encode(b'image').decode(), mimeType='image/png'
+                    mcp_types.ImageContent.model_validate(
+                        {'type': 'image', 'data': base64.b64encode(b'image').decode(), 'mimeType': 'image/png'}
                     ),
                 ],
                 structured_content=structured_error,
@@ -764,7 +772,11 @@ class TestMCPToolsetIntegration:
         [
             pytest.param([], id='empty'),
             pytest.param(
-                [mcp_types.ImageContent(type='image', data=base64.b64encode(b'image').decode(), mimeType='image/png')],
+                [
+                    mcp_types.ImageContent.model_validate(
+                        {'type': 'image', 'data': base64.b64encode(b'image').decode(), 'mimeType': 'image/png'}
+                    )
+                ],
                 id='non-text',
             ),
         ],
@@ -1228,13 +1240,15 @@ class TestMCPToolsetIntegration:
                     messages=[
                         mcp_types.PromptMessage(
                             role='user',
-                            content=ResourceLink(
-                                type='resource_link',
-                                uri=cast(AnyUrl, 'resource://kiwi.jpg'),
-                                name='kiwi-image',
-                                title='Kiwi Image',
-                                description='A photo of a kiwi fruit',
-                                mimeType='image/jpeg',
+                            content=ResourceLink.model_validate(
+                                {
+                                    'type': 'resource_link',
+                                    'uri': 'resource://kiwi.jpg',
+                                    'name': 'kiwi-image',
+                                    'title': 'Kiwi Image',
+                                    'description': 'A photo of a kiwi fruit',
+                                    'mimeType': 'image/jpeg',
+                                }
                             ),
                         )
                     ],
@@ -1673,11 +1687,15 @@ class TestSamplingHandler:
 
         model = TestModel()
         handler = _build_sampling_handler(model)
-        params = mcp_types.CreateMessageRequestParams(
-            messages=[mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hi'))],
-            maxTokens=42,
-            temperature=0.5,
-            stopSequences=['STOP'],
+        params = mcp_types.CreateMessageRequestParams.model_validate(
+            {
+                'messages': [
+                    mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hi'))
+                ],
+                'maxTokens': 42,
+                'temperature': 0.5,
+                'stopSequences': ['STOP'],
+            }
         )
         result = await handler([], params, None)  # type: ignore[arg-type, misc]
         assert isinstance(result, mcp_types.CreateMessageResult)
@@ -1697,30 +1715,32 @@ class TestSamplingMessageMapping:
     async def test_map_handles_image_audio_and_role_transitions(self):
         from pydantic_ai import _mcp as _mcp_helpers
 
-        params = mcp_types.CreateMessageRequestParams(
-            messages=[
-                mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hello')),
-                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='hi back')),
-                mcp_types.SamplingMessage(
-                    role='user',
-                    content=mcp_types.ImageContent(
-                        type='image',
-                        data=base64.b64encode(b'fake').decode(),
-                        mimeType='image/png',
+        params = mcp_types.CreateMessageRequestParams.model_validate(
+            {
+                'messages': [
+                    mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hello')),
+                    mcp_types.SamplingMessage(
+                        role='assistant', content=mcp_types.TextContent(type='text', text='hi back')
                     ),
-                ),
-                mcp_types.SamplingMessage(
-                    role='user',
-                    content=mcp_types.AudioContent(
-                        type='audio',
-                        data=base64.b64encode(b'fake').decode(),
-                        mimeType='audio/wav',
+                    mcp_types.SamplingMessage(
+                        role='user',
+                        content=mcp_types.ImageContent.model_validate(
+                            {'type': 'image', 'data': base64.b64encode(b'fake').decode(), 'mimeType': 'image/png'}
+                        ),
                     ),
-                ),
-                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='final')),
-            ],
-            systemPrompt='you are helpful',
-            maxTokens=10,
+                    mcp_types.SamplingMessage(
+                        role='user',
+                        content=mcp_types.AudioContent.model_validate(
+                            {'type': 'audio', 'data': base64.b64encode(b'fake').decode(), 'mimeType': 'audio/wav'}
+                        ),
+                    ),
+                    mcp_types.SamplingMessage(
+                        role='assistant', content=mcp_types.TextContent(type='text', text='final')
+                    ),
+                ],
+                'systemPrompt': 'you are helpful',
+                'maxTokens': 10,
+            }
         )
         pai_messages = _mcp_helpers.map_from_mcp_params(params)
         # Should alternate Request/Response, with the trailing assistant becoming the final ModelResponse.
@@ -1731,31 +1751,33 @@ class TestSamplingMessageMapping:
         from pydantic_ai import _mcp as _mcp_helpers
 
         # Tool calls belong to assistant messages.
-        tool_use_params = mcp_types.CreateMessageRequestParams(
-            messages=[
-                mcp_types.SamplingMessage(
-                    role='user',
-                    content=mcp_types.ToolUseContent(type='tool_use', id='t', name='foo', input={}),
-                ),
-            ],
-            maxTokens=10,
+        tool_use_params = mcp_types.CreateMessageRequestParams.model_validate(
+            {
+                'messages': [
+                    mcp_types.SamplingMessage(
+                        role='user',
+                        content=mcp_types.ToolUseContent(type='tool_use', id='t', name='foo', input={}),
+                    ),
+                ],
+                'maxTokens': 10,
+            }
         )
         with pytest.raises(NotImplementedError, match='cannot be used as user content'):
             _mcp_helpers.map_from_mcp_params(tool_use_params)
 
         # Audio sampling responses are also explicitly unsupported.
-        audio_response_params = mcp_types.CreateMessageRequestParams(
-            messages=[
-                mcp_types.SamplingMessage(
-                    role='assistant',
-                    content=mcp_types.AudioContent(
-                        type='audio',
-                        data=base64.b64encode(b'fake').decode(),
-                        mimeType='audio/wav',
+        audio_response_params = mcp_types.CreateMessageRequestParams.model_validate(
+            {
+                'messages': [
+                    mcp_types.SamplingMessage(
+                        role='assistant',
+                        content=mcp_types.AudioContent.model_validate(
+                            {'type': 'audio', 'data': base64.b64encode(b'fake').decode(), 'mimeType': 'audio/wav'}
+                        ),
                     ),
-                ),
-            ],
-            maxTokens=10,
+                ],
+                'maxTokens': 10,
+            }
         )
         with pytest.raises(NotImplementedError):
             _mcp_helpers.map_from_sampling_content(audio_response_params.messages[0].content)  # type: ignore[arg-type]
@@ -1765,18 +1787,22 @@ class TestSamplingMessageMapping:
     async def test_map_tool_history(self, as_list: bool, is_error: bool):
         """Pin native wire conversion independently of a model provider's history interpretation."""
         tool_call = mcp_types.ToolUseContent(type='tool_use', id='call-1', name='weather', input={'city': 'London'})
-        tool_result = mcp_types.ToolResultContent(
-            type='tool_result',
-            toolUseId='call-1',
-            content=[mcp_types.TextContent(type='text', text='unavailable' if is_error else 'sunny')],
-            isError=is_error,
+        tool_result = mcp_types.ToolResultContent.model_validate(
+            {
+                'type': 'tool_result',
+                'toolUseId': 'call-1',
+                'content': [mcp_types.TextContent(type='text', text='unavailable' if is_error else 'sunny')],
+                'isError': is_error,
+            }
         )
-        params = mcp_types.CreateMessageRequestParams(
-            messages=[
-                mcp_types.SamplingMessage(role='assistant', content=[tool_call] if as_list else tool_call),
-                mcp_types.SamplingMessage(role='user', content=[tool_result] if as_list else tool_result),
-            ],
-            maxTokens=10,
+        params = mcp_types.CreateMessageRequestParams.model_validate(
+            {
+                'messages': [
+                    mcp_types.SamplingMessage(role='assistant', content=[tool_call] if as_list else tool_call),
+                    mcp_types.SamplingMessage(role='user', content=[tool_result] if as_list else tool_result),
+                ],
+                'maxTokens': 10,
+            }
         )
         mapped = _mcp.map_from_mcp_params(params)
         assert isinstance(mapped[0], ModelResponse)
@@ -1792,33 +1818,42 @@ class TestSamplingMessageMapping:
         )
 
     async def test_map_parallel_tool_history_with_structured_result(self):
-        params = mcp_types.CreateMessageRequestParams(
-            messages=[
-                mcp_types.SamplingMessage(
-                    role='assistant',
-                    content=[
-                        mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
-                        mcp_types.ToolUseContent(type='tool_use', id='two', name='second', input={}),
-                    ],
-                ),
-                mcp_types.SamplingMessage(
-                    role='user',
-                    content=[
-                        mcp_types.ToolResultContent(
-                            type='tool_result', toolUseId='one', content=[], structuredContent={'value': 1}
-                        ),
-                        mcp_types.ToolResultContent(
-                            type='tool_result',
-                            toolUseId='two',
-                            content=[
-                                mcp_types.TextContent(type='text', text='line one'),
-                                mcp_types.TextContent(type='text', text='line two'),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-            maxTokens=10,
+        params = mcp_types.CreateMessageRequestParams.model_validate(
+            {
+                'messages': [
+                    mcp_types.SamplingMessage(
+                        role='assistant',
+                        content=[
+                            mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
+                            mcp_types.ToolUseContent(type='tool_use', id='two', name='second', input={}),
+                        ],
+                    ),
+                    mcp_types.SamplingMessage(
+                        role='user',
+                        content=[
+                            mcp_types.ToolResultContent.model_validate(
+                                {
+                                    'type': 'tool_result',
+                                    'toolUseId': 'one',
+                                    'content': [],
+                                    'structuredContent': {'value': 1},
+                                }
+                            ),
+                            mcp_types.ToolResultContent.model_validate(
+                                {
+                                    'type': 'tool_result',
+                                    'toolUseId': 'two',
+                                    'content': [
+                                        mcp_types.TextContent(type='text', text='line one'),
+                                        mcp_types.TextContent(type='text', text='line two'),
+                                    ],
+                                }
+                            ),
+                        ],
+                    ),
+                ],
+                'maxTokens': 10,
+            }
         )
         mapped = _mcp.map_from_mcp_params(params)
         assert len(mapped) == 2
@@ -1834,22 +1869,22 @@ class TestSamplingMessageMapping:
 
     @pytest.mark.parametrize('invalid_case', ['orphan', 'assistant-result'])
     async def test_map_rejects_invalid_tool_history(self, invalid_case: str):
-        tool_result = mcp_types.ToolResultContent(
-            type='tool_result',
-            toolUseId='one',
-            content=[],
+        tool_result = mcp_types.ToolResultContent.model_validate(
+            {'type': 'tool_result', 'toolUseId': 'one', 'content': []}
         )
-        params = mcp_types.CreateMessageRequestParams(
-            messages=[
-                mcp_types.SamplingMessage(
-                    role='assistant',
-                    content=mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
-                ),
-                mcp_types.SamplingMessage(
-                    role='assistant' if invalid_case == 'assistant-result' else 'user', content=tool_result
-                ),
-            ],
-            maxTokens=10,
+        params = mcp_types.CreateMessageRequestParams.model_validate(
+            {
+                'messages': [
+                    mcp_types.SamplingMessage(
+                        role='assistant',
+                        content=mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
+                    ),
+                    mcp_types.SamplingMessage(
+                        role='assistant' if invalid_case == 'assistant-result' else 'user', content=tool_result
+                    ),
+                ],
+                'maxTokens': 10,
+            }
         )
         if invalid_case == 'orphan':
             params.messages.pop(0)
@@ -1863,12 +1898,14 @@ class TestSamplingMessageMapping:
         """Two assistant messages in a row append into the same `ModelResponse` (no intervening request)."""
         from pydantic_ai import _mcp as _mcp_helpers
 
-        params = mcp_types.CreateMessageRequestParams(
-            messages=[
-                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='one')),
-                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='two')),
-            ],
-            maxTokens=10,
+        params = mcp_types.CreateMessageRequestParams.model_validate(
+            {
+                'messages': [
+                    mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='one')),
+                    mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='two')),
+                ],
+                'maxTokens': 10,
+            }
         )
         pai_messages = _mcp_helpers.map_from_mcp_params(params)
         assert [type(m).__name__ for m in pai_messages] == ['ModelResponse']
@@ -2252,10 +2289,12 @@ def as_modern_mcp_session(monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None) 
 @pytest.fixture
 def as_legacy_mcp_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """Present the connected client as a handshake-era session."""
-    init_result = mcp_types.InitializeResult(
-        protocolVersion='2025-11-25',
-        capabilities=mcp_types.ServerCapabilities(),
-        serverInfo=mcp_types.Implementation(name='legacy', version='1.0'),
+    init_result = mcp_types.InitializeResult.model_validate(
+        {
+            'protocolVersion': '2025-11-25',
+            'capabilities': mcp_types.ServerCapabilities(),
+            'serverInfo': mcp_types.Implementation(name='legacy', version='1.0'),
+        }
     )
     monkeypatch.setattr(Client, 'initialize_result', property(lambda self: init_result))
 
@@ -2274,8 +2313,7 @@ class TestMCPToolsetBackgroundTasks:
     async def task_server(self) -> FastMCP[None]:
         server: FastMCP[None] = FastMCP('task_server')
         if MCP_SDK_V2:
-            # The FastMCP 4 compatibility environment installs the task extra so this integration
-            # is exercised rather than skipped.
+            # The dev group installs `fastmcp[tasks]`, so this integration is exercised rather than skipped.
             assert TasksExtension is not None
             # FastMCP 4 moved task execution into an optional extension package.
             getattr(server, 'add_extension')(TasksExtension())
@@ -2337,10 +2375,12 @@ class TestMCPToolsetBackgroundTasks:
             'list_tools',
             AsyncMock(
                 return_value=[
-                    mcp_types.Tool(
-                        name='forbidden_tool',
-                        inputSchema={'type': 'object'},
-                        execution=mcp_types.ToolExecution(taskSupport='forbidden'),
+                    mcp_types.Tool.model_validate(
+                        {
+                            'name': 'forbidden_tool',
+                            'inputSchema': {'type': 'object'},
+                            'execution': mcp_types.ToolExecution.model_validate({'taskSupport': 'forbidden'}),
+                        }
                     )
                 ]
             ),

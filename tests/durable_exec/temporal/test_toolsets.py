@@ -124,6 +124,7 @@ except ImportError:  # pragma: lax no cover
 try:
     from fastmcp.client.transports import StdioTransport
 
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -198,7 +199,8 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     methods_called: list[str] = []
 
     async def tracking_send_request(self_: ClientSession, request: ClientRequest, *args: Any, **kwargs: Any) -> Any:
-        methods_called.append(request.root.method)
+        # SDK v1 wraps requests in a `RootModel`; SDK v2 passes the request itself.
+        methods_called.append(getattr(request, 'root', request).method)
         return await original_send_request(self_, request, *args, **kwargs)
 
     with patch.object(ClientSession, 'send_request', tracking_send_request):
@@ -1336,6 +1338,10 @@ class MCPTaskSupportWorkflow:
         return (await _mcp_task_temporal_agent.run(prompt)).output
 
 
+# Read once at import: it touches the filesystem, which blockbuster rejects inside async tests.
+MCP_SDK_V2 = is_mcp_sdk_v2()
+
+
 async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
     """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
     async with Worker(
@@ -1351,7 +1357,9 @@ async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
             task_queue=TASK_QUEUE,
         )
 
-    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    # FastMCP 3 honours the client's `prefer_tasks=False`; on FastMCP 4 the server decides, and runs it as a task.
+    optional = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
+    assert output == f'{{"required_task_tool":"required_completed","optional_task_tool":"{optional}"}}'
 
 
 nested_multimodal_tool_return_agent = Agent(TestModel(), name='nested_multimodal_tool_return_agent')

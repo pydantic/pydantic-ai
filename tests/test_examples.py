@@ -167,7 +167,7 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
     else:
         mocker.patch('pydantic_ai.mcp.MCPToolset', return_value=MockMCPServer())
     try:
-        mocker.patch('mcp.server.fastmcp.FastMCP')
+        mocker.patch('fastmcp.FastMCP')
     except (ImportError, AttributeError):
         pass
 
