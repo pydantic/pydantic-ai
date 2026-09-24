@@ -206,13 +206,17 @@ class Response:
     answers: list[Answer]
 
 
+# Kept alive across activities, so `test_mcp_tools_cached_across_activities` can count requests on one
+# session; `temporal_env` disconnects it at the end of each module (see there).
+complex_mcp_transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+
 complex_agent = Agent(
     model,
     deps_type=Deps,
     output_type=Response,
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
-        MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
+        MCPToolset(complex_mcp_transport, id='mcp', init_timeout=20),
         ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],

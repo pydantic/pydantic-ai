@@ -25,6 +25,7 @@ for optional dependencies elsewhere: importing it would drag `vcr` in at module 
 from __future__ import annotations
 
 import asyncio
+import sys
 import warnings
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -111,6 +112,11 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
         download_dest_dir=str(download_dest_dir),
     ) as env:
         yield env
+        # Each module runs on its own event loop, and FastMCP 4 can't tear down a kept-alive stdio
+        # subprocess from a later loop, so close `complex_agent`'s on the loop that started it.
+        # Looked up rather than imported: `_shared` skips when `mcp` is missing.
+        if (shared := sys.modules.get(f'{__package__}._shared')) is not None:  # pragma: no branch
+            await shared.complex_mcp_transport.disconnect()
 
 
 # The `host:port` the dev server actually bound — read back rather than assumed — for tests that
