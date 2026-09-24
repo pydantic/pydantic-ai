@@ -1,12 +1,15 @@
 import asyncio
 import json
+import os
 import re
+import subprocess
 import sys
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
 import pytest
@@ -9169,6 +9172,38 @@ async def test_provider_reentry_recreates_http_client(provider_factory: Callable
         assert not second_client.is_closed
         assert second_client is not first_client
     assert second_client.is_closed
+
+
+@requires_openai
+def test_agent_openai_codex_prefix_reads_utf8_auth(tmp_path: Path):
+    """`Agent('openai-codex:...')` constructs offline from a valid UTF-8 auth.json under a non-UTF-8 locale.
+
+    String model inference builds `OpenAICodexProvider()` eagerly, reading the Codex CLI's
+    auth.json before any network access, so construction must not depend on the platform
+    default text codec.
+    """
+    auth_json = tmp_path / 'auth.json'
+    auth_json.write_text(
+        json.dumps({'tokens': {'access_token': 'a', 'refresh_token': 'r', 'account_id': 'acc-é-123'}}),
+        encoding='utf-8',
+    )
+    code = """\
+from pydantic_ai import Agent
+
+agent = Agent('openai-codex:gpt-5.6-luna')
+print(agent.model.model_name)
+"""
+    result = subprocess.run(
+        [sys.executable, '-c', code],
+        capture_output=True,
+        text=True,
+        env={**os.environ, 'CODEX_HOME': str(tmp_path), 'LC_ALL': 'C', 'LANG': 'C', 'PYTHONUTF8': '0'},
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f'Agent construction with the openai-codex prefix failed under a non-UTF-8 locale:\n{result.stderr}'
+    )
+    assert result.stdout.strip() == 'gpt-5.6-luna'
 
 
 def test_tool_call_with_validation_value_error_serializable():
