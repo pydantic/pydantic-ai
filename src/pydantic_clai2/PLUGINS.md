@@ -640,6 +640,8 @@ tools for cleanup; it does not undo completed side effects or retry the run.
 Retained failed turns and restored interrupted sessions are marked interrupted so
 core can close unanswered tool calls on the next prompt without replaying them.
 A prompt cancelled by `turn_start` never starts an agent run and is not retained.
+`/fork` fires both hooks for its background run too: a `turn_start` that cancels
+the prompt refuses the fork, and `turn_end` arrives when the fork finishes.
 
 Codex token-refresh failures show `/login openai-codex` recovery advice, including
 when the SDK wraps them as connection errors. This changes only the terminal
@@ -698,6 +700,9 @@ host.commands.register(
 ```
 
 The handler gets the arguments as a list of strings and returns the text to show.
+Arguments are split like a shell command line, so quotes group words. Pass
+`raw=True` to receive the unsplit argument text as one string instead (an empty
+list when there is none); `/fork` does this so prompts keep their apostrophes.
 It may be `async`. Add `complete=` to offer Tab suggestions. The registry filters
 command names and returned candidates by case-sensitive substring, replacing the
 whole typed fragment when selected. Return full candidates, not just suffixes.

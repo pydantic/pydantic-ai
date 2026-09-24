@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections import deque
-from collections.abc import AsyncGenerator, Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from itertools import islice
 
@@ -50,6 +50,7 @@ class LivePrompt:
         chords: Mapping[str, Callable[[], str]] | None = None,
         pinned: Callable[[], str] = lambda: '',
         spinner: Callable[[], Spinner] = lambda: BUILTIN_SPINNERS[DEFAULT_SPINNER],
+        panel: Callable[[str], Sequence[str]] = lambda _: (),
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
@@ -57,6 +58,8 @@ class LivePrompt:
         footer notice. `pinned` returns an optional styled row painted above the footer.
         `run_now` may take an accepted draft instead of queueing it, returning whether it did.
         `spinner` returns the working animation; it is read on every frame, so a new choice shows at once.
+        `panel` receives the current spinner frame and returns styled rows painted above the queue,
+        such as running forks; it is read on every repaint, including between turns.
         """
         self.console = console
         self.commands = commands
@@ -70,6 +73,7 @@ class LivePrompt:
         self.chords = dict(chords or {})
         self.pinned = pinned
         self.spinner = spinner
+        self.panel = panel
         self.notice = ''
         self._chord_prefix = ''
         self.buffer = PromptBuffer(history=list(reversed(list(history.load_history_strings()))))
@@ -299,13 +303,17 @@ class LivePrompt:
         muted, reset = theme.sgr(theme.MUTED), '\x1b[0m'
         if width < 6 or height < 6:
             return tuple(self.buffer.rows(width=width, limit=1))
-        rows: list[str] = []
-        queue_limit = max(1, height // 6)
-        for text in self.queued_messages[:queue_limit]:
-            label = 'Command' if is_command_input(text) else 'Follow-up'
-            rows.append(muted + truncate(f'{label}: {" ".join(terminal_text(text).split())}', width) + reset)
-        if len(self.queued_messages) > queue_limit:
-            rows.append(muted + f'+{len(self.queued_messages) - queue_limit} more queued' + reset)
+        # `paint` keeps `height - 2` rows; the title, one draft row, the rule, and the footer need four.
+        room = height - 6
+        limit = max(1, height // 6)
+        panel = [truncate(row, width) + reset for row in self.panel(self.spinner().frame(self.clock()))]
+        rows = _capped(panel, limit=limit, room=room, more=muted + '+{} more' + reset)
+        queued = [
+            muted + truncate(f'{label}: {" ".join(terminal_text(text).split())}', width) + reset
+            for text in self.queued_messages
+            for label in ('Command' if is_command_input(text) else 'Follow-up',)
+        ]
+        rows += _capped(queued, limit=limit, room=room - len(rows), more=muted + '+{} more queued' + reset)
         title = ''
         if self.interrupts.active:
             head, glyph = ' Working ', self.spinner().frame(self.clock())
@@ -414,3 +422,13 @@ class LivePrompt:
             self._completion_worker.close()
             self.console.file = original
             self.output.release()
+
+
+def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:
+    """Up to `limit` rows plus a `more` count for the rest, never taller than `room`."""
+    if len(rows) <= min(limit, room):
+        return rows
+    if room <= 0:
+        return []
+    shown = rows[: min(limit, room - 1)]
+    return [*shown, more.format(len(rows) - len(shown))]

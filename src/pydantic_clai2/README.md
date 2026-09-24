@@ -671,7 +671,7 @@ every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
 Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/add_model`, `/model_settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/usage`, `/cost`, and `/compact` from the built-in `compaction` plugin.
+`/plugins`, `/reload`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
 matching applies to the filename within the typed directory. Path completion inserts
@@ -738,6 +738,44 @@ loaded dynamically rather than declared by module-scope imports. `/reload` does 
 rerun the CLI or recursively reload third-party packages. Import-time side effects
 still cannot be undone. Use `/plugins reload NAME` when you only want to reload one
 plugin.
+
+## Background forks: `/fork`
+
+`/fork` runs a copy of the current conversation in the background, so you can
+keep working while it answers. It follows Code Puppy's `/fork`.
+
+```text
+/fork write tests for the parser        fork with the current model
+/fork @openai:gpt-5 review this         fork with another model
+/fork cancel 2                          stop fork #2
+/forks                                  list this session's forks
+```
+
+The fork copies the retained history at the moment `/fork` runs and continues
+from that copy as its own saved session. Later turns in the foreground do not
+reach it, and it does not change the foreground history. With no history yet, or
+if the copy fails, the fork starts with a fresh context and says so. It uses the
+current model, plugins, and model settings unless `@model` names another model.
+CLAI has one agent, so unlike Code Puppy there is no `@agent` argument.
+
+While forks run, the editor shows one row per fork above the prompt, like Code
+Puppy's sub-agent panel: the fork number, its model, your `/spinner`, the elapsed
+time, and what it is doing (`thinking`, `tool: NAME`, `responding`). A fork that
+finished while a turn or command was running shows as done until its output prints.
+
+When a fork finishes, CLAI prints a `FORK #N RESPONSE` banner with the model, the response as
+Markdown, the elapsed time, and the saved session id. `/resume SESSION-ID`
+switches the foreground to that fork's conversation. Output waits while a turn or
+command is running, then prints before the next prompt. Commands run between
+turns, so a `/fork` typed during a turn is queued like any other command.
+
+Cancelling a turn with Esc or Ctrl-C also cancels running forks. `/exit` and
+`/reload` cancel them too.
+
+A fork is a turn for plugins: `turn_start` runs before it starts and can rewrite
+or cancel its prompt, which refuses the fork, and `turn_end` reports its outcome
+when it finishes. Forks share the foreground's plugin instances, so a tool that
+asks you a question can open its picker from a fork.
 
 ## Saved sessions and `/resume`
 

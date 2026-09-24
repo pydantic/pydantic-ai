@@ -188,6 +188,7 @@ bundled palettes use Termflow defaults.
 | `_app.py` | the prompt loop and built-in `/commands` |
 | `_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
 | `sessions.py` | resume command and background namer ownership; built-in step capture |
+| `forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
 | `session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `_rendering.py` | streaming Markdown and thinking |
 | `plugins.py` | `PluginHost`, hook names, event dataclasses |
