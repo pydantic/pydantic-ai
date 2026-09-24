@@ -18,6 +18,7 @@ from subprocess import DEVNULL, PIPE
 from typing import cast
 
 import anyio
+import anyio.abc
 import sniffio
 from typing_extensions import TypeVar
 

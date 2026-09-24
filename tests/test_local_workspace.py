@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import anyio.abc
 import pytest
 
 from pydantic_ai import Agent, RunContext
