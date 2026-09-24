@@ -276,6 +276,24 @@ def test_popup_reopening_reuses_gap_without_scrolling_blank_lines() -> None:
     assert 'partial continuation' in screen.terminal.lines()
 
 
+@pytest.mark.parametrize('history', [2, 30])
+def test_output_resumes_under_history_after_a_menu_releases_the_screen(history: int) -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    terminal.write(''.join(f'banner {index}\r\n' for index in range(history)))
+    surface = PromptSurface(output=terminal, size=lambda: (terminal.width, terminal.height))
+    surface.paint(ROWS)
+    surface.write('> /add_model\n\n')
+    surface.release()
+    surface.write('No changes.\n\n')
+    surface.paint(ROWS)
+    surface.write('next\n')
+    lines = terminal.lines()
+    top = lines.index(f'banner {history - 1}')
+    assert lines[top : top + 6] == [f'banner {history - 1}', '> /add_model', '', 'No changes.', '', 'next']
+    assert lines[-len(ROWS) :] == list(ROWS)
+    assert terminal.history == [f'banner {index}' for index in range(max(0, history + 6 - (24 - len(ROWS))))]
+
+
 @pytest.mark.parametrize('resize', [False, True])
 def test_release_finishes_partial_output_before_shell_can_overwrite_it(resize: bool) -> None:
     screen = Screen()

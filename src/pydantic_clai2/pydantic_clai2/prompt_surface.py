@@ -131,8 +131,12 @@ class PromptSurface(io.StringIO):
         changed_geometry = self._geometry != (width, height) or len(rows) != len(self._rows)
         parts: list[str] = []
         if not self._active:
+            # Scroll only as far as the rows need, then return to the writer's row.
+            # Jumping to the region bottom instead left a blank band under short
+            # history, visible after startup and whenever a menu hands the screen back.
+            up = f'\x1b[{len(rows)}A' if rows else ''
             parts.extend(
-                ['\x1b[?25l\x1b[?2004h\x1b[>4;1m', '\r\n' * len(rows), f'\x1b[1;{bottom}r', f'\x1b[{bottom};1H']
+                ['\x1b[?25l\x1b[?2004h\x1b[>4;1m', '\r\n' * len(rows), up, '\x1b7', f'\x1b[1;{bottom}r', '\x1b8']
             )
             self._active = True
         elif changed_geometry:
@@ -213,10 +217,11 @@ class PromptSurface(io.StringIO):
                     self._emit('\n')
                     self._partial = False
                 bottom = self._geometry[1] - len(self._rows)
-                parts = ['\x1b[r']
+                # Resetting the margins homes the cursor, so keep the writer's own position.
+                parts = ['\x1b7\x1b[r']
                 for row in range(bottom + 1, self._geometry[1] + 1):
                     parts.append(f'\x1b[{row};1H\x1b[2K')
-                parts.extend([f'\x1b[{bottom};1H', '\x1b[>4;0m\x1b[0m\x1b[?2004l\x1b[?25h'])
+                parts.extend(['\x1b8', '\x1b[>4;0m\x1b[0m\x1b[?2004l\x1b[?25h'])
                 self._transaction(''.join(parts))
             finally:
                 if self._deferred is not None and not self._holds:
