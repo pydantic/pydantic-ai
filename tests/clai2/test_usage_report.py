@@ -142,8 +142,9 @@ class Priced(AbstractCapability[None]):
         return response
 
 
-async def test_shell_commands_and_footer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    values = ['hello', '/usage', '/cost', '/new', '/cost', '/exit']
+@pytest.mark.parametrize('reset', ['/new', '/clear', ' Clear '])
+async def test_shell_commands_and_footer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reset: str) -> None:
+    values = ['hello', '/usage', '/cost', reset, '/cost', '/exit']
     footers: list[str] = []
 
     class Prompt(Generic[PromptT]):

@@ -200,7 +200,7 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
 `/new` starts a new saved conversation, without deleting the previous one or
-input recall. Model responses and tool results are not saved to this file.
+input recall. `/clear`, or bare `clear`, is an alias of `/new`. Model responses and tool results are not saved to this file.
 
 ## CI coverage
 
@@ -634,7 +634,7 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/add_model`, `/model_settings`, `/help`, `/new`, `/resume`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/add_model`, `/model_settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/usage`, `/cost`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,

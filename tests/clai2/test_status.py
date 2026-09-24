@@ -82,12 +82,13 @@ async def test_footer_paints_the_context_figure_on_alert(monkeypatch: pytest.Mon
     assert f'{sgr(WARNING)}9{sgr(WARNING)}0' in painted and f'{sgr(WARNING)}m' not in painted
 
 
-def test_new_resets_the_figures_whatever_follows_it() -> None:
+@pytest.mark.parametrize('command', ['/new', '/clear'])
+def test_new_resets_the_figures_whatever_follows_it(command: str) -> None:
     status = Status(context_tokens=90, context_alert=True, output_tokens=5, streamed_chars=8)
-    _reset_status('/new please', status)
+    _reset_status(f'{command} please', status)
     assert status == Status()
     status.context_alert = True
-    _reset_status('/newer', status)
+    _reset_status(f'{command}er', status)
     assert status.context_alert
 
 

@@ -102,6 +102,23 @@ async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
         assert await live.read() == 'idle prompt'
 
 
+async def test_bare_clear_queues_as_a_command_that_steering_skips() -> None:
+    attempted: list[str] = []
+
+    def steer(text: str) -> bool:
+        attempted.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        live.buffer.replace(' Clear ')
+        live.feed('enter')
+        assert live.queued_messages == ('/clear',)
+        live.feed('alt-enter')
+        assert attempted == []
+        assert await live.read() == '/clear'
+
+
 @pytest.mark.parametrize('head', ['/help', KeyboardInterrupt(), EOFError(), 'follow up'])
 @pytest.mark.parametrize('available', [False, True])
 async def test_unavailable_steering_preserves_queue(head: str | KeyboardInterrupt | EOFError, available: bool) -> None:
