@@ -20,6 +20,10 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [TypeSafe (Jev)](typesafe.md)
 * [Z.AI](zai.md)
 
+## Babel models
+
+[Babel models](babel.md) are drop-in variants of the OpenAI, Anthropic, Google and Bedrock models whose wire mapping is done by [babel](https://github.com/pydantic/babel), so a request is mapped identically in Pydantic AI and in babel's TypeScript and Rust backends.
+
 ## OpenAI-compatible Providers
 
 In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:

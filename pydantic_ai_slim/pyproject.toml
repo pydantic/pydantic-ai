@@ -90,6 +90,9 @@ bedrock = ["boto3>=1.42.63"]
 # Amazon Bedrock Mantle serves OpenAI models through an OpenAI-compatible API via `AsyncBedrockOpenAI`,
 # which needs `openai` and (for AWS SigV4 auth) `botocore`; the bearer-token path needs `openai` alone.
 bedrock-mantle = ["openai>=3.19.0", "botocore>=1.42.63"]
+# `llm-babel` powers the `pydantic_ai.models.babel` drop-ins: provider wire mapping
+# (request, response, streaming) compiled from one corpus-verified spec.
+babel = ["llm-babel>=0.1.0"]
 zai = ["openai>=3.19.0"]
 snowflake = ["openai>=3.19.0"]
 crusoe = ["openai>=3.19.0"]

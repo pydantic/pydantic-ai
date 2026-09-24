@@ -57,6 +57,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `cohere` - installs [Cohere Model](models/cohere.md) dependency `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 * `bedrock` - installs [Bedrock Model](models/bedrock.md) dependency `boto3` [PyPI ↗](https://pypi.org/project/boto3){:target="_blank"}
 * `bedrock-mantle` - installs [Bedrock Mantle Model](models/bedrock.md#bedrock-mantle) dependencies `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"} and `botocore` [PyPI ↗](https://pypi.org/project/botocore){:target="_blank"}
+* `babel` - installs the [Babel models](models/babel.md) dependency `llm-babel` [PyPI ↗](https://pypi.org/project/llm-babel){:target="_blank"}
 * `xai` - installs [xAI Model](models/xai.md) dependency `xai-sdk` [PyPI ↗](https://pypi.org/project/xai-sdk){:target="_blank"}
 * `openrouter` - installs the [OpenRouter](models/openrouter.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `zai` - installs the [Z.AI](models/zai.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
