@@ -58,7 +58,7 @@ def _delete(*, services: list[str], account: str = _ACCOUNT) -> None:
             pass  # A failed write may not have created the entry.
 
 
-def _write_private(*, path: Path, value: str) -> None:
+def write_private(*, path: Path, value: str) -> None:
     """Replace the file atomically, without ever writing through something already there.
 
     A unique staging name plus `O_EXCL` means a symlink planted where the staging file
@@ -99,8 +99,23 @@ def save_codex_credentials(*, value: str, account: str = _ACCOUNT, fallback: Pat
     try:
         _save_keyring(value=value, account=account)
     except _NO_KEYRING:
-        _write_private(path=_fallback_file(account=account, fallback=fallback), value=value)
+        write_private(path=_fallback_file(account=account, fallback=fallback), value=value)
         return
+    _fallback_file(account=account, fallback=fallback).unlink(missing_ok=True)
+
+
+def delete_credentials(*, account: str = _ACCOUNT, fallback: Path | None = None) -> None:
+    """Forget a login everywhere it may be: keyring entry, its chunks, and the fallback file."""
+    try:
+        value = keyring.get_password(_SERVICE, account)
+    except _NO_KEYRING:
+        value = None
+    if value is not None:
+        try:
+            services = _chunk_services(value=value, account=account)
+        except UserError:
+            services = []
+        _delete(services=[*services, _SERVICE], account=account)
     _fallback_file(account=account, fallback=fallback).unlink(missing_ok=True)
 
 

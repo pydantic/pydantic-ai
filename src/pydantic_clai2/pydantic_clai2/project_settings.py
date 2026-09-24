@@ -40,15 +40,15 @@ def _present(path: Path) -> bool:
     return True
 
 
-def find_project_file(workspace: Path) -> Path | None:
-    """The nearest project file at or above `workspace`. The search stops at the first `.git`.
+def find_project_file(workspace: Path, name: Path = PROJECT_FILE) -> Path | None:
+    """The nearest `name` at or above `workspace`. The search stops at the first `.git`.
 
     An unreadable project file is still returned, so loading it fails loudly rather than silently
     dropping the repository's settings; an unreadable `.git` still ends the walk.
     """
     start = workspace.resolve()
     for directory in (start, *start.parents):
-        candidate = directory / PROJECT_FILE
+        candidate = directory / name
         if _present(candidate):
             return candidate
         if _present(directory / '.git'):

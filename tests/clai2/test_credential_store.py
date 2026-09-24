@@ -15,7 +15,12 @@ from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
 from rich.console import Console
 
 from pydantic_clai2.auth import CodexAuth, CodexCredentials
-from pydantic_clai2.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.credential_store import (
+    credentials_path,
+    delete_credentials,
+    load_codex_credentials,
+    save_codex_credentials,
+)
 
 
 @pytest.fixture
@@ -276,3 +281,26 @@ def test_fallback_paths_are_per_account(tmp_path: Path, no_keyring: None, monkey
     save_codex_credentials(value='vllm-token', account='vllm')
     assert load_codex_credentials(fallback=codex) == 'codex-tokens'
     assert load_codex_credentials(account='vllm', fallback=vllm) == 'vllm-token'
+
+
+@pytest.mark.parametrize('value', ['small', 'x' * 12000])
+def test_delete_removes_entry_and_chunks(vault: dict[str, str], fallback: Path, value: str) -> None:
+    save_codex_credentials(fallback=fallback, value=value)
+    fallback.parent.mkdir(parents=True, exist_ok=True)
+    fallback.write_text('stale')
+    delete_credentials(fallback=fallback)
+    assert vault == {} and not fallback.exists()
+    delete_credentials(fallback=fallback)
+    assert load_codex_credentials(fallback=fallback) is None
+
+
+def test_delete_clears_a_corrupt_manifest(vault: dict[str, str], fallback: Path) -> None:
+    vault['pydantic-clai2'] = 'clai-chunks-v1:broken'
+    delete_credentials(fallback=fallback)
+    assert vault == {}
+
+
+def test_delete_without_keyring_removes_the_file(no_keyring: None, fallback: Path) -> None:
+    save_codex_credentials(fallback=fallback, value='plain')
+    delete_credentials(fallback=fallback)
+    assert not fallback.exists()

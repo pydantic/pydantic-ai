@@ -175,10 +175,11 @@ def _reload_plan(names: Iterable[str]) -> tuple[tuple[str, Path], ...]:
             imports.visit(ast.parse(source.read(), filename=str(path)))
         targets = {target for target in imports.names if target in sources and target != name}
         # Importing a submodule can also execute a previously unloaded package initializer.
+        # A module's own enclosing packages are already initializing when it runs, so they are not dependencies.
         for target in tuple(targets):
             parent = target.rpartition('.')[0]
             while parent in sources:
-                if parent != name:
+                if parent != name and not name.startswith(f'{parent}.'):
                     targets.add(parent)
                 parent = parent.rpartition('.')[0]
         dependencies[name] = targets

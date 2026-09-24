@@ -14,14 +14,17 @@ _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
 
+def config_dir() -> Path:
+    """The user's CLAI folder, honouring `XDG_CONFIG_HOME`."""
+    return Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
+
+
 class SettingsStore:
     """Persist overrides, never credentials or conversation messages."""
 
     def __init__(self, path: Path | None = None) -> None:
         """Open or initialize a settings database at an explicit or user path."""
-        self.path = (
-            path or Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
-        )
+        self.path = path or config_dir() / 'config.db'
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             version = connection.execute('PRAGMA user_version').fetchone()[0]

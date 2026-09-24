@@ -12,15 +12,19 @@ Context management is the built-in `compaction` plugin,
 The `/plugins` menu also lists every other harness capability, disabled by
 default. Press Space to enable one. Some need optional packages, credentials,
 or constructor settings first; see [optional harness capabilities](PLUGINS.md#optional-harness-capabilities).
-The built-in `mcp` plugin includes the MCP client and `/mcp` command. Configure
-trusted stdio or Streamable HTTP servers through plugin settings; no server is
-connected by default. `/mcp` lists configuration, and `/mcp tools NAME` connects
-briefly to discover tools. HTTP redirects are rejected; use the final endpoint URL.
-During runs, core manages connections and prefixes
-tool names with the configured server name. Local server programs still need to
-be installed separately. Settings are plain JSON, so avoid storing secrets there.
-See [Connect MCP servers](PLUGINS.md#connect-mcp-servers) for configuration and
-trust guidance. `/plugins disable mcp` removes its command and tools.
+`/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
+status dashboard. `/mcp install` opens a form where you name the server, pick
+`stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
+configuration in your editor, and switch on OAuth sign-in for remote servers.
+`/mcp edit NAME` reopens the same form. `/mcp start NAME`, `stop NAME`,
+`restart NAME`, `status NAME`, `logs NAME [LINES]`, `auth NAME [logout]`,
+`remove NAME`, and `trust [status|accept|revoke]` manage servers, and `/mcp help`
+lists them all. Saved servers are available to the agent from the next prompt,
+with tool names prefixed by the server name. A server connects on the first
+prompt that needs it (or `/mcp start`) and stays connected; one that cannot
+connect is marked `error` and left out rather than failing the prompt. See
+[Connect MCP servers](PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
+and project trust. `/plugins disable mcp` removes the command and tools.
 
 Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
 
