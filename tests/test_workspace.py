@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -177,25 +178,48 @@ async def test_resolve_rejects_a_relative_base() -> None:
         await Workspace(FakeWorkspace('resolve')).resolve('file.txt', base='relative')
 
 
+@pytest.mark.parametrize(
+    'path',
+    [
+        'dir_link/missing/new.txt',
+        'file_link',
+        # `..` climbs from the link's target, where the kernel would, not from the link's own directory.
+        'dir_link/..',
+        # A missing component is climbed out of, and the symlink after it still resolves.
+        'missing/../dir_link/escape.txt',
+        # A target whose name ends in a newline must not collapse onto its sibling without one.
+        'newline_link/escape.txt',
+        'dangling_link',
+        'deep_dangling_link/x',
+        '/pydantic-ai-missing/file.txt',
+    ],
+)
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
-async def test_realpath_resolves_symlinks_the_way_the_environment_does(tmp_path: Path, native: bool) -> None:
-    """The shell path (`readlink -f`) gives the same answers as a backend's native `realpath`."""
+async def test_realpath_resolves_symlinks_the_way_the_environment_does(tmp_path: Path, native: bool, path: str) -> None:
+    """Native and shell-derived `realpath` both agree with `os.path.realpath(strict=False)`."""
     data = tmp_path / 'elsewhere' / 'data'
     data.mkdir(parents=True)
     (data / 'file.txt').write_text('x')
-    root = tmp_path / 'root'
+    (tmp_path / 'safe\n').mkdir()
+    root = tmp_path / 'safe'
     root.mkdir()
     (root / 'dir_link').symlink_to(data)
     (root / 'file_link').symlink_to(data / 'file.txt')
+    (root / 'newline_link').symlink_to(tmp_path / 'safe\n')
+    (root / 'dangling_link').symlink_to(tmp_path / 'gone.txt')
+    (root / 'deep_dangling_link').symlink_to(tmp_path / 'gone' / 'deeper')
     backend = LocalWorkspaceBackend(root)
     workspace = Workspace(backend if native else RunOnlyWorkspaceBackend(backend))
-    data = data.resolve()
 
-    assert await workspace.realpath('dir_link/missing/new.txt') == str(data / 'missing' / 'new.txt')
-    assert await workspace.realpath('file_link') == str(data / 'file.txt')
-    # `..` climbs from the link's target, where the kernel would, not from the link's own directory.
-    assert await workspace.realpath('dir_link/..') == str(data.parent)
-    assert await workspace.realpath('/pydantic-ai-missing/file.txt') == '/pydantic-ai-missing/file.txt'
+    assert await workspace.realpath(path) == os.path.realpath(root.resolve() / path)
+
+
+async def test_shell_realpath_stops_at_a_symlink_loop(tmp_path: Path) -> None:
+    (tmp_path / 'loop').symlink_to(tmp_path / 'loop')
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+
+    with pytest.raises(WorkspaceError, match='too many levels of symbolic links'):
+        await workspace.realpath('loop')
 
 
 async def test_realpath_only_normalizes_on_a_filesystem_only_backend() -> None:
@@ -808,6 +832,32 @@ async def test_binary_sniff_failure_falls_back_to_the_filesystem_read() -> None:
         1,
     )
     assert '1 line remaining' in window.text
+    assert backend.reads == ['/workspace/data.txt']
+
+
+class _SliceRefused(FakeWorkspace):
+    """A backend that refuses the bounded slice's output, the way the local backend does past its output limit."""
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> FakeWorkspaceResult:
+        if isinstance(command, str) and command.startswith('sed -n '):
+            raise WorkspaceError('output exceeded the limit')
+        return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+
+
+async def test_refused_slice_falls_back_to_the_filesystem_read() -> None:
+    backend = _SliceRefused('refused', {'/workspace/data.txt': b'one\ntwo\n'})
+
+    window = await Workspace(backend).read_file('data.txt', max_bytes=4)
+
+    assert (window.lines, window.truncated_by) == (('one',), 'bytes')
     assert backend.reads == ['/workspace/data.txt']
 
 

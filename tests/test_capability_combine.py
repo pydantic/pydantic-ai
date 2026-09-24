@@ -135,8 +135,8 @@ _SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
 
 
 def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
-    assert merged.working_dir == '/second', 'a scalar takes the later value'
-    assert merged.read_only is True
+    # One environment: the later workspace replaces the earlier whole, so the first one's `env` never leaks.
+    assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
 
 
 def _check_tool_search(merged: ToolSearch) -> None:
@@ -199,8 +199,8 @@ COMBINE_POLICY: dict[str, Policy] = {
         _check_content_filter,
     ),
     'LocalWorkspace': Combines(
-        'a run has one workspace, and only the first capability in order could supply it anyway',
-        lambda: (LocalWorkspace('/first'), LocalWorkspace('/second', read_only=True)),
+        'a run has one workspace, and the later configuration replaces the earlier one whole',
+        lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
         _check_local_workspace,
     ),
     'ToolSearch': Combines(

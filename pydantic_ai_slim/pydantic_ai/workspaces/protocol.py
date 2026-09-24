@@ -248,7 +248,7 @@ class SupportsCommands(Protocol):
                 Implementations must reject a relative path with `ValueError`: resolving it
                 against ambient state (such as a local backend's host process working
                 directory) would silently escape the workspace root.
-            env: Extra environment variables for the command.
+            env: Extra environment variables for the command, layered over the backend's own.
             timeout: Deadline in seconds, measured from this call. On expiry a
                 [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError] is raised;
                 whether the command is terminated is backend-specific.

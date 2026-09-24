@@ -354,7 +354,7 @@ async def test_result_workspace_calls_directly_once_the_container_has_ended() ->
     assert await workspace.working_dir() == '/workspace'
     await workspace.remove('after.bin')
     assert await workspace.exists('after.bin') is False
-    assert await workspace.realpath('after.txt') == await workspace.wrapped.realpath('after.txt')
+    assert await workspace.realpath('sub/../after.txt') == '/workspace/after.txt'
     assert _workspace_units(durability) == ['ensure']
 
     # A wrapper that never ran `ensure` asks the wrapped workspace for its working directory too.

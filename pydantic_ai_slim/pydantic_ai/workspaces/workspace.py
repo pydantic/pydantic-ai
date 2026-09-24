@@ -33,6 +33,7 @@ from .protocol import (
     WorkspaceRef,
     WorkspaceResult,
     WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
 )
 from .unavailable import UnavailableWorkspace
 
@@ -50,6 +51,9 @@ _SHELL_WRITE_CHUNK_BYTES = 64 * 1024
 Linux limits one `execve` argument to 128 KiB, independently of `ARG_MAX`. Leaving half of
 that for quoting and the command template keeps fallback writes below the lower limit.
 """
+
+_SHELL_MAX_SYMLINKS = 40
+"""Symlinks `realpath` follows before giving up, as Linux does (`MAXSYMLINKS`), so a link loop ends."""
 
 _SHELL_CLEANUP_TIMEOUT = 10
 """Maximum time spent removing an interrupted fallback write's temporary files."""
@@ -158,7 +162,7 @@ class _ShellFilesystem(SupportsFilesystem):
     utility assumptions and the base64 transfer overhead used here to preserve arbitrary bytes.
 
     It needs a POSIX `sh` with `test` and `printf`, plus `base64`, `cp`, `mv`, `rm`, `mkdir`,
-    `find` and `wc`, and `readlink -f` for `realpath`; `Workspace.read_file` also uses `sed` and
+    `find` and `wc`, and `readlink` for `realpath`; `Workspace.read_file` also uses `sed` and
     `head` for bounded reads. A path under a directory the command cannot search reads as missing:
     `test -e` cannot tell a permission error from a missing path.
     """
@@ -294,18 +298,30 @@ class _ShellFilesystem(SupportsFilesystem):
         return result.exit_code == 0
 
     async def realpath(self, path: str) -> str:
-        # One round trip: strip missing trailing components until an existing path (or a dangling
-        # symlink, which `readlink -f` still follows) remains, resolve that, and re-append the tail.
+        # One round trip, resolving the way `os.path.realpath(strict=False)` does: walk the components
+        # left to right, follow each symlink one level with `readlink` and walk its target in place of
+        # the link, and let `..` climb the path resolved so far. A missing component is kept as
+        # written and can still be climbed out of, after which symlinks resolve again. The result is
+        # base64-encoded because command substitution would drop a trailing newline from a name.
         result = await self._backend.run(
-            f'path={shlex.quote(path)}; tail=; '
-            'while ! test -e "$path" && ! test -L "$path"; do '
-            'tail="/${path##*/}$tail"; path="${path%/*}"; path="${path:-/}"; done; '
-            'resolved=$(readlink -f "$path") && printf \'%s%s\' "${resolved%/}" "$tail"',
+            f'rest={shlex.quote(path.lstrip("/"))}; resolved=; links=0; '
+            'while [ -n "$rest" ]; do '
+            'case "$rest" in */*) part="${rest%%/*}"; rest="${rest#*/}";; *) part="$rest"; rest=;; esac; '
+            'case "$part" in ""|.) ;; ..) resolved="${resolved%/*}";; *) '
+            'if [ -L "$resolved/$part" ]; then '
+            f'links=$((links + 1)); if [ "$links" -gt {_SHELL_MAX_SYMLINKS} ]; then '
+            'echo "too many levels of symbolic links" >&2; exit 1; fi; '
+            'target=$(readlink -n -- "$resolved/$part"; printf x); target="${target%x}"; '
+            'case "$target" in /*) resolved=;; esac; rest="$target/$rest"; '
+            'else resolved="$resolved/$part"; fi;; esac; done; '
+            'printf %s "${resolved:-/}" | base64',
             shell=True,
         )
         await self._raise_for_error(result, path)
-        # The missing tail is kept as written, so its `.` and `..` segments still need normalizing.
-        return posixpath.normpath(result.stdout or '/')
+        try:
+            return base64.b64decode(result.stdout).decode()
+        except ValueError as error:
+            raise WorkspaceError(f'shell filesystem returned an invalid real path for {path!r}') from error
 
     async def _raise_for_error(self, result: WorkspaceResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:
@@ -472,7 +488,7 @@ class Workspace(WorkspaceBackend):
         answers where a path actually leads.
 
         Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] when it
-        implements it, and `readlink -f` in the environment's shell otherwise. A filesystem-only
+        implements it, and `readlink` in the environment's shell otherwise. A filesystem-only
         backend has no symlinks to resolve, so its paths are only normalized.
         """
         if not posixpath.isabs(path):
@@ -588,23 +604,15 @@ class Workspace(WorkspaceBackend):
             command = f'{command} | head -c {max_bytes + 1}'
         try:
             result = await self.run(command, shell=True, timeout=_SHELL_SLICE_TIMEOUT)
-        except (NotImplementedError, OSError, WorkspaceTimeoutError, UserError):
+        except WorkspaceUnavailableError:
+            raise
+        except (NotImplementedError, OSError, WorkspaceError, UserError):
+            # Includes a backend refusing the slice's output, e.g. a cap at its own output limit.
             return None
         if result.exit_code != 0 or result.stderr:
             return None
 
-        output = result.stdout.encode('utf-8')
-        byte_capped = max_bytes is not None and len(output) > max_bytes
-        if byte_capped:
-            assert max_bytes is not None
-            # Keep only lines that end within the cap. A line ending exactly at the cap is complete
-            # when the byte after it is its newline; otherwise the ceiling cut it mid-way and it is
-            # dropped, so no partial line is shown as complete. If that was the only line, the window
-            # is empty and `first_line_exceeds_limit` tells the caller to use a byte-range read.
-            kept = output[:max_bytes]
-            if output[max_bytes : max_bytes + 1] != b'\n':
-                kept = kept[: kept.rfind(b'\n') + 1]
-            output = kept
+        output, byte_capped = _complete_lines_within(result.stdout.encode('utf-8'), max_bytes)
         lines = list(_split_lines(output.decode('utf-8', errors='replace')))
         if lines and lines[-1] == '':
             lines.pop()
@@ -745,6 +753,22 @@ def _window_from_data(data: bytes, offset: int, limit: int | None, max_bytes: in
         truncated_by=truncated_by,
         first_line_exceeds_limit=first_line_exceeds,
     )
+
+
+def _complete_lines_within(output: bytes, max_bytes: int | None) -> tuple[bytes, bool]:
+    """Trim a slice read with one byte past `max_bytes` to the complete lines within the cap.
+
+    Returns the kept bytes and whether the cap cut the slice. A line ending exactly at the cap is
+    complete when the byte after it is its newline; otherwise the cap cut it mid-way and it is
+    dropped, so no partial line is shown as complete. If that was the only line, nothing is kept and
+    `first_line_exceeds_limit` tells the caller to use a byte-range read.
+    """
+    if max_bytes is None or len(output) <= max_bytes:
+        return output, False
+    kept = output[:max_bytes]
+    if output[max_bytes : max_bytes + 1] != b'\n':
+        kept = kept[: kept.rfind(b'\n') + 1]
+    return kept, True
 
 
 def _split_lines(text: str) -> tuple[str, ...]:

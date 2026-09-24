@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 
@@ -70,7 +70,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     """One-off: a run has a single workspace, so the id is fixed by default.
 
     Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
-    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids; the first
+    which keeps the last one whole: none of the earlier one's settings, `env` included, carry over. Pass a distinct `id` to keep both, or `id=None` for derived ids; the first
     one in capability order still supplies the workspace.
     """
 
@@ -78,6 +78,12 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         # Pin a relative `working_dir` to today's directory, and surface an unusable platform where the
         # capability is written, not on the first run.
         self.working_dir = LocalWorkspaceBackend(self.working_dir).ref.id
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        # A workspace is one environment: the later configuration replaces the earlier one whole, so
+        # an `env` (and its secrets) or `read_only` stated only on the replaced one never carries over.
+        return capabilities[-1]
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         backend = LocalWorkspaceBackend(self.working_dir, env=self.env)

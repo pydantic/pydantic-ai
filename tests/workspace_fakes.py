@@ -286,6 +286,11 @@ class FakeWorkspace(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         await self.ensure_ready()
         return path in self.files or path in self.directories
 
+    async def realpath(self, path: str) -> str:
+        # The environment has no symlinks, so resolving a path only normalizes it.
+        await self.ensure_ready()
+        return posixpath.normpath(path)
+
     async def close(self, *, terminate: bool = False) -> None:  # pragma: no cover
         self.cleanup_calls.append(f'close:{terminate}')
 

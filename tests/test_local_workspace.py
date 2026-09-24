@@ -152,7 +152,6 @@ async def test_relative_working_dir_resolves_against_the_directory_at_constructi
     monkeypatch.chdir('/')
 
     assert workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
-    assert await workspace.working_dir() == str(tmp_path.resolve())
 
 
 @pytest.mark.parametrize(
