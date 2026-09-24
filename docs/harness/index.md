@@ -115,6 +115,7 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | [GitHub](github.md) | Harness | Read and change GitHub repositories, issues, pull requests, and other accessible resources. |
 | [Linear](linear.md) | Harness | Read and change Linear issues, projects, teams, and comments. |
 | [Notion](notion.md) | Harness | Search and change Notion workspace content. |
+| [Google Workspace](google-workspace.md) | Harness | Use Gmail, Calendar, Drive, and other Google Workspace tools. |
 | [StackOne](stackone.md) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [LocalStack](localstack.md) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](macroscope.md) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |

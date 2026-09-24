@@ -288,6 +288,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ReportContextUsage': Anonymous('a passive observer; several callbacks compose'),
     'Skills': Anonymous('a factory: one deferred capability per skill, each named after the skill'),
     'SlidingWindowCompaction': Anonymous('composes as a tier under `TieredCompaction`'),
+    'GoogleWorkspace': Anonymous('one per set of products, and `services` is what names it'),
     'StackOne': Anonymous('one per linked account, and `account_id` is what names it'),
     'TieredCompaction': Anonymous('drives other strategies; one per tier list'),
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
