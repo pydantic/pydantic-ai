@@ -5,10 +5,12 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, cast
 
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart, ToolCallPart
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import FinalResultEvent, InstructionPart, PartDeltaEvent, PartEndEvent, PartStartEvent
 from pydantic_ai.models import ModelRequestParameters
 
@@ -16,7 +18,7 @@ from ...conftest import try_import
 from ..mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
     from anthropic.types.beta import BetaMessage, BetaRawMessageStartEvent, BetaRawMessageStreamEvent
     from pydantic import TypeAdapter
 
@@ -66,7 +68,7 @@ class MockAnthropic:
         return message
 
 
-def message(content: list[dict[str, Any]], stop_reason: str = 'end_turn') -> BetaMessage:
+def message(content: list[dict[str, Any]], stop_reason: str = 'end_turn', **extra: Any) -> BetaMessage:
     return BetaMessage.model_validate(
         {
             'id': 'msg_1',
@@ -82,8 +84,13 @@ def message(content: list[dict[str, Any]], stop_reason: str = 'end_turn') -> Bet
                 'cache_read_input_tokens': 5,
                 'cache_creation_input_tokens': 0,
             },
+            **extra,
         }
     )
+
+
+CONTAINER = {'id': 'container_1', 'expires_at': '2026-01-01T00:00:00Z'}
+THINKING_DROPPED = {'type': 'thinking_dropped', 'path': 'messages.1.content.0', 'reason': 'model_binding_mismatch'}
 
 
 def make_model(client: AsyncAnthropic) -> BabelAnthropicModel:
@@ -143,6 +150,32 @@ async def test_tool_loop_with_thinking(allow_model_requests: None):
             },
             {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_1', 'content': 'Paris: sunny'}]},
         ]
+    )
+
+
+async def test_response_details_the_next_request_depends_on(allow_model_requests: None):
+    client = MockAnthropic.as_client(
+        [
+            message(
+                [{'type': 'text', 'text': 'paused'}],
+                'pause_turn',
+                container=CONTAINER,
+                input_transformations=[THINKING_DROPPED],
+                stop_details={'type': 'refusal', 'explanation': 'no', 'category': 'general_harms'},
+            )
+        ]
+    )
+    response = await make_model(client).request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+    # A paused server-side turn is suspended so the agent reissues it, with the container to reconnect to.
+    assert response.state == 'suspended'
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'pause_turn',
+            'refusal': 'no',
+            'refusal_category': 'general_harms',
+            'container_id': 'container_1',
+            'input_transformations': [THINKING_DROPPED],
+        }
     )
 
 
@@ -278,3 +311,53 @@ async def test_stream(allow_model_requests: None):
     assert response.finish_reason == 'tool_call'
     assert response.provider_response_id == 'msg_1'
     assert (response.usage.input_tokens, response.usage.cache_read_tokens, response.usage.output_tokens) == (15, 5, 7)
+    assert response.provider_details == {'finish_reason': 'tool_use'}
+    assert response.state == 'complete'
+
+
+async def test_stream_records_the_details_the_next_request_depends_on(allow_model_requests: None):
+    start, *_rest = stream_events()
+    raw_start = start.model_dump()
+    raw_start['message']['container'] = CONTAINER
+    # A delta may carry usage alone, before the one that stops the message.
+    usage_only = {
+        'type': 'message_delta',
+        'delta': {'stop_reason': None, 'stop_sequence': None},
+        'usage': {'output_tokens': 1},
+    }
+    delta = {
+        'type': 'message_delta',
+        'delta': {
+            'stop_reason': 'pause_turn',
+            'stop_sequence': None,
+            'stop_details': {'type': 'refusal'},
+            'container': {**CONTAINER, 'id': 'container_2'},
+        },
+        'usage': {'output_tokens': 3},
+        'input_transformations': [THINKING_DROPPED],
+    }
+    events = [EVENT_ADAPTER.validate_python(raw) for raw in (raw_start, usage_only, delta)]
+    model = make_model(MockAnthropic.as_client(stream=events))
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as response:
+        _ = [event async for event in response]
+    assert response.state == 'suspended'
+    # The delta's container supersedes the one announced at the start, as it does in the native model.
+    assert response.provider_details == snapshot(
+        {'container_id': 'container_2', 'finish_reason': 'pause_turn', 'input_transformations': [THINKING_DROPPED]}
+    )
+
+
+async def test_stream_api_error_is_mapped(allow_model_requests: None):
+    error = APIStatusError(
+        'boom',
+        response=httpx2.Response(status_code=529, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'error': 'overloaded'},
+    )
+    model = make_model(MockAnthropic.as_client(stream=[*stream_events()[:3], error]))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with model.request_stream(
+            [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
+        ) as response:
+            _ = [event async for event in response]
+    assert exc_info.value.status_code == 529
+    assert exc_info.value.body == {'error': 'overloaded'}

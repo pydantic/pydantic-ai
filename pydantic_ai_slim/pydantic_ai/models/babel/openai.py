@@ -13,7 +13,11 @@ from ...messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ...profiles.openai import OpenAIModelProfile
 from ...settings import ModelSettings
 from .. import ModelRequestParameters
-from ..openai import OpenAIChatModel, OpenAIStreamedResponse
+from ..openai import (
+    OpenAIChatModel,
+    OpenAIStreamedResponse,
+    _map_api_errors,  # pyright: ignore[reportPrivateUsage]
+)
 from ._adapters import download_url_media, fold_stream_emits, ir_to_model_response, messages_to_ir
 
 __all__ = ('BabelOpenAIChatModel', 'BabelOpenAIStreamedResponse')
@@ -24,23 +28,24 @@ class BabelOpenAIStreamedResponse(OpenAIStreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         state: Any = {}
-        async for chunk in self._response:
-            if chunk.id:
-                self.provider_response_id = chunk.id
-            if chunk.model:
-                self._model_name = chunk.model
-            chunk_usage = self._map_usage(chunk)
-            if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
-                # Each chunk then carries the cumulative usage, so the latest replaces the total.
-                self._usage = chunk_usage
-            else:
-                self._usage += chunk_usage
-            result = stream_step('openai-chat', state, chunk.model_dump())
-            state = result['state']
-            for event in fold_stream_emits(
-                result['emit'], self._parts_manager, self, provider_name=self._provider_name
-            ):
-                yield event
+        with _map_api_errors(self._model_name, self._model_id_namespace):
+            async for chunk in self._validate_response():
+                if chunk.id:
+                    self.provider_response_id = chunk.id
+                if chunk.model:
+                    self._model_name = chunk.model
+                chunk_usage = self._map_usage(chunk)
+                if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
+                    # Each chunk then carries the cumulative usage, so the latest replaces the total.
+                    self._usage = chunk_usage
+                else:
+                    self._usage += chunk_usage
+                result = stream_step('openai-chat', state, chunk.model_dump())
+                state = result['state']
+                for event in fold_stream_emits(
+                    result['emit'], self._parts_manager, self, provider_name=self._provider_name
+                ):
+                    yield event
 
 
 class BabelOpenAIChatModel(OpenAIChatModel):

@@ -12,7 +12,7 @@ import dataclasses
 import re
 from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, TypeVar, cast
 
 from llm_transform import ir_build
 from llm_transform.ir_types import IRRequestDict, MessageDict, PartDict, TextPartDict
@@ -63,6 +63,8 @@ IR: TypeAlias = dict[str, Any]
 
 _MediaKind: TypeAlias = Literal['image', 'audio', 'document', 'video']
 
+_T = TypeVar('_T')
+
 _MEDIA_KIND_PREFIXES: tuple[tuple[str, _MediaKind], ...] = (
     ('image/', 'image'),
     ('audio/', 'audio'),
@@ -81,6 +83,7 @@ _SIGNATURE_NAMESPACE: dict[str, tuple[BabelFormat, str]] = {
     'google': ('gemini', 'thoughtSignature'),
     'google-gla': ('gemini', 'thoughtSignature'),
     'google-vertex': ('gemini', 'thoughtSignature'),
+    'google-cloud': ('gemini', 'thoughtSignature'),
     'bedrock': ('bedrock-converse', 'signature'),
 }
 _SIGNATURE_FIELD: dict[BabelFormat, str] = {
@@ -138,7 +141,8 @@ def messages_to_ir(
 
     A `CachePoint` attaches an Anthropic `cache_control` breakpoint to the preceding content part.
     A `ThinkingPart` keeps its replay signature only under its own provider's namespace, so a turn
-    produced by one provider never replays a signature to another. Server-side tool parts from
+    produced by one provider never replays a signature to another, and a redacted one (an encrypted
+    blob only its provider can read) replays only to `provider_name`. Server-side tool parts from
     `provider_name` replay as provider-executed tool calls; those from other providers are dropped,
     as the native models do.
 
@@ -279,8 +283,11 @@ def _response_part_to_ir(part: ModelResponsePart, provider_name: str | None) -> 
         return ir_build.text(part.content)
     if isinstance(part, ThinkingPart):
         if part.id == 'redacted_thinking':
-            # A redacted block has no readable content; the encrypted blob is its `signature`.
-            return ir_build.reasoning(part.signature or '', redacted=True)
+            # A redacted block has no readable content; the encrypted blob is its `signature`, which
+            # only the provider that issued it can decrypt, so it never replays anywhere else.
+            if part.provider_name == provider_name and part.signature:
+                return ir_build.reasoning(part.signature, redacted=True)
+            return None
         return ir_build.reasoning(part.content, provider_ext=_signature_provider_ext(part))
     if isinstance(part, NativeToolCallPart):
         if part.provider_name != provider_name:
@@ -494,33 +501,56 @@ async def download_url_media(messages: Sequence[ModelMessage], url_ok: frozenset
     """Replace URL media a wire cannot take as a URL with downloaded `BinaryContent`.
 
     `url_ok` is the set of media kinds the target wire accepts by URL (babel's `MEDIA_URL_OK` table);
-    every other `FileUrl` in a user prompt, and any with `force_download` set, is downloaded with
-    `download_item`. Returns a new history; messages without such media are shared, not copied.
+    every other `FileUrl` in a user prompt or a tool return, and any with `force_download` set, is
+    downloaded with `download_item`. Returns a new history; messages without such media are shared,
+    not copied.
     """
     result: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelRequest):
-            parts = [await _download_user_prompt_media(part, url_ok) for part in message.parts]
+            parts = [await _download_request_media(part, url_ok) for part in message.parts]
             if any(new is not old for new, old in zip(parts, message.parts)):
                 message = dataclasses.replace(message, parts=parts)
         result.append(message)
     return result
 
 
-async def _download_user_prompt_media(part: ModelRequestPart, url_ok: frozenset[str]) -> ModelRequestPart:
-    if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
+async def _download_request_media(part: ModelRequestPart, url_ok: frozenset[str]) -> ModelRequestPart:
+    if isinstance(part, UserPromptPart):
+        if isinstance(part.content, str):
+            return part
+        items: list[UserContent] = [await _download_file_url(item, url_ok) for item in part.content]
+        return _replace_content(part, items)
+    if isinstance(part, ToolReturnPart):
+        # A tool's files trail its result as user content (see `_request_to_ir`), so they need the
+        # same treatment as a user prompt's. A `ToolReturnPart` holds a file directly or in a list.
+        tool_content: Any = part.content
+        if isinstance(tool_content, list):
+            content: list[Any] = [await _download_file_url(item, url_ok) for item in cast(list[Any], tool_content)]
+            return _replace_content(part, content)
+        if isinstance(tool_content, FileUrl):
+            return _replace_content(part, [await _download_file_url(tool_content, url_ok)], single=True)
+    return part
+
+
+_RequestPartT = TypeVar('_RequestPartT', UserPromptPart, ToolReturnPart)
+
+
+def _replace_content(part: _RequestPartT, items: list[Any], *, single: bool = False) -> _RequestPartT:
+    """`part` with `items` as its content, or `part` itself when nothing in it was downloaded."""
+    old = [part.content] if single else cast(list[Any], part.content)
+    if all(new is old_item for new, old_item in zip(items, old)):
         return part
-    items: list[UserContent] = []
-    downloaded_any = False
-    for item in part.content:
-        if isinstance(item, FileUrl) and (item.force_download or _url_media_kind(item) not in url_ok):
-            downloaded = await download_item(item, data_format='bytes')
-            item = BinaryContent(
-                data=downloaded['data'], media_type=downloaded['data_type'], vendor_metadata=item.vendor_metadata
-            )
-            downloaded_any = True
-        items.append(item)
-    return dataclasses.replace(part, content=items) if downloaded_any else part
+    return dataclasses.replace(part, content=items[0] if single else items)
+
+
+async def _download_file_url(item: _T, url_ok: frozenset[str]) -> _T | BinaryContent:
+    if isinstance(item, FileUrl) and (item.force_download or _url_media_kind(item) not in url_ok):
+        downloaded = await download_item(item, data_format='bytes')
+        return BinaryContent(
+            data=downloaded['data'], media_type=downloaded['data_type'], vendor_metadata=item.vendor_metadata
+        )
+    return item
 
 
 def gemini_rest_to_sdk(node: Any) -> Any:

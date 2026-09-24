@@ -3,10 +3,12 @@ from __future__ import annotations as _annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AudioUrl, ModelRequest, TextPart, ToolCallPart
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import FinalResultEvent, PartDeltaEvent, PartEndEvent, PartStartEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
@@ -15,6 +17,7 @@ from ...conftest import try_import
 from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
+    from openai import APIStatusError
     from openai.types import chat
     from openai.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
@@ -221,6 +224,22 @@ async def test_stream_text_and_tool_call(allow_model_requests: None):
     assert response.model_name == 'gpt-4o-123'
     # Four chunks carried usage, accumulated as the native model does without continuous usage stats.
     assert response.usage == snapshot(RequestUsage(input_tokens=8, output_tokens=4))
+
+
+async def test_stream_api_error_is_mapped(allow_model_requests: None):
+    error = APIStatusError(
+        'boom',
+        response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body={'error': 'boom'},
+    )
+    model = make_model(MockOpenAI.create_mock_stream([chunk(ChoiceDelta(content='a', role='assistant')), error]))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with model.request_stream(
+            [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
+        ) as response:
+            _ = [event async for event in response]
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.body == {'error': 'boom'}
 
 
 async def test_stream_continuous_usage_stats(allow_model_requests: None):

@@ -7,19 +7,28 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any, Literal, cast
 
 from anthropic.types.beta import (
+    BetaContainer,
+    BetaInputTransformation,
     BetaMessage,
     BetaMessageParam,
     BetaRawMessageDeltaEvent,
     BetaRawMessageStartEvent,
+    BetaRefusalStopDetails,
     BetaTextBlockParam,
 )
 from llm_transform.media import MEDIA_URL_OK
 from llm_transform.registry import decode_response, encode, stream_step
 
 from ...messages import InstructionPart, ModelMessage, ModelResponse, ModelResponseStreamEvent
-from ...usage import RequestUsage
 from .. import ModelRequestParameters
-from ..anthropic import AnthropicModel, AnthropicModelSettings, AnthropicStreamedResponse
+from ..anthropic import (
+    AnthropicModel,
+    AnthropicModelSettings,
+    AnthropicStreamedResponse,
+    _map_api_errors,  # pyright: ignore[reportPrivateUsage]
+    _map_usage,  # pyright: ignore[reportPrivateUsage]
+    _report_input_transformations,  # pyright: ignore[reportPrivateUsage]
+)
 from ._adapters import IR, download_url_media, fold_stream_emits, ir_to_model_response, messages_to_ir
 
 __all__ = ('BabelAnthropicModel', 'BabelAnthropicStreamedResponse')
@@ -30,25 +39,55 @@ class BabelAnthropicStreamedResponse(AnthropicStreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         state: Any = {}
-        async for event in self._response:
-            if isinstance(event, BetaRawMessageStartEvent):
-                if event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
-                    # On Bedrock the SDK drops SSE event types, so a Bedrock-only chunk is constructed
-                    # as a `BetaRawMessageStartEvent` with no message; it carries nothing to fold.
-                    continue
-                self.provider_response_id = event.message.id
-                self._usage = _map_usage(
-                    event.message.model, event.message.usage.model_dump(), self._provider_name, self._provider_url
-                )
-            elif isinstance(event, BetaRawMessageDeltaEvent):
-                # `message_delta` reports the cumulative output tokens for the message.
-                self._usage = dataclasses.replace(self._usage, output_tokens=event.usage.output_tokens)
-            result = stream_step('anthropic-messages', state, event.model_dump())
-            state = result['state']
-            for stream_event in fold_stream_emits(
-                result['emit'], self._parts_manager, self, provider_name=self._provider_name
-            ):
-                yield stream_event
+        with _map_api_errors(self._model_name, self._model_id_namespace):
+            async for event in self._response:
+                if isinstance(event, BetaRawMessageStartEvent):
+                    if event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
+                        # On Bedrock the SDK drops SSE event types, so a Bedrock-only chunk is constructed
+                        # as a `BetaRawMessageStartEvent` with no message; it carries nothing to fold.
+                        continue
+                    self.provider_response_id = event.message.id
+                    self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
+                    self._record_details(
+                        container=event.message.container,
+                        input_transformations=event.message.input_transformations,
+                    )
+                elif isinstance(event, BetaRawMessageDeltaEvent):
+                    # `message_delta` reports the cumulative usage and the stop reason for the message.
+                    self._usage = _map_usage(
+                        event, self._provider_name, self._provider_url, self._model_name, self._usage
+                    )
+                    self._record_details(
+                        stop_reason=event.delta.stop_reason,
+                        stop_details=event.delta.stop_details,
+                        container=event.delta.container,
+                        input_transformations=event.input_transformations,
+                    )
+                    if event.delta.stop_reason:
+                        self.state = _response_state(event.delta.stop_reason)
+                result = stream_step('anthropic-messages', state, event.model_dump())
+                state = result['state']
+                for stream_event in fold_stream_emits(
+                    result['emit'], self._parts_manager, self, provider_name=self._provider_name
+                ):
+                    yield stream_event
+
+    def _record_details(
+        self,
+        *,
+        stop_reason: str | None = None,
+        stop_details: BetaRefusalStopDetails | None = None,
+        container: BetaContainer | None = None,
+        input_transformations: list[BetaInputTransformation] | None = None,
+    ) -> None:
+        details = _provider_details(
+            stop_reason=stop_reason,
+            stop_details=stop_details,
+            container=container,
+            input_transformations=input_transformations,
+        )
+        if details:
+            self.provider_details = {**(self.provider_details or {}), **details}
 
 
 class BabelAnthropicModel(AnthropicModel):
@@ -57,7 +96,9 @@ class BabelAnthropicModel(AnthropicModel):
     Construct it exactly like `AnthropicModel`. The provider, client, settings, native tools and
     beta headers behave as they do there; only the translation between the message history and the
     Messages wire is babel's. `anthropic_cache_instructions` and `CachePoint` breakpoints are placed
-    the same way as in the native model, and the 4-breakpoint limit is enforced by it.
+    the same way as in the native model, and the 4-breakpoint limit is enforced by it. The response
+    details the native model's next request depends on (the container id, a paused turn, a dropped
+    thinking block) are recorded the same way.
 
     Audio and video are not supported by the Messages API; document and image URLs are sent as
     URLs unless `force_download` is set.
@@ -94,20 +135,56 @@ class BabelAnthropicModel(AnthropicModel):
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
     ) -> ModelResponse:
-        return ir_to_model_response(
+        model_response = ir_to_model_response(
             decode_response('anthropic-messages', response.model_dump()),
             fmt='anthropic-messages',
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
-            usage=_map_usage(response.model, response.usage.model_dump(), self._provider.name, self._provider.base_url),
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=self.model_name,
+        )
+        details = _provider_details(
+            stop_reason=response.stop_reason,
+            stop_details=response.stop_details,
+            container=response.container,
+            input_transformations=response.input_transformations,
+        )
+        return dataclasses.replace(
+            model_response, provider_details=details or None, state=_response_state(response.stop_reason)
         )
 
 
-def _map_usage(model: str, usage: dict[str, Any], provider: str, provider_url: str) -> RequestUsage:
-    return RequestUsage.extract(
-        dict(model=model, usage=usage), provider=provider, provider_url=provider_url, provider_fallback='anthropic'
-    )
+def _response_state(stop_reason: str | None) -> Literal['complete', 'suspended']:
+    """A `pause_turn` stop suspends the response so the agent reissues the paused server-side turn."""
+    return 'suspended' if stop_reason == 'pause_turn' else 'complete'
+
+
+def _provider_details(
+    *,
+    stop_reason: str | None,
+    stop_details: BetaRefusalStopDetails | None,
+    container: BetaContainer | None,
+    input_transformations: list[BetaInputTransformation] | None,
+) -> dict[str, Any]:
+    """The `provider_details` the native model records from a message or a `message_delta`.
+
+    The raw stop reason and any refusal explanation are kept for inspection. The container id is
+    what the next request reuses for code execution, and the input transformations say when the
+    API dropped a replayed thinking block, which the next request then leaves out.
+    """
+    details: dict[str, Any] = {}
+    if stop_reason:
+        details['finish_reason'] = stop_reason
+    if stop_details is not None:
+        if stop_details.explanation is not None:
+            details['refusal'] = stop_details.explanation
+        if stop_details.category is not None:
+            details['refusal_category'] = stop_details.category
+    if container:
+        details['container_id'] = container.id
+    if input_transformations:
+        details['input_transformations'] = _report_input_transformations(input_transformations)
+    return details
 
 
 def _pack_system(

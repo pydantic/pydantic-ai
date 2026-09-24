@@ -52,7 +52,8 @@ agent = Agent(model)
 
 - Server-side (native) tool calls and results are replayed only to the provider that produced them; the babel models do not yet map grounding sources or file outputs.
 - Deferred tools, tool search and capability-loading parts are not supported and raise a `UserError`.
-- Response metadata beyond the model name, response id and finish reason is not carried into `provider_details`, except for OpenAI's raw finish reason and timestamp.
+- Response metadata beyond the model name, response id and finish reason is not carried into `provider_details`, except for OpenAI's raw finish reason and timestamp, and Anthropic's raw finish reason, refusal details, container id and input transformations, which the native model's next request depends on.
+- Gemini's per-file `media_resolution` and `video_metadata` from a file's `vendor_metadata` are not sent; only OpenAI's image `detail` is carried.
 
 ## Building your own
 

@@ -8,6 +8,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart, ToolCallPart
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import FinalResultEvent, PartDeltaEvent, PartEndEvent, PartStartEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -17,6 +18,7 @@ from pydantic_ai.usage import RequestUsage
 from ...conftest import try_import
 
 with try_import() as imports_successful:
+    from botocore.exceptions import ClientError
     from botocore.hooks import HierarchicalEmitter
 
     from pydantic_ai.models.babel.bedrock import BabelBedrockConverseModel, BabelBedrockStreamedResponse
@@ -28,11 +30,14 @@ pytestmark = [
 
 
 class _EventStream:
-    def __init__(self, events: list[dict[str, Any]]):
+    def __init__(self, events: list[dict[str, Any]], error: Exception | None = None):
         self._events = events
+        self._error = error
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
-        return iter(self._events)
+        yield from self._events
+        if self._error is not None:
+            raise self._error
 
 
 class _StubBedrockClient:
@@ -41,9 +46,11 @@ class _StubBedrockClient:
         responses: list[dict[str, Any]] | None = None,
         stream: list[dict[str, Any]] | None = None,
         request_id: str | None = 'req_1',
+        stream_error: Exception | None = None,
     ):
         self._responses = iter(responses or [])
         self._stream = stream or []
+        self._stream_error = stream_error
         self._request_id = request_id
         self.calls: list[dict[str, Any]] = []
         self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
@@ -54,7 +61,10 @@ class _StubBedrockClient:
 
     def converse_stream(self, **params: Any) -> dict[str, Any]:
         self.calls.append(params)
-        return {'stream': _EventStream(self._stream), 'ResponseMetadata': {'RequestId': self._request_id}}
+        return {
+            'stream': _EventStream(self._stream, self._stream_error),
+            'ResponseMetadata': {'RequestId': self._request_id},
+        }
 
 
 class _StubBedrockProvider(Provider[Any]):
@@ -188,6 +198,37 @@ async def test_stream(allow_model_requests: None):
     assert response.finish_reason == 'tool_call'
     assert response.provider_response_id == 'req_1'
     assert response.usage == snapshot(RequestUsage(input_tokens=10, output_tokens=4))
+
+
+async def test_stream_api_error_is_mapped(allow_model_requests: None):
+    error = ClientError(
+        {
+            'Error': {'Code': 'ThrottlingException', 'Message': 'slow down'},
+            'ResponseMetadata': {
+                'HTTPStatusCode': 429,
+                'HTTPHeaders': {},
+                'RequestId': 'req_1',
+                'HostId': '',
+                'RetryAttempts': 0,
+            },
+        },
+        'ConverseStream',
+    )
+    client = _StubBedrockClient(
+        stream=[
+            {'messageStart': {'role': 'assistant'}},
+            {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hi'}}},
+        ],
+        stream_error=error,
+    )
+    model = make_model(client)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with model.request_stream(
+            [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
+        ) as response:
+            _ = [event async for event in response]
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body['Error']['Message'] == 'slow down'  # type: ignore[index]
 
 
 async def test_stream_without_request_id(allow_model_requests: None):

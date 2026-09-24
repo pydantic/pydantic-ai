@@ -8,6 +8,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart, ToolCallPart
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import FinalResultEvent, PartDeltaEvent, PartEndEvent, PartStartEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
@@ -15,6 +16,7 @@ from pydantic_ai.usage import RequestUsage
 from ...conftest import IsStr, try_import
 
 with try_import() as imports_successful:
+    from google.genai import errors
     from google.genai.types import GenerateContentResponse
 
     from pydantic_ai.models.babel.google import BabelGeminiStreamedResponse, BabelGoogleModel
@@ -30,6 +32,7 @@ def response(
     parts: list[dict[str, Any]],
     finish_reason: str = 'STOP',
     usage: bool = True,
+    cached: bool = True,
     response_id: str | None = 'resp_1',
     create_time: datetime | None = None,
 ) -> GenerateContentResponse:
@@ -43,8 +46,8 @@ def response(
         data['usage_metadata'] = {
             'prompt_token_count': 12,
             'candidates_token_count': 5,
-            'cached_content_token_count': 4,
             'total_token_count': 17,
+            **({'cached_content_token_count': 4} if cached else {}),
         }
     return GenerateContentResponse.model_validate(data)
 
@@ -84,7 +87,9 @@ async def test_tool_loop(allow_model_requests: None, mocker: Any):
             ToolCallPart(tool_name='get_weather', args='{"city":"Paris"}', tool_call_id='call_0'),
         ]
     )
-    assert model_response.usage == snapshot(RequestUsage(input_tokens=12, cache_read_tokens=4, output_tokens=5))
+    assert model_response.usage == snapshot(
+        RequestUsage(details={'cached_content_tokens': 4}, input_tokens=12, cache_read_tokens=4, output_tokens=5)
+    )
     assert model_response.model_name == 'gemini-2.5-flash-001'
     assert model_response.provider_name == 'google'
     assert model_response.provider_url == 'https://generativelanguage.googleapis.com/'
@@ -158,7 +163,39 @@ async def test_stream(allow_model_requests: None, mocker: Any):
     assert streamed.provider_response_id == 'resp_1'
     assert streamed.provider_details == {'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc)}
     assert streamed.finish_reason == 'stop'
-    assert streamed.usage == snapshot(RequestUsage(input_tokens=12, cache_read_tokens=4, output_tokens=5))
+    assert streamed.usage == snapshot(
+        RequestUsage(details={'cached_content_tokens': 4}, input_tokens=12, cache_read_tokens=4, output_tokens=5)
+    )
+
+
+async def test_stream_keeps_usage_a_later_chunk_omits(allow_model_requests: None, mocker: Any):
+    # Gemini reports cumulative usage per chunk, but a gateway can drop a count from a later chunk.
+    model = make_model()
+    mocker.patch.object(
+        model.client.aio.models,
+        'generate_content_stream',
+        return_value=_chunks([response([{'text': 'a'}]), response([{'text': 'b'}], cached=False)]),
+    )
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as streamed:
+        _ = [event async for event in streamed]
+    assert streamed.usage.cache_read_tokens == 4
+    assert streamed.get().parts == [TextPart(content='ab')]
+
+
+async def test_stream_api_error_is_mapped(allow_model_requests: None, mocker: Any):
+    async def failing_chunks() -> AsyncIterator[GenerateContentResponse]:
+        yield response([{'text': 'partial'}])
+        raise errors.APIError(503, {'error': {'code': 503, 'message': 'overloaded', 'status': 'UNAVAILABLE'}})
+
+    model = make_model()
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_chunks())
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with model.request_stream(
+            [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
+        ) as streamed:
+            _ = [event async for event in streamed]
+    assert exc_info.value.status_code == 503
+    assert 'overloaded' in str(exc_info.value.body)
 
 
 async def test_stream_without_create_time(allow_model_requests: None, mocker: Any):

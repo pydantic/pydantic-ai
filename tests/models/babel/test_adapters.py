@@ -287,6 +287,26 @@ def test_thinking_signature_never_replays_to_another_provider():
     assert 'signature' not in block
 
 
+@pytest.mark.parametrize('provider_name', ['google', 'google-gla', 'google-vertex', 'google-cloud'])
+def test_every_google_provider_replays_a_thought_signature(provider_name: str):
+    ir = messages_to_ir([ModelResponse(parts=[ThinkingPart(content='t', signature='G', provider_name=provider_name)])])
+    assert ir['messages'][0]['content'][0] == snapshot(
+        {'kind': 'reasoning', 'text': 't', 'provider_ext': {'gemini': {'thoughtSignature': 'G'}}}
+    )
+
+
+def test_redacted_thinking_replays_only_to_its_own_provider():
+    def redacted(signature: str | None, provider_name: str) -> ThinkingPart:
+        return ThinkingPart(id='redacted_thinking', content='', signature=signature, provider_name=provider_name)
+
+    same = messages_to_ir([ModelResponse(parts=[redacted('ENC==', 'anthropic')])], provider_name='anthropic')
+    assert same['messages'][0]['content'] == [{'kind': 'reasoning', 'text': 'ENC==', 'redacted': True}]
+    # Another provider cannot decrypt the blob, and an empty one is never valid: both are left out.
+    foreign = messages_to_ir([ModelResponse(parts=[redacted('ENC==', 'anthropic')])], provider_name='bedrock')
+    empty = messages_to_ir([ModelResponse(parts=[redacted(None, 'anthropic')])], provider_name='anthropic')
+    assert foreign['messages'] == empty['messages'] == []
+
+
 def _response_ir(**overrides: Any) -> dict[str, Any]:
     ir: dict[str, Any] = {
         'model': 'gpt-4o',
@@ -558,9 +578,22 @@ async def test_download_url_media(mocker: Any):
             ),
         ]
     )
-    untouched = ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://x/d.png')])])
+    untouched = ModelRequest(
+        parts=[
+            UserPromptPart(content=[ImageUrl(url='https://x/d.png')]),
+            ToolReturnPart(tool_name='f', content=[ImageUrl(url='https://x/e.png'), 'ok'], tool_call_id='c0'),
+            ToolReturnPart(tool_name='f', content={'plain': 'data'}, tool_call_id='c1'),
+        ]
+    )
+    # A tool's files trail its result as user content, so they are downloaded on the same terms.
+    tool_returns = ModelRequest(
+        parts=[
+            ToolReturnPart(tool_name='f', content=DocumentUrl(url='https://x/f.pdf'), tool_call_id='c2'),
+            ToolReturnPart(tool_name='f', content=['see', AudioUrl(url='https://x/g.mp3')], tool_call_id='c3'),
+        ]
+    )
     response = ModelResponse(parts=[TextPart(content='x')])
-    messages = await download_url_media([request, response, untouched], frozenset({'image'}))
+    messages = await download_url_media([request, response, untouched, tool_returns], frozenset({'image'}))
     assert messages[1] is response
     assert messages[2] is untouched
     assert messages[0].parts[0] is request.parts[0]
@@ -574,7 +607,23 @@ async def test_download_url_media(mocker: Any):
             BinaryContent(data=b'bytes', media_type='audio/mpeg'),
         ]
     )
-    assert download.await_count == 2
+    assert messages[3].parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='f',
+                content=BinaryContent(data=b'bytes', media_type='audio/mpeg'),
+                tool_call_id='c2',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ToolReturnPart(
+                tool_name='f',
+                content=['see', BinaryContent(data=b'bytes', media_type='audio/mpeg')],
+                tool_call_id='c3',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+    assert download.await_count == 4
 
 
 def test_gemini_rest_to_sdk():
