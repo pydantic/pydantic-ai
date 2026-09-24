@@ -7,16 +7,22 @@ from pathlib import Path
 
 import anyio
 import pytest
-from acp import Client, schema
-from pydantic_ai import RunContext
+from acp import Client, schema, text_block
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Toolset
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 from pydantic_ai_harness.experimental.acp import (
     AcpFileSystemToolset,
     AcpSession,
+    AcpSessionConfig,
     AcpTerminalToolset,
+    PydanticAIACPAgent,
     acp_filesystem,
     acp_terminal,
 )
@@ -41,6 +47,42 @@ def _session(client: Client, capabilities: schema.ClientCapabilities | None) -> 
 
 def _fs_caps(*, read: bool, write: bool) -> schema.ClientCapabilities:
     return schema.ClientCapabilities(fs=schema.FileSystemCapabilities(read_text_file=read, write_text_file=write))
+
+
+async def test_session_toolset_capability_is_scanned_for_approval() -> None:
+    class ApprovingClient(RecordingClient):
+        async def request_permission(
+            self,
+            session_id: str,
+            tool_call: schema.ToolCallUpdate,
+            options: list[schema.PermissionOption],
+            **kwargs: object,
+        ) -> schema.RequestPermissionResponse:
+            starts = [update for update in self.updates if isinstance(update, schema.ToolCallStart)]
+            assert len(starts) == 1
+            assert starts[0].status == 'pending'
+            return schema.RequestPermissionResponse(
+                outcome=schema.AllowedOutcome(outcome='selected', option_id='allow_once')
+            )
+
+    tools = FunctionToolset[None]()
+    executed: list[str] = []
+
+    @tools.tool_plain(requires_approval=True)
+    def approve() -> str:
+        executed.append('approved')
+        return 'done'
+
+    def session_config(session: AcpSession) -> AcpSessionConfig[None]:
+        return AcpSessionConfig(deps=None, capabilities=[Toolset(tools)])
+
+    adapter = PydanticAIACPAgent(Agent(TestModel()), session_config=session_config)
+    client = ApprovingClient()
+    adapter.on_connect(client)
+    await adapter.initialize(protocol_version=1)
+    session = await adapter.new_session(cwd='/ws')
+    await adapter.prompt(prompt=[text_block('Use the tool')], session_id=session.session_id)
+    assert executed == ['approved']
 
 
 # --- Filesystem toolset ----------------------------------------------------
@@ -88,11 +130,22 @@ async def test_filesystem_registers_read_file_and_write_file_tools() -> None:
     assert set(await ts.get_tools(_ctx())) == {'read_file', 'write_file'}
 
 
-async def test_acp_filesystem_builds_a_working_toolset_when_fs_is_advertised() -> None:
+async def test_acp_filesystem_builds_a_working_capability_when_fs_is_advertised() -> None:
     client = RecordingClient({'/ws/a.py': 'hi'})
-    toolset = acp_filesystem(_session(client, _fs_caps(read=True, write=True)))
-    assert isinstance(toolset, AcpFileSystemToolset)
-    assert await toolset.read_file('/ws/a.py') == 'hi'  # the built toolset routes through the same client
+    capability = acp_filesystem(_session(client, _fs_caps(read=True, write=True)))
+    assert isinstance(capability, Toolset)
+
+    def read_file(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert {tool.name for tool in info.function_tools} == {'read_file', 'write_file'}
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'a.py'})])
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert len(returns) == 1
+        assert returns[0].content == 'hi'
+        return ModelResponse(parts=[TextPart('done')])
+
+    await Agent(FunctionModel(read_file), deps_type=type(None), capabilities=[capability]).run('Read a.py')
+    assert client.reads == [('/ws/a.py', 'sid')]
 
 
 async def test_acp_filesystem_read_only_client_reads_via_acp_and_writes_locally(tmp_path: Path) -> None:
@@ -107,7 +160,9 @@ async def test_acp_filesystem_read_only_client_reads_via_acp_and_writes_locally(
         client=client,
         session_id=session.session_id,
     )
-    toolset = acp_filesystem(session)
+    capability = acp_filesystem(session)
+    assert isinstance(capability, Toolset)
+    toolset = capability.toolset
     assert isinstance(toolset, AcpFileSystemToolset)
 
     assert await toolset.read_file('notes.txt') == 'hello'
@@ -284,11 +339,13 @@ async def test_run_command_cancel_survives_a_failing_kill() -> None:
     assert client.released == ['term-1']
 
 
-async def test_acp_terminal_builds_a_toolset_when_terminal_is_advertised() -> None:
+async def test_acp_terminal_builds_a_capability_when_terminal_is_advertised() -> None:
     client = RecordingClient(output='hi')
-    toolset = acp_terminal(_session(client, schema.ClientCapabilities(terminal=True)))
-    assert isinstance(toolset, AcpTerminalToolset)
-    assert await toolset.run_command('echo hi') == 'hi'  # the built toolset routes through the same client
+    capability = acp_terminal(_session(client, schema.ClientCapabilities(terminal=True)))
+    assert isinstance(capability, Toolset)
+    result = await Agent(TestModel(), deps_type=type(None), capabilities=[capability]).run('Run a command')
+    assert 'hi' in result.output
+    assert client.released == ['term-1']
 
 
 @pytest.mark.parametrize(

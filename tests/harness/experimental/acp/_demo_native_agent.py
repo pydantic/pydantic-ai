@@ -33,8 +33,10 @@ async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator
 
 
 def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-    toolsets = [toolset for toolset in (acp_filesystem(session), acp_terminal(session)) if toolset is not None]
-    return AcpSessionConfig(deps=None, toolsets=toolsets)
+    capabilities = [
+        capability for capability in (acp_filesystem(session), acp_terminal(session)) if capability is not None
+    ]
+    return AcpSessionConfig(deps=None, capabilities=capabilities)
 
 
 if __name__ == '__main__':

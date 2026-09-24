@@ -117,9 +117,9 @@ def session_config(session: AcpSession) -> AcpSessionConfig[None]:
     # Root file and shell tools at the workspace the client opened.
     return AcpSessionConfig(
         deps=None,
-        toolsets=[
-            FileSystem[None](root_dir=session.cwd).get_toolset(),
-            Shell[None](cwd=session.cwd).get_toolset(),
+        capabilities=[
+            FileSystem[None](root_dir=session.cwd),
+            Shell[None](cwd=session.cwd),
         ],
     )
 
@@ -128,7 +128,9 @@ if __name__ == '__main__':
     run_acp_stdio_sync(agent, session_config=session_config)
 ```
 
-The factory runs once per session with the client's [`AcpSession`][pydantic_ai_harness.experimental.acp.AcpSession] setup (its `cwd`, `mcp_servers`, and capabilities) and returns an [`AcpSessionConfig`][pydantic_ai_harness.experimental.acp.AcpSessionConfig] whose `deps` and `toolsets` apply to every run in that session. This is correct across multiple concurrent sessions in one process, where a single static `FileSystem` could not be.
+The factory runs once per session with the client's [`AcpSession`][pydantic_ai_harness.experimental.acp.AcpSession] setup (its `cwd`, `mcp_servers`, and capabilities) and returns an [`AcpSessionConfig`][pydantic_ai_harness.experimental.acp.AcpSessionConfig] whose `deps`, `capabilities`, and `toolsets` apply to every run in that session. This is correct across multiple concurrent sessions in one process, where a single static `FileSystem` could not be.
+
+Use `capabilities` for session behavior so hooks, instructions, ordering constraints, and capability event ownership are preserved. Keep `toolsets` for bare toolsets such as MCP servers. Session capabilities and toolsets are added to the agent's own configuration.
 
 ## Editor-native filesystem and shell (optional)
 
@@ -142,10 +144,12 @@ from pydantic_ai_harness.shell import Shell
 
 def session_config(session: AcpSession) -> AcpSessionConfig[None]:
     # Use the editor's filesystem/terminal when offered; otherwise fall back to local.
-    fs = acp_filesystem(session) or FileSystem[None](root_dir=session.cwd).get_toolset()
-    shell = acp_terminal(session) or Shell[None](cwd=session.cwd).get_toolset()
-    return AcpSessionConfig(deps=None, toolsets=[fs, shell])
+    fs = acp_filesystem(session) or FileSystem[None](root_dir=session.cwd)
+    shell = acp_terminal(session) or Shell[None](cwd=session.cwd)
+    return AcpSessionConfig(deps=None, capabilities=[fs, shell])
 ```
+
+Each helper returns a core `Toolset` capability wrapping the client-backed toolset. Pass it in `capabilities`, not `toolsets`. To use a bare toolset directly, construct `AcpFileSystemToolset` or `AcpTerminalToolset` instead. These wrappers add no telemetry spans; core already traces their tool calls.
 
 Each helper returns `None` when the client did not advertise the capability, so the `or` falls back to local and the agent works either way. The tool names match the local `FileSystem`/`Shell`, so rich rendering (next section) is identical. `acp_terminal` runs the command in the editor's environment and returns its captured output (see [Limitations](#cancellation-and-limitations)).
 

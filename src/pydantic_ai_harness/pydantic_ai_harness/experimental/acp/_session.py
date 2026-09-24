@@ -63,13 +63,14 @@ class AcpSessionConfig(Generic[AgentDepsT]):
     """Per-session run configuration returned by a `session_config` factory.
 
     `deps`, `capabilities`, and `toolsets` are applied to every agent run in that session, mirroring
-    `Agent.run(..., deps=..., capabilities=..., toolsets=...)`. Both are added to the agent's own
+    `Agent.run(..., deps=..., capabilities=..., toolsets=...)`. Capabilities and toolsets are added to the agent's own
     rather than replacing them. `deps` is required; pass `deps=None` for an agent with no
     dependencies.
 
-    Prefer `capabilities` for anything that is a capability. A capability contributes its tools
+    Configure session behavior through `capabilities`; reserve `toolsets` for bare toolsets such
+    as MCP servers or directly constructed `AcpFileSystemToolset` instances. A capability contributes its tools
     along with its hooks, instructions, and event ownership, whereas reaching past it for its
-    toolset alone (`FileSystem(...).get_toolset()`) drops the rest -- and a
+    toolset alone drops the rest -- and a
     [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] its tools emit then has no owning
     capability to be attributed to, which is an error.
     """
