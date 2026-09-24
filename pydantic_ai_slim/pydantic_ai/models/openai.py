@@ -1209,7 +1209,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
-    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:  # noqa: C901
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
         # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
@@ -1235,11 +1235,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         choice = response.choices[0]
 
-        # Moderation is a top-level field, so it's read here rather than in the choice-scoped
+        # Moderation and service tier are top-level fields, so they're read here rather than in the choice-scoped
         # `_process_provider_details` hook that subclasses may override.
         provider_details = self._process_provider_details(response) or {}
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
+        if response.service_tier:
+            provider_details['service_tier'] = response.service_tier
 
         # Handle refusal responses (structured output safety filter)
         if choice.message.refusal:
@@ -2515,6 +2517,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
+        if response.service_tier:
+            provider_details['service_tier'] = response.service_tier
 
         state = _response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
@@ -3985,6 +3989,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                         **(self.provider_details or {}),
                         'moderation': chunk.moderation.model_dump(),
                     }
+                if chunk.service_tier:
+                    self.provider_details = {**(self.provider_details or {}), 'service_tier': chunk.service_tier}
 
                 # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
                 # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
@@ -4289,6 +4295,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
                     # relies on it to cancel the server-side job.
                     self._track_background(chunk.response)
+                    # Only terminal events report the tier that served the request; earlier ones echo the requested tier.
+                    if isinstance(
+                        chunk,
+                        (
+                            responses.ResponseCompletedEvent,
+                            responses.ResponseFailedEvent,
+                            responses.ResponseIncompleteEvent,
+                        ),
+                    ) and (service_tier := chunk.response.service_tier):
+                        self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.

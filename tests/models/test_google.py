@@ -2046,6 +2046,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5474,6 +5475,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5517,6 +5519,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
