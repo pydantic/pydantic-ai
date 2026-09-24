@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -209,7 +210,8 @@ class Session(Generic[DepsT, OutputT]):
                         with move_on_after(5, shield=True):
                             await self._save_turn(outcome='cancelled')
                     except Exception as exc:  # noqa: BLE001 -- persistence failure must not swallow cancellation.
-                        cancelled.add_note(f'Could not save cancelled turn: {exc}')
+                        if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
+                            cancelled.add_note(f'Could not save cancelled turn: {exc}')
                         logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
                     raise
                 except Exception:

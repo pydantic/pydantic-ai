@@ -1,7 +1,7 @@
 """Headless project/session navigation and safe, responsive frame rendering."""
 
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 
 import pytest
@@ -162,7 +162,7 @@ def test_empty_search_and_scripted_loop() -> None:
 
 
 def test_date_buckets() -> None:
-    now = datetime(2026, 9, 18, 12, tzinfo=UTC)
+    now = datetime(2026, 9, 18, 12, tzinfo=timezone.utc)
     assert date_label(now, now=now) == 'TODAY'
     assert date_label(now - timedelta(days=1), now=now) == 'YESTERDAY'
     assert date_label(now - timedelta(days=365), now=now).startswith(str((now - timedelta(days=365)).year))

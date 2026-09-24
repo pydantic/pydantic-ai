@@ -5,13 +5,13 @@ import hashlib
 import importlib
 import importlib.util
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Generic
 
-from anyio import fail_after
+from anyio import CancelScope, fail_after
 from anyio.lowlevel import checkpoint
 from pydantic_ai import AgentStreamEvent
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
@@ -244,21 +244,23 @@ class PluginLoader(Generic[DepsT]):
         entry.error = None
 
     async def _failed_load(self, entry: PluginEntry[DepsT], host: PluginHost[DepsT]) -> None:
-        task = asyncio.current_task()
-        initial_cancellations = task.cancelling() if task is not None else 0
         try:
             for handler in host.handlers:
+                # Its own task keeps the handler's `CancelledError` apart from ours: the former is
+                # reported, the latter propagates. The shield defers scope cancellation until cleanup
+                # finishes; the `checkpoint()` below delivers it.
+                cleanup = asyncio.create_task(_end_failed_session(handler))
                 try:
-                    with fail_after(5, shield=True):
-                        await handler(SessionEnd(reason='error'))
-                except (Exception, asyncio.CancelledError) as exc:
-                    if (
-                        isinstance(exc, asyncio.CancelledError)
-                        and task is not None
-                        and task.cancelling() > initial_cancellations
-                    ):
-                        raise
-                    self._console.print(str(PluginError(entry.name, exc)), style=theme.color(theme.ERROR), markup=False)
+                    with CancelScope(shield=True):
+                        await asyncio.wait({cleanup})
+                except asyncio.CancelledError:
+                    cleanup.cancel()
+                    await asyncio.wait({cleanup})
+                    raise
+                if (error := cleanup.result()) is not None:
+                    self._console.print(
+                        str(PluginError(entry.name, error)), style=theme.color(theme.ERROR), markup=False
+                    )
         finally:
             self._drop(entry)
         await checkpoint()
@@ -424,3 +426,13 @@ def _activate(module: ModuleType, declaration: PluginSettings, host: PluginHost[
 async def _dispatch(host: PluginHost[DepsT], event: HostEvent) -> None:
     for handler in host.handlers:
         await handler(event)
+
+
+async def _end_failed_session(handler: Callable[[HostEvent], Awaitable[None]]) -> BaseException | None:
+    """Return the handler's failure rather than raising it: 3.10 tasks drop a `CancelledError`'s message."""
+    try:
+        with fail_after(5):
+            await handler(SessionEnd(reason='error'))
+    except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001 -- reported by the caller.
+        return exc
+    return None

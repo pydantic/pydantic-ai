@@ -64,12 +64,16 @@ class Interrupts:
             if main_thread:
                 signal.signal(signal.SIGINT, on_signal)
             try:
-                await task
+                # `asyncio.wait` never forwards our own cancellation to `task`, so a
+                # `CancelledError` here is always external and must propagate.
+                await asyncio.wait({task})
             except asyncio.CancelledError:
-                current = asyncio.current_task()
-                if not interrupted or current is not None and current.cancelling():
-                    raise
+                task.cancel()
+                await asyncio.wait({task})
+                raise
+            if interrupted and task.cancelled():
                 return False
+            await task  # Re-raise the operation's failure, or a cancellation that was not ours.
             return True
         finally:
             self._cancel = None

@@ -1,6 +1,7 @@
 """Interactive terminal shell around a capability-independent session."""
 
 import asyncio
+import sys
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -60,6 +61,9 @@ from .status import Status, StatusLine
 from .theme_picker import theme_command
 from .tool_output import terminal_text
 from .usage_report import cost_line, session_usage
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup
 
 if TYPE_CHECKING:
     from .auth import CodexAuth

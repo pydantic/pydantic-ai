@@ -121,7 +121,9 @@ def http_client(
 def references(server: Server) -> list[str]:
     """Environment variables named by `$VAR` in `env` values or `headers`, in first-use order."""
     values = server.env if isinstance(server, StdioServer) else server.headers
-    names = (name for value in (values or {}).values() for name in Template(value).get_identifiers())
+    # `Template.get_identifiers` is 3.11+; this is its implementation for the default pattern.
+    matches = (match for value in (values or {}).values() for match in Template.pattern.finditer(value))
+    names = (name for match in matches if (name := match['named'] or match['braced']))
     return list(dict.fromkeys(names))
 
 

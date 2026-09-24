@@ -5,6 +5,7 @@ import webbrowser
 from collections.abc import Awaitable, Callable
 from urllib.parse import parse_qs, urlparse
 
+from anyio import fail_after
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from pydantic import TypeAdapter, ValidationError
@@ -107,7 +108,8 @@ class CodexAuth:
 
         browser = asyncio.create_task(open_browser())
         try:
-            credentials = await asyncio.wait_for(self._receive(flow), timeout=self.login_timeout)
+            with fail_after(self.login_timeout):
+                credentials = await self._receive(flow)
             await self.source.save(credentials)
             self.provider = None
         except TimeoutError:

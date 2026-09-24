@@ -26,7 +26,7 @@ connect is marked `error` and left out rather than failing the prompt. See
 [Connect MCP servers](PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
 and project trust. `/plugins disable mcp` removes the command and tools.
 
-Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
+Python 3.10+ is required.
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
@@ -204,7 +204,7 @@ input recall. `/clear`, or bare `clear`, is an alias of `/new`. Model responses 
 
 ## CI coverage
 
-The `CLAI coverage` check combines branch coverage from Python 3.11 and 3.14
+The `CLAI coverage` check combines branch coverage from Python 3.10 and 3.14
 and requires 100% for `src/pydantic_clai2`. It is separate from Harness coverage;
 passing CLAI test jobs alone does not mean either coverage gate has passed.
 Tracked under [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).

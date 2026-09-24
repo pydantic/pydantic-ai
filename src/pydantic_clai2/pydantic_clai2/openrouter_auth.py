@@ -13,6 +13,7 @@ from collections.abc import Callable
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
+from anyio import fail_after
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 from pydantic_ai.exceptions import UserError
 from rich.console import Console
@@ -90,21 +91,23 @@ class OpenRouterAuth:
         )
         paste: asyncio.Task[str] | None = None
         try:
-            async with server, asyncio.timeout(self.timeout):
-                self.console.print(
-                    'Sign in to OpenRouter in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
-                )
-                self.console.print(url, markup=False, highlight=False)
-                try:
-                    opened = await asyncio.to_thread(self.open_browser, url)
-                except webbrowser.Error:
-                    opened = False
-                if not opened:
-                    self.console.print('Open the URL above manually.', style=theme.color(theme.WARNING))
-                paste = asyncio.create_task(self._paste())
-                done, _ = await asyncio.wait({code, paste}, return_when=asyncio.FIRST_COMPLETED)
-                received = code.result() if code in done else paste.result()
-                return await self.exchange(code=received, verifier=verifier)
+            async with server:
+                with fail_after(self.timeout):
+                    self.console.print(
+                        'Sign in to OpenRouter in your browser. Waiting up to five minutes.',
+                        style=theme.color(theme.INFO),
+                    )
+                    self.console.print(url, markup=False, highlight=False)
+                    try:
+                        opened = await asyncio.to_thread(self.open_browser, url)
+                    except webbrowser.Error:
+                        opened = False
+                    if not opened:
+                        self.console.print('Open the URL above manually.', style=theme.color(theme.WARNING))
+                    paste = asyncio.create_task(self._paste())
+                    done, _ = await asyncio.wait({code, paste}, return_when=asyncio.FIRST_COMPLETED)
+                    received = code.result() if code in done else paste.result()
+                    return await self.exchange(code=received, verifier=verifier)
         except TimeoutError:
             raise UserError('OpenRouter login timed out. Connect again through /add_model > openrouter.') from None
         finally:
@@ -133,7 +136,7 @@ class OpenRouterAuth:
         self, *, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, code: asyncio.Future[str]
     ) -> None:
         try:
-            async with asyncio.timeout(10):
+            with fail_after(10):
                 line = (await reader.readline()).decode('ascii', errors='replace').split()
                 status, message = '404 Not Found', 'Callback endpoint not found.'
                 if len(line) == 3 and line[0] == 'GET' and urlparse(line[1]).path == '/callback':

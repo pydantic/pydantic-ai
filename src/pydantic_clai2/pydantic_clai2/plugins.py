@@ -3,7 +3,7 @@
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import Generic, Literal, Never, Protocol, TypeVar, get_args, overload
+from typing import Generic, Literal, Protocol, TypeVar, get_args, overload
 
 from pydantic import BaseModel, JsonValue
 from pydantic_ai import AgentRunResult, AgentStreamEvent
@@ -48,6 +48,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai_harness.step_persistence import StepStore
 from rich.console import Console, RenderableType
+from typing_extensions import Never
 from typing_extensions import TypeVar as DefaultTypeVar
 
 from .commands import Commands

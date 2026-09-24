@@ -29,6 +29,9 @@ from pydantic_clai2.session_browser import SessionBrowser
 from pydantic_clai2.sessions import Sessions
 from pydantic_clai2.settings_store import SettingsStore
 
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup
+
 
 async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def rebuild(factory: Callable[[], object]) -> object:

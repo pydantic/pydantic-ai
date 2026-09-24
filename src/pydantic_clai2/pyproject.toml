@@ -7,7 +7,7 @@ name = 'pydantic-clai2'
 version = '0.1.0'
 description = 'A capability-aware streaming terminal client for Pydantic AI'
 readme = 'README.md'
-requires-python = '>=3.11'
+requires-python = '>=3.10'
 license = 'MIT'
 license-files = ['THIRD_PARTY_NOTICES.md']
 # Terminal dependencies are isolated from Harness. Tracking issue: #875.
@@ -16,7 +16,7 @@ dependencies = [
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai-harness/issues/966.
     'pydantic-ai-slim[anthropic,mcp,openai]>=2.48.1.dev2',
     'genai-prices>=0.1.7',
-    'termflow-md>=0.9.2,<0.10',
+    'termflow-md>=0.9.3,<0.10',
     'pyfiglet>=1.0.4',
     'prompt-toolkit>=3.0.52',
     'rich>=14',
@@ -24,6 +24,7 @@ dependencies = [
     "pillow>=12.3.0",
     # Default telemetry plugin: https://github.com/pydantic/pydantic-ai-harness/issues/979.
     "logfire>=4.31.0",
+    "exceptiongroup>=1.0.2; python_version < '3.11'",
 ]
 
 [project.scripts]

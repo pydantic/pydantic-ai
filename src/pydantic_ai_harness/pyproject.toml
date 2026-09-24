@@ -242,22 +242,19 @@ docstring-code-format = false
 quote-style = 'single'
 
 [tool.pyright]
-# Shared library stubs need CLAI's Python version; Harness source keeps its own target below.
-pythonVersion = '3.11'
+pythonVersion = '3.10'
 typeCheckingMode = 'strict'
 exclude = ['template', '**/.venv*', 'local-notes', 'mutants', '.agents', '.claude']
 # `reportUnusedFunction` is disabled for tests because fixtures and `@agent.tool_plain`
 # helpers are registered via decorators and never referenced by name (matches pydantic-ai).
 executionEnvironments = [
     { root = 'pydantic-clai2', extraPaths = ['pydantic-clai2/src'] },
-    { root = '.venv', pythonVersion = '3.11' },
-    { root = 'tests', pythonVersion = '3.10', reportPrivateUsage = false, reportUnusedFunction = false },
+    { root = 'tests', reportPrivateUsage = false, reportUnusedFunction = false },
     # `redis.asyncio.Redis` ships `py.typed` but leaves most of its command surface
     # partially unknown (`from_url`, `ping`, `scan_iter`, `ttl`). Only the live-Redis
     # tests touch the client directly -- `RedisSpendStore` itself goes through the
     # `RedisClient` protocol and stays fully checked.
-    { root = 'integration_tests/redis', pythonVersion = '3.10', reportUnknownMemberType = false, reportUnknownVariableType = false, reportUnknownArgumentType = false },
-    { root = '.', pythonVersion = '3.10' },
+    { root = 'integration_tests/redis', reportUnknownMemberType = false, reportUnknownVariableType = false, reportUnknownArgumentType = false },
 ]
 
 [tool.pytest.ini_options]
