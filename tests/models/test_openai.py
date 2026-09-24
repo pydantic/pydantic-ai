@@ -616,6 +616,7 @@ def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
 
     result = agent.run_sync('hello', model_settings=OpenAIChatModelSettings(openai_service_tier='priority'))
 
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['service_tier'] == 'priority'
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.provider_details == snapshot(

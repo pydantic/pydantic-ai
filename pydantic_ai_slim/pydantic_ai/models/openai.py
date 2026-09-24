@@ -4295,11 +4295,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
                     # relies on it to cancel the server-side job.
                     self._track_background(chunk.response)
-                    if chunk.response.service_tier:
-                        self.provider_details = {
-                            **(self.provider_details or {}),
-                            'service_tier': chunk.response.service_tier,
-                        }
+                    # Only terminal events report the tier that served the request; earlier ones echo the requested tier.
+                    if isinstance(
+                        chunk,
+                        (
+                            responses.ResponseCompletedEvent,
+                            responses.ResponseFailedEvent,
+                            responses.ResponseIncompleteEvent,
+                        ),
+                    ) and (service_tier := chunk.response.service_tier):
+                        self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
