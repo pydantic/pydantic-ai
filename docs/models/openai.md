@@ -1298,3 +1298,29 @@ rapid_mlx_model = OpenAIChatModel(
 )
 agent = Agent(rapid_mlx_model)
 ```
+
+### Viktor
+
+[Viktor](https://viktor.com) is an AI employee with an OpenAI-compatible API. It is an agent rather than a bare model: each request runs Viktor with its own tools alongside the tools you pass, so a request can take minutes and may act on connected systems.
+
+Viktor doesn't have a dedicated provider class, so you can use it with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] by setting the `base_url` and `api_key`. The only model name is `viktor`. A failed run is billed and may already have acted, so turn off the OpenAI client's automatic retries, and allow for Viktor's 600-second run limit:
+
+```python
+from openai import AsyncOpenAI
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+client = AsyncOpenAI(
+    base_url='https://api.viktor.com/api/compat/v1',
+    api_key='your-viktor-api-key',
+    max_retries=0,
+    timeout=660,
+)
+model = OpenAIChatModel('viktor', provider=OpenAIProvider(openai_client=client))
+agent = Agent(model)
+...
+```
+
+The [`pydantic-ai-viktor`](https://github.com/viktor-com/viktor-integrations/tree/main/python/pydantic-ai) package provides a `ViktorProvider` with these defaults and a toolset for delegating tasks to Viktor from another model.
