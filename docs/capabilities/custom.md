@@ -56,7 +56,7 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     label: str
 ```
 
@@ -66,7 +66,7 @@ If you define a custom `__init__`, set only the metadata you want to expose. The
 from pydantic_ai.capabilities import AbstractCapability
 
 
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     def __init__(
         self,
         label: str,
@@ -888,15 +888,15 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.models.test import TestModel
 
 
-class Summaries(AbstractCapability[None]):
+class Summaries(AbstractCapability):
     id = 'summaries'
 
-    async def before_run(self, ctx: RunContext[None]) -> None:
+    async def before_run(self, ctx: RunContext) -> None:
         summary = await self.summarize(ctx, ['one', 'two'])
         assert summary == '2 messages'
 
     @durable_operation(name='summarize')
-    async def summarize(self, ctx: RunContext[None], messages: list[str]) -> str:
+    async def summarize(self, ctx: RunContext, messages: list[str]) -> str:
         return f'{len(messages)} messages'
 
 
@@ -904,6 +904,8 @@ agent = Agent(TestModel(), capabilities=[Summaries()])
 ```
 
 Mark each operation method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names and must remain stable, while the Python method can be freely renamed. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
+
+A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may return a fresh instance — the operation dispatches on whichever instance the run is using, from `before_run` and from per-request hooks alike. The replacement has to keep the capability's `id`, since that is what dispatch and worker-side recovery resolve it by; Pydantic AI raises a `UserError` at the start of the run if a bound capability's ID is no longer present. Dispatch is established once `for_run()` has returned, so an operation called from inside `for_run()` itself runs directly rather than durably.
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 
@@ -986,7 +988,7 @@ To register a dynamic capability, pass a function that takes [`RunContext`][pyda
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequest, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 
@@ -1016,7 +1018,9 @@ def user_skill(ctx: RunContext[str]) -> AbstractCapability[str] | None:
 agent = Agent(TestModel(), deps_type=str, capabilities=[user_skill])
 
 result = agent.run_sync('hi', deps='alice')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 #> You can use the refunds skill (role: admin).
 ```
 
@@ -1225,6 +1229,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, AgentSpec
+from pydantic_ai.agent.spec import CapabilitySpec
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -1238,7 +1243,10 @@ class RateLimit(AbstractCapability[Any]):
 # In YAML: `- RateLimit: {rpm: 30}`
 # In Python:
 agent = Agent.from_spec(
-    AgentSpec(model='test', capabilities=[{'RateLimit': {'rpm': 30}}]),
+    AgentSpec(
+        model='test',
+        capabilities=[CapabilitySpec(name='RateLimit', arguments={'rpm': 30})],
+    ),
     custom_capability_types=[RateLimit],
 )
 ```

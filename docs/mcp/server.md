@@ -38,17 +38,20 @@ import os
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.types import TextContent
 
 
 async def client():
     server_params = StdioServerParameters(
-        command='python', args=['mcp_server.py'], env=os.environ
+        command='python', args=['mcp_server.py'], env=dict(os.environ)
     )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool('poet', {'theme': 'socks'})
-            print(result.content[0].text)
+            content = result.content[0]
+            assert isinstance(content, TextContent)
+            print(content.text)
             """
             Oh, socks, those garments soft and sweet,
             That nestle softly 'round our feet,
@@ -67,6 +70,11 @@ if __name__ == '__main__':
     See the [MCP client docs](./client.md#mcp-sampling) for details of what MCP sampling is, and how you can support it when using Pydantic AI as an MCP client.
 
 When Pydantic AI agents are used within MCP servers, they can use sampling via [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel].
+
+You can continue a conversation from another model by passing its `message_history` to the sampling agent.
+Function tool calls, results, and retry feedback in that history are preserved using MCP's native tool content blocks,
+which require a client supporting the 2025-11-25 sampling format or later.
+Multimodal tool results are not yet supported. Replaying tool history does not enable the sampling agent to call new tools.
 
 We can extend the above example to use sampling so instead of connecting directly to the LLM, the agent calls back through the MCP client to make LLM calls.
 
@@ -148,7 +156,9 @@ async def client():
         async with ClientSession(read, write, sampling_callback=sampling_callback) as session:
             await session.initialize()
             result = await session.call_tool('poet', {'theme': 'socks'})
-            print(result.content[0].text)
+            content = result.content[0]
+            assert isinstance(content, TextContent)
+            print(content.text)
             #> Socks for a fox.
 
 

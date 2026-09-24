@@ -1,0 +1,96 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1082'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        areas.account:
+          instructions:
+            field: areas
+            goal: Triage a support ticket.
+            option: account
+            question: Which teams does this touch?
+          type: noul
+        areas.billing:
+          instructions:
+            field: areas
+            goal: Triage a support ticket.
+            option: 'billing: Money already owed, charged or refunded.'
+            question: Which teams does this touch?
+          type: noul
+        areas.bug:
+          instructions:
+            field: areas
+            goal: Triage a support ticket.
+            option: bug
+            question: Which teams does this touch?
+          type: noul
+        customer.angry:
+          instructions:
+            field: customer.angry
+            goal: Triage a support ticket.
+            question: Is the customer angry?
+          type: noul
+        plan:
+          criteria:
+            enterprise: null
+            free: null
+            none: None of these.
+            pro: null
+          instructions:
+            field: plan
+            goal: Triage a support ticket.
+            question: Which plan does the customer name, if any?
+          type: choice
+      state: Third time our pro plan has been charged twice this year. I am furious. Refund it.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '422'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        areas.account:
+          noul: 0.76
+          type: noul
+        areas.billing:
+          noul: 0.97
+          type: noul
+        areas.bug:
+          noul: 0.6
+          type: noul
+        customer.angry:
+          noul: 0.99
+          type: noul
+        plan:
+          choice: pro
+          confidence: 1.0
+          probabilities:
+            enterprise: 0.0
+            free: 0.0
+            none: 0.0
+            pro: 1.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 561
+        output_tokens: 118
+    status:
+      code: 200
+      message: OK
+version: 1

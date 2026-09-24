@@ -10,7 +10,11 @@ You send and receive raw audio samples; there is no container or codec in the li
 [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] accepts raw, signed 16-bit
 little-endian mono PCM — a single chunk, or an async iterable of chunks (a microphone stream, a
 WebSocket receive loop) that it forwards until the iterable ends, so a whole capture loop can be
-one task. [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
+one task. If the session is closed while consuming the iterable, that task returns cleanly as soon
+as the source yields again, without sending that chunk. Cancel the task in application code if the
+source can stall indefinitely. Sending a single chunk after close still raises
+[`UserError`][pydantic_ai.exceptions.UserError].
+[`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
 returns the same format. Capture at
 [`session.audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
 and play at
@@ -60,6 +64,8 @@ async def main():
         async for event in session:
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
+        # Let the speaker consume every generated chunk before closing the session.
+        await session.wait_for_playback()
 
     # Leaving the `async with` block closes the session, which ends every live view.
     await asyncio.gather(audio_task, transcript_task)
@@ -69,10 +75,26 @@ Each view is independently bounded; a slow consumer drops its oldest item rather
 tools, turn tracking, or other consumers.
 A subscription begins when `stream_audio()` or `stream_transcripts()` is called, so a view handed to
 a task with `asyncio.create_task` misses nothing while it waits for its first turn on the event loop,
-up to its buffer bound.
+up to its buffer bound. Call the method where the task is created and pass the iterator in, as
+above: an `async for chunk in session.stream_audio()` inside the task body subscribes only once the
+task first runs, so audio emitted before then is never seen.
 An unconsumed view buffers up to its bound, dropping the oldest item when full, until it is collected.
 [`close()`][pydantic_ai.realtime.RealtimeSession.close] discards pending items and ends every live
 iterator; [`closed`][pydantic_ai.realtime.RealtimeSession.closed] reports the state.
+
+If nothing is iterating the session, the session keeps the most recent 512 part delta events
+(audio, transcript, and text) and the most recent 512 structural events for a late `async for`;
+older ones are discarded. Discarding a part's start discards the rest of that part with it, so a late
+iterator never receives a delta it cannot attach to a part. A failure parked for the consumer is
+never discarded.
+
+After a reply finishes generating, await
+[`wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback] before closing the
+session or opening the microphone. It returns once the single `stream_audio()` consumer has accounted
+for all audio emitted so far: played, using the same one-chunk-lag accounting as
+[`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes], or never played at
+all — discarded by a barge-in or by the view's buffer overflowing, or emitted before the view
+subscribed. It requires exactly one audio view and also returns if that view or the session closes.
 
 ### Live captions
 

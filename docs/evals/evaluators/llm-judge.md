@@ -138,6 +138,10 @@ LLMJudge(
 )
 ```
 
+When the judge model cannot generate text, like [TypeSafe's Jev](../../models/typesafe.md), `LLMJudge` asks it only for the pass/fail verdict. The result has no reason rather than a fabricated one, and its score is `1.0` for pass or `0.0` for fail. A model reports this through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on its profile.
+
+The verdict is one yes-or-no question naming only the sections the prompt carries, so a rubric judged without an expected output is not asked to weigh one.
+
 ### Model Settings
 
 Customize model behavior:

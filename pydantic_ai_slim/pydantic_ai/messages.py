@@ -991,6 +991,14 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 """A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
 
+# Explicit tuple for readability; validated against `UserContent` in tests
+_USER_CONTENT_TYPES: tuple[type, ...] = (str, TextContent, *MULTI_MODAL_CONTENT_TYPES, CachePoint)
+
+_NOT_USER_CONTENT = (
+    'Serialize the value yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) '
+    'or `pydantic_ai.format_as_xml()`.'
+)
+
 
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
 """Type variable for the return value type in `ToolReturn[T]`.
@@ -1131,6 +1139,30 @@ class UserPromptPart:
 
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    def __post_init__(self) -> None:
+        # Every model's message mapper walks this content and hands each item to an exhaustive match. What
+        # is not `UserContent` gets there as a bare `AssertionError: Expected code to be unreachable`, and
+        # what is iterable but not a sequence -- a `dict`, most of all -- is walked as its keys, silently
+        # sending them to the model as the prompt. Both are caught here, where the value comes in, rather
+        # than once per mapper. `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic
+        # deserializes message history, where a `ValueError` becomes a `ValidationError` with location info.
+        content = self.content
+        if isinstance(content, str):
+            return
+        # `bytes` is a `Sequence` of `int`, so it passes the check below and fails on its first item with a
+        # message about an `int` the caller never wrote.
+        if not isinstance(content, Sequence) or isinstance(content, bytes | bytearray):
+            raise ValueError(
+                '`UserPromptPart.content` must be a `str` or a sequence of `UserContent` items, '
+                f'got `{type(content).__name__}`. {_NOT_USER_CONTENT}'
+            )
+        for index, item in enumerate(content):
+            if not isinstance(item, _USER_CONTENT_TYPES):
+                raise ValueError(
+                    f'`UserPromptPart.content[{index}]` must be a `UserContent` item, '
+                    f'got `{type(item).__name__}`. {_NOT_USER_CONTENT}'
+                )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []

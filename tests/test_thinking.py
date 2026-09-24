@@ -22,7 +22,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
@@ -515,6 +515,28 @@ class TestGoogleThinkingTranslation:
     """
 
     @pytest.fixture
+    def default_google_model(self):
+        """A model with unspecified thinking_level support (should default to Gemini 3+ behaviour)."""
+        return FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+            ),
+        )
+
+    def test_thinking_default_uses_thinking_level(self, default_google_model: FunctionModel):
+        params = ModelRequestParameters(thinking='high')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(default_google_model, settings, params)
+        assert result == {'include_thoughts': True, 'thinking_level': 'HIGH'}
+
+    def test_thinking_false_default_uses_minimal_level(self, default_google_model: FunctionModel):
+        params = ModelRequestParameters(thinking=False)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(default_google_model, settings, params)
+        assert result == {'thinking_level': 'MINIMAL'}
+
+    @pytest.fixture
     def gemini_3_model(self):
         """A model with thinking_level support (Gemini 3+)."""
         return FunctionModel(
@@ -792,9 +814,9 @@ class TestAnthropicThinkingOutputToolsConflict:
     """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
     thinking but accepts alongside adaptive thinking, so only the former switches the output mode.
 
-    The exception is a model that rejects forcing outright (`claude-fable-5-1`, `claude-mythos-5-1`):
-    there, Tool Output could only fall back to a soft `tool_choice='auto'` the model may ignore, so
-    adaptive thinking keeps switching away from it too.
+    The exception is a model that rejects forcing outright (`claude-fable-5-1`, `claude-mythos-5-1`,
+    `claude-opus-5-5`): there, Tool Output could only fall back to a soft `tool_choice='auto'` the
+    model may ignore, so adaptive thinking keeps switching away from it too.
 
     These are pre-request guards, so no request is ever made and there is nothing to record. Real
     model names are used so the shipped profile flags — not hand-built ones — decide each case.
@@ -894,7 +916,7 @@ class TestAnthropicThinkingOutputToolsConflict:
             model.prepare_request(settings, params)
 
 
-def _bedrock_model(profile: BedrockModelProfile) -> BedrockConverseModel:
+def _bedrock_model(profile: ModelProfile) -> BedrockConverseModel:
     client = MagicMock()
     client.meta.endpoint_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
     return BedrockConverseModel('test-model', provider=BedrockProvider(bedrock_client=client), profile=profile)
@@ -1041,6 +1063,29 @@ class TestBedrockThinkingTranslation:
             BedrockModelSettings(), ModelRequestParameters(thinking=level)
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': effort}}
+
+    def test_anthropic_variant_adaptive_xhigh_passes_through_when_profile_supports_it(self):
+        """`xhigh` reaches the wire as `xhigh` when the merged profile carries `anthropic_supports_xhigh_effort`.
+
+        `BedrockProvider.model_profile` merges the downstream Anthropic profile into the Bedrock one, so the
+        flag is present for the same models the direct Anthropic path passes `xhigh` through for. Bedrock accepts
+        `xhigh` on exactly those models and rejects it on the rest, which the `max` fallback above covers.
+        """
+        model = _bedrock_model(
+            merge_profile(
+                BedrockModelProfile(
+                    bedrock_thinking_variant='anthropic',
+                    bedrock_supports_adaptive_thinking=True,
+                    bedrock_supports_effort=True,
+                    supports_thinking=True,
+                ),
+                AnthropicModelProfile(anthropic_supports_xhigh_effort=True),
+            )
+        )
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking='xhigh')
+        )
+        assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'xhigh'}}
 
     def test_anthropic_variant_adaptive_no_effort_when_unsupported(self):
         """Effort is omitted when the profile doesn't advertise bedrock_supports_effort."""
@@ -1481,7 +1526,9 @@ class TestGoogleBudgetApiConstraints:
 
     def test_all_budgets_within_flash_range(self):
         """Every effort budget must be within Gemini 2.5 Flash's [0, 24576] range."""
-        model = FunctionModel(_echo, profile=ModelProfile(supports_thinking=True))
+        model = FunctionModel(
+            _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+        )
         for effort in ('minimal', 'low', 'medium', 'high', 'xhigh'):
             params = ModelRequestParameters(thinking=effort)
             result = GoogleModel._translate_thinking(model, {}, params)
@@ -1492,7 +1539,9 @@ class TestGoogleBudgetApiConstraints:
 
     def test_all_budgets_within_pro_range(self):
         """Every effort budget must be within Gemini 2.5 Pro's [128, 32768] range."""
-        model = FunctionModel(_echo, profile=ModelProfile(supports_thinking=True))
+        model = FunctionModel(
+            _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+        )
         for effort in ('minimal', 'low', 'medium', 'high', 'xhigh'):
             params = ModelRequestParameters(thinking=effort)
             result = GoogleModel._translate_thinking(model, {}, params)
@@ -1503,7 +1552,9 @@ class TestGoogleBudgetApiConstraints:
 
     def test_budgets_are_monotonically_increasing(self):
         """low < medium < high — effort levels should map to increasing budgets."""
-        model = FunctionModel(_echo, profile=ModelProfile(supports_thinking=True))
+        model = FunctionModel(
+            _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+        )
         budgets = {}
         for effort in ('low', 'medium', 'high'):
             params = ModelRequestParameters(thinking=effort)
@@ -1555,15 +1606,41 @@ class TestProfileThinkingCapabilities:
         assert profile is not None
         assert profile.get('supports_thinking', False) is True
         assert profile.get('thinking_always_enabled', False) is False
+        assert profile.get('google_supports_thinking_level') is False
 
         profile = google_model_profile('gemini-2.5-pro')
         assert profile is not None
         assert profile.get('supports_thinking', False) is True
         assert profile.get('thinking_always_enabled', False) is True
+        assert profile.get('google_supports_thinking_level') is False
 
         profile = google_model_profile('gemini-2.0-flash')
         assert profile is not None
         assert profile.get('supports_thinking', False) is False
+        assert profile.get('google_supports_thinking_level') is False
+
+        profile = google_model_profile('gemini-1.5-flash')
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is False
+        assert profile.get('google_supports_thinking_level') is False
+
+        profile = google_model_profile('gemini-3.0-pro')
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
+        assert profile.get('google_supports_thinking_level') is True
+
+        profile = google_model_profile('gemini-3-flash-preview')
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('google_supports_thinking_level') is True
+
+        # Future/unversioned and -latest alias models default to Gemini 3 behaviour
+        for name in ('gemini-9-flash', 'gemini-flash-latest', 'gemini-pro-latest'):
+            profile = google_model_profile(name)
+            assert profile is not None
+            assert profile.get('supports_thinking', False) is True
+            assert profile.get('google_supports_thinking_level') is True
 
     def test_openai_profile_thinking_support(self):
         profile = openai_model_profile('o3')

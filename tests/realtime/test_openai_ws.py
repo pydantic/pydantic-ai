@@ -13,6 +13,7 @@ import asyncio
 import importlib
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -20,11 +21,12 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RequestUsage, RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    EnqueuedMessagesEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelRequest,
@@ -47,11 +49,11 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     RealtimeTurnCompleteEvent,
 )
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
-from .ws_cassettes import RealtimeCassette, ReplayWebSocket
+from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
@@ -74,6 +76,57 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
+
+
+async def test_enqueued_message_delivery_event(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """OpenAI delivery emits the enqueued request object recorded in session history."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(instructions='Reply exactly "DELIVERED".')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        enqueue_id = session.enqueue('Reply now.')
+        assert enqueue_id is not None
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    enqueued_events = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert len(enqueued_events) == 1
+    assert enqueued_events[0].enqueue_id == enqueue_id
+    assert enqueued_events[0].messages[0] is session.new_messages()[0]
+    assert session.new_messages()[1] == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='DELIVERED')],
+            usage=RequestUsage(
+                details={
+                    'input_text_tokens': 14,
+                    'input_image_tokens': 0,
+                    'output_text_tokens': 5,
+                    'audio_tokens': 0,
+                },
+                output_tokens=5,
+                input_tokens=14,
+                cost=Decimal('0.000136'),
+            ),
+            model_name='gpt-realtime',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={'status': 'completed'},
+            provider_response_id=IsStr(),
+            finish_reason='stop',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
 
 
 async def test_session_when_idle_enqueue_waits_for_response_boundary(
@@ -127,6 +180,7 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                     },
                     output_tokens=5,
                     input_tokens=24,
+                    cost=Decimal('0.000176'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -159,6 +213,7 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                     },
                     output_tokens=9,
                     input_tokens=52,
+                    cost=Decimal('0.000352'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -282,6 +337,7 @@ async def test_image_can_solicit_one_response(
     assert len(responses) == 1
 
 
+@pytest.mark.realtime_ws_hold_open
 async def test_media_views_subscribe_before_iteration(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
@@ -319,6 +375,48 @@ async def test_media_views_subscribe_before_iteration(
     assert transcript_parts[0].transcript
 
 
+@pytest.mark.realtime_ws_hold_open
+async def test_wait_for_playback_drains_audio_before_close(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A generation boundary does not let session teardown cut off device-paced playback.
+
+    The recording ends with the reply, but the session is still live: this test stops iterating and
+    then calls another session method, so without holding the socket open the replay's
+    end-of-conversation close would reach that call as a receive-side failure.
+    """
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in one short sentence.')
+    emitted: list[bytes] = []
+    played: list[bytes] = []
+
+    async with agent.realtime(model).session() as session:
+        audio = session.stream_audio()
+
+        async def play_audio() -> None:
+            async for chunk in audio:
+                await asyncio.sleep(0.005)
+                played.append(chunk)
+
+        playback = asyncio.create_task(play_audio())
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if (
+                    isinstance(event, PartDeltaEvent)
+                    and isinstance(event.delta, SpeechPartDelta)
+                    and event.delta.audio_chunk
+                ):
+                    emitted.append(event.delta.audio_chunk)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await session.wait_for_playback()
+        assert played == emitted
+
+    await playback
+
+
 async def test_provider_factory_text_turn(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], openai_api_key: str
 ) -> None:
@@ -354,6 +452,7 @@ async def test_provider_factory_text_turn(
                         'output_text_tokens': 5,
                         'audio_tokens': 0,
                     },
+                    cost=Decimal('0.000128'),
                 ),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
@@ -493,12 +592,14 @@ async def test_audio_in_server_vad_turn(
                 'output_text_tokens': 28,
                 'audio_tokens': 136,
             },
+            cost=Decimal('0.010072'),
             requests=1,
         )
     )
     assert reply.usage.details.get('input_transcription_seconds') is None
 
 
+@pytest.mark.realtime_ws_hold_open
 async def test_input_audio_retention_segments_three_server_vad_turns(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
@@ -697,6 +798,7 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='hang_up', args='{}', tool_call_id=(tool_call_id := IsSameStr()))],
+                usage=RequestUsage(cost=Decimal('0.0')),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -723,20 +825,11 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
     )
 
 
+@pytest.mark.realtime_ws_hold_open
 async def test_tool_error_ends_transcript_only_session(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A raising tool ends a transcript-only consumer instead of leaving the live session mute."""
-    replay_recv = ReplayWebSocket.recv
-
-    async def yielding_replay_recv(self: ReplayWebSocket, *, decode: bool | None = None) -> str | bytes:
-        # A real socket yields between frames; give the spawned tool task the same scheduling chance
-        # during cassette playback before end-of-recording is interpreted as a provider close.
-        await asyncio.sleep(0)
-        return await replay_recv(self, decode=decode)
-
-    monkeypatch.setattr(ReplayWebSocket, 'recv', yielding_replay_recv)
     provider, _ = openai_ws_cassette
     model = OpenAIRealtimeModel(
         'gpt-realtime', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
@@ -772,6 +865,7 @@ async def test_tool_error_ends_transcript_only_session(
                         tool_call_id=IsStr(),
                     )
                 ],
+                usage=RequestUsage(cost=Decimal('0.0')),
                 model_name='gpt-realtime',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -779,6 +873,20 @@ async def test_tool_error_ends_transcript_only_session(
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='The tool raised an unhandled error and the session ended.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        outcome='failed',
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

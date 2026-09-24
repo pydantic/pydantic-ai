@@ -206,6 +206,45 @@ def test_model_profile_gemini_3():
     assert profile.get('google_supports_server_side_tool_invocations', False) is True
 
 
+def test_model_profile_thinking_defaults():
+    """Gemini 3+ behaviour is the default for thinking; older models are if-guarded."""
+    # Default Gemini 3+ behaviour
+    for name in (
+        'gemini-3.0-pro',
+        'gemini-3-flash-preview',
+        'gemini-3.7-flash',
+        'gemini-9-flash',
+        'some-codename',
+        'gemini-flash-latest',
+        'gemini-pro-latest',
+    ):
+        profile = google_model_profile(name)
+        assert profile is not None, f'{name} should have a profile'
+        assert profile.get('supports_thinking') is True, f'{name} should support thinking'
+        assert profile.get('google_supports_thinking_level') is True, f'{name} should support thinking_level'
+
+    # Gemini 2.5: supports thinking, but uses budget (thinking_level=False)
+    for name in ('gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-image'):
+        profile = google_model_profile(name)
+        assert profile is not None, f'{name} should have a profile'
+        assert profile.get('supports_thinking') is True, f'{name} should support thinking'
+        assert profile.get('google_supports_thinking_level') is False, f'{name} should not support thinking_level'
+
+    # Older models without thinking support
+    for name in (
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-flash',
+        'gemini-1.5-pro',
+        'gemini-pro',
+        'gemma-3-27b-it',
+    ):
+        profile = google_model_profile(name)
+        assert profile is not None, f'{name} should have a profile'
+        assert profile.get('supports_thinking') is False, f'{name} should not support thinking'
+        assert profile.get('google_supports_thinking_level') is False, f'{name} should not support thinking_level'
+
+
 def test_model_profile_gemini_2_disables_tool_combination_capabilities():
     profile = google_model_profile('gemini-2.5-flash')
     assert profile is not None

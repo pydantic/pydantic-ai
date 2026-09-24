@@ -58,6 +58,7 @@ AdvisorModelName = (
         'claude-fable-5',
         'claude-mythos-5-1',
         'claude-mythos-5',
+        'claude-opus-5-5',
         'claude-opus-5',
         'claude-opus-4-8',
         'claude-opus-4-7',
@@ -183,6 +184,7 @@ class WebSearchTool(AbstractNativeTool):
 
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
+    * OpenAI Responses, see <https://developers.openai.com/api/docs/guides/tools-web-search#domain-filtering>
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
     * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
