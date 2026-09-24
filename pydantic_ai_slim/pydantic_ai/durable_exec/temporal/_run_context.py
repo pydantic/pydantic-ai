@@ -31,7 +31,7 @@ class _UnrestoredWorkspace(UnavailableWorkspace):
     def __init__(self) -> None:
         super().__init__(
             'No workspace is attached to this run. Attach one to the agent through a capability such as '
-            "`LocalWorkspace('/absolute/path')`; inside a Temporal activity, `RunContext.workspace` is rebuilt "
+            "`LocalWorkspace('.')`; inside a Temporal activity, `RunContext.workspace` is rebuilt "
             "from the run's serialized `WorkspaceRef` through the agent's capabilities."
         )
 

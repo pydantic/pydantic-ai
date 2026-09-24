@@ -52,8 +52,8 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     """Whether to wrap the workspace in a [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace].
 
     Reads and directory listings work; commands and file changes raise
-    [`UserError`][pydantic_ai.exceptions.UserError]. This restricts access through the workspace
-    API and is not isolation.
+    [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError]. This restricts access
+    through the workspace API and is not isolation.
     """
 
     env: Mapping[str, str] | None = None

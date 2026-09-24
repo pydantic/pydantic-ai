@@ -25,7 +25,7 @@ must exist; the first operation raises `WorkspaceUnavailableError` otherwise), a
 claims only that exact ref: a foreign ref, or a local ref for another directory, gets `None`, so message history
 cannot redirect the agent to another host directory (pass `workspace='new'` to start over in the
 configured one). For a single run, pass the backend instead:
-`agent.run(..., workspace=LocalWorkspaceBackend('/absolute/path'))`.
+`agent.run(..., workspace=LocalWorkspaceBackend('.'))`.
 Without an attached workspace, operations raise `UserError`. `Workspace` offers the same run,
 file, and bounded-read methods for every backend; wrappers can override primitives and
 `ReadOnlyWorkspace` blocks commands and changes.
@@ -89,5 +89,5 @@ default; configure with `workspace_activity_config`, `workspace_step_config` or
 `workspace_task_config`. The deprecated `TemporalAgent`/`DBOSAgent`/`PrefectAgent` wrappers refuse
 workspaces in their container.
 
-See the [workspace guide](https://ai.pydantic.dev/workspace/) for protocol details and lifecycle
+See the [workspace guide](https://pydantic.dev/docs/ai/workspace/) for protocol details and lifecycle
 examples.

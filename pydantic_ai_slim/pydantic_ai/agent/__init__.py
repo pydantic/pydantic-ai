@@ -66,7 +66,7 @@ from .._cancel import CancellationToken, RunBinding, RunCancellation, take_run_b
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import dispatch_event_stream, set_current_run_context
+from .._run_context import dispatch_event_stream, set_current_run_context, unattached_workspace
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -131,7 +131,7 @@ from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
-from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
+from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -429,14 +429,6 @@ S = TypeVar('S')
 _PreparedDepsT = TypeVar('_PreparedDepsT')
 _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
-
-_NO_WORKSPACE_REASON = (
-    "No workspace is attached to this run. Attach `capabilities=[LocalWorkspace('/absolute/path')]` to the agent, or "
-    "pass `workspace=LocalWorkspaceBackend('/absolute/path')` to the run method, to use the local machine (unsafe: "
-    'commands and file operations run with the full permissions of this process); attach another capability that '
-    'supplies a workspace through its `get_workspace` hook; or pass a `WorkspaceRef` to connect to an existing '
-    'environment. See https://ai.pydantic.dev/workspace/ for details.'
-)
 
 
 @dataclasses.dataclass
@@ -1718,7 +1710,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
-            workspace=Workspace(UnavailableWorkspace(_NO_WORKSPACE_REASON)),
+            workspace=unattached_workspace(),
         )
 
         # A caller-provided live workspace is already known and is visible to `for_run`. A workspace
@@ -1788,7 +1780,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             elif workspace == 'new':
                 raise exceptions.UserError(
                     "`workspace='new'` needs a capability that can create a workspace, but every `get_workspace` "
-                    "returned `None`. Attach one, such as `capabilities=[LocalWorkspace('/absolute/path')]`."
+                    "returned `None`. Attach one, such as `capabilities=[LocalWorkspace('.')]`."
                 )
             elif explicit_ref is not None:
                 raise exceptions.UserError(

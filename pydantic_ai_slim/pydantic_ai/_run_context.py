@@ -113,12 +113,16 @@ def unattached_workspace() -> Workspace:
     # package initialization. This factory runs only when a `RunContext` is constructed.
     from .workspaces import UnavailableWorkspace, Workspace
 
-    return Workspace(
-        UnavailableWorkspace(
-            'No workspace is attached: this context has no workspace; attach a workspace capability such as '
-            "`capabilities=[LocalWorkspace('/absolute/path')]`, or pass `workspace=` to the run method."
-        )
-    )
+    return Workspace(UnavailableWorkspace(_NO_WORKSPACE_REASON))
+
+
+_NO_WORKSPACE_REASON = (
+    "No workspace is attached to this run. Attach `capabilities=[LocalWorkspace('.')]` to the agent, or pass "
+    "`workspace=LocalWorkspaceBackend('.')` to the run method, to use the local machine (unsafe: commands and "
+    'file operations run with the full permissions of this process); attach another capability that supplies a '
+    'workspace through its `get_workspace` hook; or pass a `WorkspaceRef` to connect to an existing environment. '
+    'See https://pydantic.dev/docs/ai/workspace/ for details.'
+)
 
 
 @dataclasses.dataclass(frozen=True)

@@ -929,7 +929,7 @@ async def test_attached_is_false_only_for_an_unavailable_workspace_even_through_
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
-    with pytest.raises(UserError, match=r'LocalWorkspace.*pass `workspace=`'):
+    with pytest.raises(UserError, match=r"LocalWorkspace\('\.'\).*https://pydantic\.dev/docs/ai/workspace/"):
         await ctx.workspace.run(['true'])
 
 
