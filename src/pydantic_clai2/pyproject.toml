@@ -14,7 +14,7 @@ license-files = ['THIRD_PARTY_NOTICES.md']
 dependencies = [
     'pydantic-ai-harness[coder]',
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai-harness/issues/966.
-    'pydantic-ai-slim[anthropic,mcp,openai]>=2.48.1.dev2',
+    'pydantic-ai-slim[anthropic,mcp,openai]>=2.49.0',
     'genai-prices>=0.1.7',
     'termflow-md>=0.9.3,<0.10',
     'pyfiglet>=1.0.4',
@@ -35,8 +35,6 @@ packages = ['src/pydantic_clai2']
 
 [tool.uv.sources]
 pydantic-ai-harness = { workspace = true }
-# Until device flow is released: https://github.com/pydantic/pydantic-ai/issues/8616.
-pydantic-ai-slim = { git = "https://github.com/pydantic/pydantic-ai", subdirectory = "pydantic_ai_slim", rev = "f4a37f59732e6d182bb02ecec9ae2252c0a7b328" }
 
 [tool.ruff]
 extend = '../pyproject.toml'
