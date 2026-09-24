@@ -1233,7 +1233,7 @@ async def test_the_last_route_left_is_taken_without_asking(allow_model_requests:
     assert result.output == 'rejected'
     assert len(seen) == 1
     assert (result.response.provider_details or {})['route'] == snapshot(
-        {'choice': 'output', 'probabilities': {'output': 1.0}, 'offered': ['output'], 'taken': 'output'}
+        {'choice': 'reject', 'probabilities': {'reject': 1.0}, 'offered': ['reject'], 'taken': 'reject'}
     )
 
 

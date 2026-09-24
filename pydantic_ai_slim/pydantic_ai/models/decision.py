@@ -354,6 +354,9 @@ class DecisionModel(Model[InterfaceClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        # The one place a single output type's own name survives, since its tool is `final_result`. Read before
+        # preparing, which drops `output_object` outside native and prompted output.
+        output_name = output_object.name if (output_object := model_request_parameters.output_object) else None
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tools, hand_offs = _output_tools(model_request_parameters)
         # One output type is filled in the same request that picks a route; several are a union, so the first
@@ -368,7 +371,7 @@ class DecisionModel(Model[InterfaceClient]):
         ]
         offered = [*hand_offs, *function_tools]
         tools = _tools_left(messages, offered)
-        routes = _route_labels(output_tools, tools)
+        routes = _route_labels(output_tools, tools, output_name)
         forced_tool = tools[0] if not output_tools and len(tools) == 1 and len(offered) > 1 else None
         if forced_tool is not None and (
             _none_route(forced_tool) or not _properties(forced_tool.parameters_json_schema)
@@ -1248,12 +1251,12 @@ def _questions(
 
 
 _OUTPUT_ROUTE_LABEL = 'output'
-"""The label of a single output type that has no name of its own: a bare `bool` or `Literal`, or an output function."""
+"""The label of a single output type that has no name of its own: a bare `bool` or `Literal` that Pydantic AI wraps."""
 
 _OUTPUT_LABEL_SUFFIX = ' (output)'
 
 
-def _output_route_label(tool: ToolDefinition) -> str:
+def _output_route_label(tool: ToolDefinition, output_name: str | None) -> str:
     """The name an output route goes by on the route question, before collisions with other routes are settled.
 
     The output tool's name is the library's, not the user's: `final_result` for a single output type and
@@ -1262,16 +1265,26 @@ def _output_route_label(tool: ToolDefinition) -> str:
 
     - a name given with `ToolOutput(name=...)`, which is the tool's name as it stands;
     - a union member's own name, which follows the prefix: `Refund`, `None`, or an output function's name;
-    - a single output type's name, which is its schema's `title`, the class name; or `output` for one that has
-      none, a bare `bool` or `Literal` that Pydantic AI wraps, or an output function.
+    - a single output type's own name, `output_name`: the name of a model or an `Enum`, or of an output function,
+      which its tool has nowhere to carry. It comes from the request's `output_object`, which Pydantic AI fills in for
+      an output type given without `ToolOutput` and a model prepares away in tool output mode;
+    - failing that, a single output type's schema `title`, which is how `ToolOutput(Ticket)` without a name still
+      goes by `Ticket`; or `output` for a type that has no name worth offering, a bare `bool`, `Literal` or `list`
+      that Pydantic AI wraps in an object, since `bool` says nothing about the route. A wrapped type with a class
+      of its own, an `Enum`, is a `$ref` to its definition, and that is how it is told apart.
     """
     if tool.name == DEFAULT_OUTPUT_TOOL_NAME:
+        wrapped = _wrapped(tool)
+        if output_name and (wrapped is None or '$ref' in wrapped):
+            return output_name
         title = _resolved(tool.parameters_json_schema).get('title')
         return title if isinstance(title, str) and title else _OUTPUT_ROUTE_LABEL
     return tool.name.removeprefix(f'{DEFAULT_OUTPUT_TOOL_NAME}_') or _OUTPUT_ROUTE_LABEL
 
 
-def _route_labels(output_tools: list[ToolDefinition], tools: list[ToolDefinition]) -> dict[str, ToolDefinition]:
+def _route_labels(
+    output_tools: list[ToolDefinition], tools: list[ToolDefinition], output_name: str | None
+) -> dict[str, ToolDefinition]:
     """Every route on offer under the one label the model knows it by, in the order the route question offers them.
 
     The label is the option key on the route question and the `chosen` of the fill that follows, so one route has
@@ -1290,7 +1303,7 @@ def _route_labels(output_tools: list[ToolDefinition], tools: list[ToolDefinition
     for tool in routes:
         if tool.kind != 'output':
             continue
-        label = _output_route_label(tool)
+        label = _output_route_label(tool, output_name)
         while label in taken:
             label += _OUTPUT_LABEL_SUFFIX
         taken.add(label)

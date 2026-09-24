@@ -226,7 +226,7 @@ Fields are what the model fills. When there is more than one *thing* the text co
 Each option goes by the name you gave the route:
 
 - a tool or an [output function](../output.md#output-functions) by the function's name;
-- an output type by its class name, or by the `name` you gave it with [`ToolOutput`][pydantic_ai.output.ToolOutput];
+- an output type by its class name, an `Enum`'s included, or by the `name` you gave it with [`ToolOutput`][pydantic_ai.output.ToolOutput];
 - a `None` member of a union as `None`;
 - a single output type with no class name of its own, such as a bare `bool` or `Literal`, as `output`.
 

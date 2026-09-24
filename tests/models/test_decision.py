@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Annotated, Any, Literal
 
 import pytest
@@ -305,6 +306,22 @@ async def escalate(ctx: RunContext[None]) -> str:
     return 'escalated'  # pragma: no cover
 
 
+class Priority(str, Enum):
+    """How soon the ticket needs a reply."""
+
+    now = 'now'
+    later = 'later'
+
+
+def assign(team: Literal['billing', 'technical']) -> str:
+    """Assign the ticket to a team.
+
+    Args:
+        team: Which team should handle it?
+    """
+    return team  # pragma: no cover
+
+
 def route_question(model: InMemoryDecisionModel, key: str = 'route') -> ChoiceQuestion:
     question = model.requests[0].questions[key]
     assert isinstance(question, ChoiceQuestion)
@@ -317,6 +334,7 @@ def route_question(model: InMemoryDecisionModel, key: str = 'route') -> ChoiceQu
     [
         pytest.param(Triage, ['Triage', 'refund'], id='a single output type goes by its class name'),
         pytest.param(bool, ['output', 'refund'], id='a wrapped bare output type goes by `output`'),
+        pytest.param(Priority, ['Priority', 'refund'], id='a wrapped `Enum` goes by its class name'),
         pytest.param(
             ToolOutput(Triage, name='triage_it'), ['triage_it', 'refund'], id='a named output goes by its name'
         ),
@@ -326,6 +344,9 @@ def route_question(model: InMemoryDecisionModel, key: str = 'route') -> ChoiceQu
             id='union members go by their own names',
         ),
         pytest.param([Triage, escalate], ['Triage', 'escalate', 'refund'], id='a hand-off goes by its name'),
+        pytest.param(escalate, ['escalate', 'refund'], id='a single hand-off goes by its name'),
+        pytest.param(assign, ['assign', 'refund'], id='a single output function goes by its name'),
+        pytest.param(ToolOutput(Triage), ['Triage', 'refund'], id='an unnamed `ToolOutput` goes by its title'),
     ],
 )
 async def test_route_labels(allow_model_requests: None, output_type: Any, labels: list[str]):
