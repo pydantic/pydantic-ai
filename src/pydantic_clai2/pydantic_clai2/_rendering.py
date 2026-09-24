@@ -36,6 +36,7 @@ from termflow.syntax import LANGUAGE_ALIASES  # pyright: ignore[reportMissingTyp
 
 from . import theme
 from .grep_output import GrepOutput
+from .sandbox_calls import SandboxCallOrder
 from .tool_output import ToolOutput, print_tool_header, terminal_text
 
 
@@ -102,6 +103,7 @@ class StreamRenderer:
     ) -> None:
         self.console = console
         self._renderers = tuple(renderers)
+        self._sandbox_calls = SandboxCallOrder()
         self.show_tool_output = show_tool_output
         self._tool_output = ToolOutput(console, shell_lines=shell_lines, show_output=show_tool_output)
         self._grep_output = GrepOutput(console, lines=grep_lines, show_output=show_tool_output)
@@ -121,6 +123,8 @@ class StreamRenderer:
 
     async def on_stream_event(self, event: AgentStreamEvent) -> None:
         """Bind this callback to `Session.on_stream_event`."""
+        if await self._render_sandbox_call(event):
+            return
         if await self._render_with_plugins(event):
             if isinstance(event, PartStartEvent) and isinstance(event.part, (TextPart, ThinkingPart)):
                 self._thinking = isinstance(event.part, ThinkingPart)
@@ -153,9 +157,22 @@ class StreamRenderer:
         elif isinstance(event, PartStartEvent) or isinstance(event, PartEndEvent) and event.index == self._index:
             await self.finish()
         elif isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent)):
-            await self.finish()
-            self.stop_loading()
-            self._render_tool_event(event)
+            await self._render_tool(event)
+
+    async def _render_sandbox_call(self, event: AgentStreamEvent) -> bool:
+        """Render a call from inside `run_code` like a direct one, under its `run_code` header."""
+        tool_events = self._sandbox_calls.tool_events(event)
+        if tool_events is None:
+            return False
+        for tool_event in tool_events:
+            if not await self._render_with_plugins(tool_event):
+                await self._render_tool(tool_event)
+        return True
+
+    async def _render_tool(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> None:
+        await self.finish()
+        self.stop_loading()
+        self._render_tool_event(event)
 
     def _render_tool_event(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> None:
         if isinstance(event, FunctionToolResultEvent):

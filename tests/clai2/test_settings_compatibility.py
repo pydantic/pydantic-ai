@@ -35,6 +35,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
 
     store = SettingsStore(path)
     assert store.load() == Settings(model='test', thinking=False)
+    # Databases from before speculative execution keep it off.
+    assert store.load().speculative_code_mode is False
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
@@ -98,6 +100,7 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('run.request_limit', '"10"'),
         ('run.request_limit', 'invalid json'),
         ('display.theme', '"light"'),
+        ('run.speculative_code_mode', '"yes"'),
     ],
 )
 def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str, value_json: str) -> None:

@@ -15,9 +15,9 @@ from termflow.diff import DiffRenderer, DiffTheme  # pyright: ignore[reportMissi
 from . import theme
 
 
-def terminal_text(text: str) -> str:
-    """Make untrusted control characters inert before terminal rendering."""
-    return ''.join(char if char.isprintable() or char in '\n\t' else f'\\x{ord(char):02x}' for char in text)
+def terminal_text(text: str, *, keep: str = '\n\t') -> str:
+    """Make untrusted control characters inert before terminal rendering, except those in `keep`."""
+    return ''.join(char if char.isprintable() or char in keep else f'\\x{ord(char):02x}' for char in text)
 
 
 def print_tool_header(console: Console, *, name: str, argument: str = '') -> None:

@@ -20,6 +20,13 @@ class Settings(BaseModel):
     tool_retries: int = Field(
         default=3, ge=0, description='Default retries per tool call. Explicit tool retry limits take precedence.'
     )
+    speculative_code_mode: bool = Field(
+        default=False,
+        description=(
+            'Fold tools into a sandboxed run_code that executes and speculates while the model writes. '
+            'Ctrl+X Ctrl+S toggles it.'
+        ),
+    )
     session_namer: bool = Field(default=True, description='Name saved sessions in the background using a model.')
     session_namer_model: str | None = Field(
         default=None, description='Naming model override; null uses the current model.'
@@ -66,6 +73,7 @@ SETTING_FIELDS = {
     'display.grep_lines': 'grep_lines',
     'display.smooth_seconds': 'smooth_seconds',
     'run.tool_retries': 'tool_retries',
+    'run.speculative_code_mode': 'speculative_code_mode',
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
 }

@@ -24,7 +24,7 @@ def read_clai_customization_guide(**_ignored: object) -> str:
     return files('pydantic_clai2').joinpath('customization.md').read_text(encoding='utf-8')
 
 
-class _GuideHint(Capability[None]):
+class CustomizationGuide(Capability[None]):
     """The discovery hint, placed between the working guidance and the repository's instructions.
 
     Instructions follow capability order. This one is bound to the agent while the coding tools
@@ -39,12 +39,14 @@ class _GuideHint(Capability[None]):
     """
 
     def __init__(self) -> None:
+        """Offer the hint and the guide tool."""
         super().__init__(instructions=_HINT, tools=[Tool(read_clai_customization_guide, strict=False)])
 
     def get_ordering(self) -> CapabilityOrdering:
+        """Sit after the working guidance and before the repository's instructions."""
         return CapabilityOrdering(wrapped_by=[AskUser, Capability], wraps=[RepoContext])
 
 
 def customization_guide() -> Capability[None]:
     """Offer a small discovery hint without reading or injecting the guide yet."""
-    return _GuideHint()
+    return CustomizationGuide()

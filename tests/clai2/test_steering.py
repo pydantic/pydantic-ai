@@ -91,7 +91,7 @@ async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
         live.feed('enter')
         assert await live.read() == '/help'
         assert accepted == ['change direction']
-        assert 'Enter: submit' in Text.from_ansi(live.frame()[-1]).plain
+        assert Text.from_ansi(live.frame()[-1]).plain == 'ready'
 
         def idle(text: str) -> bool:
             return False
