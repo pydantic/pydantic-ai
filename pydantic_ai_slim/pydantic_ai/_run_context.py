@@ -445,8 +445,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Whether this code runs inside a durable container, like a Temporal workflow, DBOS workflow, or Prefect flow.
 
         Code running there must be deterministic, since the engine replays it on recovery. This is `False`
-        inside a durable unit (activity, step, or task), where tools and model requests run, and when the
-        agent has no durability capability or is run outside a durable container.
+        inside a Temporal activity or DBOS step, where tools and model requests run, and when the agent has no
+        durability capability or is run outside a durable container. A Prefect task inherits its flow's
+        context, so it is `True` there.
         """
         # Looked up through `sys.modules` like `realtime`: without the module, no durability capability exists.
         durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
