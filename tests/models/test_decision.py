@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, RunContext, ToolOutput
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
@@ -436,3 +436,51 @@ async def test_the_route_question_stays_clear_of_a_field_named_route(allow_model
     await Agent(model, output_type=Routed, tools=[refund]).run('Take the A2.')
     assert list(model.requests[0].questions) == ['route', 'route_']
     assert list(route_question(model, 'route_').criteria) == ['Routed', 'refund']
+
+
+class RoutingDecisionModel(InMemoryDecisionModel):
+    """Answers the route question from a fixed distribution over the routes offered, and the rest as its parent does."""
+
+    def __init__(self, route: dict[str, float]):
+        super().__init__()
+        self.route = route
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        if isinstance(question := request.questions.get('route'), ChoiceQuestion):
+            # A route that is no longer offered keeps its probability out of the answer, as a real model's would.
+            probabilities = {label: self.route[label] for label in question.criteria}
+            choice = max(probabilities, key=lambda label: probabilities[label])
+            response.answers['route'] = ChoiceAnswer(
+                choice=choice, confidence=probabilities[choice], probabilities=probabilities
+            )
+        return response
+
+
+def look_up_order() -> str:
+    """Look up the customer's order."""
+    return 'Order #1 shipped yesterday.'
+
+
+def issue_refund() -> str:
+    """Refund the customer's last payment."""
+    return 'Refunded.'  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_the_lean_weighs_every_function_tool_together(allow_model_requests: None):
+    """Probability split between two tools still says a tool is wanted, though neither clears the bar alone."""
+    model = RoutingDecisionModel({'Triage': 0.0, 'look_up_order': 0.59, 'issue_refund': 0.41})
+    result = await Agent(model, output_type=Triage, tools=[look_up_order, issue_refund]).run('Where is my order?')
+
+    [first, *_] = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    assert [part.tool_name for part in first.parts if isinstance(part, ToolCallPart)] == ['look_up_order']
+
+
+@pytest.mark.anyio
+async def test_the_function_tools_together_below_the_bar_are_a_lean(allow_model_requests: None):
+    model = RoutingDecisionModel({'Triage': 0.45, 'look_up_order': 0.3, 'issue_refund': 0.25})
+    result = await Agent(model, output_type=Triage, tools=[look_up_order, issue_refund]).run('Where is my order?')
+
+    assert result.output == Triage(urgent=True, action='review')
+    assert len(model.requests) == 1

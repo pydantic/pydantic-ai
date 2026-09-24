@@ -223,10 +223,12 @@ class DecisionModelSettings(ModelSettings, total=False):
     decision_tool_call_threshold: float
     """How likely a tool call has to be before it is taken, from 0 to 1. Default: 0.6.
 
-    With tools attached, one more question asks which route the text calls for, the output type among them. A tool
-    picked below this probability is a lean, and the output is filled as usual; one at or above it is called, after
-    the model fills any supported arguments, or raised as
-    [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] when its arguments are unsupported.
+    With tools attached, one more question asks which route the text calls for, the output type among them. When
+    the model picks a function tool, this is compared with the probability of all function tools together, not of
+    the one picked: probability split between two tools still says a tool is wanted. At or above it, the picked
+    tool is called, after the model fills any supported arguments, or raised as
+    [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] when its arguments are unsupported. Below it,
+    the pick is a lean, and the output is filled as usual.
     """
 
 
@@ -703,8 +705,9 @@ def _tool_call(
 ) -> ToolDefinition | ToolCallPart | None:
     """The output or tool call to take from the model's answer to the route question.
 
-    A tool picked below the threshold is a lean: the likeliest output type is filled, or with none to fill, the
-    likeliest output function is taken instead. A selected route with fields is returned for a second request.
+    A tool picked while the function tools together fall below the threshold is a lean: the likeliest output type
+    is filled, or with none to fill, the likeliest output function is taken instead. A selected route with fields is
+    returned for a second request.
 
     The threshold gates tools, not output types. Picking an output type says which result to fill, not that
     something else should be done; there is nothing to hand off to and nothing to be unsure about beyond the pick
@@ -722,7 +725,6 @@ def _tool_call(
     tool = routes.get(answer.choice)
     if tool is None:
         raise UnexpectedModelBehavior(f'The model picked a route it was not offered: {answer.choice!r}')
-    probability = answer.probabilities[answer.choice]
     # An option the model priced but was not offered has no tool to be named for, so it keeps its label.
     probabilities = {
         route.name if (route := routes.get(label)) else label: p for label, p in answer.probabilities.items()
@@ -736,7 +738,13 @@ def _tool_call(
     }
     if tool in output_tools:
         return tool
-    if tool.name not in hand_offs and probability < threshold:
+    # The bar is for doing something rather than giving a result, so it is weighed against every function tool
+    # together: probability split between two tools still says a tool is wanted, even when neither clears the bar
+    # alone, and leaning to a result then would take the one route the model priced lowest.
+    tool_probability = sum(
+        p for label, p in answer.probabilities.items() if (route := routes.get(label)) and route.kind != 'output'
+    )
+    if tool.name not in hand_offs and tool_probability < threshold:
         # A `None` route is a result to take, not something else to be done, so it is weighed here with the
         # output types rather than below with the hand-offs, even though it is offered as one of those.
         results = [*output_tools, *(candidate for candidate in tools if _none_route(candidate))]
