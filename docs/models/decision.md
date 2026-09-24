@@ -62,15 +62,21 @@ print(result.output)
 #> urgent=True area='billing'
 ```
 
-Each part of what the model reads comes from one place in the agent:
+Every input to the agent ends up in exactly one of the two, and on one side it is judged, on the other it is asked:
 
-| What the model reads | Where it comes from |
-|---|---|
-| the question | the field's description — `Field(description=...)`, or an `Enum` field's class docstring when the field has none |
-| the goal, on every question | the output type's docstring, or a tool's description |
-| shared framing, on every question | the agent's `instructions` |
-| each option's meaning | a description on that option in the schema |
-| what "none of these" means | a description on the `None` itself, `Annotated[None, Field(description=...)]` |
+| Agent input | Where it ends up | Judged or asked |
+|---|---|---|
+| the latest user prompt | the state: the whole state when there is no history, otherwise its `text` | judged |
+| the message history | the state's `history`, as user prompts, answers, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) | judged |
+| a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) | judged |
+| a field's description — `Field(description=...)`, or an `Enum` field's class docstring when the field has none | that field's question | asked |
+| the output type's docstring | the goal, on every question about it, and its description when it is offered as a [route](#routes-which-thing-to-do) | asked |
+| the agent's `instructions` | shared framing on every question — or the question itself, when there is no field to describe | asked |
+| a description on an option in the schema | that option's meaning | asked |
+| a description on the `None` itself, `Annotated[None, Field(description=...)]` | what "none of these" means | asked |
+| a tool's description, and its arguments' descriptions | the tool's option on the route question, and the questions that [fill its arguments](#tools-pick-then-fill) | asked |
+
+Dependencies and anything else on the run context are not sent, unless a prompt, instructions function or history processor puts them into one of the rows above.
 
 A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's `instructions` are sent as the question, as in the [confidence example below](#confidence-and-thresholds). Prefer an output type with fields anyway: each field carries its own question, so several questions can be asked in one request. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
 
