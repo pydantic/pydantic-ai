@@ -112,6 +112,9 @@ prompt-injection-defender-ml = [
 coder = [
     "ripgrep==14.1.0 ; sys_platform != 'android'",
 ]
+logfire-mcp = [
+    "pydantic-ai-slim[mcp]>=2.44.0",
+]
 
 [project.urls]
 Homepage = 'https://github.com/pydantic/pydantic-ai-harness'

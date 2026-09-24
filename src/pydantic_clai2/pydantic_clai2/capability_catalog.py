@@ -29,6 +29,7 @@ _FACTORIES = (
     ('tool_guardrail', 'guardrails:ToolGuardrail'),
     ('localstack', 'localstack:LocalStack'),
     ('managed_prompt', 'logfire:ManagedPrompt'),
+    ('logfire_mcp', 'logfire_mcp:LogfireMCP'),
     ('macroscope', 'macroscope:Macroscope'),
     ('memory', 'memory:Memory'),
     ('modal_sandbox', 'modal_sandbox:ModalSandbox'),
