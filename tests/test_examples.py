@@ -1019,6 +1019,11 @@ async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) ->
         # docs/models/decision.md: Jev is unsure of both fields, so the language model behind it takes the request.
         # The mocked `FallbackModel` does not carry the example's `unsure` handler, so an API error stands in for it.
         raise ModelAPIError('jev-latest', 'unsure')
+    if isinstance(last, UserPromptPart) and last.content == 'Can you recommend a good restaurant near your office?':
+        # docs/models/decision.md: Jev splits the route pick almost evenly, so the language model behind it takes the
+        # step. The mocked `FallbackModel` does not carry the example's `unsure_route` handler, so an API error stands
+        # in for it.
+        raise ModelAPIError('jev-latest', 'unsure')
     return await model_logic(messages, info)
 
 
@@ -1235,16 +1240,35 @@ async def model_logic(  # noqa: C901
                     'confidence': {},
                     'probabilities': {},
                     'scores': {},
-                    'tool': {
-                        'choice': 'final_result_None',
-                        'probabilities': {
-                            'final_result_Ticket': 0.03,
-                            'final_result_Escalation': 0.01,
-                            'final_result_None': 0.96,
-                        },
-                        'offered': ['final_result_None'],
+                    'route': {
+                        'choice': 'None',
+                        'probabilities': {'Ticket': 0.05, 'Escalation': 0.0, 'None': 0.95},
+                        'offered': ['Ticket', 'Escalation', 'None'],
+                        'taken': 'None',
                     },
                 },
+            )
+        elif m.content == 'The export button does nothing when I click it.':
+            # docs/models/decision.md: a union picks a member, then fills it in a second request
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})],
+                provider_details={
+                    'confidence': {'urgent': 0.4},
+                    'probabilities': {},
+                    'scores': {},
+                    'requests': 2,
+                    'route': {
+                        'choice': 'Ticket',
+                        'probabilities': {'Ticket': 1.0, 'Escalation': 0.0},
+                        'offered': ['Ticket', 'Escalation'],
+                        'taken': 'Ticket',
+                    },
+                },
+            )
+        elif m.content == 'Can you recommend a good restaurant near your office?':
+            # docs/models/decision.md: the language model behind Jev takes the step Jev's route pick was unsure of
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})]
             )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
@@ -1258,7 +1282,7 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})],
                 provider_details={
-                    'confidence': {'area': 1.0, 'urgent': 0.8600000000000001},
+                    'confidence': {'area': 1.0, 'urgent': 0.86},
                     'probabilities': {'area': {'billing': 1.0, 'bug': 0.0, 'account': 0.0}},
                     'scores': {},
                 },
