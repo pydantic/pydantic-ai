@@ -8,7 +8,7 @@ import inspect
 import json
 import uuid
 import warnings
-from collections.abc import AsyncIterator, MutableMapping
+from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2242,6 +2242,7 @@ def test_reasoning_message_thinking_roundtrip() -> None:
                     TextPart(content='Here is my response'),
                 ],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg-1'}},
             )
         ]
     )
@@ -2297,7 +2298,15 @@ def test_activity_message_other_types_ignored() -> None:
         ]
     )
 
-    assert messages == snapshot([ModelResponse(parts=[TextPart(content='Response')], timestamp=IsDatetime())])
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Response')],
+                timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg-1'}},
+            )
+        ]
+    )
 
 
 @requires_ag_ui('0.1.11')
@@ -2324,6 +2333,7 @@ def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> No
             ModelResponse(
                 parts=[ThinkingPart(content='Thinking...'), TextPart(content='Done')],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg-1'}},
             )
         ]
     )
@@ -2356,8 +2366,11 @@ def _sync_part_timestamps(
         object.__setattr__(new_part, 'timestamp', original_part.timestamp)
 
 
-def _sync_timestamps(original: list[ModelMessage], reloaded: list[ModelMessage]) -> None:
-    """Sync timestamps between original and reloaded messages for comparison."""
+def _sync_load_bookkeeping(original: Sequence[ModelMessage], reloaded: Sequence[ModelMessage]) -> None:
+    """Align what `load_messages` adds so a reloaded history compares equal to the original.
+
+    Timestamps are minted on load, and the AG-UI message id is kept under `__pydantic_ai__`.
+    """
     for o, n in zip(original, reloaded):
         if isinstance(n, ModelResponse) and isinstance(o, ModelResponse):
             n.timestamp = o.timestamp
@@ -2366,6 +2379,7 @@ def _sync_timestamps(original: list[ModelMessage], reloaded: list[ModelMessage])
         elif isinstance(n, ModelRequest) and isinstance(o, ModelRequest):  # pragma: no branch
             for op, np in zip(o.parts, n.parts):
                 _sync_part_timestamps(op, np)
+        n.metadata = {key: value for key, value in (n.metadata or {}).items() if key != '__pydantic_ai__'} or None
 
 
 def test_dump_load_roundtrip_basic() -> None:
@@ -2377,13 +2391,83 @@ def test_dump_load_roundtrip_basic() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     assert reloaded == original
 
 
+def test_load_dump_preserves_message_id() -> None:
+    """An inbound AG-UI message `id` survives `load_messages` -> `dump_messages` instead of being replaced.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7632
+    """
+    run_input = AGUIAdapter.build_run_input(
+        json.dumps(
+            {
+                'threadId': 'thread-id',
+                'runId': 'run-id',
+                'state': {},
+                'messages': [{'id': 'client-user-message-id', 'role': 'user', 'content': 'Hello'}],
+                'tools': [],
+                'context': [],
+                'forwardedProps': {},
+            }
+        ).encode()
+    )
+
+    [loaded] = AGUIAdapter.load_messages(run_input.messages)
+    assert loaded.metadata == {'__pydantic_ai__': {'ui_message_id': 'client-user-message-id'}}
+
+    [dumped] = AGUIAdapter.dump_messages([loaded])
+    assert dumped.id == 'client-user-message-id'
+
+    [dumped_empty_id] = AGUIAdapter.dump_messages(AGUIAdapter.load_messages([UserMessage(id='', content='Hello')]))
+    assert dumped_empty_id.id == ''
+
+
+def test_load_dump_message_id_on_merged_and_split_messages() -> None:
+    """An id is kept per `ModelMessage`, so it follows how AG-UI messages merge into them.
+
+    A system + user pair merges into one `ModelRequest`, and two tool results for parallel tool calls
+    merge into one `ModelRequest`. Each keeps the last id and dumps it on the last message produced
+    from it; the messages before it get fresh ids, so the two `ToolMessage`s never share one.
+    Every other message maps to its own `ModelRequest` or `ModelResponse` and gets its own id back.
+    """
+    ag_ui_msgs: list[Message] = [
+        SystemMessage(id='sys-1', content='Be brief.'),
+        UserMessage(id='usr-1', content='Weather in Paris and Rome?'),
+        AssistantMessage(
+            id='asst-1',
+            content='Checking.',
+            tool_calls=[
+                ToolCall(id='call_1', type='function', function=FunctionCall(name='get_weather', arguments='{}')),
+                ToolCall(id='call_2', type='function', function=FunctionCall(name='get_weather', arguments='{}')),
+            ],
+        ),
+        ToolMessage(id='tool-1', tool_call_id='call_1', content='18C and sunny'),
+        ToolMessage(id='tool-2', tool_call_id='call_2', content='24C and cloudy'),
+        AssistantMessage(id='asst-2', content='Paris is 18C and sunny, Rome is 24C and cloudy.'),
+    ]
+
+    dumped = AGUIAdapter.dump_messages(AGUIAdapter.load_messages(ag_ui_msgs))
+
+    assert [(type(m).__name__, m.id) for m in dumped] == [
+        ('SystemMessage', IsStr()),
+        ('UserMessage', 'usr-1'),
+        ('AssistantMessage', 'asst-1'),
+        ('ToolMessage', IsStr()),
+        ('ToolMessage', 'tool-2'),
+        ('AssistantMessage', 'asst-2'),
+    ]
+    uuid.UUID(dumped[0].id)
+    uuid.UUID(dumped[3].id)
+
+
 def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:
-    """AG-UI does not trust a client round-trip with framework or provider response state."""
+    """AG-UI does not trust a client round-trip with framework or provider response state.
+
+    Only the AG-UI message id, which the client owns anyway, is kept under `__pydantic_ai__`.
+    """
     original: list[ModelMessage] = [
         ModelRequest(
             parts=[UserPromptPart(content='Hello')],
@@ -2399,10 +2483,11 @@ def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:
         ),
     ]
 
-    request, response = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original))
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    request, response = AGUIAdapter.load_messages(ag_ui_msgs)
 
     assert isinstance(request, ModelRequest)
-    assert request.metadata is None
+    assert request.metadata == {'__pydantic_ai__': {'ui_message_id': ag_ui_msgs[0].id}}
     assert isinstance(response, ModelResponse)
     assert response.provider_details is None
 
@@ -2428,7 +2513,7 @@ def test_dump_load_roundtrip_thinking() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     assert reloaded == original
 
@@ -2444,7 +2529,7 @@ def test_dump_load_roundtrip_tools() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     assert reloaded == original
 
@@ -2469,7 +2554,7 @@ def test_dump_load_roundtrip_failed_tool_return() -> None:
     assert tool_message.error == 'tool failed'
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
     assert reloaded == original
 
 
@@ -2489,7 +2574,7 @@ def test_dump_load_roundtrip_load_capability() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     assert reloaded == original
     assert parse_loaded_capabilities(reloaded) == {'foobar'}
@@ -2548,6 +2633,7 @@ def test_dump_load_roundtrip_invalid_json_args() -> None:
             ModelResponse(
                 parts=[ToolCallPart(tool_name='test', args='{"INVALID_JSON":"{invalid json"}', tool_call_id='call_1')],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': IsStr()}},
             )
         ]
     )
@@ -3027,7 +3113,7 @@ def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     assert reloaded == original
 
@@ -3051,7 +3137,7 @@ def test_dump_load_roundtrip_binary_content() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     assert reloaded == original
 
@@ -3121,7 +3207,7 @@ def test_dump_load_roundtrip_file_part(original: list[ModelMessage]) -> None:
     """
     ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     assert reloaded == original
 
@@ -3156,7 +3242,7 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     assert reloaded == original
 
@@ -3187,7 +3273,7 @@ def test_dump_load_roundtrip_failed_builtin_tool_return() -> None:
     assert tool_message.error == 'search failed'
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
     assert reloaded == original
 
 
@@ -3234,7 +3320,7 @@ def test_dump_load_roundtrip_cache_point() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(expected, reloaded)
+    _sync_load_bookkeeping(expected, reloaded)
 
     assert reloaded == expected
 
@@ -3258,7 +3344,7 @@ def test_dump_load_roundtrip_uploaded_file() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(expected, reloaded)
+    _sync_load_bookkeeping(expected, reloaded)
 
     assert reloaded == expected
 
@@ -3282,7 +3368,7 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     # RetryPromptPart becomes ToolReturnPart on reload (same tool_call_id mapping)
     assert len(reloaded) == 4
@@ -3303,7 +3389,7 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     # RetryPromptPart without tool becomes UserPromptPart on reload
     # Content is formatted by RetryPromptPart.model_response()
@@ -3447,7 +3533,7 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
     )
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     # Round-trip splits into two ModelResponses due to the two AssistantMessages
     assert reloaded == snapshot(
@@ -3513,7 +3599,7 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(original, reloaded)
+    _sync_load_bookkeeping(original, reloaded)
 
     assert reloaded == snapshot(
         [
@@ -3971,16 +4057,19 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
         [
             ModelRequest(
                 parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg0'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Previous response')],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg1'}},
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='Hello!', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=(run_id := IsSameStr()),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg2'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -4255,7 +4344,8 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         content=[document_content],
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg6'}},
             ),
             ModelResponse(
                 parts=[
@@ -4281,6 +4371,7 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                     ToolCallPart(tool_name='tool_call_2', args='{}', tool_call_id='tool_call_2'),
                 ],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_9'}},
             ),
             ModelRequest(
                 parts=[
@@ -4300,11 +4391,13 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         content='User message',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_12'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Assistant message')],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_13'}},
             ),
         ]
     )
@@ -6843,7 +6936,8 @@ def test_load_multimodal_data_source() -> None:
                     UserPromptPart(
                         content=[BinaryContent(data=b'hello', media_type='image/png')], timestamp=IsDatetime()
                     ),
-                ]
+                ],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg-1'}},
             )
         ]
     )
@@ -7031,7 +7125,8 @@ def test_multimodal_roundtrip_preserves_file_vendor_metadata() -> None:
                         ],
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                metadata={'__pydantic_ai__': {'ui_message_id': IsStr()}},
             )
         ]
     )
@@ -7074,7 +7169,7 @@ def test_multimodal_roundtrip_preserves_file_url_force_download(
     assert dumped_content.metadata == {'force_download': content.force_download}
 
     loaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    _sync_timestamps(messages, loaded)
+    _sync_load_bookkeeping(messages, loaded)
     assert loaded == messages
 
 
@@ -7234,7 +7329,12 @@ def test_build_run_input_skips_unknown_content_type() -> None:
         run_input = AGUIAdapter.build_run_input(body)
 
     assert AGUIAdapter.load_messages(run_input.messages) == snapshot(
-        [ModelRequest(parts=[UserPromptPart(content='what is in this?', timestamp=IsDatetime())])]
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='what is in this?', timestamp=IsDatetime())],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg-1'}},
+            )
+        ]
     )
 
 
@@ -7249,7 +7349,12 @@ def test_build_run_input_skips_unknown_message_role() -> None:
         run_input = AGUIAdapter.build_run_input(body)
 
     assert AGUIAdapter.load_messages(run_input.messages) == snapshot(
-        [ModelRequest(parts=[UserPromptPart(content='spoken', timestamp=IsDatetime())])]
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='spoken', timestamp=IsDatetime())],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg-2'}},
+            )
+        ]
     )
 
 
@@ -7481,6 +7586,7 @@ async def test_system_prompt_with_ag_ui_adapter():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7526,6 +7632,7 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7573,6 +7680,7 @@ async def test_frontend_system_prompt_stripped_by_default():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7619,6 +7727,7 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7665,6 +7774,7 @@ async def test_frontend_system_prompt_only_request_dropped():
             ModelResponse(
                 parts=[TextPart(content='Previous response')],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_assistant'}},
             ),
             ModelRequest(
                 parts=[
@@ -7673,6 +7783,7 @@ async def test_frontend_system_prompt_only_request_dropped():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7719,6 +7830,7 @@ async def test_client_mode_keeps_frontend_system_prompt():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7765,6 +7877,7 @@ async def test_client_mode_keeps_frontend_system_prompt_no_agent_prompt():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7824,8 +7937,13 @@ async def test_client_mode_keeps_frontend_system_prompt_multi_turn():
                     SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
                     UserPromptPart(content='First message', timestamp=IsDatetime()),
                 ],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
-            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[TextPart(content='First response')],
+                timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_2'}},
+            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(content='Second message', timestamp=IsDatetime()),
@@ -7833,6 +7951,7 @@ async def test_client_mode_keeps_frontend_system_prompt_multi_turn():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_3'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7879,6 +7998,7 @@ async def test_client_mode_does_not_reinject_agent_system_prompt():
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7933,14 +8053,20 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
                 parts=[
                     SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
                     UserPromptPart(content='First message', timestamp=IsDatetime()),
-                ]
+                ],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_1'}},
             ),
-            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[TextPart(content='First response')],
+                timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_2'}},
+            ),
             ModelRequest(
                 parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_3'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -8609,7 +8735,9 @@ def test_tool_availability_delta_ui_round_trip():
     """The reserved activity discriminator preserves control history through AG-UI."""
     messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])]
 
-    assert AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages)) == messages
+    loaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages))
+    _sync_load_bookkeeping(messages, loaded)
+    assert loaded == messages
 
 
 def test_compaction_ui_round_trip_and_sanitization():

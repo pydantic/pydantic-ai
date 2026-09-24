@@ -190,13 +190,16 @@ genai-prices = false
 typesafe-sdk = false
 logfire = false
 logfire-api = false
-# Anthropic 1.3.0 is the first release listing `claude-fable-5-1` and `claude-mythos-5-1`.
-# TODO(dsfaccini): Remove after 2026-09-08 17:37 UTC. https://github.com/pydantic/pydantic-ai/issues/7985
-# This admits only the reviewed 1.3.0 artifacts; later Anthropic artifacts remain quarantined.
-anthropic = "2026-09-01T17:37:11Z"
-# OpenAI 3.8.0 is the first release listing `gpt-6-astra` in `ChatModel`/`ReasoningEffort('max')`.
-# TODO(dsfaccini): Remove after 2026-09-10 19:51 UTC.
-openai = "2026-09-03T19:51:09Z"
+# Anthropic 1.8.0 is the first release listing `claude-opus-5-5`.
+# TODO(DouweM): Remove after 2026-09-29 16:25 UTC. https://github.com/pydantic/pydantic-ai/issues/8636
+# This admits only the reviewed 1.8.0 artifacts; later Anthropic artifacts remain quarantined.
+anthropic = "2026-09-22T16:25:39Z"
+# OpenAI 3.19.0 is the first release listing `gpt-rosalind-research`, and the `openai` floor.
+# TODO(adtyavrdhn): Remove after 2026-09-30 00:09 UTC.
+openai = "2026-09-23T00:08:49Z"
+# google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
+# TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
+google-genai = "2026-09-22T17:23:02Z"
 
 [dependency-groups]
 dev = [
@@ -239,6 +242,9 @@ dev = [
     "mcp-types>=2.0.0",
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
     "blockbuster>=1.5.26,<1.6",
+    "sqlparse>=0.6.0",
+    "nest-asyncio>=1.6.0",
+    "azure-identity>=1.25.3",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -253,7 +259,7 @@ coverage = [
 lint = [
     "griffecli>=2.1.0,<3",
     "mypy>=1.11.2",
-    "pyright>=1.1.408",
+    "pyright>=1.1.414",
     "ruff>=0.14.14",
 ]
 [tool.hatch.build.targets.wheel]

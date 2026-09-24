@@ -42,8 +42,8 @@ agent = Agent(model)
 ...
 ```
 
-!!! note "Claude Opus 4.7 / 4.8 / 5 migration"
-    Anthropic's [Claude Opus migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide) recommends removing `temperature`, `top_p`, and `top_k` from Opus 4.7, 4.8, and 5 requests. Pydantic AI drops those keys automatically for `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5` and `claude-mythos-5`, including `extra_body` overrides.
+!!! note "Claude Opus 4.7 / 4.8 / 5 / 5.5 migration"
+    Anthropic's [Claude Opus migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide) recommends removing `temperature`, `top_p`, and `top_k` from Opus 4.7, 4.8, 5, and 5.5 requests. Pydantic AI drops those keys automatically for `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-5`, `claude-fable-5` and `claude-mythos-5`, including `extra_body` overrides.
 
     The same guide also recommends re-evaluating `max_tokens` and any token-count assumptions when migrating from Opus 4.6, since Opus 4.7 introduced updated tokenization (carried into 4.8). If you rely on `count_tokens()` or `count_tokens_before_request`, verify your thresholds against the new model.
 
@@ -125,7 +125,7 @@ You can use Anthropic models through cloud platforms by passing a custom client 
 
 To use Claude models via [AWS Bedrock](https://aws.amazon.com/bedrock/claude/), follow the [Anthropic documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock) on how to set up a Bedrock client and then pass it to `AnthropicProvider`. Both the newer `AsyncAnthropicBedrockMantle` client (recommended by Anthropic, using the Messages API) and the legacy `AsyncAnthropicBedrock` client (using the `InvokeModel` API with ARN-versioned model IDs) are supported:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - anthropic's `__all__` omits this client, so pyright reports it as not exported"}
 from anthropic import AsyncAnthropicBedrockMantle
 
 from pydantic_ai import Agent
@@ -152,7 +152,7 @@ agent = Agent(model)
 
 To use Claude models via [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude), follow the [Anthropic documentation](https://docs.anthropic.com/en/api/claude-on-vertex-ai) on how to set up an `AsyncAnthropicVertex` client and then pass it to `AnthropicProvider`:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - anthropic's `__all__` omits this client, so pyright reports it as not exported"}
 from anthropic import AsyncAnthropicVertex
 
 from pydantic_ai import Agent
@@ -193,7 +193,7 @@ See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/do
 
 Anthropic's [task budgets](https://platform.claude.com/docs/en/build-with-claude/task-budgets) let you give Claude an advisory token budget for a full agentic loop — including thinking, tool calls, tool results, and output — so the model can pace itself and finish gracefully as the budget is consumed. Configure them with [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget], which takes an [`AnthropicTaskBudget`][pydantic_ai.models.anthropic.AnthropicTaskBudget] payload and maps to `output_config.task_budget`.
 
-Pydantic AI automatically enables Anthropic's required `task-budgets-2026-03-13` beta when this setting is present. Support is currently limited to native Anthropic `claude-fable-5`, `claude-fable-5-1`, `claude-mythos-5`, `claude-mythos-5-1`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, and `claude-sonnet-5` requests, not Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs.
+Pydantic AI automatically enables Anthropic's required `task-budgets-2026-03-13` beta when this setting is present. Support is currently limited to native Anthropic `claude-fable-5`, `claude-fable-5-1`, `claude-mythos-5`, `claude-mythos-5-1`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, and `claude-sonnet-5` requests, not Bedrock, Vertex, or Microsoft Foundry Anthropic model IDs.
 
 ```python {title="anthropic_task_budget.py"}
 from pydantic_ai import Agent
@@ -512,7 +512,7 @@ agent = Agent('anthropic:claude-opus-4-8', system_prompt='You are a code reviewe
 
 
 @agent.tool
-def require_type_annotations(ctx: RunContext[None]) -> str:
+def require_type_annotations(ctx: RunContext) -> str:
     ctx.enqueue(SystemPromptPart(content='Every suggestion must include explicit type annotations.'))
     return 'rule added'
 ```
@@ -530,7 +530,7 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 
 ## Fast mode
 
-Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6**, **Claude Opus 4.7**, **Claude Opus 4.8**, and **Claude Opus 5**. It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On unsupported models, `anthropic_speed='fast'` is ignored with a `UserWarning`. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
+Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6**, **Claude Opus 4.7**, **Claude Opus 4.8**, **Claude Opus 5**, and **Claude Opus 5.5**. It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On unsupported models, `anthropic_speed='fast'` is ignored with a `UserWarning`. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
 
 ```python
 from pydantic_ai import Agent
@@ -551,7 +551,7 @@ agent = Agent(
 
 ## Forced tool choice
 
-Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled — [adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) is compatible with forcing. Anthropic documents **Claude Fable 5.1** and **Claude Mythos 5.1** as rejecting a forced tool choice unconditionally, even without thinking, and Pydantic AI marks those two with [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice].
+Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled — [adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) is compatible with forcing. Anthropic documents **Claude Fable 5.1**, **Claude Mythos 5.1**, and **Claude Opus 5.5** as rejecting a forced tool choice unconditionally, even without thinking, and Pydantic AI marks those with [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice].
 
 On a model that doesn't support forcing:
 
@@ -562,7 +562,7 @@ Because [Tool Output](../output.md#tool-output) resolves to a forced tool choice
 
 ## Thinking block binding
 
-**Claude Fable 5.1** binds each thinking block to the conversation prefix that produced it. Replaying message history after that prefix changes fails with a 400 (`The block is bound to a different conversation`), and two ordinary Pydantic AI features change it:
+**Claude Fable 5.1** and **Claude Opus 5.5** bind each thinking block to the conversation prefix that produced it. Replaying message history after that prefix changes fails with a 400 (`The block is bound to a different conversation`), and two ordinary Pydantic AI features change it:
 
 - a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, and
 - a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).

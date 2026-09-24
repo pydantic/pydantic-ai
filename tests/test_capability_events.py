@@ -68,7 +68,7 @@ def test_missing_namespace_rejected():
     with pytest.raises(UserError, match='requires a namespace'):
 
         @dataclass(kw_only=True)
-        class MissingEvent(CapabilityEvent):  # pyright: ignore[reportUnusedClass]
+        class MissingEvent(CapabilityEvent):
             pass
 
 
@@ -77,7 +77,7 @@ def test_invalid_namespace_rejected(namespace: str):
     with pytest.raises(UserError, match='invalid namespace'):
 
         @dataclass(kw_only=True)
-        class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):  # pyright: ignore[reportUnusedClass]
+        class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):
             pass
 
 
@@ -92,9 +92,7 @@ def test_duplicate_kind_rejected():
     with pytest.raises(UserError, match=r"Duplicate capability event kind 'test_file_system\.file_read'"):
 
         @dataclass(kw_only=True)
-        class DuplicateEvent(  # pyright: ignore[reportUnusedClass]
-            CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'
-        ):
+        class DuplicateEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'):
             pass
 
 
@@ -156,7 +154,7 @@ def test_envelope_field_shadowing_rejected():
     with pytest.raises(UserError, match='reserved for the event envelope: capability_id, data'):
 
         @dataclass(kw_only=True)
-        class ShadowingEvent(CapabilityEvent, namespace='shadowing'):  # pyright: ignore[reportUnusedClass]
+        class ShadowingEvent(CapabilityEvent, namespace='shadowing'):
             data: dict[str, int]
             capability_id: str | None = None
 
@@ -225,7 +223,7 @@ def test_undecorated_capability_event_base_with_fields_rejected():
     with pytest.raises(UserError, match='declares fields but is not a dataclass'):
 
         @dataclass(kw_only=True)
-        class BareFieldsChildEvent(BareFieldsBase):  # pyright: ignore[reportUnusedClass]
+        class BareFieldsChildEvent(BareFieldsBase):
             pass
 
 

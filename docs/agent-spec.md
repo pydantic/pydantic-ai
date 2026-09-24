@@ -180,10 +180,12 @@ capabilities:
 ```python {title="save_spec_example.py"}
 from pydantic_ai import AgentSpec
 
-spec = AgentSpec(
-    model='anthropic:claude-opus-4-6',
-    instructions='You are a helpful assistant.',
-    capabilities=[{'WebSearch': {'local': 'duckduckgo'}}],
+spec = AgentSpec.model_validate(
+    {
+        'model': 'anthropic:claude-opus-4-6',
+        'instructions': 'You are a helpful assistant.',
+        'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
+    }
 )
 spec.to_file('agent.yaml')
 # Also generates ./agent_schema.json for editor autocompletion

@@ -49,7 +49,7 @@ Structured outputs (like tools) use Pydantic to build the JSON schema used for t
 
     Specifically, there are three valid uses of `output_type` where you'll need to do this:
 
-    1. When using a union of types, e.g. `output_type=Foo | Bar`. Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands in Python 3.15, type checkers do not consider these a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the union to `output_type`. Alternatively, you can use a list: `output_type=[Foo, Bar]`.
+    1. With mypy or Pyright before 1.1.412: when using a type expression that isn't a plain class, like a union `output_type=Foo | Bar`, a `Literal['a', 'b']`, or a constrained `Annotated[float, Field(ge=0, le=1)]`. Pyright 1.1.412 and later accepts these as [PEP 747](https://peps.python.org/pep-0747/) type forms and infers the type they spell, but mypy and older Pyright versions do not consider them a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the type expression to `output_type`. For a union, you can alternatively use a list: `output_type=[Foo, Bar]`.
     2. With mypy: When using a list, as a functionally equivalent alternative to a union, or because you're passing in [output functions](#output-functions). Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19142) with mypy to try and get this fixed.
     3. With mypy: when using an async output function. Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19143) with mypy to try and get this fixed.
 
@@ -87,7 +87,7 @@ print(result.output)
 #> width=10 height=20 depth=30 units='cm'
 ```
 
-1. This could also have been a union: `output_type=Box | str`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Box | str`. However, as explained in the "Type checking considerations" section above, with mypy or older Pyright versions that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -98,7 +98,7 @@ from pydantic_ai import Agent
 
 agent = Agent[object, list[str] | list[int]](
     'openai:gpt-5-mini',
-    output_type=list[str] | list[int],  # type: ignore # (1)!
+    output_type=list[str] | list[int],  # (1)!
     instructions='Extract either colors or sizes from the shapes provided.',
 )
 
@@ -111,7 +111,7 @@ print(result.output)
 #> [10, 20, 30]
 ```
 
-1. As explained in the "Type checking considerations" section above, using a union rather than a list requires explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. As explained in the "Type checking considerations" section above, with mypy or older Pyright versions, using a union rather than a list requires explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -390,7 +390,7 @@ print(repr(result.output))
 #> Vehicle(name='Ford Explorer', wheels=4)
 ```
 
-1. This could also have been a union: `output_type=Fruit | Vehicle`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Fruit | Vehicle`. However, as explained in the "Type checking considerations" section above, with mypy or older Pyright versions that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -441,7 +441,7 @@ print(repr(result.output))
 #> Vehicle(name='Ford Explorer', wheels=4)
 ```
 
-1. This could also have been a union: `output_type=Vehicle | Device`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Vehicle | Device`. However, as explained in the "Type checking considerations" section above, with mypy or older Pyright versions that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -539,7 +539,42 @@ print(result.output)
 
 The descriptions are what make this worth a helper: each option carries its meaning into the schema the model receives, and the output is one of the keys, validated, and typed `str`. Passing a sequence of keys instead of a mapping describes nothing and asks the same question with a plain `enum`.
 
-Like [`StructuredDict()`](#structured-dict), `Choices()` returns a type rather than a marker, so the same value works as an `output_type`, as a field of a Pydantic model, and as a [tool](tools.md) parameter.
+Like [`StructuredDict()`](#structured-dict), `Choices()` returns a type, so the same value works as an `output_type`, as a field of a Pydantic model, and as a [tool](tools.md) parameter. A type checker won't accept a type built at runtime in an annotation, though, so as a field or a parameter, put either one in `Annotated` on the type of the value it gives back: `Annotated[str, Intent]` for choices that don't [stand for something else](#choices-that-stand-for-something-else), and `Annotated[dict[str, Any], Person]` for a `StructuredDict()`. Pydantic reads the schema and validation from the metadata, and the type checker sees a plain `str` or `dict`:
+
+```python {title="choices_annotated.py"}
+from typing import Annotated
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, Choices
+
+Intent = Choices(
+    {
+        'refund': 'The customer wants their money back.',
+        'replace': 'The customer wants a working unit instead.',
+        'escalate': 'Nobody on this tier can resolve it.',
+    }
+)
+
+
+class Triage(BaseModel):
+    intent: Annotated[str, Intent]
+    summary: str
+
+
+agent = Agent('openai:gpt-5.2', output_type=Triage)
+
+
+@agent.tool_plain
+def open_ticket(intent: Annotated[str, Intent], summary: str) -> str:
+    """Open a ticket with the team that handles this intent."""
+    return f'Opened a {intent} ticket.'
+
+
+result = agent.run_sync('The kettle leaks everywhere. I just want my money back.')
+print(result.output)
+#> intent='refund' summary='Leaking kettle, customer wants a refund.'
+```
 
 #### Choices that stand for something else
 
@@ -704,7 +739,7 @@ class InvalidRequest(BaseModel):
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
     'google:gemini-3-flash-preview',
-    output_type=Output,  # type: ignore
+    output_type=Output,
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
 )
@@ -839,7 +874,7 @@ When the model returns an empty response and `None` is an allowed output type, t
 `None` is also supported in the other output modes, with an extra structured commit path in addition to (or in place of) the empty-response fallback:
 
 - **Bare unions including `None` that use tool mode** — e.g. `output_type=int | None`, `output_type=[int, float, None]`, or `output_type=[ToolOutput(Foo), None]`: a dedicated `final_result_None` output tool is exposed alongside the other output tools, so the model can commit to `None` through a tool call. An empty, blank-text, or thinking-only model response is still also treated as `None`, as with `str | None`.
-- **Explicit output mode markers** — e.g. `output_type=ToolOutput(int | None)`, `output_type=NativeOutput([int, None])`, or `output_type=PromptedOutput([int, None])`: `None` is included as a branch of the structured schema the wrapper generates. The model commits by calling the tool with `null` (for `ToolOutput`) or by selecting the `NoneType` branch of the discriminated schema (for `NativeOutput`/`PromptedOutput`). An empty response is **not** accepted — once you've opted into an explicit structured output mode, the model is expected to commit through the schema.
+- **Explicit output mode markers** — e.g. `output_type=ToolOutput(int | None)`, `output_type=NativeOutput([int, None])`, or `output_type=PromptedOutput([int, None])`: `None` is included as a branch of the structured schema the wrapper generates. The model commits by calling the tool with `null` (for `ToolOutput`) or by selecting the `None` branch of the discriminated schema (for `NativeOutput`/`PromptedOutput`). An empty response is **not** accepted — once you've opted into an explicit structured output mode, the model is expected to commit through the schema.
 
 !!! note
     `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.

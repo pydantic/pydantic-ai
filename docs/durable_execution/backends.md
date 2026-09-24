@@ -58,7 +58,7 @@ class TerminalError(Exception):
     pass
 
 
-class ImmediateBackend(JournalCallableOperationBackend[None]):
+class ImmediateBackend(JournalCallableOperationBackend):
     def __init__(self, agent_name: str, default_model_id: str | None) -> None:
         super().__init__(
             agent_name=agent_name,
@@ -78,7 +78,7 @@ class ImmediateBackend(JournalCallableOperationBackend[None]):
         return await body()
 
 
-class ImmediateDurability(BaseDurabilityCapability[None]):
+class ImmediateDurability(BaseDurabilityCapability):
     engine_spec = DurabilityEngineSpec(
         engine_name='Immediate',
         durable_unit_noun='operation',

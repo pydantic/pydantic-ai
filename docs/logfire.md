@@ -243,7 +243,6 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
 - [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
-- [Patronus AI](https://docs.patronus.ai/docs/percival/integrations/pydantic)
 - [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
 - [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
 - [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
@@ -277,7 +276,7 @@ By default, model request spans use the standard `gen_ai.usage.input_tokens` and
 
 This avoids double-counting in observability backends that aggregate usage attributes across parent and child spans, since an agent run span reports the sum of its own model request spans' usage.
 
-An agent run span reports what that run spent. A run that [delegates to another agent](multi-agent-applications.md#agent-delegation) does not include the delegate's tokens, because the delegate's own run span reports those. So the agent run spans in a trace can be added up as they are — the total matches the sum of the `gen_ai.usage.*` attributes on the model request spans underneath them.
+An agent run span reports what that run spent. A run that [delegates to another agent](multi-agent-applications.md#agent-delegation) does not include the delegate's tokens, whether or not the delegate is instrumented: if it is, its own run span reports them. So the agent run spans in a trace can be added up as they are — the total matches the sum of the `gen_ai.usage.*` attributes on the model request spans underneath them.
 
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.

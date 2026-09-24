@@ -28,11 +28,12 @@ The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mod
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.6-sol')
+agent = Agent('openai:gpt-6-sol')
 ...
 ```
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
+For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together.
 
 Or initialise the model directly with just the model name:
 
@@ -40,7 +41,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-5.6-sol')
+model = OpenAIResponsesModel('gpt-6-sol')
 agent = Agent(model)
 ...
 ```
@@ -156,9 +157,11 @@ agent = Agent(model, model_settings=settings)
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
+OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`.
+
 ### Prompt caching
 
-GPT-5.6 and later models (including GPT-6 Astra) support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
+GPT-5.6 and GPT-6 models support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
@@ -196,7 +199,7 @@ settings = OpenAIResponsesModelSettings(
 agent = Agent(model, model_settings=settings)
 
 result = agent.run_sync('Your prompt here')
-moderation = result.response.provider_details.get('moderation')
+moderation = (result.response.provider_details or {}).get('moderation')
 ```
 
 When the response includes moderation results, they are stored under the `'moderation'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], with `input` and `output` entries each carrying the flagged status, per-category flags, and category scores.
@@ -209,7 +212,7 @@ The features below are specific to the Responses API and only available on [`Ope
 
 ### Reasoning mode
 
-Models that support it (currently the GPT-5.6 family and GPT-6 Astra) can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../capabilities/thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
+The GPT-5.6 and GPT-6 families can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../capabilities/thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
 
 Configure the mode with [`openai_reasoning_mode`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_mode]; there is no separate `pro` model to select:
 
@@ -243,7 +246,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-`auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 Astra families); on other models it is ignored.
+`auto` and `current_turn` are sent to any model that supports reasoning. `all_turns` is sent only to models whose profile sets [`OpenAIModelProfile.openai_responses_supports_reasoning_context`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_supports_reasoning_context] (currently the GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 families); on other models it is ignored.
 
 ### Native tools
 
@@ -268,7 +271,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModel
 model_settings = OpenAIResponsesModelSettings(
     openai_native_tools=[
         ComputerToolParam(
-            type='computer_use',
+            type='computer',
         )
     ],
 )
@@ -317,9 +320,9 @@ model = OpenAIResponsesModel('gpt-5.2')
 agent = Agent(model=model)
 
 result = agent.run_sync('The secret is 1234')
-model_settings = OpenAIResponsesModelSettings(
-    openai_previous_response_id=result.all_messages()[-1].provider_response_id
-)
+response_id = result.response.provider_response_id
+assert response_id is not None
+model_settings = OpenAIResponsesModelSettings(openai_previous_response_id=response_id)
 result = agent.run_sync('What is the secret code?', model_settings=model_settings)
 print(result.output)
 #> 1234

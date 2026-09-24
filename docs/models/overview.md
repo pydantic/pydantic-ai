@@ -75,7 +75,7 @@ If you want to use a different provider or profile, you can instantiate a model 
 
 ### Inspecting a model's profile {#inspecting-a-models-profile}
 
-A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict`, so you read capability flags with normal dictionary access via `model.profile` — for example [`supports_text_output`][pydantic_ai.profiles.ModelProfile.supports_text_output], [`supports_tools`][pydantic_ai.profiles.ModelProfile.supports_tools], [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output], and [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports text generation, tool calling, native JSON-schema output, or a specific native tool before relying on it:
+A model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] also describes what the model can do. It is a `TypedDict` whose keys are all optional, so you read capability flags with `.get()` on `model.profile` — for example [`supports_text_output`][pydantic_ai.profiles.ModelProfile.supports_text_output], [`supports_tools`][pydantic_ai.profiles.ModelProfile.supports_tools], [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output], and [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools]. This is useful when you want to branch on a capability rather than discover a limitation at request time — for example checking whether a model supports text generation, tool calling, native JSON-schema output, or a specific native tool before relying on it:
 
 ```python
 from pydantic_ai.models.test import TestModel
@@ -84,17 +84,17 @@ from pydantic_ai.native_tools import WebSearchTool
 model = TestModel()
 profile = model.profile
 
-print(profile['supports_tools'])
+print(profile.get('supports_tools'))
 #> True
-print(profile['supports_text_output'])
+print(profile.get('supports_text_output'))
 #> True
-print(profile['supports_json_schema_output'])
+print(profile.get('supports_json_schema_output'))
 #> False
-print(WebSearchTool in profile['supported_native_tools'])
+print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 #> True
 ```
 
-`model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so direct key access like `profile['supports_tools']` works. If you supply `profile=` as a callable (or otherwise have a partial profile dict), use `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`) to tolerate missing keys.
+`model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so `profile.get('supports_tools')` returns a value. If you supply `profile=` as a callable (or otherwise have a partial profile dict), pass the default as the fallback, `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`), to tolerate missing keys.
 Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
 
 The profile also carries the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]: the maximum number of tokens it can handle in a single request, or `None` when unknown. Every model, including a `FallbackModel` and wrappers like [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel], exposes it as [`model.context_window`][pydantic_ai.models.AbstractModel.context_window]; a fallback model reports the smallest window among its candidates, so history that fits it fits whichever candidate answers. Inside a run, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reports the fraction in use, or `None` when it cannot be calculated. See [Compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) for an example that handles this case.
@@ -380,8 +380,8 @@ contains all the exceptions encountered during the `run` execution.
     in Python 3.11+, we use the [`exceptiongroup`](https://github.com/agronholm/exceptiongroup) backport
     package for earlier Python versions:
 
-    ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
-    from exceptiongroup import catch
+    ```python {title="fallback_model_failure.py" test="skip"}
+    from exceptiongroup import BaseExceptionGroup, catch
 
     from pydantic_ai import Agent, ModelAPIError
     from pydantic_ai.models.anthropic import AnthropicModel

@@ -175,6 +175,7 @@ try:
     from openai.types.responses.response_compaction_item_param_param import ResponseCompactionItemParamParam
     from openai.types.responses.response_create_params import (
         ContextManagement,
+        PromptCacheOptions as ResponsesPromptCacheOptions,
         ToolChoice as ResponsesToolChoice,
     )
     from openai.types.responses.response_input_file_content_param import ResponseInputFileContentParam
@@ -281,7 +282,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-5.5-2026-04-23', 'gpt-5.5-pro', 'gpt-5.5-pro-2026-04-23']
+OpenAIModelName = str | AllModels
 """
 Possible OpenAI model names.
 
@@ -291,10 +292,6 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
-
-The ids in the local `Literal` are bridged because `AllModels` doesn't list them at the floor the
-`openai` extra declares; they arrived in `openai` 3.1.0
-(https://github.com/openai/openai-python/pull/3617). Drop them once the floor is bumped past it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -1155,8 +1152,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 extra_headers = dict(model_settings.get('extra_headers', {}))
                 extra_headers.setdefault('User-Agent', get_user_agent())
 
-                # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
-                prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
                 # Most providers only accept one of `max_completion_tokens` (OpenAI, incl. o-series) or
                 # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
                 max_tokens = model_settings.get('max_tokens', OMIT)
@@ -1190,7 +1185,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     store=model_settings.get('openai_store', OMIT),
                     moderation=model_settings.get('openai_moderation', OMIT),
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                    prompt_cache_retention=prompt_cache_retention,
+                    prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
@@ -1214,7 +1209,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
-    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:  # noqa: C901
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
         # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
@@ -1240,11 +1235,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         choice = response.choices[0]
 
-        # Moderation is a top-level field, so it's read here rather than in the choice-scoped
+        # Moderation and service tier are top-level fields, so they're read here rather than in the choice-scoped
         # `_process_provider_details` hook that subclasses may override.
         provider_details = self._process_provider_details(response) or {}
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
+        if response.service_tier:
+            provider_details['service_tier'] = response.service_tier
 
         # Handle refusal responses (structured output safety filter)
         if choice.message.refusal:
@@ -2520,6 +2517,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
+        if response.service_tier:
+            provider_details['service_tier'] = response.service_tier
 
         state = _response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
@@ -2796,8 +2795,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             store = False
         extra_headers, timeout = self._build_request_options(model_settings)
 
-        # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
-        prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+        # The SDK's Responses `PromptCacheOptions` has keys ours doesn't expose, so the TypedDicts aren't assignable.
+        prompt_cache_options: ResponsesPromptCacheOptions | Omit = OMIT
+        if (cache_options := model_settings.get('openai_prompt_cache_options')) is not None:
+            prompt_cache_options = ResponsesPromptCacheOptions(**cache_options)
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             try:
@@ -2824,8 +2825,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     user=model_settings.get('openai_user', OMIT),
                     include=include or OMIT,
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                    prompt_cache_retention=prompt_cache_retention,
-                    prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
+                    prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
+                    prompt_cache_options=prompt_cache_options,
                     background=model_settings.get('openai_background', OMIT),
                     moderation=model_settings.get('openai_moderation', OMIT),
                     timeout=timeout,
@@ -3953,6 +3954,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _has_finish_reason: bool = field(default=False, init=False)
+    _logprobs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -3987,6 +3989,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                         **(self.provider_details or {}),
                         'moderation': chunk.moderation.model_dump(),
                     }
+                if chunk.service_tier:
+                    self.provider_details = {**(self.provider_details or {}), 'service_tier': chunk.service_tier}
 
                 # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
                 # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
@@ -4022,6 +4026,8 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if self._logprobs:
+                self.provider_details = {**(self.provider_details or {}), 'logprobs': self._logprobs}
             if (
                 self._model_profile.get('openai_chat_streaming_requires_finish_reason', False)
                 and not self._has_finish_reason
@@ -4130,8 +4136,14 @@ class OpenAIStreamedResponse(StreamedResponse):
         """Hook that generates the provider details from chunk content.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
+        Overrides should call `super()` so `logprobs` are collected across chunks.
         """
-        return _map_provider_details(chunk.choices[0])
+        provider_details = _map_provider_details(chunk.choices[0])
+        if provider_details and (logprobs := provider_details.pop('logprobs', None)):
+            # Each chunk carries only its own tokens' logprobs, so collect them and publish the full list
+            # once the stream ends.
+            self._logprobs.extend(logprobs)
+        return provider_details or None
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
@@ -4283,6 +4295,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
                     # relies on it to cancel the server-side job.
                     self._track_background(chunk.response)
+                    # Only terminal events report the tier that served the request; earlier ones echo the requested tier.
+                    if isinstance(
+                        chunk,
+                        (
+                            responses.ResponseCompletedEvent,
+                            responses.ResponseFailedEvent,
+                            responses.ResponseIncompleteEvent,
+                        ),
+                    ) and (service_tier := chunk.response.service_tier):
+                        self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
@@ -4640,11 +4662,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
                     # Collect annotations if the setting is enabled
                     if self._model_settings.get('openai_include_raw_annotations'):
-                        # `openai` 3.1 retyped `annotation` from `object` to a model union declared in the
-                        # event's own module, whose members are distinct classes from the identically
-                        # shaped ones `ResponseOutputText.annotations` uses. That distinction is invisible
-                        # in the payload but fatal to `responses_output_text_annotations_ta`, so normalize
-                        # to the wire dict both SDK shapes carry rather than serializing by type.
+                        # The event types `annotation` as a model union declared in the event's own module,
+                        # whose members are distinct classes from the identically shaped ones
+                        # `ResponseOutputText.annotations` uses. That distinction is invisible in the payload
+                        # but fatal to `responses_output_text_annotations_ta`, so normalize to the wire dict
+                        # rather than serializing by type.
                         annotation = chunk.annotation
                         _annotations_by_item.setdefault(chunk.item_id, []).append(
                             annotation.model_dump(mode='json') if isinstance(annotation, BaseModel) else annotation
@@ -5792,10 +5814,10 @@ def _map_mcp_call(
         NativeToolReturnPart(
             tool_name=tool_name,
             tool_call_id=item.id,
-            # Dumped rather than read off the item like `output` alone would allow: `openai` 3.1 retyped
-            # `McpCall.error` from `str` to a model union, so reading the attribute puts an SDK model
-            # into a message part that then can't be serialized with the message history. `warnings=False`
-            # because pre-3.1 the wire's error object lands in that `str`-typed field unconverted.
+            # Dumped rather than read off the item like `output` alone would allow: `McpCall.error` is an
+            # SDK model union, so reading the attribute puts an SDK model into a message part that then
+            # can't be serialized with the message history. `warnings=False` because an error `type` the
+            # SDK doesn't know yet is stuffed into the first union member, whose `type` literal then warns.
             content=item.model_dump(mode='json', include={'output', 'error'}, warnings=False),
             provider_name=provider_name,
         ),

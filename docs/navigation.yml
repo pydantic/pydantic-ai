@@ -17,6 +17,7 @@ navigation:
         aliases:
           - "installation"
           - "install"
+          - "quickstart"
       - page: "Coding Agent Skills"
         path: "coding-agent-skills.md"
         slug: "overview/coding-agent-skills"
@@ -349,6 +350,10 @@ navigation:
             path: "advisor.md"
             source: "harness"
             slug: "harness/advisor"
+          - page: "Background Tools"
+            path: "background-tools.md"
+            source: "harness"
+            slug: "harness/background-tools"
       - section: "Context Management"
         slug: ""
         contents:
@@ -974,6 +979,13 @@ navigation:
           - "comparisons/livekit"
           - "pydantic-ai-vs-livekit"
           - "livekit-vs-pydantic-ai"
+      - page: "vs Pipecat"
+        path: "comparisons/vs-pipecat.md"
+        slug: "comparisons/vs-pipecat"
+        aliases:
+          - "comparisons/pipecat"
+          - "pydantic-ai-vs-pipecat"
+          - "pipecat-vs-pydantic-ai"
       - page: "vs Pi"
         path: "comparisons/vs-pi.md"
         slug: "comparisons/vs-pi"

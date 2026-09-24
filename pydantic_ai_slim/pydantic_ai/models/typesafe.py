@@ -10,7 +10,7 @@ from typing_extensions import assert_never
 
 from .. import _utils, usage
 from .._http import to_httpx2_timeout
-from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION
+from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..messages import (
@@ -57,6 +57,7 @@ try:
         JSONContent,
         Noul,
         NoulAnswer,
+        NoulCriteria,
         Score,
         ScoreAnswer,
         SystemOneResponse,
@@ -97,9 +98,17 @@ _MAX_CHOICE_OPTIONS = 255
 _MAX_SCORE_LEVELS = 10
 
 _UNSUPPORTED_FIELD_HINT = (
-    'Use `bool`, a `Literal` or `Enum` of two or more strings, a `float` bounded with `ge=0` and `le=1`, a `list` of '
-    'a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its schema, or a model '
-    'of these.'
+    'Use `bool`, a `Literal` or `Enum` of two or more strings or whole numbers, a `float` bounded with `ge=0` and '
+    '`le=1`, a `list` of a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its '
+    'schema, or a model of these.'
+)
+
+# A pick-one or a rubric still says what it is asking through its options; a yes/no may have nothing else,
+# and Jev rejects a question with neither instructions nor criteria.
+_ASKS_NOTHING = (
+    'Output field {name!r} asks Jev nothing. A question is not part of the text being judged: give the field '
+    'a description, or the agent `instructions`, and leave the prompt to the material the question is about. '
+    'A `system_prompt` will not do: Jev is told what was said, not what to ask.'
 )
 
 
@@ -310,7 +319,6 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         ):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool)
-        properties = _fields(output_tool) if output_tool else {}
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
@@ -331,12 +339,12 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
                 'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
                 'it from this model.'
             )
-        questions = _questions(properties, output_tool, instructions) if output_tool else {}
-        tool_key = _tool_question(questions, output_tools, tools, instructions)
+        ask = _Ask.about(output_tool, instructions) if output_tool else _Ask.nothing()
+        tool_key = _tool_question(ask.questions, output_tools, tools, instructions)
 
-        response = await self._system_one(state, questions, settings)
+        response = await self._system_one(state, ask.questions, settings)
         response_usage = _request_usage(response)
-        args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
+        args, provider_details = ask.answers(response, boolean_threshold)
         parts: list[ModelResponsePart] = []
         if output_tool:
             parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
@@ -427,14 +435,13 @@ class TypeSafeModel(Model[AsyncTypeSafeClient]):
         and it is refused before any request. Offered beside others, it is a route like any other.
         """
         try:
-            properties = _fields(tool)
-            questions = _questions(properties, tool, instructions)
+            ask = _Ask.about(tool, instructions, picked=True)
         except UserError:
             raise ToolCallProposed(self._model_name, tool.name, probability) from None
 
         try:
-            response = await self._system_one(state, questions, settings)
-            args, provider_details = _answers(response.answers, properties, questions, boolean_threshold)
+            response = await self._system_one(state, ask.questions, settings)
+            args, provider_details = ask.answers(response, boolean_threshold)
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
             # could silently choose another route, so a failure while filling is terminal and names that route.
@@ -541,6 +548,24 @@ def _threshold(settings: TypeSafeModelSettings, name: str, default: float) -> fl
     return threshold
 
 
+def _fanned_in(
+    name: str, options: Mapping[Any, Any], answers: Mapping[str, object], boolean_threshold: float
+) -> tuple[dict[str, tuple[bool, float]], dict[str, float]]:
+    """Read back the yes/no per option that `_fan_out` asked, as verdicts and as the raw probabilities.
+
+    A list and a mapping ask the same questions and differ only in how the verdicts are shaped afterwards.
+    """
+    labelled: dict[str, float] = {}
+    for option in options:
+        answer = answers.get(f'{name}.{option}')
+        if not isinstance(answer, NoulAnswer):
+            raise UnexpectedModelBehavior(
+                f'Unexpected answer from TypeSafe for output field {name!r}, option {option!r}: {answer!r}'
+            )
+        labelled[option] = answer.noul
+    return {option: _verdict(p, boolean_threshold) for option, p in labelled.items()}, labelled
+
+
 def _verdict(probability: float, threshold: float) -> tuple[bool, float]:
     """Whether Jev's probability of yes clears the bar, and how far from the bar it landed.
 
@@ -564,6 +589,7 @@ def _answers(
     properties: dict[str, dict[str, Any]],
     questions: dict[str, Noul | Choice | Score],
     boolean_threshold: float,
+    defaulted: frozenset[str],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The output's arguments and `provider_details` from Jev's answers to the field questions."""
     args: dict[str, Any] = {}
@@ -571,34 +597,45 @@ def _answers(
     probabilities: dict[str, dict[str, float]] = {}
     scores: dict[str, float] = {}
     for name, prop in properties.items():
-        prop, none_key = _optional(prop)
+        prop, none_option = _optional(prop)
+        if keys := _mapping_options(prop):
+            # A mapping keeps every option with the answer it got, unlike a list.
+            verdicts, labelled = _fanned_in(name, keys, answers, boolean_threshold)
+            _set(args, name, {key: chosen for key, (chosen, _) in verdicts.items()})
+            confidence[name] = min(sureness for _, sureness in verdicts.values())
+            probabilities[name] = labelled
+            continue
         if prop.get('type') == 'array':
-            # One yes/no went out per option; the answer is the options that came back yes, in their order.
-            labelled: dict[str, float] = {}
-            for option in _options(prop['items']) or {}:
-                answer = answers.get(f'{name}.{option}')
-                if not isinstance(answer, NoulAnswer):
-                    raise UnexpectedModelBehavior(
-                        f'Unexpected answer from TypeSafe for output field {name!r}, option {option!r}: {answer!r}'
-                    )
-                labelled[option] = answer.noul
-            verdicts = {option: _verdict(p, boolean_threshold) for option, p in labelled.items()}
+            # A list is the options that came back yes, in their order.
+            verdicts, labelled = _fanned_in(name, _options(prop['items']) or {}, answers, boolean_threshold)
             _set(args, name, [option for option, (chosen, _) in verdicts.items() if chosen])
             confidence[name] = min(sureness for _, sureness in verdicts.values())
             probabilities[name] = labelled
             continue
         answer = answers.get(name)
         if isinstance(questions[name], Noul) and isinstance(answer, NoulAnswer):
-            if prop.get('type') == 'number':
+            if (bound := _bounded(prop)) is not None:
                 # The probability is the answer, so there is no separate confidence to report: a field
-                # that asks for the number would otherwise get it back twice under two names.
-                _set(args, name, answer.noul)
+                # that asks for the number would otherwise get it back twice under two names. The bound is
+                # the units it is asked in, so the same answer comes back as 0.42 or as 42.
+                _set(args, name, answer.noul * bound)
             else:
                 chosen, sureness = _verdict(answer.noul, boolean_threshold)
                 _set(args, name, chosen)
                 confidence[name] = sureness
         elif isinstance(questions[name], Choice) and isinstance(answer, ChoiceAnswer):
-            _set(args, name, None if answer.choice == none_key else answer.choice)
+            if answer.choice not in none_option:
+                # The option itself is written back, looked up by its label rather than parsed out of it: `1`
+                # and `'1'` are two options, and only the lookup knows which one the label stood for.
+                labelled = _labelled(_options(prop) or {})
+                _set(args, name, labelled.get(answer.choice, answer.choice))
+            elif 'default' in properties[name]:
+                # "None of these" is the absence of an answer, and a default says what to use when there is
+                # none, so the field is left out for Pydantic to fill in. The model it belongs to is still put
+                # in place, to apply the default in, unless that model has a default of its own to apply instead.
+                _slot(args, name)
+            else:
+                _set(args, name, None)
             confidence[name] = answer.confidence
             probabilities[name] = answer.probabilities
         elif isinstance(questions[name], Score) and isinstance(answer, ScoreAnswer):
@@ -611,6 +648,7 @@ def _answers(
             scores[name] = answer.score
         else:
             raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe for output field {name!r}: {answer!r}')
+    _leave_out_unanswered(args, properties, defaulted)
     return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
 
 
@@ -688,13 +726,23 @@ def _tool_call(
 def _expressible(tool: ToolDefinition, instructions: str | None) -> bool:
     """Whether Jev could fill this route's fields, asked without sending anything."""
     try:
-        _questions(_fields(tool), tool, instructions)
+        _Ask.about(tool, instructions)
     except UserError:
         return False
     return True
 
 
 _NONE_OF_THESE = 'None of these.'
+
+
+def _null(schema: dict[str, Any]) -> bool:
+    """Whether a schema is `None`, whatever else the user wrote about it.
+
+    Pydantic renders a bare `None` as `{'type': 'null'}`, but `Annotated[None, Field(description=...)]` — how a
+    user says what returning nothing means — renders the description beside it. The type is what makes it `None`;
+    the rest is the user's own words, and a route or a field is no less `None` for having some.
+    """
+    return schema.get('type') == 'null'
 
 
 def _none_route(tool: ToolDefinition) -> bool:
@@ -704,7 +752,8 @@ def _none_route(tool: ToolDefinition) -> bool:
     in its schema and yet only one value that field could ever take. There is nothing to ask about it: to Jev it
     is one more option to pick, the same thing `_optional` makes of an `X | None` field one level down.
     """
-    return tool.kind == 'output' and list(_properties(tool.parameters_json_schema).values()) == [{'type': 'null'}]
+    properties = list(_properties(tool.parameters_json_schema).values())
+    return tool.kind == 'output' and len(properties) == 1 and _null(properties[0])
 
 
 def _route_args(tool: ToolDefinition) -> dict[str, Any]:
@@ -773,11 +822,12 @@ def _properties(schema: dict[str, Any]) -> dict[str, Any]:
     return schema.get('properties', {})
 
 
-def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
+def _fields(output_tool: ToolDefinition) -> tuple[dict[str, dict[str, Any]], frozenset[str]]:
     """The output schema's fields, flattened, with `$ref`s to `$defs` (how Pydantic renders an `Enum` or a model) resolved.
 
     A nested model is its fields, named `outer.inner`: Jev answers questions, and a field of a field is still one
-    question. The answers are nested back into place by `_set`.
+    question. The answers are nested back into place by `_set`. The nested models with a default in the schema
+    come back alongside, by the same names, for `_leave_out_unanswered`.
     """
     schema = output_tool.parameters_json_schema
     defs: dict[str, Any] = schema.get('$defs', {})
@@ -789,6 +839,9 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
             prop = {**prop, 'items': resolve(prop['items'])}
         if 'anyOf' in prop:
             prop = {**prop, 'anyOf': [resolve(option) for option in prop['anyOf']]}
+        if 'propertyNames' in prop:
+            # How an `Enum`-keyed mapping names its keys, as a `$ref` to the enum's own schema.
+            prop = {**prop, 'propertyNames': resolve(prop['propertyNames'])}
         return prop
 
     def flatten(properties: dict[str, Any], prefix: str, seen: frozenset[str]) -> dict[str, dict[str, Any]]:
@@ -811,36 +864,143 @@ def _fields(output_tool: ToolDefinition) -> dict[str, dict[str, Any]]:
                         'itself has no end to fill, and Jev asks a fixed set of questions. Give the field a type '
                         'that does not contain itself.'
                     )
+                if 'default' in prop:
+                    defaulted.add(f'{prefix}{name}')
                 fields.update(flatten(prop['properties'], f'{prefix}{name}.', seen | {ref} if ref else seen))
             else:
                 fields[f'{prefix}{name}'] = prop
         return fields
 
-    return flatten(_properties(schema), '', frozenset())
+    defaulted: set[str] = set()
+    return flatten(_properties(schema), '', frozenset()), frozenset(defaulted)
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
     """Put a flattened field's answer back where it belongs, `outer.inner` under `outer`."""
+    parent, leaf = _slot(args, name)
+    parent[leaf] = value
+
+
+def _slot(args: dict[str, Any], name: str) -> tuple[dict[str, Any], str]:
+    """Where a flattened field's answer goes: the arguments of the model it belongs to, put in place, and its name there."""
     *path, leaf = name.split('.')
     for part in path:
         args = args.setdefault(part, {})
-    args[leaf] = value
+    return args, leaf
 
 
-def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
-    """An `X | None` field as `X` plus the name of one more option, "none of these"; any other field as it is.
+def _leave_out_unanswered(
+    args: dict[str, Any], properties: dict[str, dict[str, Any]], defaulted: frozenset[str], prefix: str = ''
+) -> bool:
+    """Leave out a nested model with a default when nothing under it was answered, and say if `args` holds an answer.
+
+    Every field under such a model was left out for its own default to apply, and the model's default says what to
+    use when there is nothing to fill it with. An empty model put in place would apply the defaults inside it
+    instead. One without a default of its own stays, empty, for those inner defaults to apply in.
+    """
+    answered = False
+    for name, value in list(args.items()):
+        path = f'{prefix}{name}'
+        if path in properties:
+            answered = True
+        elif _leave_out_unanswered(value, properties, defaulted, f'{path}.'):
+            answered = True
+        elif path in defaulted:
+            del args[name]
+    return answered
+
+
+def _optional(prop: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """An `X | None` field as `X` plus one more option, "none of these", named and described; any other as it is.
 
     Measured on labelled tickets, an explicit option is as accurate as an `other` member the user wrote and more
-    accurate than reading `None` off low confidence, which is what the field's confidence is for.
+    accurate than reading `None` off low confidence, which is what the field's confidence is for. What the user
+    wrote about the `None` branch, `Annotated[None, Field(description=...)]`, says what picking it means on this
+    field better than the stock phrase does, so it describes the option when there is one.
     """
-    if 'anyOf' not in prop or len(prop['anyOf']) != 2 or {'type': 'null'} not in prop['anyOf']:
-        return prop, None
-    inner = next(option for option in prop['anyOf'] if option != {'type': 'null'})
+    options = prop.get('anyOf')
+    # Exactly one of the two has to be `None`, and the other one has to be something: a union of nothing but
+    # `None`s has no `X` to ask about, and is refused as the unsupported field it is rather than crashing here.
+    if not options or len(options) != 2 or sum(_null(option) for option in options) != 1:
+        return prop, {}
+    none = next(option for option in options if _null(option))
+    inner = next(option for option in options if not _null(option))
     prop = {**inner, **{k: v for k, v in prop.items() if k not in ('anyOf', 'default')}}
     key = 'none'
     while key in (_options(prop) or {}):
         key += '_'
-    return prop, key
+    meaning = none.get('description')
+    return prop, {key: meaning if isinstance(meaning, str) and meaning else _NONE_OF_THESE}
+
+
+def _list_options(name: str, prop: dict[str, Any]) -> dict[Any, str | None]:
+    """The options a `list` field fans out over, or a `UserError` saying why it is not a list of them."""
+    labels = _options(prop['items']) if 'items' in prop else None
+    if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: a list must be of two or more string '
+            f'options. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    if 'maxItems' in prop or 'minItems' in prop:
+        # Every option is asked about and every yes is kept, so how many come back is Jev's answer rather than
+        # something that can be held to a limit -- the same reason a mapping carrying one is refused. Checked
+        # after the shape, so a `tuple`, which carries both intrinsically, is still told it is not a list.
+        raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
+    return labels
+
+
+def _fan_out(name: str, ask: dict[str, JSONContent], labels: dict[Any, str | None]) -> dict[str, Noul]:
+    """One yes/no per option, asked with the field's question and that option's description.
+
+    Both a list of options and a mapping keyed by them ask this; what differs is how the answers are read back.
+    """
+    questions: dict[str, Noul] = {}
+    for label, meaning in labels.items():
+        option = f'{label}: {meaning}' if meaning else label
+        questions[f'{name}.{label}'] = Noul(instructions={**ask, 'option': option})
+    return questions
+
+
+def _bounded(prop: dict[str, Any]) -> float | None:
+    """The upper bound of a number field that asks for a probability, or `None` if it is not one.
+
+    A probability is what Jev answers, so a number field has to be bounded to be one. The bound itself is only
+    a scale: `ge=0, le=1` is the probability as it comes back, and `ge=0, le=100` the same answer as a
+    percentage. What the field asks is unchanged; only the units it is written in differ.
+    """
+    if prop.get('type') != 'number' or prop.get('minimum') != 0:
+        return None
+    if 'multipleOf' in prop:
+        # Jev answers anywhere between the bounds, so a field that only accepts steps along them is not a
+        # probability in different units; it is a set of levels, which is what a rubric is for.
+        return None
+    maximum = prop.get('maximum')
+    return maximum if isinstance(maximum, (int, float)) and not isinstance(maximum, bool) and maximum > 0 else None
+
+
+def _mapping_options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
+    """The options a `dict[Literal, bool]` field is keyed by, or `None` if the field is not one.
+
+    A mapping keyed by options and valued by yes/no is a fan-out like a list of those options. A mapping of
+    anything else -- `dict[str, str]`, `dict[str, int]` -- has no options to fan out over and is not one.
+    """
+    if prop.get('type') != 'object' or prop.get('properties'):
+        return None
+    if 'maxProperties' in prop or 'minProperties' in prop:
+        # Every option is asked about and every answer is kept, so there is no way to return fewer or more
+        # keys than the mapping declares, and a limit on how many there may be could only be broken.
+        return None
+    # A plain yes/no per key and nothing else. Anything narrower -- a `const`, an `enum`, a `Literal[True]` --
+    # would forbid an answer Jev is free to give, and `True` rather than a schema is how `dict[str, Any]` says
+    # its values are unconstrained. Matching the whole schema rather than one key of it refuses both, and
+    # whatever else is put there next.
+    if prop.get('additionalProperties') != {'type': 'boolean'}:
+        return None
+    names = prop.get('propertyNames')
+    if not isinstance(names, dict):
+        # `propertyNames: true` says the keys are unconstrained, so there are no options to fan out over.
+        return None
+    return _options(cast('dict[str, Any]', names))
 
 
 def _options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
@@ -852,8 +1012,68 @@ def _options(prop: dict[str, Any]) -> dict[Any, str | None] | None:
     return None
 
 
+def _pickable(options: dict[Any, str | None]) -> bool:
+    """Whether every option is a string or a whole number, which is what a pick-one can offer by name."""
+    # `bool` is an `int` in Python, but `True` is not a label, and a pick-one of booleans is a yes/no.
+    return all(
+        isinstance(option, str) or (isinstance(option, int) and not isinstance(option, bool)) for option in options
+    )
+
+
+def _labelled(options: dict[Any, str | None]) -> dict[str, Any]:
+    """Each option of a pick-one under the label Jev picks it by, in the order they are declared.
+
+    A string is its own label, so a pick-one of strings asks exactly what it always has. A whole number is labelled
+    by its digits, unless a string option already is those digits: `Literal['1', 1]` is two options, and the answer
+    has to say which of them was picked, so the number becomes `1 (number)`. The answer is read back through this
+    mapping rather than by converting the label, so the argument gets the option itself, with its type.
+    """
+    taken = {option for option in options if isinstance(option, str)}
+    labelled: dict[str, Any] = {}
+    for option in options:
+        label = option
+        if not isinstance(option, str):
+            label = str(option)
+            while label in taken:
+                label = f'{label} (number)'
+            taken.add(label)
+        labelled[label] = option
+    return labelled
+
+
+def _rubric(options: dict[Any, str | None]) -> list[str] | None:
+    """A rubric's level descriptions in level order, or `None` when the options are not a rubric.
+
+    Jev scores against an ordered rubric that starts at zero, so the levels have to be exactly that, and every one
+    of them has to say what it means: a rubric whose levels are unexplained is not a rubric. Any other whole
+    numbers -- status codes, levels with nothing said about them -- are labels, and are a pick-one instead.
+    """
+    if not all(isinstance(option, int) and not isinstance(option, bool) for option in options):
+        return None
+    levels = sorted(options)
+    if levels != list(range(len(levels))) or not 2 <= len(levels) <= _MAX_SCORE_LEVELS:
+        return None
+    criteria = [meaning for level in levels if (meaning := options[level])]
+    return criteria if len(criteria) == len(levels) else None
+
+
+def _with_none(name: str, options: dict[Any, str | None] | None, none_option: dict[str, str]) -> dict[Any, str | None]:
+    """An optional field's options with "none of these" as one more, or a `UserError` saying why it cannot be one."""
+    if options is not None and _rubric(options) is not None:
+        raise UserError(
+            f'Output field {name!r} is a rubric, and a rubric cannot be optional: its levels are ordered and '
+            f'`None` is not one of them.'
+        )
+    if options is None or not _pickable(options):
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: only a pick-one of strings or whole '
+            f'numbers can be optional, since `None` is one more option to pick. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    return {**options, **none_option}
+
+
 def _ask(
-    name: str, prop: dict[str, Any], output_tool: ToolDefinition, instructions: str | None
+    name: str, prop: dict[str, Any], output_tool: ToolDefinition, instructions: str | None, *, picked: bool = False
 ) -> dict[str, JSONContent]:
     """What a field asks, as the labelled parts TypeSafe's own examples use."""
     # Only what the user wrote goes to Jev. A bare `bool` output is wrapped in a field named `response`
@@ -866,6 +1086,11 @@ def _ask(
         ask['field'] = name
     if description := prop.get('description'):
         ask['question'] = description
+    if picked and (route := _route_name(output_tool)):
+        # A fill is a second request about the same text, so nothing in it says a route was already picked.
+        # Its name is what the choice question offered and what the answer named, and a field of that route
+        # reads differently once you know which one you are filling.
+        ask['chosen'] = route
     if described := _described(output_tool):
         ask['goal'] = described
     if instructions:
@@ -876,22 +1101,59 @@ def _ask(
     return ask
 
 
+@dataclass(frozen=True)
+class _Ask:
+    """One route's fields as Jev questions, and how to read its answers back.
+
+    `_fields` and `_questions` are derived from the same route, and `_answers` needs both of them again to
+    make sense of what comes back, so the three travel together rather than being rebuilt side by side at
+    every call site. A turn that picks a route and then fills it builds one of these per request, and what
+    a question carries about its route is decided in one place instead of once per caller.
+    """
+
+    properties: dict[str, dict[str, Any]]
+    questions: dict[str, Noul | Choice | Score]
+    defaulted: frozenset[str]
+
+    @classmethod
+    def about(cls, tool: ToolDefinition, instructions: str | None, *, picked: bool = False) -> _Ask:
+        """The questions this route's fields become, or a `UserError` if Jev cannot express one of them.
+
+        `picked` is for the second request of a turn that chose a route first: those questions name the
+        route they belong to, which the first request's questions have no reason to.
+        """
+        properties, defaulted = _fields(tool)
+        return cls(properties, _questions(properties, tool, instructions, picked=picked), defaulted)
+
+    @classmethod
+    def nothing(cls) -> _Ask:
+        """No fields to fill: a turn that only picks a route still reports the same empty details."""
+        return cls({}, {}, frozenset())
+
+    def answers(self, response: SystemOneResponse, boolean_threshold: float) -> tuple[dict[str, Any], dict[str, Any]]:
+        return _answers(response.answers, self.properties, self.questions, boolean_threshold, self.defaulted)
+
+
 def _questions(
-    properties: dict[str, dict[str, Any]], output_tool: ToolDefinition, instructions: str | None
+    properties: dict[str, dict[str, Any]],
+    output_tool: ToolDefinition,
+    instructions: str | None,
+    *,
+    picked: bool = False,
 ) -> dict[str, Noul | Choice | Score]:
     """One Jev question per output field."""
     questions: dict[str, Noul | Choice | Score] = {}
     for name, prop in properties.items():
-        ask = _ask(name, prop, output_tool, instructions)
-        prop, none_key = _optional(prop)
+        ask = _ask(name, prop, output_tool, instructions, picked=picked)
+        prop, none_option = _optional(prop)
         options = _options(prop)
-        if none_key is not None:
-            if options is None or not all(isinstance(option, str) for option in options):
-                raise UserError(
-                    f'Output field {name!r} is not supported by this model: only a `Literal` or `Enum` of strings can '
-                    f'be optional, since `None` is one more option to pick. {_UNSUPPORTED_FIELD_HINT}'
-                )
-            options = {**options, none_key: _NONE_OF_THESE}
+        if options and all(isinstance(option, bool) for option in options) and not any(options.values()):
+            # `Literal[True, False]` spells out the two values a `bool` already has and says nothing about
+            # either, so there is nothing to pick between that a yes/no does not ask, and the schema says
+            # `boolean` too. Two booleans that *are* described are that same yes/no with criteria, below.
+            options = None
+        if none_option:
+            options = _with_none(name, options, none_option)
 
         # A single value needs no labelling, and TypeSafe's advice is to start with a string; the object
         # form earns its keys only once there is more than one thing in it.
@@ -900,23 +1162,18 @@ def _questions(
         if prop.get('type') == 'array':
             # Several options at once is one yes/no per option, all in the same request, which TypeSafe call
             # fanning out: does this option apply, asked with the field's question and the option's description.
-            labels = _options(prop['items']) if 'items' in prop else None
-            if not labels or len(labels) < 2 or not all(isinstance(label, str) for label in labels):
-                raise UserError(
-                    f'Output field {name!r} is not supported by this model: a list must be of two or more string '
-                    f'options. {_UNSUPPORTED_FIELD_HINT}'
-                )
-            for label, meaning in labels.items():
-                option = f'{label}: {meaning}' if meaning else label
-                questions[f'{name}.{label}'] = Noul(instructions={**ask, 'option': option})
+            questions.update(_fan_out(name, ask, _list_options(name, prop)))
         elif options is not None:
-            # `bool` is an `int` in Python but never a rubric level, and it is handled as a yes/no below.
-            if options and all(isinstance(option, int) and not isinstance(option, bool) for option in options):
-                questions[name] = _score_question(name, cast('dict[int, str | None]', options), asked)
-            elif len(options) < 2 or not all(isinstance(option, str) for option in options):
+            if (criteria := _rubric(options)) is not None:
+                questions[name] = Score(instructions=asked, criteria=cast('list[JSONContent]', criteria))
+            elif len(options) == 2 and all(isinstance(option, bool) for option in options):
+                # `True` and `False` are the two options a yes/no already has, so an `Enum` or `Literal` of
+                # exactly those is that same question, with somewhere to say what each answer means.
+                questions[name] = _noul_question(cast('dict[bool, str | None]', options), asked)
+            elif len(options) < 2 or not _pickable(options):
                 raise UserError(
-                    f'Output field {name!r} is not supported by this model: its options are not two or more strings. '
-                    f'{_UNSUPPORTED_FIELD_HINT}'
+                    f'Output field {name!r} is not supported by this model: its options are not two or more strings '
+                    f'or whole numbers. {_UNSUPPORTED_FIELD_HINT}'
                 )
             elif len(options) > _MAX_CHOICE_OPTIONS:
                 raise UserError(
@@ -924,23 +1181,39 @@ def _questions(
                     f'{_MAX_CHOICE_OPTIONS} options, and this one has {len(options)}.'
                 )
             else:
-                questions[name] = Choice(instructions=asked, criteria=cast('dict[str, str | None]', options))
-        elif prop.get('type') == 'boolean' or (
-            prop.get('type') == 'number' and prop.get('minimum') == 0 and prop.get('maximum') == 1
-        ):
-            if not ask:
-                # A pick-one or a rubric still says what it is asking through its options; a yes/no has
-                # nothing else, and Jev rejects a question with neither instructions nor criteria.
-                raise UserError(
-                    f'Output field {name!r} asks Jev nothing. A question is not part of the text being judged: '
-                    f'give the field a description, or the agent `instructions`, and leave the prompt to the '
-                    f'material the question is about. A `system_prompt` will not do: Jev is told what was said, '
-                    f'not what to ask.'
+                questions[name] = Choice(
+                    instructions=asked,
+                    criteria={label: options[option] for label, option in _labelled(options).items()},
                 )
+        elif keys := _mapping_options(prop):
+            # A mapping from options to yes/no asks the same thing per option a list of them does; what
+            # differs is the answer, which keeps every option rather than only the ones that came back yes.
+            if len(keys) < 2:
+                # A key of a JSON object is a string by construction, so only how many there are is in doubt.
+                raise UserError(
+                    f'Output field {name!r} is not supported by this model: a mapping must be keyed by two or '
+                    f'more options. {_UNSUPPORTED_FIELD_HINT}'
+                )
+            questions.update(_fan_out(name, ask, keys))
+        elif prop.get('type') == 'boolean' or _bounded(prop) is not None:
+            if not ask:
+                raise UserError(_ASKS_NOTHING.format(name=name))
             questions[name] = Noul(instructions=asked)
         else:
             raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
     return questions
+
+
+def _route_name(tool: ToolDefinition) -> str | None:
+    """What to call a picked route when telling Jev which one it picked.
+
+    Only what the user wrote means anything: an output route is named for the library's own tool, either
+    `final_result` on its own or `final_result_<Member>` for a union member, and the bare prefix says no
+    more than "the answer" does. A function tool's name is the user's.
+    """
+    if tool.kind != 'output':
+        return tool.name
+    return tool.name.removeprefix(DEFAULT_OUTPUT_TOOL_NAME).lstrip('_') or None
 
 
 def _described(tool: ToolDefinition) -> str | None:
@@ -1023,31 +1296,20 @@ def _tool_question(
     return key
 
 
-def _score_question(name: str, options: dict[int, str | None], asked: JSONContent | None) -> Score:
-    """A rubric question from an `IntEnum` or `Literal` of whole numbers, one description per level.
+def _noul_question(options: dict[bool, str | None], asked: JSONContent | None) -> Noul:
+    """A yes/no from an `Enum` or `Literal` of `True` and `False`, with what each answer means.
 
-    Jev scores against an ordered rubric that starts at zero, so the levels have to be exactly that, and
-    every one of them needs saying what it means: a rubric whose levels are unexplained is not a rubric.
+    A bare `bool` asks the same question and says nothing about its answers, because a `bool` has nowhere to
+    write it down. Two described options do, and Jev takes them as the yes/no's criteria. Only one of the two
+    need be described; what is written is sent, and a pair that describes neither never gets here — it is
+    collapsed to a plain yes/no by `_questions`, which is also what raises when there is nothing to ask.
     """
-    levels = sorted(options)
-    if levels != list(range(len(levels))) or len(levels) < 2:
-        raise UserError(
-            f'Output field {name!r} is not supported by this model: a rubric must be the whole numbers from 0 '
-            f'upwards, in order, and there must be at least two of them. {_UNSUPPORTED_FIELD_HINT}'
-        )
-    if len(levels) > _MAX_SCORE_LEVELS:
-        raise UserError(
-            f'Output field {name!r} is not supported by this model: Jev scores against at most '
-            f'{_MAX_SCORE_LEVELS} levels, and this rubric has {len(levels)}.'
-        )
-    criteria = [options[level] for level in levels]
-    if not all(criteria):
-        missing = ', '.join(str(level) for level in levels if not options[level])
-        raise UserError(
-            f'Output field {name!r} is a rubric, so every level needs to say what it means, and {missing} does not. '
-            f'Give each level a description in the schema.'
-        )
-    return Score(instructions=asked, criteria=cast('list[JSONContent]', criteria))
+    criteria: NoulCriteria = {}
+    if (yes := options[True]) is not None:
+        criteria['true'] = yes
+    if (no := options[False]) is not None:
+        criteria['false'] = no
+    return Noul(instructions=asked, criteria=criteria)
 
 
 def _prompt_text(part: UserPromptPart) -> str:

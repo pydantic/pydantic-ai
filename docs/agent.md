@@ -502,6 +502,7 @@ async def main():
         End(data=FinalResult(output='The capital of France is Paris.')),
     ]
     """
+    assert agent_run.result is not None
     print(agent_run.result.output)
     #> The capital of France is Paris.
 ```
@@ -1335,6 +1336,8 @@ If you wish to further customize model behavior, you can use a subclass of [`Mod
 For example:
 
 ```py
+from google.genai.types import HarmBlockThreshold, HarmCategory
+
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
@@ -1345,14 +1348,14 @@ try:
         'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
         model_settings=GoogleModelSettings(
             temperature=0.0,  # general model settings can also be specified
-            gemini_safety_settings=[
+            google_safety_settings=[
                 {
-                    'category': 'HARM_CATEGORY_HARASSMENT',
-                    'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    'category': HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
                 },
                 {
-                    'category': 'HARM_CATEGORY_HATE_SPEECH',
-                    'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
                 },
             ],
         ),
@@ -1411,7 +1414,7 @@ In particular, agents are generic in both the type of their dependencies and the
 
 Consider the following script with type mistakes:
 
-```python {title="type_mistakes.py" hl_lines="18 28"}
+```python {title="type_mistakes.py" hl_lines="18 28" typecheck="skip - deliberately wrong to show what a type checker reports"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
@@ -1620,12 +1623,13 @@ def local_time() -> str:
 
 
 @agent.instructions
-def user_name(ctx: RunContext[None]) -> str:
+def user_name(ctx: RunContext) -> str:
     return 'The user is Frank.'
 
 
 agent.run_sync('What is the capital of Italy?')
 
+assert model.last_model_request_parameters is not None
 parts = model.last_model_request_parameters.instruction_parts or []
 print([(part.name, str(part.id) if part.id is not None else None, part.content) for part in parts])
 """

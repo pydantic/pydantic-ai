@@ -316,7 +316,7 @@ async def main():
         return f'Result from task {ctx.inputs}'
 
     # Use ReduceFirstValue to get the first result and cancel the rest
-    first_result = g.join(ReduceFirstValue[str](), initial=None, node_id='first_result')
+    first_result = g.join(ReduceFirstValue[str](), initial='', node_id='first_result')
 
     g.add(
         g.edge_from(g.start_node).to(generate),
@@ -411,7 +411,7 @@ def reduce_metrics_max(current: ReducedMetrics, inputs: ReducedMetrics) -> Reduc
 
 
 async def main():
-    g = GraphBuilder(state_type=MetricsState, output_type=dict[str, int])
+    g = GraphBuilder(state_type=MetricsState, output_type=ReducedMetrics)
 
     @g.step
     async def generate(ctx: StepContext[object, None, None]) -> list[int]:
@@ -469,7 +469,7 @@ Reducers with access to [`ReducerContext`][pydantic_graph.join.ReducerContext] c
 import asyncio
 from dataclasses import dataclass
 
-from pydantic_graph import GraphBuilder, ReducerContext, StepContext
+from pydantic_graph import GraphBuilder, ReducerContext, StepContext, TypeExpression
 
 
 @dataclass
@@ -490,7 +490,7 @@ def reduce_find_match(ctx: ReducerContext[SearchState, None], current: str | Non
 
 
 async def main():
-    g = GraphBuilder(state_type=SearchState, output_type=str | None)
+    g = GraphBuilder(state_type=SearchState, output_type=TypeExpression[str | None])
 
     @g.step
     async def generate_searches(ctx: StepContext[SearchState, None, None]) -> list[str]:

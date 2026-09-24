@@ -298,7 +298,7 @@ def authenticated_workspace(request: Request) -> str:
 
 @app.post('/')
 async def run_agent(request: Request) -> Response:
-    adapter = await AGUIAdapter.from_request(request, agent=agent)
+    adapter = await AGUIAdapter[ChannelDeps, str].from_request(request, agent=agent)
     deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.run_input.context)
     return adapter.streaming_response(adapter.run_stream(deps=deps))
 ```
@@ -521,6 +521,10 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 Every streamed tool call carries a `parentMessageId` naming the assistant message that owns it, and that message is always announced by a [`TEXT_MESSAGE_START`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L170-L187) first — including when the model's response is nothing but tool calls, in which case the message carries no content and is closed immediately. A frontend that rebuilds the conversation from the event stream alone therefore never has to infer that a message exists.
 
 Tool calls attach to whichever assistant message is open when they stream: text appearing before them in the same response shares their message, and text appearing after starts a new one that any later tool calls attach to instead. [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] splits text and tool calls the same way. It splits on more than that, though: a compaction part always starts a new assistant message when history is loaded, a reasoning part does so from `ag-ui-protocol` 0.1.11, and a file part does so only under [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data]. The stream splits on none of them, so a response interleaving one of those with tool calls yields more messages loaded than streamed.
+
+### Message ids across round-trips
+
+[`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages] keeps each inbound message's `id` in the reserved `__pydantic_ai__` key of the message it produces, and [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] uses it as the id again, so a history the client sent comes back with the ids the client assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive AG-UI messages merge into one message, such as the tool results of parallel tool calls or a system message followed by a user message, only the last id is kept and it goes on the last message dumped from it; the others get fresh ids. Messages produced by an agent run have no kept id and get a fresh UUID on every dump.
 
 ### Preserving failed tool outcomes
 

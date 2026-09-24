@@ -18,7 +18,7 @@ Alongside Pydantic AI, we've developed `pydantic-graph` — an async graph and s
 
 While this library is developed as part of Pydantic AI; it has no dependency on `pydantic-ai` and can be considered as a pure graph-based state machine library. You may find it useful whether or not you're using Pydantic AI or even building with GenAI.
 
-`pydantic-graph` is designed for advanced users and makes heavy use of Python generics and type hints. It is not designed to be as beginner-friendly as Pydantic AI.
+Reach for `pydantic-graph` when control flow is the hard part: explicit states, branches and resumable transitions you want typed and diagrammed. It leans on Python generics and type hints; for most agents, plain Python and the [multi-agent patterns](multi-agent-applications.md) are the shorter road.
 
 ## Installation
 
@@ -56,13 +56,13 @@ Nodes, which are generally [`dataclass`es][dataclasses.dataclass], generally con
 
 Nodes are generic in:
 
-- **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.basenode.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
-- **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.basenode.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
+- **state**, which must have the same type as the state of graphs they're included in: `None` for a graph without state, see [stateful graphs](#stateful-graphs) for more information
+- **deps**, the type of the deps of the graph they're included in, [`DepsT`][pydantic_graph.basenode.DepsT] has a default of `object`, which fits any graph, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
 - **graph return type** — this only applies if the node returns [`End`][pydantic_graph.basenode.End]. [`RunEndT`][pydantic_graph.basenode.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
 Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.basenode.End]:
 
-```py {title="intermediate_node.py" noqa="F821" test="skip"}
+```py {title="intermediate_node.py" noqa="F821" test="skip" typecheck="skip - fragment where MyState and AnotherNode are not defined"}
 from dataclasses import dataclass
 
 from pydantic_graph import BaseNode, GraphRunContext
@@ -87,14 +87,14 @@ class MyNode(BaseNode[MyState]):  # (1)!
 
 We could extend `MyNode` to optionally end the run if `foo` is divisible by 5:
 
-```py {title="intermediate_or_end_node.py" hl_lines="7 13 15" noqa="F821" test="skip"}
+```py {title="intermediate_or_end_node.py" hl_lines="7 13 15" noqa="F821" test="skip" typecheck="skip - fragment where MyState and AnotherNode are not defined"}
 from dataclasses import dataclass
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 
 
 @dataclass
-class MyNode(BaseNode[MyState, None, int]):  # (1)!
+class MyNode(BaseNode[MyState, object, int]):  # (1)!
     foo: int
 
     async def run(
@@ -107,7 +107,7 @@ class MyNode(BaseNode[MyState, None, int]):  # (1)!
             return AnotherNode()
 ```
 
-1. We parameterize the node with the return type (`int` in this case) as well as state. Because generic parameters are positional-only, we have to include `None` as the second parameter representing deps.
+1. We parameterize the node with the return type (`int` in this case) as well as state. Because generic parameters are positional-only, we have to include `object`, the default, as the second parameter representing deps.
 2. The return type of the `run` method is now a union of `AnotherNode` and `End[int]`, this allows the node to end the run if `foo` is divisible by 5.
 
 ### Graph
@@ -132,12 +132,12 @@ from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepCon
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
+class DivisibleBy5(BaseNode[None, object, int]):  # (1)!
     foo: int
 
     async def run(
         self,
-        ctx: GraphRunContext,
+        ctx: GraphRunContext[None],
     ) -> Increment | End[int]:
         if self.foo % 5 == 0:
             return End(self.foo)
@@ -146,10 +146,10 @@ class DivisibleBy5(BaseNode[None, None, int]):  # (1)!
 
 
 @dataclass
-class Increment(BaseNode):  # (2)!
+class Increment(BaseNode[None]):  # (2)!
     foo: int
 
-    async def run(self, ctx: GraphRunContext) -> DivisibleBy5:
+    async def run(self, ctx: GraphRunContext[None]) -> DivisibleBy5:
         return DivisibleBy5(self.foo + 1)
 
 
@@ -176,8 +176,8 @@ async def main():
     #> 5
 ```
 
-1. The `DivisibleBy5` node is parameterized with `None` for the state param and `None` for the deps param as this graph doesn't use state or deps, and `int` as it can end the run.
-2. The `Increment` node doesn't return `End`, so the `RunEndT` generic parameter is omitted, state can also be omitted as the graph doesn't use state.
+1. The `DivisibleBy5` node is parameterized with `None` for the state param as this graph doesn't use state, `object` (the default) for the deps param as the node doesn't use deps, and `int` as it can end the run.
+2. The `Increment` node doesn't return `End`, so the `RunEndT` generic parameter is omitted, and so is deps, which it doesn't use.
 3. Create a [`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder] declaring the input and output types of the graph.
 4. Define a [step](graph/builder/steps.md) that wraps the initial input as the first `BaseNode`. The builder calls this when execution leaves [`g.start_node`][pydantic_graph.graph_builder.GraphBuilder.start_node].
 5. Register each `BaseNode` subclass with [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node] so the builder knows about it; outgoing edges are inferred from each node's `run` return type.
@@ -261,12 +261,12 @@ PRODUCT_PRICES = {  # (2)!
 
 
 @dataclass
-class Purchase(BaseNode[MachineState, None, None]):  # (16)!
+class Purchase(BaseNode[MachineState, object, None]):  # (16)!
     product: str
 
     async def run(
         self, ctx: GraphRunContext[MachineState]
-    ) -> End | InsertCoin | SelectProduct:
+    ) -> End[None] | InsertCoin | SelectProduct:
         if price := PRODUCT_PRICES.get(self.product):  # (8)!
             ctx.state.product = self.product  # (9)!
             if ctx.state.user_balance >= price:  # (10)!
@@ -447,7 +447,7 @@ class EmailOk(BaseModel):
 
 feedback_agent = Agent[object, EmailRequiresWrite | EmailOk](
     'openai:gpt-5.2',
-    output_type=EmailRequiresWrite | EmailOk,  # type: ignore
+    output_type=EmailRequiresWrite | EmailOk,
     instructions=(
         'Review the email and provide feedback, email must reference the users specific interests.'
     ),
@@ -455,7 +455,7 @@ feedback_agent = Agent[object, EmailRequiresWrite | EmailOk](
 
 
 @dataclass
-class Feedback(BaseNode[State, None, Email]):
+class Feedback(BaseNode[State, object, Email]):
     email: Email
 
     async def run(

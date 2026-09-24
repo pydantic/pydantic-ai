@@ -3892,6 +3892,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 37, 27, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
                 finish_reason='stop',
@@ -4402,6 +4403,43 @@ async def test_anthropic_opus_5_features(allow_model_requests: None, anthropic_a
         }
     )
     assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_5_5_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.model_name == 'claude-opus-5-5'
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-5-5',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_5_5_thinking_false_omits_thinking(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """Claude Opus 5.5 rejects `thinking: {'type': 'disabled'}`, and unified `thinking=False` never sends it.
+
+    With no `thinking` field the model thinks adaptively at its default effort, so the request succeeds.
+    """
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings={'thinking': False})
+
+    result = await agent.run('What is 2+2?')
+    assert result.output == snapshot('2 + 2 = 4')
+    assert 'thinking' not in single_request_body(vcr)
 
 
 _REFUSAL_CASE_PARAMS = [
@@ -9021,6 +9059,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 11, 19, 23, 41, 8, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
                 finish_reason='stop',

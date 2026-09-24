@@ -692,13 +692,13 @@ agent = Agent('anthropic:claude-opus-4-7')
 
 
 @agent.tool
-def trigger_alert(ctx: RunContext[None]) -> str:
+def trigger_alert(ctx: RunContext) -> str:
     ctx.enqueue('Alert: production is degraded, prioritize triage.')
     return 'alert raised'
 
 
 @agent.tool
-def enter_incident_mode(ctx: RunContext[None]) -> str:
+def enter_incident_mode(ctx: RunContext) -> str:
     # Enqueue a `SystemPromptPart` to adjust the agent's standing instructions mid-run.
     ctx.enqueue(SystemPromptPart(content='You are now in incident mode: be terse and action-oriented.'))
     return 'incident mode enabled'
