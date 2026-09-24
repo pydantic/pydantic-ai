@@ -1,6 +1,6 @@
 ---
 title: ImageGeneration Capability
-description: "Let an agent decide when to generate an image: the `ImageGeneration` capability prefers the model provider's native image tool and falls back to a dedicated image model."
+description: "Let an agent decide when to generate an image: the ImageGeneration capability prefers the model provider's native image tool and falls back to a dedicated image model."
 ---
 
 # ImageGeneration Capability
