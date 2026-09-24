@@ -117,6 +117,7 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | [Notion](notion.md) | Harness | Search and change Notion workspace content. |
 | [Google Workspace](google-workspace.md) | Harness | Use Gmail, Calendar, Drive, and other Google Workspace tools. |
 | [StackOne](stackone.md) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
+| [Slack](slack.md) | Harness | Give an agent Slack messages, channels, and canvas tools. |
 | [LocalStack](localstack.md) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](macroscope.md) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
 

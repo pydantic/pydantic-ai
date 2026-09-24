@@ -45,6 +45,7 @@ _FACTORIES = (
     ('researcher', 'researcher:Researcher'),
     ('shell', 'shell:Shell'),
     ('skills', 'skills:Skills'),
+    ('slack', 'slack:Slack'),
     ('spend_limits', 'spend:SpendLimits'),
     ('stackone', 'stackone:StackOne'),
     ('step_persistence', 'step_persistence:StepPersistence'),

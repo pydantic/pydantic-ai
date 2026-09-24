@@ -112,6 +112,9 @@ prompt-injection-defender-ml = [
 github = [
     "pydantic-ai-slim[mcp]>=2.44.0",
 ]
+slack = [
+    "pydantic-ai-slim[mcp]>=2.44.0",
+]
 coder = [
     "ripgrep==14.1.0 ; sys_platform != 'android'",
 ]

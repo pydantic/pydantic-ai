@@ -134,6 +134,7 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | [Notion](pydantic_ai_harness/notion/) | Harness | Search and change Notion workspace content. |
 | [Google Workspace](pydantic_ai_harness/google_workspace/) | Harness | Use Gmail, Calendar, Drive, and other Google Workspace tools. |
 | [StackOne](pydantic_ai_harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
+| [Slack](pydantic_ai_harness/slack/) | Harness | Give an agent Slack messages, channels, and canvas tools. |
 | [LocalStack](pydantic_ai_harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](pydantic_ai_harness/macroscope/) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
 
