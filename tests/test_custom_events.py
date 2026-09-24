@@ -360,7 +360,7 @@ def test_duplicate_event_name_rejected():
     with pytest.raises(UserError, match="Duplicate custom event name 'upload_progress'"):
 
         @dataclass(kw_only=True)
-        class _ConflictingEvent(CustomEvent, name='upload_progress'):  # pyright: ignore[reportUnusedClass]
+        class _ConflictingEvent(CustomEvent, name='upload_progress'):
             pass
 
 
@@ -375,7 +375,7 @@ def test_reserved_name_rejected():
     with pytest.raises(UserError, match="Custom event name '__unknown__' is reserved"):
 
         @dataclass(kw_only=True)
-        class ReservedEvent(CustomEvent, name='__unknown__'):  # pyright: ignore[reportUnusedClass]
+        class ReservedEvent(CustomEvent, name='__unknown__'):
             pass
 
 
@@ -384,7 +384,7 @@ def test_envelope_field_shadowing_rejected():
     with pytest.raises(UserError, match='reserved for the event envelope: data'):
 
         @dataclass(kw_only=True)
-        class ShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+        class ShadowingEvent(CustomEvent):
             data: Any = None
 
 
@@ -436,13 +436,13 @@ def test_ui_attribute_shadowing_rejected():
     with pytest.raises(UserError, match='declares a `ui` attribute'):
 
         @dataclass(kw_only=True)
-        class UiShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+        class UiShadowingEvent(CustomEvent):
             ui: str = ''  # pyright: ignore[reportIncompatibleVariableOverride]
 
     with pytest.raises(UserError, match='declares a `ui` attribute'):
 
         @dataclass(kw_only=True)
-        class UiClassVarShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+        class UiClassVarShadowingEvent(CustomEvent):
             ui: ClassVar[bool] = False
 
 
@@ -495,7 +495,7 @@ def test_undecorated_base_with_fields_rejected():
     with pytest.raises(UserError, match='declares fields but is not a dataclass'):
 
         @dataclass(kw_only=True)
-        class LeafEvent(UndecoratedBase):  # pyright: ignore[reportUnusedClass]
+        class LeafEvent(UndecoratedBase):
             done: int = 0
 
 

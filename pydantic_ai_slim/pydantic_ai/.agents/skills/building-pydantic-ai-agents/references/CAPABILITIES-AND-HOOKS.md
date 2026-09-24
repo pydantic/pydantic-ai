@@ -76,7 +76,7 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
 
 @hooks.on.before_tool_execute(tools=['send_email'])
 async def audit_tool(
-    ctx: RunContext[None],
+    ctx: RunContext,
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,

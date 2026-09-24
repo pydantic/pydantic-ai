@@ -239,6 +239,9 @@ dev = [
     "mcp-types>=2.0.0",
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
     "blockbuster>=1.5.26,<1.6",
+    "sqlparse>=0.6.0",
+    "nest-asyncio>=1.6.0",
+    "azure-identity>=1.25.3",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -253,7 +256,7 @@ coverage = [
 lint = [
     "griffecli>=2.1.0,<3",
     "mypy>=1.11.2",
-    "pyright>=1.1.408",
+    "pyright>=1.1.414",
     "ruff>=0.14.14",
 ]
 [tool.hatch.build.targets.wheel]

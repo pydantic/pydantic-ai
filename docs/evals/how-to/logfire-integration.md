@@ -184,10 +184,10 @@ Check:
 
 1. **Token is set**: `echo $LOGFIRE_TOKEN`
 2. **Configuration is correct**:
-   ```python
+   ```python {test="skip"}
    import logfire
 
-   logfire.configure(send_to_logfire='always')  # Force sending
+   logfire.configure(send_to_logfire=True)  # Force sending
    ```
 3. **Network connectivity**: Check firewall settings
 4. **Project exists**: Verify project name in Logfire UI
