@@ -259,6 +259,16 @@ async def test_background_child_holding_a_pipe_returns_after_the_drain_grace(
     await _assert_process_gone(child_pid)
 
 
+async def test_anyio_4_15_wait_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """With the version gate off, `run()` uses anyio's own `wait()` and `aclose()`, whatever anyio is installed.
+
+    No background child here: on anyio before 4.15 that path waits for the pipes to close.
+    """
+    monkeypatch.setattr(local_module, '_PROCESS_WAIT_WAITS_FOR_PIPES', False)
+    result = await LocalWorkspaceBackend(tmp_path).run(['echo', 'done'], timeout=10)
+    assert (result.exit_code, result.stdout) == (0, 'done\n')
+
+
 async def test_timeout_keeps_output_printed_before_the_deadline(tmp_path: Path):
     workspace = LocalWorkspaceBackend(tmp_path)
     with pytest.raises(WorkspaceTimeoutError) as exc_info:
