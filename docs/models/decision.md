@@ -36,7 +36,7 @@ Most agents ask more than one thing. Give the agent an output type and each fiel
 - The class docstring states what the type is for, as a goal: "Triage a support ticket." It is sent as the goal on every question about the type.
 - A field's description is that field's question. Write it with `Field(description=...)`, or, as here, as a docstring under the field: setting `model_config = ConfigDict(use_attribute_docstrings=True)` on the model makes Pydantic read that docstring as the field's description.
 - An `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings], with a docstring under each member, says what each option means. The options of a `Literal`, or of a plain `Enum`, are seen by their names alone.
-- [`BoolCriteria`][pydantic_ai.output.BoolCriteria] says what a yes and a no mean. It is `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime. The field still needs its question: the criteria describe the answers, and the question says what is being judged.
+- A `bool` field's question is usually all it needs. Where the line between yes and no is subtle, as it is for "urgent", [`BoolCriteria`][pydantic_ai.output.BoolCriteria] says what a yes and a no mean. It is `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime.
 
 ```python
 from enum import Enum
@@ -215,7 +215,7 @@ print(result.response.model_name)
 #> claude-opus-5-5
 ```
 
-`Area` is a pick-one whose options are described by their docstrings, `urgent` a yes/no with [`BoolCriteria`][pydantic_ai.output.BoolCriteria] saying what each answer means, `app` a pick-one that can answer "none of these", and `Impact` a [rubric](#what-each-field-type-does): ordered levels, each described. `Reply` asks for a `str`, which no decision model can fill, and that is deliberate: it is the route that needs a language model.
+`Area` is a pick-one whose options are described by their docstrings, `urgent` a yes/no whose subtle boundary [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells out, `app` a pick-one that can answer "none of these", and `Impact` a [rubric](#what-each-field-type-does): ordered levels, each described. `Reply` asks for a `str`, which no decision model can fill, and that is deliberate: it is the route that needs a language model.
 
 ### How it runs
 
@@ -240,11 +240,13 @@ Every input to the agent ends up in one of two places: the state, which is judge
 | the message history | the state's `history`, as user prompts, answers, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
 | a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
 
+A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
+
 **Asked**, as the questions:
 
 | Agent input | Where it ends up |
 |---|---|
-| the agent's `instructions` | the question itself, when the output is a bare `bool`, `Literal` or `float` with no field to describe; otherwise, shared framing on every question |
+| the agent's `instructions` | the question itself, when the output is a bare `bool`, pick-one or `float` with no field to describe; otherwise, shared framing on every question |
 | the output type's docstring | the goal, on every question about it, and its description when it is offered as a [route](#routes-which-thing-to-do) |
 | a field's description — `Field(description=...)`, or the docstring under the field with `use_attribute_docstrings=True`; an `Enum` field's class docstring only when the field has neither | that field's question |
 | a description on an option in the schema, such as an `Enum` member's docstring | that option's meaning |
@@ -262,8 +264,11 @@ In short:
 
 - **The output type's docstring states its purpose, as a goal:** "Triage a support ticket."
 - **Every field carries its question**, as `Field(description=...)` or as a docstring under the field with `model_config = ConfigDict(use_attribute_docstrings=True)`.
-- **A `bool` field with [`BoolCriteria`][pydantic_ai.output.BoolCriteria] still gets a question.** The criteria describe the answers; the question says what is being judged.
-- **Option docstrings and `BoolCriteria` texts are statements** of what that outcome means, not questions: "The customer is losing money or has a deadline today."
+- **A `bool` field needs a question, and that is usually enough.** Add [`BoolCriteria`][pydantic_ai.output.BoolCriteria] when the boundary between yes and no is subtle, or when a [literal reading](typesafe.md#what-jev-answers-badly) of the question would go wrong.
+- **Option docstrings and `BoolCriteria` texts are statements** of what that outcome means, not questions: "The customer is losing money or has a deadline today." They must agree with the question: a `true` that describes a no confuses the model.
+- **A `list` field is asked once per option**, so word its question as a yes or no about one option: "Does this ticket raise this topic?", not "Which topics does this ticket raise?".
+- **A rubric level's description stands alone.** Its member name is not sent, so describe the situation the level covers, not a degree: "Something is broken, and there is a way around it", not "Moderate".
+- **Give every outcome a route.** An agent with several output types needs [one for everything the text can call for](#give-every-outcome-a-route), including a way out to a language model.
 - **One question per field, in one place.** An `Enum` class docstring is only sent when the field has no description, so give the field its question and leave the class docstring off.
 - **`instructions` are framing shared by every question**, and the question itself only for a bare output with no field to describe.
 
@@ -314,15 +319,17 @@ Each field type is asked as one kind of question, and comes back as one kind of 
 | any pick-one in a union with `None` | pick one, or "None of these." | the option, or the field's default, or `None` | not for a rubric |
 | `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | the probability, unrounded, in the field's own units | no confidence entry, since the probability is the answer |
 | an `IntEnum` of `0, 1, 2, …` with a description per level, from `UseEnumMemberDocstrings` | score against a rubric | the nearest level | at most the backend's `max_score_levels`; the unrounded position is in `provider_details['scores']` |
-| `list` of a `Literal` or `Enum` of strings | one yes or no per option | the options answered yes | its confidence is the least sure option's |
+| `list` of a `Literal` or `Enum` of strings | one yes or no per option | the options answered yes | word its question about one option; its confidence is the least sure option's |
 | `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer | the same question as the `list` |
 | a nested model of these | its fields, asked as `outer.inner` | the model | the parent field's description is not sent |
 
 The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as the model gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones answered yes.
 
+Each of those yes/no questions carries the field's description as its question, with one option and its description beside it, so write the description as a yes or no about a single option: `topics: list[Topic]` described as "Does this ticket raise this topic?" reads right when it is asked about each topic in turn, where "Which topics does this ticket raise?" asks for a list the question is not in a position to give.
+
 An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, so that "nothing fits" is an answer the model can give rather than something read off low confidence, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, and a field without one gets `None`. The same goes for a nested model with a default when nothing under it was answered: it gets its own default, not one built from the defaults of the fields inside it. A `default_factory` is not in the schema, which is all the answers are read against, so it counts as no default. Any pick-one, of strings or whole numbers, can be optional; a rubric cannot, since its levels are ordered and `None` is not one of them. To say what picking nothing means on this field rather than take the stock phrase, describe the `None` itself: `Area | Annotated[None, Field(description='Nothing here needs routing.')]` makes that description the option's meaning.
 
-A yes/no is a `bool`, which says what is being asked but nothing about what a yes or a no would mean. That is the one place the model is asked to judge without being told what it is judging against: a pick-one carries a description per option and a rubric one per level, while a yes/no has only the question unless the two answers are spelled out. [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells them out, as in the [`Ticket` above](#asking-with-an-output-type). The two descriptions become the question's `criteria`, which is what the model weighs the text against, so a field that has them is answering a sharper question than the same field without.
+A yes/no is a `bool`, and its question is usually enough on its own. Where the line between yes and no is subtle, or where a [literal reading](typesafe.md#what-jev-answers-badly) of the question would go wrong, [`BoolCriteria`][pydantic_ai.output.BoolCriteria] says what each answer means, as it does for "urgent" in the [`Ticket` above](#asking-with-an-output-type). The two descriptions become the question's `criteria`, which the model weighs the text against, so they must agree with the question: each says what a yes or a no to *that* question looks like. TypeSafe [suggest](https://docs.typesafe.ai/primitives/noul) asking with and without criteria and keeping whichever answers better on your own examples.
 
 Where the answer should be a named thing rather than `True` or `False` — because it is stored, or branched on by name — an `Enum` of `True` and `False` mixing in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] asks exactly the same question, and the field's value is the member the answer picks:
 
@@ -358,7 +365,7 @@ A `Literal[True, False]` has nowhere to write the two meanings at all, and asks 
 
 A rubric is a set of ordered levels rather than a set of alternatives: the whole numbers from 0 upwards, at least two of them and no more than the backend's [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels], and every level needs a description in the schema saying what it means. The ordering is the numbers' own, so the order the levels are declared in does not matter. The model answers with a position along the rubric, which lands between levels, and the field gets the nearest one — a half rounds up. The unrounded position is in `provider_details['scores']`.
 
-A level's description reaches the schema the [same way an option's meaning does](#where-the-wording-comes-from), which makes an `IntEnum` mixing in `UseEnumMemberDocstrings` the way to declare one.
+A level's description reaches the schema the [same way an option's meaning does](#where-the-wording-comes-from), which makes an `IntEnum` mixing in `UseEnumMemberDocstrings` the way to declare one. The descriptions are all the model sees of the levels: the member names, `opaque` and `actionable` below, are not sent. So each description has to stand alone, and should, as TypeSafe [put it](https://docs.typesafe.ai/primitives/score), "describe situations, not degrees": "A reader who did not already know could act on it" gives the model something to match the text against, where "Very clear" does not.
 
 Any other whole numbers are labels rather than levels, and are a pick-one like strings: `Literal[200, 404, 500]`, an `IntEnum` of codes, or `Literal['a', 1]` mixing the two. That includes numbers from 0 upwards that miss being a rubric only because a level says nothing about itself — a bare `Literal[0, 1, 2]`, a plain `IntEnum` — or because there are more of them than the backend scores against. A pick-one weighs its options without their order, so describe every level of a rubric you mean as one. The model picks a number by its digits, and the field gets back the option itself, number and all. A number whose digits are already a string option is offered as `1 (number)`, so `Literal['1', 1]` is still two options.
 
@@ -575,6 +582,14 @@ print(result.output)
 
 To say what declining means on your agent rather than take the stock phrase, name the route yourself with [`ToolOutput`][pydantic_ai.output.ToolOutput]: `ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')` puts that description on the route instead.
 
+#### Give every outcome a route
+
+The route question is answered with one of the routes on offer, so the output types an agent offers should cover everything the text can call for. That is output type design for any model, not something particular to decision models: a language model offered only `Refund` and `Feedback` has no good answer to "What day is my order arriving?" either, and has to force it into one of the two.
+
+It matters most after a tool returns. A tool whose result is already in the turn is [not offered again](#tools-pick-then-fill), so the next step picks one of the output types, whether or not any of them fits. Give that agent an order lookup tool, and "What day is my order arriving?" looks the order up and then comes back as a refund or as feedback — `Feedback`, most likely — with the answer the customer wanted nowhere in it.
+
+The way out is a route that hands the step on: an output type like the [support desk](#a-support-desk-end-to-end)'s `Reply`, with a `str` field no decision model can fill. Picking it [escalates](#escalating-to-a-language-model) the step, so behind a `FallbackModel` a language model answers whatever the other routes do not cover, with the tool's result in view.
+
 ## Escalating to a language model
 
 A route the model cannot fill is still offered, and picking it hands the step on: a tool with any unsupported argument, such as a plain `str` or an unbounded number, or a union member with such a field, like the support desk's `Reply`. The pick becomes a [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] rather than a response. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind the decision model hands that model the whole step, with the same tools and output types, and the language model decides the step again for itself. The rest of the requests never leave the decision model. Without a model behind it, the proposal is the error, and it says which route the model wanted and how sure it was. The request that proposed the call is not on the fallback response's usage.
@@ -600,7 +615,7 @@ The same `FallbackModel` can also take the steps the decision model answered but
 
 ## Confidence and thresholds
 
-Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field, so one threshold reads the same way across an output type. It is a margin, not a probability that the answer is right. For a yes/no it is how far the probability of yes sits from the threshold that decided it, scaled to run from 0 at the threshold to 1 at certainty — at the default of 0.5 that is the distance from the coin flip, doubled, so a `False` answered from a probability of 0.01 reports 0.98 and one answered from 0.45 reports 0.10. The bar it measures from is the one [actually used](#what-true-has-to-mean), so a yes at 0.8 under a threshold of 0.75 reports 0.2 rather than the 0.6 it would report against a coin flip, and a [fallback on low confidence](#falling-back-on-low-confidence) keeps meaning what it meant. For a pick-one or a rubric it is the confidence the backend reports, from how its probabilities are spread; for a list of options it is the least sure option's.
+Confidence in each answer is on the response, in `provider_details['confidence']`: 0 to 1, one number per field. It is a margin, not a probability that the answer is right. For a yes/no it is how far the probability of yes sits from the threshold that decided it, scaled to run from 0 at the threshold to 1 at certainty — at the default of 0.5 that is the distance from the coin flip, doubled, so a `False` answered from a probability of 0.01 reports 0.98 and one answered from 0.45 reports 0.10. The bar it measures from is the one [actually used](#what-true-has-to-mean), so a yes at 0.8 under a threshold of 0.75 reports 0.2 rather than the 0.6 it would report against a coin flip, and a [fallback on low confidence](#falling-back-on-low-confidence) keeps meaning what it meant. For a pick-one or a rubric it is the confidence the backend reports, from how its probabilities are spread; for a list of options it is the least sure option's. The kinds of question arrive at the number differently, so a bar tuned on a yes/no does not carry over to a pick-one — TypeSafe [say as much](https://docs.typesafe.ai/model-jaggedness/jev-1.13#common-sense-structural-invariants) of Jev — and neither does a bar tuned on one field carry over to another: [set one per field](#falling-back-on-low-confidence).
 
 `provider_details['probabilities']` holds the whole distribution of each pick-one and rubric field — a pick-one's options keyed by the label the model picked them by, and a rubric's levels by their number as a string — and each option's probability for a list. `provider_details['scores']` holds each rubric field's unrounded position along its levels.
 
@@ -663,27 +678,53 @@ The threshold applies to every `bool` field and to each option of a fanned-out `
 
 [`FallbackModel`](overview.md#fallback-model) falls back on API errors by default, and its `fallback_on` also takes a handler that looks at the response. A decision model's confidence is on the response, so a language model can take over the requests the decision model was unsure about — the cheap model answers what it can, the expensive one only the rest. A `float` field has no confidence entry, for the reason above, so a handler like this one does not see its uncertainty and an output of nothing but `float`s never falls back:
 
-```python
+```python {title="fall_back_when_unsure.py"}
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
 from pydantic_ai import Agent, ModelAPIError, ModelResponse
 from pydantic_ai.models.fallback import FallbackModel
 
 
+class Screening(BaseModel):
+    """Screen a request to a coding agent."""
+
+    harmful: bool = Field(description='Is this request harmful?')
+    target: Literal['code', 'infrastructure', 'data'] = Field(
+        description='What does the request act on?'
+    )
+
+
+# How sure each field has to be, set by what a wrong answer costs.
+BARS = {'harmful': 0.8, 'target': 0.6}
+
+
 def unsure(response: ModelResponse) -> bool:
     confidence = (response.provider_details or {}).get('confidence', {})
-    return any(value < 0.8 for value in confidence.values())
+    return any(value < BARS[field] for field, value in confidence.items())
 
 
 model = FallbackModel(
     'typesafe:jev-latest', 'anthropic:claude-opus-5-5', fallback_on=[ModelAPIError, unsure]
 )
-agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
-result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
+agent = Agent(model, output_type=Screening)
+
+result = agent.run_sync('Rename the helper functions in utils.py to snake_case.')
 print(result.output)
-#> True
+#> harmful=False target='code'
 assert result.response.provider_details is not None
 print(result.response.provider_details['confidence'])
-#> {'response': 0.84}
+#> {'harmful': 0.98, 'target': 1.0}
+
+result = agent.run_sync("Drop the staging database and restore it from last night's backup.")
+print(result.output)
+#> harmful=False target='data'
+print(result.response.model_name)
+#> claude-opus-5-5
 ```
+
+Each field has its own bar. A wrong `harmful` costs more than a wrong `target`, so it has to be surer, and the two are different kinds of question whose confidence is [not on the same scale](#confidence-and-thresholds) anyway. Jev was sure of both answers about the rename, so they stand. About the database it answered `data` with a confidence of 0.52 and `harmful` with 0.28, both under their bars, so the language model took the request. Tune each bar on labelled examples of that field.
 
 The handler runs on every model in the chain, and a language model reports no `confidence`, so its answers pass through. A response handler on its own replaces the default exception fallback, which is why `ModelAPIError` is listed alongside it.
 
@@ -732,22 +773,28 @@ Each of these is a [capability](../capabilities/overview.md) hook, and none of t
 The simplest shape is one run. An [output function](../output.md#output-functions) makes the decision a signature rather than a string to map afterwards — and because the function *runs* on the model's pick, it can do the work it routed to, so the router's result is the answer:
 
 ```python {title="route_to_a_model.py"}
-from typing import Literal
+from enum import Enum
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, UseEnumMemberDocstrings
 
 assistant = Agent(instructions='You are a helpful engineering assistant.')
 
 
-async def route(ctx: RunContext, tier: Literal['fast', 'capable']) -> str:
+class Tier(UseEnumMemberDocstrings, str, Enum):
+    fast = 'fast'
+    """A lookup, an extraction, or a change confined to one place."""
+
+    capable = 'capable'
+    """Architecture, security, or a decision that is expensive to get wrong."""
+
+
+async def route(ctx: RunContext, tier: Tier) -> str:
     """Answer the question on a model suited to it.
 
     Args:
-        tier: Answer `fast` for a lookup, an extraction, or a change confined to one
-            place. Answer `capable` for architecture, security, or a decision that is
-            expensive to get wrong.
+        tier: Which model should answer this?
     """
-    model = 'openai:gpt-5.6-sol' if tier == 'capable' else 'openai:gpt-5.6-luna'
+    model = 'openai:gpt-5.6-sol' if tier is Tier.capable else 'openai:gpt-5.6-luna'
     return (await assistant.run(ctx.prompt, model=model)).output
 
 
@@ -762,30 +809,35 @@ async def main():
 
 The decision model fills `tier` and the framework calls `route`, which runs the assistant and returns its answer, so one `router.run(...)` is the whole thing. The question itself is not an argument: it is already the text being judged, and [`ctx.prompt`][pydantic_ai.tools.RunContext.prompt] hands the same text to the function, so `tier` is the only question asked and the routing costs one request and no extra plumbing. A `str` parameter would not work here in any case — it is not [a type a decision model can fill](#supported-field-types), and an agent asking for one is refused before a request is sent.
 
-The argument's `Literal` becomes the pick-one question and its `Args:` entry becomes the wording. The model sees that wording as the question and the function's summary line as what the run is for — but *not* a meaning per option, which is what an [`Enum` with described members](#where-the-wording-comes-from) is for. The pick's confidence is in `provider_details['confidence']`, so an unsure route can go to the capable model rather than the cheap one, which is the conservative direction when a wrong route is expensive.
+The argument's `Enum` becomes the pick-one question: its `Args:` entry is the question, the function's summary line what the run is for, and each member's docstring what that option means — the [same split](#where-the-wording-comes-from) as an output field's, with the meanings on the options rather than folded into the question. The pick's confidence is in `provider_details['confidence']`, so an unsure route can go to the capable model rather than the cheap one, which is the conservative direction when a wrong route is expensive.
 
 ### Decide again on every step
 
 A run is not one decision. [`SelectModel`][pydantic_ai.capabilities.SelectModel] is evaluated before each step, so the same question can be asked of the conversation as it stands rather than of the first prompt alone — a run that starts simple and turns hard moves up when it turns:
 
 ```python {title="select_the_model_per_step.py"}
-from typing import Literal
+from enum import Enum
 
-from pydantic_ai import Agent, ModelSelectionContext
+from pydantic_ai import Agent, ModelSelectionContext, UseEnumMemberDocstrings
 from pydantic_ai.capabilities import SelectModel
 from pydantic_ai.models import Model, infer_model
 
 fast = infer_model('openai:gpt-5.6-luna')
 capable = infer_model('openai:gpt-5.6-sol')
 
+
+class Tier(UseEnumMemberDocstrings, str, Enum):
+    fast = 'fast'
+    """A lookup, or a change confined to one place."""
+
+    capable = 'capable'
+    """Architecture, security, or a decision that is expensive to get wrong."""
+
+
 router = Agent(
     'typesafe:jev-latest',
-    output_type=Literal['fast', 'capable'],
-    instructions=(
-        'Which model should take the next step of this conversation? Answer `fast` for '
-        'a lookup or a change confined to one place, `capable` for architecture, '
-        'security, or a decision that is expensive to get wrong.'
-    ),
+    output_type=Tier,
+    instructions='Which model should take the next step of this conversation?',
 )
 
 
@@ -795,7 +847,7 @@ async def select_model(ctx: ModelSelectionContext) -> Model:
         # yet on the first step. A run given `message_history` does have something to read.
         return fast
     picked = await router.run(message_history=ctx.messages)
-    return capable if picked.output == 'capable' else fast
+    return capable if picked.output is Tier.capable else fast
 
 
 agent = Agent(capabilities=[SelectModel(select_model)])
@@ -827,6 +879,8 @@ A router that reads the history has the same problem every agent does: the histo
 A [hook](../hooks.md) on tool execution sees every call the model makes, with its arguments already validated, and can stop one before its body runs. That is a decision per call, which is the shape a decision model answers:
 
 ```python {title="judge_a_tool_call.py"}
+import json
+
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, RunContext, SkipToolExecution, ToolDefinition
@@ -852,7 +906,7 @@ async def judge_tool_call(
     tool_def: ToolDefinition,
     args: dict[str, object],
 ) -> dict[str, object]:
-    verdict = await judge.run(f'{tool_def.name}: {args}')
+    verdict = await judge.run(json.dumps({'tool': tool_def.name, 'args': args}))
     if verdict.output.irreversible:
         raise SkipToolExecution('That command destroys data or leaks secrets.')
     return args
@@ -890,7 +944,7 @@ async def main():
 
 The alternative is [deferred tools](../deferred-tools.md): mark a tool `requires_approval=True` and resolve the approval request with [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]. Use that when the decision has to leave the process — a person approving in another system, a queue, a run that is resumed later. Use the hook when the decision is made in-process, as it is here. Both see validated arguments; only the deferral can outlive the run.
 
-The arguments go to the decision model's backend before the verdict comes back, so a call is disclosed to a third party even when it is then refused. Send the judge what it needs to decide — the tool name and the fields that bear on safety — rather than the whole argument dict, when those arguments can carry credentials or customer data.
+The call goes to the judge as JSON, so the text it judges reads as structured data, with the tool and its arguments named, rather than as a Python repr. Those arguments go to the decision model's backend before the verdict comes back, so a call is disclosed to a third party even when it is then refused. Send the judge what it needs to decide — the tool name and the fields that bear on safety — rather than the whole argument dict, when those arguments can carry credentials or customer data.
 
 This judges the call the model proposed, not the model's intent, so it is a check on what is about to happen rather than on what was said. Keep a human in the loop for the calls that matter most: a judgement this cheap is one you can afford to run on everything, which is exactly why it should not be the only thing standing between an agent and an irreversible action. For a guard the two mistakes rarely cost the same — a missed irreversible command costs more than a second look at a safe one — so set [what `True` has to mean](#what-true-has-to-mean) accordingly.
 

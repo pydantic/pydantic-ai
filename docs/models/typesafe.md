@@ -124,16 +124,27 @@ What one request can carry is limited, and `TypeSafeModel` keeps to the first tw
 
 ## What Jev answers badly
 
-Everything below returns an answer rather than an error, which is what makes it worth knowing. TypeSafe publish these per model version, on their [jaggedness page for `jev-1.13`](https://docs.typesafe.ai/model-jaggedness/jev-1.13), and revise them as models change. TypeSafe's own guide also calls asking [one thing per field](decision.md#ask-one-thing-per-field) "probably the most important concept".
+Everything below returns an answer rather than an error, which is what makes it worth knowing.
 
+### Published by TypeSafe
+
+TypeSafe publish these per model version, on their [jaggedness page for `jev-1.13`](https://docs.typesafe.ai/model-jaggedness/jev-1.13), and revise them as models change. The page also warns against hiding several judgements in one question, which TypeSafe's guide calls "probably the most important concept": see [ask one thing per field](decision.md#ask-one-thing-per-field).
+
+- **Literal reading.** Jev "answers the question you wrote, not the one you meant": scoping words, negations and implied conditions are read at face value. State the exact condition in the question, and put boundary cases in a `bool` field's [criteria](decision.md#what-each-field-type-does) or in the descriptions of a pick-one's options.
 - **Arithmetic, counting and dates.** Jev is not a calculator, does not count reliably, and reads dates as text rather than as ordered quantities. Compute these in Python and ask Jev about the result.
-- **Several judgements in one question.** See [ask one thing per field](decision.md#ask-one-thing-per-field).
-- **Indirection.** A question about a property of a property, or one needing several hops, costs accuracy.
+- **Indirection.** A question about a property of a property, or one needing several hops, costs accuracy. Ask as directly as you can, and [name the part of the state](decision.md#where-the-wording-comes-from) the question is about.
 - **Context it does not need.** Accuracy falls as the state grows with detail unrelated to the question, so filter before you send rather than after, and compact a long conversation before judging it.
+- **Adversarial text.** Jev treats the state as data, not as hostile: text written to steer the answer — an injected instruction, a misleading framing, an argument for its own classification — can move it. TypeSafe say they expect to improve this. A guard built on Jev belongs alongside deterministic checks, not instead of them, and is worth testing against your own adversarial inputs.
+- **Contradictory question and criteria.** Where a field's question and its criteria ask for different things, such as a [`BoolCriteria`][pydantic_ai.output.BoolCriteria] whose `true` describes a no, Jev answers worse. Write the criteria as an extension of the question.
+- **Structural invariants.** A question and its negation need not add up to one, and the same question asked as a yes/no and as a pick-one gives numbers that do not compare. Ask each decision one way, enforce identities in code, and [tune each bar](decision.md#confidence-and-thresholds) on the kind of question it gates.
+- **Generation.** Jev does not write text, so a route with a `str` field [escalates to a language model](decision.md#escalating-to-a-language-model).
+
+### Observed in Pydantic AI
+
+These come from running Jev behind Pydantic AI, not from TypeSafe.
+
 - **A tool call that repeats.** With a tool's call and result in the history, the text usually still calls for it, so Jev picks it again. A tool is therefore not offered again once its result is in the turn, and comes back on offer at the next prompt; unsupported arguments are proposed to the model behind Jev, which decides. Put a `UsageLimits(request_limit=...)` on a Jev agent with tools all the same, as on any agent that loops.
 - **Deciding what it cannot see.** A tool that needs an argument the text does not state — a refund amount, a date — is one Jev will propose and a language model may decline to call; the two judge the same option differently, and language models disagree with each other on such picks about as often. Compare Jev with the model behind it on your own tickets before trusting either's hand-off rate.
-- **Adversarial text.** Jev treats the state as data, not as hostile: text written to steer the answer — an injected instruction, a misleading framing, an argument for its own classification — can move it. TypeSafe say they expect to improve this. A guard built on Jev belongs alongside deterministic checks, not instead of them, and is worth testing against your own adversarial inputs.
-- **Option order.** The order of a `Literal`'s options or an `Enum`'s members is part of what Jev sees, and reordering them can move the answer. If a classification matters, test it with the options in more than one order.
 - **A question about the question.** Asked whether it *can* answer, rather than what the text calls for, Jev hands off nearly everything, which is why the output type is offered as an action, [described by its docstring](decision.md#routes-which-thing-to-do).
 
 !!! note "Measure on your own data"

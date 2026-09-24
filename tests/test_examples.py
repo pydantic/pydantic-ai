@@ -52,7 +52,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
 from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
@@ -705,7 +705,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='escalate_to_human', args={}
     ),
     'Clear out the build directory.': ToolCallPart(tool_name='run_shell', args={'command': 'rm -rf ./build'}),
-    "run_shell: {'command': 'rm -rf ./build'}": ToolCallPart(tool_name='final_result', args={'irreversible': True}),
+    "Drop the staging database and restore it from last night's backup.": ToolCallPart(
+        tool_name='final_result', args={'harmful': False, 'target': 'data'}
+    ),
+    '{"tool": "run_shell", "args": {"command": "rm -rf ./build"}}': ToolCallPart(
+        tool_name='final_result', args={'irreversible': True}
+    ),
     'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(
         tool_name='final_result', args={'response': 'reject_all'}
     ),
@@ -1008,6 +1013,12 @@ async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) ->
         # docs/models/decision.md: with the status in view, the support desk picks `Reply`, whose `str` field a
         # decision model cannot fill, so the language model behind it takes the step
         raise ToolCallProposed('jev-latest', _output_tool_named(info, 'Reply'), 0.81)
+    if isinstance(last, UserPromptPart) and last.content == (
+        "Drop the staging database and restore it from last night's backup."
+    ):
+        # docs/models/decision.md: Jev is unsure of both fields, so the language model behind it takes the request.
+        # The mocked `FallbackModel` does not carry the example's `unsure` handler, so an API error stands in for it.
+        raise ModelAPIError('jev-latest', 'unsure')
     return await model_logic(messages, info)
 
 
@@ -1295,6 +1306,16 @@ async def model_logic(  # noqa: C901
                         'area': {'account': 0.0, 'bug': 1.0, 'billing': 0.0},
                         'app': {'android': 0.86, 'web': 0.0, 'ios': 0.0, 'none': 0.14},
                     },
+                    'scores': {},
+                },
+            )
+        elif m.content == 'Rename the helper functions in utils.py to snake_case.':
+            # docs/models/decision.md: Jev is sure of both fields, so its answers stand
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'harmful': False, 'target': 'code'})],
+                provider_details={
+                    'confidence': {'harmful': 0.98, 'target': 1.0},
+                    'probabilities': {'target': {'code': 1.0, 'infrastructure': 0.0, 'data': 0.0}},
                     'scores': {},
                 },
             )
