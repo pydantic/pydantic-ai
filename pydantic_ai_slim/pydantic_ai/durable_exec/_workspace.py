@@ -229,6 +229,18 @@ class ExistsArguments:
 
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
+class RealpathArguments:
+    @property
+    def method(self) -> Literal['realpath']:
+        return 'realpath'
+
+    path: str
+
+    async def call(self, workspace: Workspace) -> str:
+        return await workspace.realpath(self.path)
+
+
+@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
 class ReadTextArguments:
     @property
     def method(self) -> Literal['read_text']:
@@ -433,6 +445,7 @@ WORKSPACE_OPERATIONS: tuple[WorkspaceOperationSpec, ...] = (
     WorkspaceOperationSpec(WorkspaceOperationId('make_dir'), MakeDirArguments, WorkspaceOperationResult[None]),
     WorkspaceOperationSpec(WorkspaceOperationId('remove'), RemoveArguments, WorkspaceOperationResult[None]),
     WorkspaceOperationSpec(WorkspaceOperationId('exists'), ExistsArguments, WorkspaceOperationResult[bool]),
+    WorkspaceOperationSpec(WorkspaceOperationId('realpath'), RealpathArguments, WorkspaceOperationResult[str]),
     WorkspaceOperationSpec(WorkspaceOperationId('read_text'), ReadTextArguments, WorkspaceOperationResult[str]),
     WorkspaceOperationSpec(WorkspaceOperationId('write_text'), WriteTextArguments, WorkspaceOperationResult[None]),
     WorkspaceOperationSpec(WorkspaceOperationId('read_file'), ReadFileArguments, WorkspaceOperationResult[FileWindow]),
@@ -561,6 +574,11 @@ class DurableWorkspace(WrapperWorkspace):
         if not self._in_container():
             return await self.wrapped.exists(path)
         return await self._dispatch(ExistsArguments(path=path))
+
+    async def realpath(self, path: str) -> str:
+        if not self._in_container():
+            return await self.wrapped.realpath(path)
+        return await self._dispatch(RealpathArguments(path=path))
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         if not self._in_container():

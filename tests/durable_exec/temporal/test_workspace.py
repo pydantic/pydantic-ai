@@ -826,6 +826,7 @@ def test_workspace_activities_attempt_mutations_once_by_default() -> None:
             'make_dir': 1,
             'remove': 1,
             'exists': 0,
+            'realpath': 0,
             'read_text': 0,
             'write_text': 1,
             'read_file': 0,

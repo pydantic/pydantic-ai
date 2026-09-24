@@ -5,7 +5,9 @@ or a virtual filesystem — that an agent can work in. Backends implement the sm
 [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] identity and working-directory
 protocol, plus [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both. This lets a backend
-expose exactly what its platform supports, including files without a shell.
+expose exactly what its platform supports, including files without a shell. A backend that can
+resolve symlinks natively also implements the optional
+[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath].
 Tools and capabilities use the
 read-only [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace] object; identity and
 lifecycle are covered in the [workspace documentation](../workspace.md).
@@ -76,6 +78,7 @@ __all__ = (
     'WorkspaceUnavailableError',
     'SupportsCommands',
     'SupportsFilesystem',
+    'SupportsRealpath',
 )
 
 WorkspaceCommand: TypeAlias = str | Sequence[str]
@@ -298,6 +301,25 @@ class SupportsFilesystem(Protocol):
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
+        ...
+
+
+@runtime_checkable
+class SupportsRealpath(Protocol):
+    """Optional native symlink resolution implemented by a workspace backend.
+
+    [`Workspace.realpath`][pydantic_ai.workspaces.Workspace.realpath] prefers this method and
+    derives the same answer through [`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run]
+    when it is absent.
+    """
+
+    async def realpath(self, path: str) -> str:
+        """Resolve every symlink in an absolute POSIX path.
+
+        Returns the path with every symlink in its existing components resolved and `.`/`..`
+        segments normalized. Components that don't exist are kept as written, like
+        `os.path.realpath(path, strict=False)`.
+        """
         ...
 
 

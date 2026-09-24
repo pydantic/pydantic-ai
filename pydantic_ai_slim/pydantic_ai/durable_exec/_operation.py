@@ -203,6 +203,7 @@ WorkspaceMethod: TypeAlias = Literal[
     'make_dir',
     'remove',
     'exists',
+    'realpath',
     'read_text',
     'write_text',
     'read_file',

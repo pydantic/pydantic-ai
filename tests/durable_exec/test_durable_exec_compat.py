@@ -134,6 +134,7 @@ WORKSPACE_METHODS: tuple[WorkspaceMethod | Literal['ensure'], ...] = (
     'make_dir',
     'remove',
     'exists',
+    'realpath',
     'read_text',
     'write_text',
     'read_file',

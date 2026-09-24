@@ -560,6 +560,11 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         files = await self._files()
         return path in files or path in self._directories()
 
+    async def realpath(self, path: str) -> str:
+        # The environment has no symlinks, so resolving a path only normalizes it.
+        await self._files()
+        return posixpath.normpath(path)
+
 
 class ProviderWorkspaces(AbstractCapability[Any]):
     """Supplies `InMemoryProvider` environments: a fresh one without a ref, the named one with."""

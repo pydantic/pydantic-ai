@@ -25,6 +25,7 @@ from .protocol import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsRealpath,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -155,6 +156,11 @@ class _ShellFilesystem(SupportsFilesystem):
     This is the portability floor for command-capable workspaces. Backends should implement
     `SupportsFilesystem` when their provider has a native API: native calls avoid the shell's
     utility assumptions and the base64 transfer overhead used here to preserve arbitrary bytes.
+
+    It needs a POSIX `sh` with `test` and `printf`, plus `base64`, `cp`, `mv`, `rm`, `mkdir`,
+    `find` and `wc`, and `readlink -f` for `realpath`; `Workspace.read_file` also uses `sed` and
+    `head` for bounded reads. A path under a directory the command cannot search reads as missing:
+    `test -e` cannot tell a permission error from a missing path.
     """
 
     def __init__(self, backend: SupportsCommands):
@@ -286,6 +292,20 @@ class _ShellFilesystem(SupportsFilesystem):
     async def exists(self, path: str) -> bool:
         result = await self._backend.run(f'test -e {shlex.quote(path)}', shell=True)
         return result.exit_code == 0
+
+    async def realpath(self, path: str) -> str:
+        # One round trip: strip missing trailing components until an existing path (or a dangling
+        # symlink, which `readlink -f` still follows) remains, resolve that, and re-append the tail.
+        result = await self._backend.run(
+            f'path={shlex.quote(path)}; tail=; '
+            'while ! test -e "$path" && ! test -L "$path"; do '
+            'tail="/${path##*/}$tail"; path="${path%/*}"; path="${path:-/}"; done; '
+            'resolved=$(readlink -f "$path") && printf \'%s%s\' "${resolved%/}" "$tail"',
+            shell=True,
+        )
+        await self._raise_for_error(result, path)
+        # The missing tail is kept as written, so its `.` and `..` segments still need normalizing.
+        return posixpath.normpath(result.stdout or '/')
 
     async def _raise_for_error(self, result: WorkspaceResult, path: str, *, missing: bool = False) -> None:
         if result.exit_code == 0:
@@ -441,6 +461,29 @@ class Workspace(WorkspaceBackend):
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
         return await self._filesystem.exists(await self.resolve(path))
+
+    async def realpath(self, path: str) -> str:
+        """Resolve every symlink in `path`, the way the environment itself would.
+
+        A relative `path` is joined onto the [`working_dir`][pydantic_ai.workspaces.Workspace.working_dir].
+        Symlinks in the existing components are resolved and `.`/`..` segments normalized;
+        components that don't exist are kept as written, like `os.path.realpath(path, strict=False)`.
+        Unlike [`resolve`][pydantic_ai.workspaces.Workspace.resolve], which is textual, this
+        answers where a path actually leads.
+
+        Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] when it
+        implements it, and `readlink -f` in the environment's shell otherwise. A filesystem-only
+        backend has no symlinks to resolve, so its paths are only normalized.
+        """
+        if not posixpath.isabs(path):
+            # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
+            path = posixpath.join(await self.working_dir(), path)
+        backend = self._backend
+        if isinstance(backend, SupportsRealpath):
+            return await backend.realpath(path)
+        if isinstance(backend, SupportsCommands):
+            return await _ShellFilesystem(backend).realpath(path)
+        return posixpath.normpath(path)
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read text from `path`, resolving relative paths through the backend first.

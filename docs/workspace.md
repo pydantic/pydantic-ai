@@ -368,6 +368,7 @@ neither protocol. Reattachment rules skip until their fixtures are provided.
 - `test_filesystem_missing_paths_raise_file_not_found`: Missing paths raise `FileNotFoundError` from `read_bytes`, `stat`, `list_dir`, and `remove`.
 - `test_filesystem_reading_directory_raises_is_a_directory`: Reading a directory raises `IsADirectoryError`.
 - `test_filesystem_remove_file_and_tree`: `remove` deletes a file or a directory tree.
+- `test_realpath_resolves_symlinks`: `Workspace.realpath` follows a symlink the command created, and keeps a missing tail under a symlinked directory as written.
 - `test_ref_is_none_until_the_environment_exists_then_stable`: A lazily created environment gets a stable, non-`None` ref on first use.
 - `test_reattach_by_ref_sees_the_same_files`: A second backend attached by ref sees the same files.
 - `test_reattach_after_destroy_raises_unavailable`: A ref to a destroyed environment raises `WorkspaceUnavailableError` on use.

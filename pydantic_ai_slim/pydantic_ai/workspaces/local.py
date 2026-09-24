@@ -28,6 +28,7 @@ from .protocol import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsRealpath,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -86,7 +87,7 @@ async def _shielded(awaitable: Awaitable[T]) -> T:
     return (await gather(run()))[0]
 
 
-class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
     """Run commands as subprocesses on this machine and use its filesystem.
 
     This isolates nothing and is not a jail. `working_dir` is only where commands start and what
@@ -228,6 +229,9 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     async def exists(self, path: str) -> bool:
         return await run_in_executor(self._path(path).exists)
+
+    async def realpath(self, path: str) -> str:
+        return await run_in_executor(os.path.realpath, self._path(path))
 
     async def run(
         self,

@@ -6,6 +6,7 @@ from .protocol import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    SupportsRealpath,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -39,5 +40,6 @@ __all__ = (
     'WorkspaceUnavailableError',
     'SupportsCommands',
     'SupportsFilesystem',
+    'SupportsRealpath',
     'UnavailableWorkspace',
 )

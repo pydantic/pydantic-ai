@@ -517,6 +517,7 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
     assert [entry.name for entry in await workspace.list_dir('.')] == ['b.bin', 'sub']
     assert (await workspace.read_file('sub/a.txt')).lines == ('alpha',)
     assert await workspace.exists('b.bin') is True
+    assert await workspace.realpath('sub/../b.bin') == '/remote/b.bin'
     await workspace.remove('b.bin')
     assert await workspace.exists('b.bin') is False
     with pytest.raises(FileNotFoundError):
@@ -538,6 +539,7 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
             'list_dir',
             'read_file',
             'exists',
+            'realpath',
             'remove',
             'exists',
             'remove',
@@ -672,6 +674,7 @@ def test_journal_names_with_a_workspace_supplier() -> None:
             'compat__workspace__make_dir',
             'compat__workspace__remove',
             'compat__workspace__exists',
+            'compat__workspace__realpath',
             'compat__workspace__read_text',
             'compat__workspace__write_text',
             'compat__workspace__read_file',

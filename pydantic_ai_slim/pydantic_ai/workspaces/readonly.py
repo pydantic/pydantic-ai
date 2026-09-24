@@ -29,7 +29,7 @@ _READ_ONLY_REASON = (
 class ReadOnlyWorkspace(WrapperWorkspace):
     """A [`Workspace`][pydantic_ai.workspaces.Workspace] facade that forwards reads and refuses mutations.
 
-    Reads (`working_dir`, `read_bytes`, `stat`, `list_dir`, `exists`) forward to the wrapped
+    Reads (`working_dir`, `read_bytes`, `stat`, `list_dir`, `exists`, `realpath`) forward to the wrapped
     backend, using its native filesystem methods or the shell fallback; `run` and file mutations raise
     [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError] explaining the restriction. `ref`
     is the wrapped backend's own: a

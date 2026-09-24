@@ -177,6 +177,33 @@ async def test_resolve_rejects_a_relative_base() -> None:
         await Workspace(FakeWorkspace('resolve')).resolve('file.txt', base='relative')
 
 
+@pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
+async def test_realpath_resolves_symlinks_the_way_the_environment_does(tmp_path: Path, native: bool) -> None:
+    """The shell path (`readlink -f`) gives the same answers as a backend's native `realpath`."""
+    data = tmp_path / 'elsewhere' / 'data'
+    data.mkdir(parents=True)
+    (data / 'file.txt').write_text('x')
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'dir_link').symlink_to(data)
+    (root / 'file_link').symlink_to(data / 'file.txt')
+    backend = LocalWorkspaceBackend(root)
+    workspace = Workspace(backend if native else RunOnlyWorkspaceBackend(backend))
+    data = data.resolve()
+
+    assert await workspace.realpath('dir_link/missing/new.txt') == str(data / 'missing' / 'new.txt')
+    assert await workspace.realpath('file_link') == str(data / 'file.txt')
+    # `..` climbs from the link's target, where the kernel would, not from the link's own directory.
+    assert await workspace.realpath('dir_link/..') == str(data.parent)
+    assert await workspace.realpath('/pydantic-ai-missing/file.txt') == '/pydantic-ai-missing/file.txt'
+
+
+async def test_realpath_only_normalizes_on_a_filesystem_only_backend() -> None:
+    workspace = Workspace(FilesystemOnlyWorkspaceBackend(FakeWorkspace('files-only')))
+
+    assert await workspace.realpath('sub/../notes.txt') == '/workspace/notes.txt'
+
+
 async def test_flat_file_operations_use_the_backend_filesystem() -> None:
     backend = FakeWorkspace('files', {'/workspace/data.txt': b'hello'})
     workspace = Workspace(backend)

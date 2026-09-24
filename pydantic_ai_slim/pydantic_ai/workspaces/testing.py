@@ -368,6 +368,27 @@ class WorkspaceBackendSuite:
                 rule, 'removed directory contents still exist'
             )
 
+    async def test_realpath_resolves_symlinks(self, backend: WorkspaceBackend) -> None:
+        rule = (
+            'Returns the path with every symlink in its existing components resolved and `.`/`..` segments '
+            "normalized. Components that don't exist are kept as written."
+        )
+        commands = _commands(backend)
+        workspace = Workspace(backend)
+        async with _probe(backend, workspace, rule) as root:
+            target, link = posixpath.join(root, 'target'), posixpath.join(root, 'link')
+            await _checked(rule, lambda: workspace.make_dir(target))
+            result = await _checked(rule, lambda: commands.run(['ln', '-s', target, link]))
+            if result.exit_code != 0 or not await _checked(rule, lambda: workspace.exists(link)):
+                pytest.skip('the environment cannot create symlinks with `ln -s`')
+            resolved = await _checked(rule, lambda: workspace.realpath(link))
+            assert resolved == target, _failure(rule, f'realpath of a symlinked directory was {resolved!r}')
+            missing = posixpath.join(link, 'missing', 'file.txt')
+            resolved = await _checked(rule, lambda: workspace.realpath(missing))
+            assert resolved == posixpath.join(target, 'missing', 'file.txt'), _failure(
+                rule, f'realpath of a missing path under a symlinked directory was {resolved!r}'
+            )
+
     async def test_ref_is_none_until_the_environment_exists_then_stable(self, backend: WorkspaceBackend) -> None:
         rule = (
             'A fresh backend may have no ref until its first operation; after the environment exists, '
