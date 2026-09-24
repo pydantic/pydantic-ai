@@ -150,7 +150,7 @@ jobs:
       # synced venv out-of-band instead (--no-deps: pydantic-ai-slim is already
       # present from the workspace). Keep the pin in sync with the runner's
       # (.github/scripts/pydantic-ai-runner).
-      - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0"
+      - run: uv pip install --no-deps "pydantic-ai-harness==0.31.0"
 
       - name: Test GitHub agentic workflow policy
         env:
@@ -372,7 +372,9 @@ jobs:
           cache-suffix: docs-only
 
       - name: Install documentation test dependencies
-        run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+        run: |
+          uv sync --all-extras --no-extra mcp-tasks --all-packages
+          uv pip install --no-deps "pydantic-ai-harness==0.31.0"
 
       - name: Check Markdown files
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
@@ -427,7 +429,9 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --only-dev
+      - run: |
+          uv sync --only-dev
+          uv pip install --no-deps "pydantic-ai-harness==0.31.0"
 
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
       # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
@@ -510,7 +514,9 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --only-dev
+      - run: |
+          uv sync --only-dev
+          uv pip install --no-deps "pydantic-ai-harness==0.31.0"
 
       # Cache only the immutable model used by `TestSentenceTransformers`. The old
       # shared HF cache could be populated first by a matrix job that never downloaded
@@ -748,7 +754,9 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
 
-      - run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
+      - run: |
+          uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
+          uv pip install --no-deps "pydantic-ai-harness==0.31.0"
         env:
           UV_FROZEN: "0"
 

@@ -37,6 +37,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelHTTPError,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -134,6 +135,10 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 path = ex.path
             test_id = f'{path}:{ex.start_line}'
             prefix_settings = ex.prefix_settings()
+            if path.parts[:2] == ('docs', 'cookbook') and prefix_settings.get('test', '').startswith('skip'):
+                raise AssertionError(  # pragma: no cover
+                    f'Cookbook recipes must be executable: {path}:{ex.start_line}'
+                )
             if title := prefix_settings.get('title'):
                 if title.endswith('.py'):
                     code_examples[title] = ex
@@ -176,9 +181,9 @@ class MockRealtimeConnection(RealtimeConnection):
     """A scripted realtime connection for executable documentation examples.
 
     The default script speaks one assistant turn. When the example's agent defines a
-    `check_availability` tool, the script plays a full spoken exchange instead — user turn, tool
-    round, assistant answer — so the quickstart's printed conversation is produced by the real
-    session/tool loop rather than pasted into the docs.
+    `check_availability` or `refund_authenticated_order` tool, the script plays the corresponding
+    full spoken exchange instead — user turn, tool round, assistant answer — so the printed
+    conversation is produced by the real session/tool loop rather than pasted into the docs.
     """
 
     def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
@@ -194,7 +199,22 @@ class MockRealtimeConnection(RealtimeConnection):
             self._tool_result_received.set()
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        if 'check_availability' in self._function_tool_names:
+        if 'refund_authenticated_order' in self._function_tool_names:
+            yield InputTranscript(text='Refund $50 for order A100.', is_final=True)
+            yield ToolCall(
+                tool_call_id='refund_1',
+                tool_name='refund_authenticated_order',
+                args='{"order_id": "A100", "amount_cents": 5000}',
+            )
+            yield ResponseDone()
+            await self._tool_result_received.wait()
+            yield AudioDelta(data=b'\x00\x00')
+            yield OutputTranscript(
+                text='I cannot access that order; I can connect you to an agent.',
+                is_final=True,
+            )
+            yield ResponseDone()
+        elif 'check_availability' in self._function_tool_names:
             yield InputTranscript(text='Hi! Do you have a table for two tomorrow night?', is_final=True)
             yield ToolCall(
                 tool_call_id='call_1', tool_name='check_availability', args='{"day": "tomorrow", "party_size": 2}'
@@ -459,6 +479,7 @@ def test_docs_examples(
     mocker.patch.object(UpdatePrices, 'fetch', return_value=get_snapshot())
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
+    mocker.patch('builtins.input', return_value='y')
 
     # Avoid filesystem access when examples call ssl.create_default_context(cafile=...) with non-existent paths
     mocker.patch('ssl.create_default_context', return_value=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
@@ -716,6 +737,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Clear out the build directory.': ToolCallPart(tool_name='run_shell', args={'command': 'rm -rf ./build'}),
     "run_shell: {'command': 'rm -rf ./build'}": ToolCallPart(tool_name='final_result', args={'irreversible': True}),
     'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(tool_name='reject_all', args={}),
+    'Write a one-sentence deployment update.': 'Version 2.4 is deployed successfully in all regions.',
+    'Summarize rollback readiness.': 'Rollback is ready once traffic-shift checks pass.',
+    'Who should approve the rollback?': 'The incident commander should approve the rollback.',
     'What does this repo do?': 'It is a provider-agnostic agent framework for Python.',
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
@@ -1046,9 +1070,28 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'read_ticket':
+        assert all(t.name != 'issue_refund' for t in info.function_tools)
+        return ModelResponse(
+            parts=[TextPart('The customer reports that exports are slow. I did not take any account action.')]
+        )
     elif isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif isinstance(m.content, list) and m.content[0] == 'Extract this paper.':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=info.output_tools[0].name,
+                        args={
+                            'title': 'Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context',
+                            'document_type': 'research paper',
+                            'published_year': 2024,
+                        },
+                        tool_call_id='document_paper',
+                    )
+                ]
+            )
         assert isinstance(m.content, str)
         if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
             t.name == 'mark_task_done' for t in info.function_tools
@@ -1062,6 +1105,32 @@ async def model_logic(  # noqa: C901
             add_name = next(t.name for t in info.function_tools if t.name in ('_add', 'add'))
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=add_name, args={'a': 2, 'b': 3}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'I was charged twice for invoice INV-42. Can you reverse one charge?':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=info.output_tools[0].name,
+                        args={'destination': 'billing', 'reason': 'The request concerns a duplicate charge.'},
+                    )
+                ]
+            )
+        elif m.content == 'Respond to the request. Routing reason: The request concerns a duplicate charge.':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=info.output_tools[0].name,
+                        args={
+                            'answer': 'I found the duplicate charge and sent it for refund review.',
+                            'needs_refund_review': True,
+                        },
+                    )
+                ]
+            )
+        elif m.content == 'Summarize ticket T-19 and take any appropriate action.':
+            assert all(t.name != 'issue_refund' for t in info.function_tools)
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='read_ticket', args={'ticket_id': 'T-19'}, tool_call_id='ticket_19')]
             )
         elif m.content == 'What is the latest news in AI?':
             return ModelResponse(
@@ -1549,6 +1618,208 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
+    elif isinstance(m, UserPromptPart) and m.content == 'Give the incident commander one concise status update.':
+        return ModelResponse(parts=[TextPart('Checkout is degraded; rollback is in progress.')])
+    elif (
+        isinstance(m, UserPromptPart)
+        and m.content == 'Email the launch update to alice@example.com and bob@example.com.'
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='send_email',
+                    args={'address': 'alice@example.com', 'subject': 'Launch update'},
+                    tool_call_id='email_alice',
+                ),
+                ToolCallPart(
+                    tool_name='send_email',
+                    args={'address': 'bob@example.com', 'subject': 'Launch update'},
+                    tool_call_id='email_bob',
+                ),
+            ]
+        )
+    elif (
+        isinstance(m, UserPromptPart)
+        and m.content == 'Write a response plan for elevated API latency after a deployment.'
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'summary': 'The deployment increased API latency.', 'action_items': []},
+                    tool_call_id='incident_plan',
+                )
+            ]
+        )
+    elif isinstance(m, RetryPromptPart) and m.content == 'Include at least one concrete action item.':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={
+                        'summary': 'The deployment increased API latency.',
+                        'action_items': ['Roll back the deployment and compare latency with the previous release.'],
+                    },
+                    tool_call_id='incident_plan_retry',
+                )
+            ]
+        )
+    elif isinstance(m, UserPromptPart) and m.content == 'My deployment region is eu-west-1.':
+        return ModelResponse(parts=[TextPart("I'll remember that.")])
+    elif (
+        isinstance(m, UserPromptPart)
+        and m.content == 'Which deployment region did I choose?'
+        and any(
+            isinstance(part, UserPromptPart) and part.content == 'My deployment region is eu-west-1.'
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+    ):
+        return ModelResponse(parts=[TextPart('You chose eu-west-1.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'Refund $49.99 from payment pay_123.':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='refund_payment',
+                    args={'payment_id': 'pay_123', 'amount_cents': 4999},
+                    tool_call_id='refund_payment_call',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'refund_payment':
+        return ModelResponse(parts=[TextPart('The $49.99 refund for payment pay_123 was completed.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'Where is order A100?':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='order_status',
+                    args={'order_id': 'A100'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'order_status':
+        return ModelResponse(parts=[TextPart('Order A100 has shipped and is expected Friday.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'Which product has the most revenue?':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='top_products',
+                    args={'limit': 5},
+                    tool_call_id='top_products_call',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'top_products':
+        return ModelResponse(parts=[TextPart('Logfire has the most revenue at $2,100.')])
+    elif isinstance(m, UserPromptPart) and m.content == '[EMAIL] says card [PAYMENT_CARD] was charged twice.':
+        return ModelResponse(
+            parts=[TextPart('This is a duplicate card charge request involving redacted customer data.')]
+        )
+    elif (
+        isinstance(m, UserPromptPart)
+        and isinstance(m.content, str)
+        and m.content.startswith('Security review: Move session storage')
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=info.output_tools[0].name,
+                    args={
+                        'response': [
+                            {
+                                'area': 'security',
+                                'risk': 'Session rows may cross tenant boundaries',
+                                'mitigation': 'Enforce tenant-scoped queries and database policies.',
+                            }
+                        ]
+                    },
+                    tool_call_id='security_review',
+                )
+            ]
+        )
+    elif (
+        isinstance(m, UserPromptPart)
+        and isinstance(m.content, str)
+        and m.content.startswith('Reliability review: Move session storage')
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=info.output_tools[0].name,
+                    args={
+                        'response': [
+                            {
+                                'area': 'reliability',
+                                'risk': 'A direct cutover can lose active sessions',
+                                'mitigation': 'Dual-write, backfill, and roll out gradually.',
+                            }
+                        ]
+                    },
+                    tool_call_id='reliability_review',
+                )
+            ]
+        )
+    elif isinstance(m, UserPromptPart) and isinstance(m.content, str) and m.content.startswith('Incident update:'):
+        return ModelResponse(parts=[TextPart('Noted.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'What is the latest mitigation?':
+        prompts = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
+        assert 'Incident update: checkout latency is high.' not in prompts
+        assert 'Incident update: rollback started.' in prompts
+        return ModelResponse(parts=[TextPart('The latest mitigation is a rollback.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'What is the first rollback step?':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='search_documents',
+                    args={'query': 'first rollback step'},
+                    tool_call_id='search_documents_call',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'search_documents':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={
+                        'text': 'Shift traffic to the previous release.',
+                        'sources': ['runbook.md#rollback'],
+                    },
+                    tool_call_id='rag_answer',
+                )
+            ]
+        )
+    elif isinstance(m, UserPromptPart) and m.content == 'I lost an API key. What should I do?':
+        return ModelResponse(parts=[TextPart('Revoke the lost key and issue a replacement.')])
+    elif isinstance(m, UserPromptPart) and m.content == 'A secret may be in our logs. What is the first action?':
+        return ModelResponse(parts=[TextPart('Rotate the secret, then investigate its exposure.')])
+    elif isinstance(m, UserPromptPart) and 'ACME Hosting — Invoice INV-2048' in m.content:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={
+                        'invoice_number': 'INV-2048',
+                        'invoice_date': '2026-09-18',
+                        'customer': 'Northstar Labs',
+                        'items': [
+                            {'description': 'Managed database', 'quantity': 2, 'unit_price': '120.00'},
+                            {'description': 'Object storage', 'quantity': 1, 'unit_price': '35.50'},
+                        ],
+                        'total': '275.50',
+                    },
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
@@ -1653,20 +1924,18 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         model = infer_model(model)
 
     if isinstance(model, FallbackModel):
-        # When a fallback model is encountered, replace any OpenAIChatModel with a model that will raise a ModelHTTPError.
-        # Otherwise, do the usual inference.
+        # Make OpenAI models fail so documentation examples exercise their configured fallback.
         def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')
 
         mock_fallback_models: list[Model] = []
         for m in model.models:
             try:
-                from pydantic_ai.models.openai import OpenAIChatModel
+                from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
             except ImportError:  # pragma: lax no cover
-                OpenAIChatModel = type(None)
+                OpenAIChatModel = OpenAIResponsesModel = type(None)
 
-            if isinstance(m, OpenAIChatModel):
-                # Raise an HTTP error for OpenAIChatModel
+            if isinstance(m, OpenAIChatModel | OpenAIResponsesModel):
                 mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
             else:
                 mock_fallback_models.append(mock_infer_model(m))

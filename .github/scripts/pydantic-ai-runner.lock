@@ -30,7 +30,7 @@ logfire-api = false
 requirements = [
     { name = "logfire" },
     { name = "opentelemetry-instrumentation-httpx" },
-    { name = "pydantic-ai-harness", specifier = "==0.7.0" },
+    { name = "pydantic-ai-harness", specifier = "==0.31.0" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "mcp"], directory = "../../pydantic_ai_slim" },
 ]
 
@@ -1108,15 +1108,16 @@ email = [
 
 [[package]]
 name = "pydantic-ai-harness"
-version = "0.7.0"
+version = "0.31.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "genai-prices" },
     { name = "httpx" },
     { name = "pydantic-ai-slim" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/a9/43f9f227bc8e8bb821e491bd9a3681e92aa11e60e7ee6e5589928efa7708/pydantic_ai_harness-0.7.0.tar.gz", hash = "sha256:b0255a347c346696f951cedef6e9664a04ce6672afe9cf4736435cc9c705a2ab", size = 1020449, upload-time = "2026-07-14T03:01:46.136Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/00/cebf7d148d1a1250645e06a4bbf09dc5d3754ec141fdb6cfbf00c6bdad50/pydantic_ai_harness-0.31.0.tar.gz", hash = "sha256:a8763f3bfa62a2c261c4c753270cd14ae774e7941a2e7184da3b776ac46db2be", size = 2608680, upload-time = "2026-09-12T01:07:06.526Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/27/2dd853791bbcc9ce687c072a81adfde16576bb99aebd426c27f40812d3bd/pydantic_ai_harness-0.7.0-py3-none-any.whl", hash = "sha256:1895d7ac1fa101621294505387bccdceedd1e1b67b1caaa7777e7a7d0a4de8b7", size = 313712, upload-time = "2026-07-14T03:01:44.204Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/1d/57f35d88568b9e463cf85cb04b56bbaa490072ac97090333dea314f12e91/pydantic_ai_harness-0.31.0-py3-none-any.whl", hash = "sha256:80ba336ad0c9fc2e38b90b1dbe729f7c51e4ffd7ee71ce6c1c470f25f03c3414", size = 823313, upload-time = "2026-09-12T01:07:04.722Z" },
 ]
 
 [[package]]

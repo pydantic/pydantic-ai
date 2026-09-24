@@ -29,9 +29,9 @@ the four provider pages (canonical for installs, model names, settings, quirks).
   the standard runnable banner; rely on `async with` exit to close the session rather than an
   explicit `close()` unless the example is about `close()`.
 - Docs examples execute in `tests/test_examples.py` against a scripted connection: the default
-  script speaks one assistant turn ('Hello from the realtime assistant.'); an agent defining a
-  `check_availability` tool triggers the quickstart's scripted reservation conversation — never use
-  that tool name elsewhere.
+  script speaks one assistant turn ('Hello from the realtime assistant.'); agents defining
+  `check_availability` or `refund_authenticated_order` trigger their corresponding scripted
+  conversations — never use those tool names elsewhere.
 - Browser WebRTC ships in Pydantic AI: `docs/realtime/deployment.md#browser-webrtc-server-sideband` is the canonical
   owner of the topology, and don't present third-party media platforms as the WebRTC story. Azure
   Voice Live ships too: `docs/realtime/azure.md` owns its routing and settings.

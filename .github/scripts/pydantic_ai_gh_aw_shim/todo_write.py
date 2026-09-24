@@ -12,6 +12,10 @@ shows while a step runs and has no harness equivalent, so it's dropped (the
 headless shim renders nothing live anyway).
 """
 
+from typing import cast
+
+from pydantic_ai import RunContext, RunUsage
+from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.planning import PlanItem, Planning, PlanningToolset, TaskStatus
 from typing_extensions import TypedDict
 
@@ -39,6 +43,16 @@ async def todo_write(todos: list[TodoItem]) -> str:
     # full list every time, so no cross-call state needs to be retained.
     # `get_toolset()` is typed `AgentToolset | None` but always returns the
     # planning toolset, so narrow to reach `write_plan` without a private import.
-    toolset = Planning[None]().get_toolset()
+    planning = Planning[None](id='planning')
+    toolset = planning.get_toolset()
     assert isinstance(toolset, PlanningToolset)
-    return await toolset.write_plan(items)
+    toolset = cast(PlanningToolset[None], toolset)
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        capabilities={'planning': planning},
+        _capability=planning,
+        _event_stream_buffer=[],
+    )
+    return await toolset.write_plan(ctx, items)
