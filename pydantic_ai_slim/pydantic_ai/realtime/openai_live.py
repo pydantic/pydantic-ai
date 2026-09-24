@@ -35,7 +35,6 @@ import sys
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
-from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, ClassVar, Literal, cast
 
@@ -47,6 +46,7 @@ from typing_extensions import TypedDict
 # maps a direct one — including the cache and reasoning breakdowns genai-prices reads.
 from .._genai_prices import best_effort_price
 from .._instrumentation import get_instructions
+from .._run_context import get_current_run_context
 from ..exceptions import UserError
 from ..messages import (
     BinaryImage,
@@ -64,7 +64,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..models import KnownModelName, Model, ModelRequestParameters
+from ..models import Model, ModelRequestParameters
 from ..models.openai import _map_usage as map_openai_usage  # pyright: ignore[reportPrivateUsage]
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
@@ -190,10 +190,6 @@ _live_error_adapter: TypeAdapter[_LiveErrorFrame] = TypeAdapter(_LiveErrorFrame)
 #: Why a session can end without anyone asking. The others, `close_requested` and `remote_hangup`, are
 #: an ordinary end of the call.
 _ABNORMAL_CLOSE_REASONS = frozenset({'expired', 'content', 'connection_lost'})
-
-#: Model-string prefixes that name a model OpenAI hosts, and so one a Live session can delegate to.
-_OPENAI_MODEL_PREFIXES = frozenset({'openai', 'openai-responses', 'openai-chat'})
-_OPENAI_BASE_URL = 'https://api.openai.com/v1/'
 
 #: The PCM16 sample rates Live accepts. (It also takes 8 kHz G.711, which isn't PCM16.)
 _LIVE_PCM_RATES = frozenset({16000, 24000})
@@ -884,16 +880,6 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode()
 
 
-def _openai_model_name(model: Model | KnownModelName | str | None) -> str | None:
-    """The name of an OpenAI-hosted model, or `None` for anything a Live backend can't be."""
-    if isinstance(model, str):
-        provider, separator, name = model.partition(':')
-        return name if separator and provider in _OPENAI_MODEL_PREFIXES else None
-    if model is not None and model.system == 'openai' and model.base_url == _OPENAI_BASE_URL:
-        return model.model_name
-    return None
-
-
 def _tool_result_follow_up(result: ToolResult) -> dict[str, Any] | None:
     """The backend input message carrying a `ToolReturn`'s text `content`, sent after its output.
 
@@ -1004,19 +990,25 @@ class OpenAILiveModel(RealtimeModel):
         """The underlying [`AsyncOpenAI`](https://github.com/openai/openai-python) client from the provider."""
         return self._provider.client
 
-    def with_agent_model(self, model: Model | KnownModelName | str | None) -> OpenAILiveModel:
-        """Delegate to the agent's own model when no backend is named.
+    def _agent_model_name(self) -> str | None:
+        """The agent's own model, as the backend to delegate to, when it is reached the same way as this one.
 
-        The backend runs the agent's instructions and calls its tools, so it is the agent doing its
-        work; an agent built on an OpenAI model has already said which model that should be. Any other
-        agent model (another provider, or an OpenAI-compatible server) can't serve as a Live backend and
-        leaves the default in place.
+        The backend runs the agent's instructions and calls its tools, so it is the agent doing its work,
+        and an agent built on an OpenAI model has already said which model that should be. It has to be
+        an OpenAI model at this model's base URL, so both go to OpenAI directly or both through the same
+        gateway route; anything else can't serve as this session's backend.
+
+        Read from the current run context: a session opened with
+        [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] is an agent run, so its run context is
+        current while connecting, as it is around a standard run's model request. A connection
+        opened any other way has no agent to consult, and an agent whose model is still an unresolved
+        name (with `defer_model_check=True`) has no base URL to compare.
         """
-        if self._backend_model is not None or (backend_model := _openai_model_name(model)) is None:
-            return self
-        adapted = copy(self)
-        adapted._backend_model = backend_model
-        return adapted
+        run_context = get_current_run_context()
+        agent_model = run_context.agent.model if run_context is not None and run_context.agent is not None else None
+        if isinstance(agent_model, Model) and agent_model.system == 'openai' and agent_model.base_url == self.base_url:
+            return agent_model.model_name
+        return None
 
     @property
     def model_name(self) -> OpenAILiveModelName:
@@ -1038,7 +1030,7 @@ class OpenAILiveModel(RealtimeModel):
         backend_instructions = '\n\n'.join(
             text for text in (instructions, delegation_settings.get('instructions')) if text
         )
-        backend_model = delegation_settings.get('model') or self._backend_model or 'auto'
+        backend_model = delegation_settings.get('model') or self._backend_model or self._agent_model_name() or 'auto'
         responses: dict[str, Any] = {'model': AUTO_BACKEND_MODEL if backend_model == 'auto' else backend_model}
         if backend_instructions:
             responses['instructions'] = backend_instructions

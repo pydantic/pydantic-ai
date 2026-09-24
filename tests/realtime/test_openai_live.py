@@ -58,12 +58,15 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     import websockets
+    from openai import AsyncOpenAI
     from openai.types.live import ServerEvent, SessionConfig
     from pydantic import TypeAdapter
     from websockets.frames import Close
 
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers import Provider
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import openai_live as live_module
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -978,47 +981,88 @@ def test_the_backend_model_can_follow_a_plus_in_the_model_name() -> None:
     assert _backend(model) == 'gpt-6-luna'
 
 
+async def _session_backend(agent: Agent[None, Any], model: OpenAILiveModel) -> str:
+    """Open a session through `agent.realtime()` and read the backend its `session.start` names."""
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    with _patched_connect(ws):
+        async with agent.realtime(model).session():
+            pass
+    return json.loads(ws.sent[0])['session']['delegation']['responses']['model']
+
+
 @pytest.mark.parametrize(
     ('agent_model', 'backend'),
     [
         ('openai:gpt-6-luna', 'gpt-6-luna'),
         ('openai-responses:gpt-6-luna', 'gpt-6-luna'),
-        # Not something OpenAI hosts, so it can't be a Live backend.
-        ('anthropic:claude-opus-5-5', AUTO_BACKEND_MODEL),
-        ('gateway/openai:gpt-6-luna', AUTO_BACKEND_MODEL),
         (None, AUTO_BACKEND_MODEL),
     ],
 )
-def test_the_backend_defaults_to_the_agents_own_model(agent_model: str | None, backend: str) -> None:
+async def test_the_backend_defaults_to_the_agents_own_model(
+    model: OpenAILiveModel, agent_model: str | None, backend: str
+) -> None:
     """The backend runs the agent's instructions and tools; an OpenAI agent model already names it."""
-    model = OpenAILiveModel('gpt-live-1', provider='openai').with_agent_model(agent_model)
-    assert _backend(model) == backend
+    assert await _session_backend(Agent(agent_model), model) == backend
 
 
-def test_an_agent_model_instance_is_used_only_when_openai_hosts_it() -> None:
-    hosted = OpenAIResponsesModel('gpt-6-luna', provider=OpenAIProvider(api_key='x'))
+@pytest.mark.parametrize(
+    ('agent_route', 'live_route', 'backend'),
+    [
+        ('direct', 'direct', 'gpt-6-luna'),
+        ('gateway', 'gateway', 'gpt-6-luna'),
+        # Reached a different way, the agent's model isn't one this session can delegate to.
+        ('gateway', 'direct', AUTO_BACKEND_MODEL),
+        ('direct', 'gateway', AUTO_BACKEND_MODEL),
+    ],
+)
+async def test_the_agents_model_is_used_when_reached_the_same_way(
+    agent_route: str, live_route: str, backend: str
+) -> None:
+    """`gateway/openai:gpt-live-1` on an agent built on `gateway/openai:gpt-6-luna` delegates to it.
+
+    Both have to go to OpenAI the same way, directly or through the same gateway route, which is what
+    comparing their base URLs checks.
+    """
+
+    def provider(route: str) -> Provider[AsyncOpenAI]:
+        return gateway_provider('openai', api_key='pylf_v1_us_x') if route == 'gateway' else OpenAIProvider(api_key='x')
+
+    agent = Agent(OpenAIResponsesModel('gpt-6-luna', provider=provider(agent_route)))
+    live = OpenAILiveModel('gpt-live-1', provider=provider(live_route))
+    assert await _session_backend(agent, live) == backend
+
+
+async def test_an_agent_model_not_at_openai_is_not_a_backend(model: OpenAILiveModel) -> None:
+    """An OpenAI-compatible server speaks the protocol, but isn't where the Live session runs."""
     compatible = OpenAIChatModel('llama3', provider=OpenAIProvider(api_key='x', base_url='http://localhost:11434/v1'))
-    live = OpenAILiveModel('gpt-live-1', provider='openai')
-
-    assert _backend(live.with_agent_model(hosted)) == 'gpt-6-luna'
-    assert _backend(live.with_agent_model(compatible)) == AUTO_BACKEND_MODEL
+    assert await _session_backend(Agent(compatible), model) == AUTO_BACKEND_MODEL
 
 
-def test_a_named_backend_takes_precedence_over_the_agents_model() -> None:
+async def test_an_unresolved_agent_model_is_not_a_backend(model: OpenAILiveModel) -> None:
+    """With `defer_model_check=True` the agent's model is still a name, with no base URL to compare."""
+    agent = Agent('openai:gpt-6-luna', defer_model_check=True)
+    assert await _session_backend(agent, model) == AUTO_BACKEND_MODEL
+
+
+async def test_a_named_backend_takes_precedence_over_the_agents_model() -> None:
     """An explicit setting beats the name's `+`, which beats the agent's model, which beats `'auto'`."""
-    plus = OpenAILiveModel('gpt-live-1+gpt-6-luna', provider='openai')
-    assert plus.with_agent_model('openai:gpt-5.6-sol') is plus
-    assert _backend(plus) == 'gpt-6-luna'
+    agent = Agent('openai:gpt-5.6-sol')
+    assert await _session_backend(agent, OpenAILiveModel('gpt-live-1+gpt-6-luna', provider='openai')) == 'gpt-6-luna'
 
-    adopted = OpenAILiveModel('gpt-live-1', provider='openai').with_agent_model('openai:gpt-5.6-sol')
-    assert _backend(adopted, openai_live_delegation=OpenAILiveResponsesDelegation(model='gpt-6-luna')) == 'gpt-6-luna'
-    assert _backend(adopted, openai_live_delegation=OpenAILiveResponsesDelegation(model='auto')) == AUTO_BACKEND_MODEL
+    def delegating_to(backend: str) -> OpenAILiveModel:
+        delegation = OpenAILiveResponsesDelegation(model=backend)
+        return OpenAILiveModel(
+            'gpt-live-1', provider='openai', settings=OpenAILiveModelSettings(openai_live_delegation=delegation)
+        )
+
+    assert await _session_backend(agent, delegating_to('gpt-6-luna')) == 'gpt-6-luna'
+    assert await _session_backend(agent, delegating_to('auto')) == AUTO_BACKEND_MODEL
 
 
-def test_other_realtime_models_ignore_the_agents_model() -> None:
-    """Only a realtime model that hands work to a text model has any use for the agent's."""
-    model = infer_realtime_model('openai:gpt-realtime')
-    assert model.with_agent_model('openai:gpt-6-luna') is model
+def test_a_connection_opened_without_an_agent_uses_auto(model: OpenAILiveModel) -> None:
+    """Outside `agent.realtime()` there is no run context, and so no agent to consult."""
+    assert _backend(model) == AUTO_BACKEND_MODEL
 
 
 def test_16khz_audio_is_chosen_through_the_profile() -> None:
@@ -1240,20 +1284,6 @@ async def test_a_malformed_handshake_frame_raises_a_realtime_error(model: OpenAI
                 messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
             ):
                 pass  # pragma: no cover
-
-
-async def test_an_agent_model_override_picks_the_backend(model: OpenAILiveModel) -> None:
-    """`agent.realtime()` hands the realtime model the model a standard run would use, override included."""
-    agent = Agent('openai:gpt-5.6-sol')
-    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
-    ws = _FakeWebSocket([started])
-
-    with _patched_connect(ws), agent.override(model='openai:gpt-6-luna'):
-        async with agent.realtime(model).session():
-            pass
-
-    start = json.loads(ws.sent[0])
-    assert start['session']['delegation']['responses']['model'] == 'gpt-6-luna'
 
 
 def test_session_config_matches_the_provider_schema(model: OpenAILiveModel) -> None:

@@ -3423,8 +3423,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
-        agent_model_override = self._override_model.get()
-        model = model.with_agent_model(agent_model_override.value if agent_model_override else self.model)
 
         deps = self._get_deps(deps)
         # Resolved, not passed through: a session inherits the conversation it continues and mints a fresh

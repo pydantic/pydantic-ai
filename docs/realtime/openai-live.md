@@ -41,8 +41,9 @@ provider prefix alone cannot tell the two protocols apart. Use the
 list.
 
 The *backend* model, the one that does the delegated work, is a second model name. Since it runs the
-agent's instructions and tools, it is the agent's own model when that is an OpenAI model, so an agent
-built on `'openai:gpt-5.6-sol'` delegates to `gpt-5.6-sol`. Name a different backend after a `+` in the
+agent's instructions and tools, it is the agent's own model when that is an OpenAI model reached the
+same way as the Live model (directly, or through the same gateway route), so an agent built on
+`'openai:gpt-5.6-sol'` delegates to `gpt-5.6-sol`. Name a different backend after a `+` in the
 realtime model name, which reads as the composite it is:
 
 ```python
@@ -58,7 +59,7 @@ realtime = agent.realtime('openai:gpt-live-1+gpt-6-luna')
 ```
 
 `openai_live_delegation={'model': ...}`, described below, takes precedence over both. With none of
-them, or with the agent on a model OpenAI doesn't host, the backend is `'auto'`: the model Pydantic AI
+them, or with the agent on a model the Live session can't reach the same way, the backend is `'auto'`: the model Pydantic AI
 currently recommends ([`AUTO_BACKEND_MODEL`][pydantic_ai.realtime.openai_live.AUTO_BACKEND_MODEL]),
 which moves as OpenAI releases new models. Pin one when the backend's behavior needs to stay put.
 
@@ -304,9 +305,11 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 
 ## Gateway
 
-Whether the [Pydantic AI Gateway](../gateway.md) can route GPT-Live has not been verified. Connect
-through `provider='openai'` or an
-[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider].
+The [Pydantic AI Gateway](../gateway.md) does not route GPT-Live yet, so `'gateway/openai:gpt-live-1'`
+fails to connect. Connect through `provider='openai'` or an
+[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for now. Once it does, the backend
+follows the same rule as a direct connection: an agent built on `'gateway/openai:gpt-6-luna'` delegates
+to `gpt-6-luna`, because both go through the same gateway route.
 
 ## Provider-specific quirks
 
