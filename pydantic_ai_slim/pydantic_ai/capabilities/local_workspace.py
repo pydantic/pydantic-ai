@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 
@@ -54,6 +55,16 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     API and is not isolation.
     """
 
+    env: Mapping[str, str] | None = None
+    """Environment variables every command in this workspace gets; the per-call `env` is layered on top.
+
+    Commands inherit nothing from the agent process, so pass what they need, e.g.
+    `LocalWorkspace('.', env={'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']})`. Without
+    `PATH`, tools installed outside the system default path (Homebrew, `~/.local/bin`) are not
+    found. Don't pass `os.environ` wholesale: it hands the model's commands every secret in the
+    process, LLM API keys included.
+    """
+
     id: str | None = 'local_workspace'
     """One-off: a run has a single workspace, so the id is fixed by default.
 
@@ -67,7 +78,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         LocalWorkspaceBackend(self.working_dir)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        backend = LocalWorkspaceBackend(self.working_dir)
+        backend = LocalWorkspaceBackend(self.working_dir, env=self.env)
         if ref is not None and ref != backend.ref:
             # Another provider's environment, or a local directory other than the configured one:
             # a ref from message history must never redirect the agent to an arbitrary host directory.

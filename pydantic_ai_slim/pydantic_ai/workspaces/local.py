@@ -93,8 +93,13 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     This isolates nothing and is not a jail. `working_dir` is only where commands start and what
     relative workspace paths resolve against: absolute paths, `..`, and commands reach anywhere on
     the host that this process can. Use it for trusted local work, tests, and development; run
-    untrusted code in a container or VM through a provider workspace. Commands inherit only `PATH`,
-    `HOME`, `LANG`, and `TMPDIR` when present, plus variables supplied through `env`.
+    untrusted code in a container or VM through a provider workspace.
+
+    Commands inherit nothing from the agent process's environment: they get exactly `env` plus the
+    per-call `env`. Pass what they need, e.g. `env={'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']}`;
+    without `PATH`, programs are looked up in the system default path only, so tools installed
+    elsewhere (Homebrew, `~/.local/bin`) are not found. Don't pass `os.environ` wholesale: it hands
+    the model's commands every secret in the process, LLM API keys included.
 
     It supports POSIX platforms only. A command that calls `setsid` can move its own processes
     outside the process group that this workspace kills on cancellation or timeout.
@@ -111,9 +116,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             canonicalized on first use so
             [`working_dir()`][pydantic_ai.workspaces.WorkspaceBackend.working_dir] reports the
             directory commands actually run in.
+        env: Environment variables every command in this workspace gets. The per-call `env` of
+            [`run`][pydantic_ai.workspaces.SupportsCommands.run] is layered on top.
     """
 
-    def __init__(self, working_dir: str | Path):
+    def __init__(self, working_dir: str | Path, *, env: Mapping[str, str] | None = None):
         if os.name != 'posix':
             raise NotImplementedError(
                 '`LocalWorkspaceBackend` only supports POSIX platforms at the moment: its timeout contract '
@@ -130,6 +137,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._working_dir = expanded
         self._canonical_working_dir: Path | None = None
         self._ref = WorkspaceRef(provider='local', id=expanded.as_posix())
+        self._env = dict(env or {})
 
     @property
     def ref(self) -> WorkspaceRef:
@@ -248,9 +256,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 f'cwd must be an absolute path, got {cwd!r}: a relative cwd would resolve against '
                 "the host process's working directory, not the workspace's"
             )
-        merged_env = {key: os.environ[key] for key in ('PATH', 'HOME', 'LANG', 'TMPDIR') if key in os.environ}
-        if env is not None:
-            merged_env.update(env)
+        merged_env = {**self._env, **(env or {})}
         if isinstance(command, str):
             if not shell:
                 raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')

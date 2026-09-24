@@ -45,6 +45,14 @@ async def test_tools_use_the_local_workspace(tmp_path: Path) -> None:
     assert await result.workspace.working_dir() == str(tmp_path.resolve())
 
 
+async def test_env_reaches_every_command(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path, env={'GREETING': 'hello'})])
+
+    result = await agent.run('go')
+
+    assert (await result.workspace.run(['sh', '-c', 'printf %s "$GREETING"'])).stdout == 'hello'
+
+
 async def test_working_dir_expands_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('HOME', str(tmp_path))
     (tmp_path / 'project').mkdir()

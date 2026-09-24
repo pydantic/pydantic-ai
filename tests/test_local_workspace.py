@@ -391,25 +391,14 @@ async def test_kill_tolerates_an_already_exited_group():
         LocalWorkspaceBackend._kill(process)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_local_environment_contains_only_allowed_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    allowed = {
-        'PATH': '/bin:/usr/bin',
-        'HOME': str(tmp_path / 'home'),
-        'LANG': 'C.UTF-8',
-        'TMPDIR': str(tmp_path / 'tmp'),
-    }
-    for key, value in allowed.items():
-        monkeypatch.setenv(key, value)
+async def test_commands_inherit_nothing_from_the_host_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('LOCAL_WORKSPACE_HOST_SECRET', 'do-not-pass')
-    monkeypatch.setenv('LOCAL_WORKSPACE_EXPLICIT', 'host-value')
-    workspace = LocalWorkspaceBackend(tmp_path)
-    result = await workspace.run(
-        ['/usr/bin/env'],
-        env={'LOCAL_WORKSPACE_EXPLICIT': 'explicit-value'},
-    )
+    workspace = LocalWorkspaceBackend(tmp_path, env={'SHARED': 'backend', 'BACKEND_ONLY': 'backend'})
+
+    result = await workspace.run(['/usr/bin/env'], env={'SHARED': 'call'})
 
     child_environment = dict(line.split('=', 1) for line in result.stdout.splitlines())
-    assert child_environment == {**allowed, 'LOCAL_WORKSPACE_EXPLICIT': 'explicit-value'}
+    assert child_environment == {'SHARED': 'call', 'BACKEND_ONLY': 'backend'}
 
 
 async def test_cwd_selects_the_working_directory(tmp_path: Path):
