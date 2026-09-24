@@ -65,6 +65,7 @@ def filesystem() -> FileSystemToolset[None]:
         denied_patterns=[],
         protected_patterns=[],
         max_read_lines=2000,
+        max_list_results=1000,
         max_search_results=1000,
         max_find_results=1000,
     )
