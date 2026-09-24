@@ -755,7 +755,7 @@ _OutputSpecItem = TypeAliasType(
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
-    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co] | _NoneOutput[T_co]'],
+    _OutputSpecItem[T_co] | _NoneOutput[T_co] | Sequence['OutputSpec[T_co]'],
     type_params=(T_co,),
 )
 """Specification of the agent's output data.

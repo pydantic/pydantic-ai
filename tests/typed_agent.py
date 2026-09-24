@@ -6,16 +6,25 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import partial
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias, TypeVar
 
 from pydantic import Field
 from starlette.requests import Request
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
-from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.agent import AgentRun, AgentRunResult
 from pydantic_ai.capabilities import PrepareTools, Thinking, WebSearch
-from pydantic_ai.output import Choice, Choices, NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.output import (
+    Choice,
+    Choices,
+    NativeOutput,
+    OutputSpec,
+    PromptedOutput,
+    StructuredDict,
+    TextOutput,
+    ToolOutput,
+)
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
@@ -564,3 +573,43 @@ if not MYPY:
         return None
 
     Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(none_prepare)])  # pyright: ignore[reportArgumentType,reportCallIssue]
+
+
+# `output_type` given as a generic `OutputSpec[T]` must solve the result
+# TypeVar on every public run entry point (issue #8717).
+
+output_spec_agent = Agent('test')
+
+T = TypeVar('T')
+
+
+async def test_run_output_spec_typevar_passthrough(output_type: OutputSpec[T]) -> T:
+    result = await output_spec_agent.run('x', output_type=output_type)
+    assert_type(result, AgentRunResult[T])
+    assert_type(result.output, T)
+    return result.output
+
+
+def test_run_sync_output_spec_typevar_passthrough(output_type: OutputSpec[T]) -> T:
+    result = output_spec_agent.run_sync('x', output_type=output_type)
+    assert_type(result, AgentRunResult[T])
+    assert_type(result.output, T)
+    return result.output
+
+
+async def test_iter_output_spec_typevar_passthrough(output_type: OutputSpec[T]) -> T:
+    async with output_spec_agent.iter('x', output_type=output_type) as run:
+        assert_type(run, AgentRun[object, T])
+        async for _ in run:
+            pass
+        assert run.result is not None
+        assert_type(run.result, AgentRunResult[T])
+        return run.result.output
+
+
+async def test_run_output_type_list_with_none_preserved() -> None:
+    # mypy never solves a `Sequence` item inside `OutputSpec` (pre-existing,
+    # see #8717), so the type is pinned by annotation; pyright checks the
+    # assignment against its own inference, which is what #8641 fixed.
+    result: AgentRunResult[Foo | Bar | None] = await output_spec_agent.run('x', output_type=[Foo, Bar, None])
+    assert_type(result.output, Foo | Bar | None)
