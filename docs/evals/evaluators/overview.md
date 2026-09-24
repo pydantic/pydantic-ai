@@ -61,7 +61,8 @@ see [Standard Quality Metrics](standard-quality-metrics.md): the
 [`GEval`][pydantic_evals.evaluators.GEval] evaluator plus ready-made
 [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] rubrics you can copy and adapt. To plug in the
 *exact* upstream implementations of external frameworks, see
-[Third-Party Integrations](framework-integrations.md).
+[Third-Party Integrations](framework-integrations.md). For a typed yes/no, pick-one or 0-to-1 question
+with no prose, cheap enough to run on every case, see [`Classifier`][pydantic_evals.evaluators.Classifier].
 
 **Advantages:**
 
