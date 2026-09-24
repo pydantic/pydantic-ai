@@ -151,7 +151,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'google_supports_tool_combination': False,
     'google_supports_server_side_tool_invocations': False,
     'google_supported_mime_types_in_tool_returns': (),
-    'google_supports_thinking_level': False,
+    'google_supports_thinking_level': True,
     'google_supports_minimal_thinking_level': True,
     'google_supports_strict_tool_definition': False,
     # GrokModelProfile subclass defaults
@@ -520,7 +520,7 @@ def test_openai_o3_mini():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openai_codex_gpt_5_6():
-    """The Codex subscription backend: the standard OpenAI profile plus the narrower wire dialect."""
+    """The Codex subscription backend: the first-party OpenAI profile plus the narrower wire dialect."""
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
     profile = OpenAICodexProvider.model_profile('gpt-5.6-luna')
@@ -544,10 +544,12 @@ def test_openai_codex_gpt_5_6():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
+            'tool_addition_mode': 'with_definitions',
             'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
+            'tool_deferral_mode': 'with_tool_search',
         }
     )
 
@@ -572,7 +574,6 @@ def test_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
-            'google_supports_thinking_level': True,
             'google_supports_strict_tool_definition': True,
         }
     )
@@ -588,6 +589,7 @@ def test_google_gemini_2_5_flash():
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_thinking': True,
+            'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
         }
     )
@@ -608,6 +610,7 @@ def test_google_gemini_2_5_flash_image():
             'supports_image_output': True,
             'supports_tools': False,
             'supports_thinking': True,
+            'google_supports_thinking_level': False,
         }
     )
 
@@ -630,7 +633,6 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'google_supports_minimal_thinking_level': False,
             'google_supports_server_side_tool_invocations': True,
             'google_supports_strict_tool_definition': True,
-            'google_supports_thinking_level': True,
             'google_supports_tool_combination': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': GoogleJsonSchemaTransformer,
@@ -1124,7 +1126,6 @@ def test_openrouter_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
-            'google_supports_thinking_level': True,
             'google_supports_strict_tool_definition': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1161,7 +1162,6 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_minimal_thinking_level': False,
             'google_supports_server_side_tool_invocations': True,
             'google_supports_strict_tool_definition': True,
-            'google_supports_thinking_level': True,
             'google_supports_tool_combination': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
@@ -1307,7 +1307,6 @@ def test_github_copilot_google_gemini_3_pro():
                 'application/pdf',
                 'text/plain',
             ),
-            'google_supports_thinking_level': True,
             'google_supports_strict_tool_definition': True,
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
@@ -2157,7 +2156,6 @@ def test_vercel_vertex_gemini():
                 'application/pdf',
                 'text/plain',
             ),
-            'google_supports_thinking_level': True,
             'google_supports_strict_tool_definition': True,
         }
     )

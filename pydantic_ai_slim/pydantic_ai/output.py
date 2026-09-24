@@ -3,12 +3,12 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, Literal, overload
+from typing import Any, ClassVar, Generic, Literal, Protocol, cast, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
@@ -25,6 +25,7 @@ __all__ = (
     'StructuredDict',
     'Choice',
     'Choices',
+    'BoolCriteria',
     'OutputObjectDefinition',
     'OutputContext',
     # types
@@ -56,7 +57,9 @@ StructuredOutputMode = Literal['tool', 'native', 'prompted']
 
 
 OutputTypeOrFunction = TypeAliasType(
-    'OutputTypeOrFunction', type[T_co] | Callable[..., Awaitable[T_co] | T_co], type_params=(T_co,)
+    'OutputTypeOrFunction',
+    type[T_co] | TypeForm[T_co] | Callable[..., Awaitable[T_co] | T_co],
+    type_params=(T_co,),
 )
 """Definition of an output type or function.
 
@@ -64,6 +67,23 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+
+class _NoneOutput(Protocol[T_co]):
+    """The type of a bare `None` output type, as seen by a type checker.
+
+    `None` in `output_type=[Foo, None]` or `ToolOutput(None)` is a value, not a type, so `type[T]` cannot match it
+    and would not add `None` to the output type if it did. Matching `None` structurally binds `T` to `None` through
+    `__class__`, while `__bool__` returning `Literal[False]` keeps other values out (a class annotating its own
+    `__bool__` that way would also match). A list of only `None` still type-checks, though it is refused at run time.
+
+    Pyright 1.1.412 and later also matches `None` as a `TypeForm`, so this is for older Pyright versions.
+    """
+
+    @property
+    def __class__(self) -> type[T_co]: ...  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    def __bool__(self) -> Literal[False]: ...
 
 
 TextOutputFunc = TypeAliasType(
@@ -137,7 +157,7 @@ class ToolOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        type_: OutputTypeOrFunction[OutputDataT],
+        type_: OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT],
         *,
         name: str | None = None,
         description: str | None = None,
@@ -147,7 +167,8 @@ class ToolOutput(Generic[OutputDataT]):
     ):
         if max_retries is not None and max_retries < 0:
             raise exceptions.UserError(f'max_retries must be >= 0, got {max_retries}')
-        self.output = type_
+        # A bare `None` is kept as is: the output schema treats it as the `None` output type.
+        self.output = cast(OutputTypeOrFunction[OutputDataT], type_)
         self.name = name
         self.description = description
         self.max_retries = max_retries
@@ -196,14 +217,16 @@ class NativeOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
         template: str | Literal[False] | None = None,
     ):
-        self.outputs = outputs
+        # A bare `None` item stays in the list: the output schema treats it as the `None` output type.
+        self.outputs = cast(OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]], outputs)
         self.name = name
         self.description = description
         self.strict = strict
@@ -268,13 +291,15 @@ class PromptedOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT]
+        | Sequence[OutputTypeOrFunction[OutputDataT] | _NoneOutput[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
         template: str | Literal[False] | None = None,
     ):
-        self.outputs = outputs
+        # A bare `None` item stays in the list: the output schema treats it as the `None` output type.
+        self.outputs = cast(OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]], outputs)
         self.name = name
         self.description = description
         self.template = template
@@ -658,20 +683,84 @@ def Choices(
     return _ChoicesWithActions
 
 
+@dataclass(frozen=True, kw_only=True)
+class BoolCriteria:
+    """What a yes and what a no would each mean, for a `bool` field or parameter to carry in `Annotated`.
+
+    A `bool` field's description says what is being asked; these two say what either answer amounts to,
+    which is what a set of options gets from [`Choices()`][pydantic_ai.output.Choices] and an `Enum` gets
+    from [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings]. Both descriptions reach the model
+    in the schema, as a description on each of the two constants a boolean can be.
+
+    It is a marker rather than a type, so the field stays a plain `bool` to every type checker, and the
+    value you get back is a plain `True` or `False`:
+
+    ```python {title="bool_criteria.py"}
+    from typing import Annotated
+
+    from pydantic import BaseModel, Field
+
+    from pydantic_ai import Agent, BoolCriteria
+
+
+    class Settled(BaseModel):
+        refunded: Annotated[
+            bool,
+            BoolCriteria(true='Money was returned to the customer.', false='No refund was issued.'),
+        ] = Field(description='Was a refund issued?')
+
+
+    agent = Agent('openai:gpt-5.2', output_type=Settled)
+    result = agent.run_sync('We have sent the 40 pounds back to your card.')
+    print(result.output.refunded)
+    #> True
+    ```
+
+    On [TypeSafe's Jev](../models/typesafe.md), which asks a yes/no as its own primitive, the two land in
+    that question's `criteria` as `true` and `false`, sent verbatim.
+    """
+
+    true: str
+    """What it means for the answer to be `True`."""
+
+    false: str
+    """What it means for the answer to be `False`."""
+
+    def __get_pydantic_json_schema__(
+        self, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        json_schema = handler(core_schema)
+        # A `Literal` of `True` and/or `False` renders as a `boolean` too, but already pins its values in a
+        # `const` or `enum` that the two meanings below would contradict or be shadowed by. The rendered schema
+        # rather than the core schema is checked, so a `bool` wrapped in a validator is still accepted.
+        if json_schema.get('type') != 'boolean' or 'const' in json_schema or 'enum' in json_schema:
+            raise exceptions.UserError(
+                '`BoolCriteria` says what each answer of a `bool` means, so it can only annotate a plain `bool`, '
+                'not a `Literal` of `True` and/or `False` or any other type.'
+            )
+        # The same `anyOf`-of-`const`s shape `Choices()` and a described `Enum` produce, on the two constants a
+        # boolean can be.
+        return {
+            **json_schema,
+            'anyOf': [{'const': True, 'description': self.true}, {'const': False, 'description': self.false}],
+        }
+
+
 _OutputSpecItem = TypeAliasType(
     '_OutputSpecItem',
     OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co],
     type_params=(T_co,),
 )
 
+
 OutputSpec = TypeAliasType(
     'OutputSpec',
-    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co]'],
+    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co] | _NoneOutput[T_co]'],
     type_params=(T_co,),
 )
 """Specification of the agent's output data.
 
-This can be a single type, a function, a sequence of types and/or functions, or an instance of one of the output mode marker classes:
+This can be a single type, a function, a sequence of types and/or functions (which can include `None` to allow no output), or an instance of one of the output mode marker classes:
 - [`ToolOutput`][pydantic_ai.output.ToolOutput]
 - [`NativeOutput`][pydantic_ai.output.NativeOutput]
 - [`PromptedOutput`][pydantic_ai.output.PromptedOutput]

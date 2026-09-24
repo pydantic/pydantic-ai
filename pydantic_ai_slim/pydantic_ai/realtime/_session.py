@@ -19,7 +19,7 @@ import anyio
 from anyio import Lock
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
-from typing_extensions import TypeAliasType, assert_never
+from typing_extensions import Never, TypeAliasType, assert_never
 
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
@@ -352,13 +352,6 @@ _TranslatableEvent: TypeAlias = (
     | RealtimeSessionErrorEvent
 )
 _SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]
-
-
-def _as_event(item: object) -> RealtimeEvent:
-    """Unwrap a queue item: re-raise a tool's exception, otherwise return the event."""
-    if isinstance(item, BaseException):
-        raise item
-    return cast('RealtimeEvent', item)
 
 
 def _pcm_to_wav(data: bytes, sample_rate: int) -> bytes:
@@ -742,6 +735,12 @@ class RealtimeSession:
         self._pending_response_usage = RequestUsage()
         self._response_limit_checked = False
         self._pending_response_requests = 0
+        # Whether a response has actually begun, cleared at the exchange boundary that
+        # `RealtimeTurnCompleteEvent` marks. A tool-calling turn spans several responses, so the
+        # per-response flags above would read as "done" in the gaps. Reads pair with
+        # `_pending_response_requests` for the solicited-but-not-started half — see `_reply_outstanding`.
+        self._response_active = False
+        self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
@@ -792,9 +791,9 @@ class RealtimeSession:
         self._input_audio_by_id: dict[str, bytes] = {}
 
         # The session context is the single owner of the receive pump and background tool tasks.
-        # Iteration starts the pump lazily, but never tears it down: an early `break` can abandon the
-        # reader generator without affecting resource lifetime, and `__aexit__` still drains everything
-        # before the connection and toolset close.
+        # It starts the pump on entry and never tears it down before `close()`: an early `break` can
+        # abandon the reader generator without affecting resource lifetime, and `__aexit__` still
+        # drains everything before the connection and toolset close.
         self._queue: deque[RealtimeEvent | object] = deque()
         self._queue_event = asyncio.Event()
         self._queue_delta_count = 0
@@ -855,11 +854,11 @@ class RealtimeSession:
         self._pump_task: asyncio.Task[None] | None = None
         self._pump_error: Exception | None = None
         self._pump_finished = False
+        self._receive_ending = False
         self._iterator_active = False
         self._stream_exhausted = False
-        # Whether the event stream was ever consumed, which decides whether a pump error still needs
-        # somewhere to go when the session closes — see `close`.
-        self._stream_consumed = False
+        self._parked_errors: list[BaseException] = []
+        self._delivered_errors: list[BaseException] = []
         self._entered = False
         self._closed = False
         self._closing_error: BaseException | None = None
@@ -915,7 +914,7 @@ class RealtimeSession:
         tool does not resume, and its call is recorded as interrupted.
 
         Raises whatever ended the session — a provider hangup, an exceeded `usage_limits`, or a failed
-        tool — if the event stream was never iterated, since there was nowhere else for it to surface.
+        tool — unless it was already raised by event iteration or an outbound session method.
         """
         if not self._entered:
             return
@@ -923,9 +922,11 @@ class RealtimeSession:
             self._pending_messages.close()
             self._closed = True
             self._finish_taps(discard_pending=True)
+            self._release_exchange()
+            # A session closed without ever sending, subscribing, or iterating never started one.
+            # Cancelled before state is settled below so it can't mutate state mid-settlement; the
+            # task is awaited together with the rest afterwards.
             if self._pump_task is not None:
-                # Cancelled before state is settled below so the pump can't mutate it mid-settlement;
-                # the task is awaited together with the rest afterwards.
                 self._pump_task.cancel()
             if (early_error := self._closing_error or self._pump_error) is not None and (
                 chat_span := self._session_instrumentation.chat_span
@@ -965,11 +966,10 @@ class RealtimeSession:
             raise error
 
     async def _finish_teardown(self) -> None:
-        tasks = list(self._background_tasks)
-        if self._pump_task is not None:
-            tasks.append(self._pump_task)
-        if tasks:
-            await cancel_and_drain(*tasks, msg='Realtime session exited')
+        # A session closed without ever sending, subscribing, or iterating started no pump, so there
+        # may be nothing here but the background tasks.
+        pump_tasks = (self._pump_task,) if self._pump_task is not None else ()
+        await cancel_and_drain(*self._background_tasks, *pump_tasks, msg='Realtime session exited')
 
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
         # in flight), with the error — if any — already recorded on it before settlement.
@@ -994,23 +994,13 @@ class RealtimeSession:
         )
         self._loop = None
 
-        # A session that was never iterated has nowhere else to learn that it failed: the pump's error is
-        # normally raised out of `__aiter__`, so a caller using only `send()` and the
-        # `stream_audio()`/`stream_transcripts()` views would otherwise exit *cleanly* from a provider
-        # hangup — or from an exceeded `usage_limits`, silently spending past a cost cap it asked for.
-        # Not raised when the caller did consume the stream (it either saw the error or chose to stop
-        # listening), nor over an exception already on its way out of the `async with` body.
-        if self._closing_error is None and not self._stream_consumed:
-            if self._pump_error is not None:
-                self._close_error = self._pump_error
-                return
-            # A failed tool (or background drain) surfaces through the queue rather than
-            # `_pump_error`; with no consumer it would otherwise vanish here.
-            while self._queue:
-                item = self._queue_get_nowait()
-                if isinstance(item, BaseException) and not isinstance(item, asyncio.CancelledError):
-                    self._close_error = item
-                    return
+        # Do not hide the caller's own exception, but make sure every receive-side failure has one
+        # delivery point even when iteration stopped early or was never started. Stored rather than
+        # raised: `close()` raises it once, for the first caller that finishes waiting on the
+        # teardown. Recorded as delivered so no later path delivers it a second time.
+        if self._closing_error is None and (error := self._first_undelivered_error()) is not None:
+            self._delivered_errors.append(error)
+            self._close_error = error
 
     def _queue_put(self, item: RealtimeEvent | object) -> None:
         """Append an item, bounding the queue while no session iterator is active."""
@@ -1223,6 +1213,73 @@ class RealtimeSession:
                 return
             await tap.progress.wait()
 
+    async def wait_for_reply(self) -> None:
+        """Wait until the model has finished the reply it owes, if any.
+
+        Returns once the exchange in progress reaches the boundary
+        [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] marks — after a
+        tool-calling turn, that is the answer that follows the tool results, not the response that
+        called them. Returns immediately when the model owes nothing, so a reply that finished between
+        the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
+        over; it also returns if the session closes.
+
+        This is the wait `async for event in session` would otherwise be written out to perform, and
+        unlike that loop it can run while something else is iterating the session, so a caller that
+        only wants the turn boundary does not have to take over the event stream to find it:
+
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+        async def main():
+            async with agent.realtime('openai:gpt-realtime').session() as session:
+                await session.send('Say hello.')
+                await session.wait_for_reply()
+        ```
+
+        Waiting for the model to stop *generating* is not the same as waiting for the speaker to stop
+        *playing*: pair it with
+        [`wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback] before opening
+        the microphone, so the reply is not cut off and the model does not hear itself.
+        """
+        self._ensure_streamable()
+        self._start_pump()
+        while True:
+            # Cleared before the check, so a boundary reached between the check and the wait still
+            # wakes us rather than leaving this parked until the turn after it.
+            self._exchange_progress.clear()
+            if not self._reply_outstanding():
+                return
+            await self._exchange_progress.wait()
+
+    def _release_response_reservation(self) -> None:
+        """Give back a reservation for a response that will never arrive, waking any waiter.
+
+        Rolled back by every outbound call that reserved a response and then failed to send it. The
+        decrement and the wake belong together: a caller parked in `wait_for_reply()` on that single
+        reservation has nothing else coming to wake it.
+        """
+        self._pending_response_requests -= 1
+        self._exchange_progress.set()
+
+    def _reply_outstanding(self) -> bool:
+        """Whether the model still owes speech.
+
+        Derived rather than tracked, so no failure path can leave `wait_for_reply()` parked on a reply
+        that can no longer arrive: once receiving has ended nothing more will be said, a reservation
+        rolled back by a failed send stops counting, and several `respond=True` sends in flight are all
+        waited for rather than just the first to reach its boundary.
+        """
+        if self._closed or self._pump_finished:
+            return False
+        return self._response_active or bool(self._pending_response_requests)
+
+    def _release_exchange(self) -> None:
+        self._response_active = False
+        self._exchange_progress.set()
+
     def _single_audio_tap(self, method: str, purpose: str) -> _AudioTap:
         if len(self._audio_taps) != 1:
             raise UserError(
@@ -1348,6 +1405,7 @@ class RealtimeSession:
         [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself as each tool
         completes (see `_execute_tool`) — neither is accepted here.
         """
+        self._ensure_can_send()
         if isinstance(content, str):
             await self._send_text(content, respond=respond is not False)
         elif isinstance(content, BinaryContent):
@@ -1385,7 +1443,7 @@ class RealtimeSession:
             await self._send_frame(content if respond else TextContext(content))
         except BaseException:
             if respond:
-                self._pending_response_requests -= 1
+                self._release_response_reservation()
             self._remove_sent_request(request)
             raise
         return request
@@ -1430,7 +1488,7 @@ class RealtimeSession:
         """
         if not self._entered:
             raise UserError('Enter the realtime session with `async with` before enqueuing content.')
-        self._ensure_not_closed()
+        self._ensure_can_send()
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
             return None
@@ -1477,7 +1535,7 @@ class RealtimeSession:
                 await self._send_frame(image)
         except BaseException:
             if respond:
-                self._pending_response_requests -= 1
+                self._release_response_reservation()
             # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
             # so nothing to take back.
             if request is not None:
@@ -1524,7 +1582,11 @@ class RealtimeSession:
 
         Given an async iterable — a microphone stream, a WebSocket receive loop — each chunk is
         forwarded as it arrives and the call returns when the iterable is exhausted, so a whole
-        capture loop can be one task: `asyncio.create_task(session.send_audio(microphone))`.
+        capture loop can be one task: `asyncio.create_task(session.send_audio(microphone))`. If the
+        session is closed while consuming that iterable, the call returns cleanly at the next chunk
+        the source yields. Cancel the task in application code if the source can stall indefinitely.
+        Passing a single chunk to a session that is already closed still raises
+        [`UserError`][pydantic_ai.exceptions.UserError].
 
         Resample the audio to
         [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
@@ -1532,8 +1594,11 @@ class RealtimeSession:
         raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
         """
         self._require_media_ownership('send_audio')
+        self._ensure_can_send()
         if isinstance(data, AsyncIterable):
             async for chunk in data:
+                if self._closed:
+                    return
                 await self.send_audio(chunk)
             return
         if (turn := self._user_turns.get(None)) is not None and turn.speech_ended:
@@ -1569,6 +1634,7 @@ class RealtimeSession:
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
+        self._ensure_can_send()
         self._require_media_ownership('commit_audio')
         self._require_capability('supports_manual_turn_control', method='commit_audio', feature='manual turn-taking')
         await self._send_frame(CommitAudio())
@@ -1578,6 +1644,7 @@ class RealtimeSession:
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
+        self._ensure_can_send()
         self._require_media_ownership('clear_audio')
         self._require_capability('supports_manual_turn_control', method='clear_audio', feature='manual turn-taking')
         await self._send_frame(ClearAudio())
@@ -1592,12 +1659,13 @@ class RealtimeSession:
         If a response is already in flight, the request is held until it completes and is dropped if
         the user barges in. Returning does not mean the model has started speaking.
         """
+        self._ensure_can_send()
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
         self._reserve_response_request()
         try:
             await self._send_frame(CreateResponse())
         except BaseException:
-            self._pending_response_requests -= 1
+            self._release_response_reservation()
             raise
 
     @overload
@@ -1641,7 +1709,7 @@ class RealtimeSession:
             played_bytes: Playback position as the total raw PCM bytes actually played from the
                 session's single `stream_audio()` iterator. Mutually exclusive with `played_ms`.
         """
-        self._ensure_not_closed()
+        self._ensure_can_send()
         self._require_capability('supports_interruption', method='interrupt', feature='interruption')
         if played_bytes is not None:
             if played_ms is not None:
@@ -1785,6 +1853,12 @@ class RealtimeSession:
         """
         self._ensure_not_closed()
         self._start_pump()
+        # Only the closed check is re-taken here, not `_ensure_can_send`: a frame already waiting on
+        # the lock when a background failure ends receiving is one already underway, not the "next
+        # outbound method" that contract speaks of, and it costs a single frame nobody reads on a
+        # session that is ending anyway. Re-taking the full guard under the lock would also raise that
+        # parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither of
+        # which is a caller that asked to send.
         async with self._send_lock:
             try:
                 for content in contents:
@@ -1806,6 +1880,40 @@ class RealtimeSession:
     def _ensure_not_closed(self) -> None:
         if self._closed:
             raise UserError('This realtime session is closed.')
+
+    def _ensure_can_send(self) -> None:
+        self._ensure_not_closed()
+        if (self._pump_finished or self._receive_ending) and (error := self._first_undelivered_error()) is not None:
+            self._raise_delivered(error)
+        # Started here rather than in `__aenter__` so a session driven by `send()` alone still notices
+        # a receive-side failure, without the pump publishing to taps that do not exist yet. Entering
+        # eagerly discarded provider output produced before the caller's first `stream_audio()` or
+        # `stream_transcripts()`, which is the order every docs example uses.
+        self._start_pump()
+
+    def _error_was_delivered(self, error: BaseException) -> bool:
+        return any(delivered is error for delivered in self._delivered_errors)
+
+    def _raise_delivered(self, error: BaseException) -> Never:
+        """Raise an error its callers have already checked is undelivered, recording the delivery."""
+        self._delivered_errors.append(error)
+        raise error
+
+    def _first_undelivered_error(self) -> BaseException | None:
+        if self._pump_error is not None and not self._error_was_delivered(self._pump_error):
+            return self._pump_error
+        for error in self._parked_errors:
+            if not isinstance(error, asyncio.CancelledError) and not self._error_was_delivered(error):
+                return error
+        return None
+
+    def _park_error(self, error: BaseException) -> None:
+        """Park a background failure for iteration or close, ending receive-only views if nobody is iterating."""
+        self._parked_errors.append(error)
+        self._queue_put(error)
+        if not self._iterator_active and self._pump_task is not None:
+            self._receive_ending = True
+            self._pump_task.cancel()
 
     def _require_capability(self, capability: str, *, method: str, feature: str) -> None:
         """Raise a clear `UserError` before sending when the profile doesn't report `capability`."""
@@ -2062,12 +2170,13 @@ class RealtimeSession:
         try:
             self._check_usage_limits()
         except UsageLimitExceeded as exceeded:
-            # Surfaced from `close()` on the same terms as every other teardown failure: only when the
-            # stream was never consumed, so a caller that already saw the limit from iteration is not
-            # told twice, and only when nothing else is ending the session — the reason a session is
-            # closing outranks a limit discovered while it closes.
-            if self._closing_error is None and self._close_error is None and not self._stream_consumed:
-                self._close_error = exceeded
+            # Parked rather than raised, so it reaches the caller through the same single delivery point
+            # as every other receive-side failure — `close()` takes the first undelivered error, and the
+            # caller's own exception still wins. Skipped once a limit has already been delivered: the
+            # caller that saw it from iteration must not be told again when teardown re-checks the same
+            # budget against the response it just settled.
+            if not any(isinstance(delivered, UsageLimitExceeded) for delivered in self._delivered_errors):
+                self._park_error(exceeded)
 
     def _ensure_chat_span(self) -> None:
         """Begin assembling a response and open its `chat {model}` span if not already open.
@@ -2141,6 +2250,7 @@ class RealtimeSession:
         self._pending_interrupted_at_ms = None
         if not more_expected:
             events.append(RealtimeTurnCompleteEvent())
+            self._release_exchange()
             # Only the exchange boundary is marked: each response is already a `chat` span, so a marker
             # per response would say nothing the trace doesn't show, while the turn boundary — where the
             # model is actually done — has no span of its own.
@@ -2559,6 +2669,9 @@ class RealtimeSession:
         # The response the provider was cancelling on speech onset is one of the things being
         # settled here, so interrupting whatever comes next is the client's job again.
         self._server_cancelled_the_response_on_speech = False
+        # Whatever the model still owed is being settled here rather than spoken, on both the reconnect
+        # and the close path, so a `wait_for_reply()` waiting on it is waiting on nothing.
+        self._release_exchange()
         events = self._finalize_user()
         for item_id, turn in list(self._user_turns.items()):
             if item_id is not None and not turn.finalized:
@@ -2828,7 +2941,7 @@ class RealtimeSession:
                 )
             )
         except BaseException:
-            self._pending_response_requests -= 1
+            self._release_response_reservation()
             raise
 
     # --- streaming --------------------------------------------------------------------------------
@@ -2852,7 +2965,7 @@ class RealtimeSession:
     def _pending_message_task_done(self, task: asyncio.Task[None]) -> None:
         self._background_tasks.discard(task)
         if not task.cancelled() and (error := task.exception()) is not None:
-            self._queue_put(error)
+            self._park_error(error)
         self._queue_put(self._queue_changed)
 
     async def _drain_pending_messages(self, priority: PendingMessagePriority) -> None:
@@ -2923,6 +3036,7 @@ class RealtimeSession:
         elif self._usage_limits is not None:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
+        self._response_active = True
 
     def _accumulate_response_usage(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
@@ -2989,15 +3103,7 @@ class RealtimeSession:
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.
-            self._queue_put(e)
-            if not self._stream_consumed and self._pump_task is not None:
-                # Nobody is reading the event stream, so the parked error can only surface from
-                # `close()` — and with the provider still waiting on a tool result it will never get,
-                # the session would sit open but mute until the caller happens to close it. End the
-                # receive side now, exactly as a pump error does: the audio/transcript views finish,
-                # the caller's own playback loop returns, and `close()` raises the error. A consumer
-                # that is iterating gets it from iteration and keeps its views, as before.
-                self._pump_task.cancel()
+            self._park_error(e)
             return
         finally:
             validation_done.set()
@@ -3030,7 +3136,7 @@ class RealtimeSession:
         # `_pending_message_task_done`. Otherwise it vanishes with only an "exception was never
         # retrieved" warning at GC, silently losing the enqueued message with no signal to the consumer.
         if not task.cancelled() and (error := task.exception()) is not None:
-            self._queue_put(error)
+            self._park_error(error)
         self._release_ordered_tool_events()
         # Wake the queue reader so it can finish once both the pump and the last tool are done.
         self._queue_put(self._queue_changed)
@@ -3193,6 +3299,7 @@ class RealtimeSession:
             self._pump_error = e
         finally:
             self._pump_finished = True
+            self._exchange_progress.set()
             if not self._closed:
                 self._finish_taps()
             self._queue_put(self._queue_changed)
@@ -3276,7 +3383,6 @@ class RealtimeSession:
             raise UserError('This realtime session event stream has already ended.')
 
         self._iterator_active = True
-        self._stream_consumed = True
         self._start_pump()
 
         async def queue_events() -> AsyncIterator[RealtimeEvent]:
@@ -3287,12 +3393,17 @@ class RealtimeSession:
                     # drain belong to `__aexit__`, which runs as this exception leaves the owner block.
                     if self._pump_error is not None:
                         self._stream_exhausted = True
-                        raise self._pump_error
+                        if not self._error_was_delivered(self._pump_error):
+                            self._raise_delivered(self._pump_error)
                     if self._pump_finished and not self._background_tasks and not self._queue:
                         self._stream_exhausted = True
                         return
                     continue
-                yield _as_event(item)  # re-raises if a tool failed
+                if isinstance(item, BaseException):
+                    if self._error_was_delivered(item):
+                        continue
+                    self._raise_delivered(item)
+                yield cast('RealtimeEvent', item)
 
         source = queue_events()
         stream: AsyncIterable[RealtimeEvent] = source
