@@ -13,19 +13,20 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+ag-ui-protocol = false
 listentome = false
 typesafe-sdk = false
 logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
+google-genai = "2026-09-22T17:23:02Z"
 anthropic = "2026-09-22T16:25:39Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
 openai = "2026-09-23T00:08:49Z"
 logfire-api = false
-google-genai = "2026-09-22T17:23:02Z"
 
 [manifest]
 requirements = [
@@ -1144,7 +1145,7 @@ mcp = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10,<1" },
+    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.8.0" },
     { name = "anyio", specifier = ">=4.7.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },

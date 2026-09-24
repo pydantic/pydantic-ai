@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import uuid
 import warnings
-from base64 import b64decode
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
@@ -13,6 +12,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    cast,
 )
 
 from pydantic import ValidationError
@@ -49,6 +49,7 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
     narrow_message_parts,
+    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import (
@@ -70,9 +71,9 @@ try:
         ActivityMessage,
         AssistantMessage,
         BaseEvent,
-        BinaryInputContent,
         DeveloperMessage,
         FunctionCall,
+        InputContent,
         Message,
         RunAgentInput,
         SystemMessage,
@@ -84,8 +85,9 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
+    from ._binary_0_14 import BinaryInputContent, legacy_binary_input, legacy_binary_to_content
     from ._event_stream import AGUIEventStream
-    from ._forward_compat import skip_unknown_tagged_items
+    from ._forward_compat import HAS_BINARY_INPUT_PART, adapt_unsupported_items
     from ._interrupt import (
         HAS_INTERRUPTS,
         ResumeEntry,
@@ -191,19 +193,37 @@ def _new_message_id() -> str:
     return str(uuid.uuid4())
 
 
+def _input_content_to_user_content(content: Sequence[InputContent]) -> list[UserContent]:
+    """Convert a message's typed content parts to Pydantic AI content.
+
+    A part the installed `ag-ui-protocol` accepts but Pydantic AI cannot use, such as a `file` source
+    with no known provider, is dropped with a warning.
+    """
+    converted: list[UserContent] = []
+    for part in content:
+        match part:
+            case TextInputContent(text=text):
+                converted.append(text)
+            case _ if isinstance(part, BinaryInputContent):
+                # A guard, not a class pattern: AG-UI 1.0 retired the part from the content union,
+                # but an install below 1.0 still sends it.
+                if (legacy := legacy_binary_to_content(part)) is not None:
+                    converted.append(legacy)
+            case ImageInputContent() | AudioInputContent() | VideoInputContent() | DocumentInputContent():
+                from ._multimodal import multimodal_input_to_content
+
+                if (media := multimodal_input_to_content(part)) is not None:
+                    converted.append(media)
+            case _:
+                assert_never(part)
+    return converted
+
+
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
     use_multimodal: bool = False,
-) -> (
-    TextInputContent
-    | BinaryInputContent
-    | ImageInputContent
-    | AudioInputContent
-    | VideoInputContent
-    | DocumentInputContent
-    | None
-):
+) -> InputContent | None:
     """Convert a user content item to AG-UI input content.
 
     When `use_multimodal` is True (ag-ui >= 0.1.15), media URLs are emitted as typed
@@ -218,13 +238,13 @@ def _user_content_to_input(
             from ._multimodal import media_url_to_multimodal
 
             return media_url_to_multimodal(item)
-        return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
+        return legacy_binary_input(url=item.url, mime_type=item.media_type or '')
     elif isinstance(item, BinaryContent):
         if use_multimodal:
             from ._multimodal import binary_to_multimodal
 
             return binary_to_multimodal(item)
-        return BinaryInputContent(type='binary', data=item.base64, mime_type=item.media_type)
+        return legacy_binary_input(data=item.base64, mime_type=item.media_type)
     elif isinstance(item, UploadedFile):
         # UploadedFile holds an opaque provider file_id (e.g. 'file-abc123'), not a URL or
         # binary data, so it can't be mapped to AG-UI input content. Skipped like CachePoint.
@@ -253,12 +273,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     - `>= 0.1.11`: emits `REASONING_*` events with encrypted metadata during streaming, and
       includes `ThinkingPart` as `ReasoningMessage` in `dump_messages` output for full round-trip
       fidelity of thinking signatures and provider metadata.
-    - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
-      `VideoInputContent`, `DocumentInputContent`) instead of generic `BinaryInputContent`.
+    - `>= 0.1.15`: emits typed multimodal input content instead of generic `BinaryInputContent`.
+      An installed `ag-ui-protocol >= 1.0` uses typed content for every negotiated version.
+    - `>= 1.0`: declares the SDK's protocol version on `RUN_STARTED` and, with `include_usage`, reports
+      token usage per provider and model on `RUN_FINISHED`. The `cancelled` outcome and the success
+      outcome's `pendingToolCallIds` also need the client to declare `protocolVersion` 1.0 or newer on
+      its `RunAgentInput`; older browser clients reject them and get a plain `success` outcome and a
+      bare `RUN_FINISHED` instead.
 
-    `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
-    of this setting, and `build_run_input` skips inbound content types the installed
-    `ag-ui-protocol` predates rather than rejecting the request.
+    `load_messages` accepts reasoning and multimodal content regardless of this setting. `build_run_input`
+    skips unsupported inbound content and translates retired `binary` parts when possible.
     """
 
     preserve_file_data: bool = False
@@ -266,10 +290,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     [activity messages](https://docs.ag-ui.com/concepts/messages).
 
     Defaults to `False`. AG-UI has no native representation for agent-generated files
-    ([`FilePart`][pydantic_ai.messages.FilePart]) or uploaded-file references
-    ([`UploadedFile`][pydantic_ai.messages.UploadedFile]), so when this is `True` they are
-    serialized as sidecar activity messages on `dump_messages` and reconstructed on
-    `load_messages`. A frontend only completes the round-trip if it echoes these activity
+    ([`FilePart`][pydantic_ai.messages.FilePart]), and `dump_messages` does not write 1.0's
+    `file` source for uploaded-file references ([`UploadedFile`][pydantic_ai.messages.UploadedFile]),
+    so when this is `True` they are serialized as sidecar activity messages on `dump_messages` and
+    reconstructed on `load_messages`. A frontend only completes the round-trip if it echoes these activity
     messages back on the next request.
 
     This is a representation setting, not a security one: honoring a reconstructed inbound
@@ -279,37 +303,50 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     unaffected — they ride inline in `ToolMessage.content`.
     """
 
+    include_usage: bool = False
+    """Whether `RUN_FINISHED` reports the run's token usage per provider and model (`ag-ui-protocol >= 1.0`).
+
+    Defaults to `False` because each entry names the provider and model the server used, which is
+    server-side information a client has no need for by default.
+    """
+
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
         """Build an AG-UI run input object from the request body.
 
-        A message `role` or input content `type` introduced by a protocol version newer than the
-        installed `ag-ui-protocol` is skipped with a warning rather than failing the whole request,
+        A message `role`, input content `type` or media `source` type introduced by a protocol version
+        newer than the installed `ag-ui-protocol` is skipped with a warning rather than failing the whole request,
         per the backwards-compatibility policy in `pydantic_ai/ui/AGENTS.md`. Only items the
         installed models cannot dispatch at all are skipped: a body that is invalid for any other
         reason still raises, so a client bug isn't converted into silent misbehavior.
+
+        On a 1.0 install, a retired `binary` input part is translated into typed media content; one
+        with no MIME type or payload is malformed and still raises.
         """
         try:
             return RunAgentInput.model_validate_json(body)
         except ValidationError:
-            payload, skipped = skip_unknown_tagged_items(body)
-            if not skipped:
+            if (adapted := adapt_unsupported_items(body)) is None:
                 raise
+            payload, skipped = adapted
 
         # Validated outside the `except` block so a body that is *also* malformed reports the
         # remaining errors on their own rather than chained behind the unknown-tag failure.
         run_input = RunAgentInput.model_validate(payload)
-        warnings.warn(
-            f'AG-UI content the installed ag-ui-protocol {DEFAULT_AG_UI_VERSION} does not support '
-            f'({", ".join(sorted(skipped))}) was skipped; upgrade `ag-ui-protocol` to accept it.',
-            UserWarning,
-            stacklevel=2,
-        )
+        if skipped:
+            warnings.warn(
+                f'AG-UI content the installed ag-ui-protocol {DEFAULT_AG_UI_VERSION} does not support '
+                f'({", ".join(sorted(skipped))}) was skipped; upgrade `ag-ui-protocol` to accept it.',
+                UserWarning,
+                stacklevel=2,
+            )
         return run_input
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Build an AG-UI event stream transformer."""
-        return AGUIEventStream(self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version)
+        return AGUIEventStream(
+            self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version, include_usage=self.include_usage
+        )
 
     @classmethod
     async def from_request(
@@ -324,6 +361,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
         allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+        include_usage: bool = False,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -337,6 +375,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
             allowed_content_types=allowed_content_types,
+            include_usage=include_usage,
             **kwargs,
         )
 
@@ -415,53 +454,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 case UserMessage(content=content):
                     if isinstance(content, str):
                         builder.add(UserPromptPart(content=content))
-                    else:
-                        user_prompt_content: list[UserContent] = []
-                        for part in content:
-                            match part:
-                                case TextInputContent(text=text):
-                                    user_prompt_content.append(text)
-                                case BinaryInputContent():
-                                    if part.url:
-                                        try:
-                                            binary_part = BinaryContent.from_data_uri(part.url)
-                                        except ValueError:
-                                            media_type_constructors = {
-                                                'image': ImageUrl,
-                                                'video': VideoUrl,
-                                                'audio': AudioUrl,
-                                            }
-                                            media_type_prefix = part.mime_type.split('/', 1)[0]
-                                            constructor = media_type_constructors.get(media_type_prefix, DocumentUrl)
-                                            binary_part = constructor(url=part.url, media_type=part.mime_type)
-                                    elif part.data:
-                                        binary_part = BinaryContent(
-                                            data=b64decode(part.data), media_type=part.mime_type
-                                        )
-                                    else:  # pragma: no cover
-                                        raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
-                                    user_prompt_content.append(binary_part)
-                                case (
-                                    ImageInputContent()
-                                    | AudioInputContent()
-                                    | VideoInputContent()
-                                    | DocumentInputContent()
-                                ):
-                                    from ._multimodal import (
-                                        multimodal_input_to_content,
-                                    )
-
-                                    user_prompt_content.append(multimodal_input_to_content(part))
-                                case _:
-                                    assert_never(part)
-
-                        if user_prompt_content:
-                            content_to_add = (
-                                user_prompt_content[0]
-                                if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
-                                else user_prompt_content
-                            )
-                            builder.add(UserPromptPart(content=content_to_add))
+                    elif user_prompt_content := _input_content_to_user_content(content):
+                        content_to_add = (
+                            user_prompt_content[0]
+                            if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
+                            else user_prompt_content
+                        )
+                        builder.add(UserPromptPart(content=content_to_add))
 
                 case SystemMessage(content=content) | DeveloperMessage(content=content):
                     builder.add(SystemPromptPart(content=content))
@@ -511,9 +510,27 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if tool_name is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
-                    # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
-                    # multimodal content comes back as real types; see `rehydrate_tool_return_content`.
-                    content = rehydrate_tool_return_content(tool_msg.content)
+                    if isinstance(tool_msg.content, list):
+                        # From 1.0 a tool message can carry content parts. They load as a user message's
+                        # do, then pass the validation a string return's JSON does, so media narrows to
+                        # the type a reloaded return has and `sanitize_messages` sees typed content. A
+                        # single part is the return itself, so a lone text part rehydrates like string
+                        # content. A message with no parts left keeps its place with no content, which is
+                        # what `sanitize_messages` leaves an emptied return with.
+                        parts = cast(
+                            list[Any],  # validating a list gives a list; the adapter's type is the whole union
+                            tool_return_content_ta.validate_python(_input_content_to_user_content(tool_msg.content)),
+                        )
+                        if not parts:
+                            content = None
+                        elif len(parts) == 1:
+                            content = rehydrate_tool_return_content(parts[0])
+                        else:
+                            content = parts
+                    else:
+                        # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
+                        # multimodal content comes back as real types; see `rehydrate_tool_return_content`.
+                        content = rehydrate_tool_return_content(tool_msg.content)
 
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
                     # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
@@ -669,20 +686,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         each tool message, so a `ToolReturnPart` that precedes a `UserPromptPart` in the original
         request keeps its position instead of being reordered after the user prompt.
         """
-        use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
+        # Unlike the legacy `THINKING_*` events, which are leaf models we can vendor, `binary` is a
+        # member of the SDK's `UserMessage.content` union: an install that dropped it cannot build the
+        # message, so the install's typed media wins over the negotiated version.
+        use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION or not HAS_BINARY_INPUT_PART
         # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) landed in 0.1.11 — see
         # `tool_kind_encrypted_value`.
         use_encrypted_value = parse_ag_ui_version(ag_ui_version) >= ENCRYPTED_VALUE_VERSION
         result: list[Message] = []
         system_content: list[str] = []
-        user_content: list[
-            TextInputContent
-            | BinaryInputContent
-            | ImageInputContent
-            | AudioInputContent
-            | VideoInputContent
-            | DocumentInputContent
-        ] = []
+        user_content: list[InputContent] = []
 
         def flush_user_content() -> None:
             nonlocal user_content
@@ -958,7 +971,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           affects hand-constructed histories.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `FileUrl.force_download` is dropped when `ag_ui_version < '0.1.15'` (before typed
-          multimodal content gained a metadata carrier).
+          multimodal content gained a metadata carrier) on an installed `ag-ui-protocol < 1.0`.
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.
         - `FilePart` is silently dropped unless `preserve_file_data=True`.
         - `UploadedFile` in a multi-item `UserPromptPart` is split into a separate activity message

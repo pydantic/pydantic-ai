@@ -3,10 +3,10 @@
 Our `ag-ui-protocol` floor is `>=0.1.10` and the policy (see `pydantic_ai/ui/AGENTS.md`) is that an
 older install skips new functionality rather than erroring on it. AG-UI's models set `extra='allow'`,
 so a *field* added to an existing type already parses and is ignored, but `Message` (discriminated on
-`role`) and `InputContent` (discriminated on `type`) are tagged unions: a `role` or `type` the
-installed models don't know is rejected outright, which fails validation for the whole request.
-`ReasoningMessage` (0.1.11) and typed multimodal input content (0.1.15) both sit above the floor, so
-a client that is merely newer than the server trips this.
+`role`), `InputContent` (discriminated on `type`) and a media part's `source` (also on `type`) are
+tagged unions: a tag the installed models don't know is rejected outright, which fails validation for
+the whole request. `ReasoningMessage` (0.1.11), typed multimodal input content (0.1.15) and the `file`
+source (1.0) all sit above the floor, so a client that is merely newer than the server trips this.
 
 This module reduces such a body to the items the installed models *can* dispatch, so the rest of the
 run still parses. It deliberately removes nothing else: an item whose tag is known stays untouched
@@ -14,6 +14,11 @@ and keeps failing validation, so a genuinely malformed payload is still rejected
 reinterpreted. An unknown tag alone isn't enough either — an item only qualifies as new functionality
 if it also satisfies the contract every member of its union shares, so a client bug can't ride in
 under a tag we don't recognize.
+
+The one tag that is unknown because the SDK *retired* it, `binary` on 1.0, is translated to its typed
+replacement instead of skipped; a `binary` part with nothing to translate stays in and fails validation.
+The translation rewrites the raw JSON rather than going through the SDK's deprecated `BinaryInputContent`
+class, which 1.0 keeps importable for one release only.
 """
 
 from __future__ import annotations
@@ -25,8 +30,9 @@ from ag_ui.core import InputContent, Message
 from pydantic import BaseModel, JsonValue
 
 from ..._utils import get_union_args
+from ._utils import media_part_type
 
-__all__ = ['skip_unknown_tagged_items']
+__all__ = ['HAS_BINARY_INPUT_PART', 'adapt_unsupported_items']
 
 
 def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
@@ -44,9 +50,28 @@ def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
     )
 
 
+def _known_source_tags(tagged_union: object) -> dict[str, frozenset[str]]:
+    """The `source.type` tags each media member of `tagged_union` knows, keyed by the member's own `type` tag.
+
+    Empty below 0.1.15, where no member carries a `source`.
+    """
+    members: tuple[type[BaseModel], ...] = get_union_args(tagged_union)
+    return {
+        tag: _known_tags(member.model_fields['source'].annotation, 'type')
+        for member in members
+        if 'source' in member.model_fields
+        for tag in get_args(member.model_fields['type'].annotation)
+        if isinstance(tag, str)
+    }
+
+
 # The discriminator names themselves are AG-UI wire constants, stable across every version in range.
 _KNOWN_MESSAGE_ROLES = _known_tags(Message, 'role')
 _KNOWN_INPUT_CONTENT_TYPES = _known_tags(InputContent, 'type')
+_KNOWN_SOURCE_TYPES_BY_CONTENT_TYPE = _known_source_tags(InputContent)
+
+HAS_BINARY_INPUT_PART = 'binary' in _KNOWN_INPUT_CONTENT_TYPES
+"""Whether the installed SDK still accepts the retired `binary` input part."""
 
 
 def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozenset[str]) -> str | None:
@@ -61,16 +86,48 @@ def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozense
     return None
 
 
-def skip_unknown_tagged_items(body: bytes) -> tuple[JsonValue, frozenset[str]]:
-    """Re-read a rejected AG-UI request body without the items this install can't dispatch.
+def _unknown_source_tag(item: dict[str, JsonValue]) -> str | None:
+    """A `"source.type='file'"` label when a media part's source is one the installed models don't know."""
+    content_type = item.get('type')
+    if not isinstance(content_type, str):
+        return None
+    known_sources = _KNOWN_SOURCE_TYPES_BY_CONTENT_TYPE.get(content_type)
+    source = item.get('source')
+    if known_sources is None or not isinstance(source, dict):
+        return None
+    unknown = _unknown_tag(source, 'type', known_sources)
+    return f'source.{unknown}' if unknown is not None else None
 
-    Returns the reduced payload and labels for the tags that were skipped. The payload is only
-    meaningful when the label set is non-empty; an empty set means there was nothing to skip and the
-    caller should let the original validation error stand.
 
-    `messages[]` and a user message's list `content` are the only tagged-union lists in
-    `RunAgentInput`. A body that isn't a JSON object, or whose `messages` isn't a list, is left for
-    validation to reject.
+def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
+    """The typed media part for a retired `binary` part, or `None` when it has no MIME type or payload.
+
+    `url` wins over `data`, as it did in the legacy loader. A base64 data URI in `url` is how 0.x
+    clients inlined bytes, so it becomes a data source, and its own media type wins over the declared
+    one, as `BinaryContent.from_data_uri` did.
+    """
+    mime_type = item.get('mimeType', item.get('mime_type'))
+    if not isinstance(mime_type, str):
+        return None
+    url = item.get('url')
+    data = item.get('data')
+    if isinstance(url, str) and url.startswith('data:') and ';base64,' in url:
+        uri_mime_type, data = url.removeprefix('data:').split(';base64,', 1)
+        mime_type, url = uri_mime_type or mime_type, None
+    if isinstance(url, str) and url:
+        source: dict[str, JsonValue] = {'type': 'url', 'value': url, 'mimeType': mime_type}
+    elif isinstance(data, str) and data:
+        source = {'type': 'data', 'value': data, 'mimeType': mime_type}
+    else:
+        return None
+    return {'type': media_part_type(mime_type), 'source': source}
+
+
+def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | None:
+    """Re-read a rejected request, skipping unsupported tagged items and translating retired ones.
+
+    Returns the adapted payload and labels for the skipped tags, or `None` when nothing was skipped
+    or translated, in which case the caller should let the original `ValidationError` stand.
     """
     try:
         payload: JsonValue = json.loads(body)
@@ -80,14 +137,15 @@ def skip_unknown_tagged_items(body: bytes) -> tuple[JsonValue, frozenset[str]]:
         # `ValidationError` (and the 422 it maps to) must stand. Invalid JSON and invalid UTF-8 both
         # arrive as `ValueError` subclasses — `UnicodeDecodeError` is not a `JSONDecodeError` — and
         # input nested past the interpreter's limit arrives as `RecursionError`.
-        return None, frozenset()
+        return None
     if not isinstance(payload, dict):
-        return None, frozenset()
+        return None
     messages = payload.get('messages')
     if not isinstance(messages, list):
-        return None, frozenset()
+        return None
 
     skipped: set[str] = set()
+    translated = False
     kept_messages: list[JsonValue] = []
     for message in messages:
         if isinstance(message, dict):
@@ -109,11 +167,23 @@ def skip_unknown_tagged_items(body: bytes) -> tuple[JsonValue, frozenset[str]]:
                     if isinstance(item, dict) and (
                         (unknown_type := _unknown_tag(item, 'type', _KNOWN_INPUT_CONTENT_TYPES)) is not None
                     ):
-                        skipped.add(unknown_type)
+                        if item.get('type') != 'binary':
+                            skipped.add(unknown_type)
+                            continue
+                        if (media_part := _translate_binary_part(item)) is not None:
+                            translated = True
+                            kept_content.append(media_part)
+                            continue
+                        # A retired part with nothing to translate is malformed: it stays in so
+                        # validation reports it, like any malformed item under a known tag.
+                    elif isinstance(item, dict) and (unknown_source := _unknown_source_tag(item)) is not None:
+                        skipped.add(unknown_source)
                         continue
                     kept_content.append(item)
                 message['content'] = kept_content
         kept_messages.append(message)
 
+    if not skipped and not translated:
+        return None
     payload['messages'] = kept_messages
     return payload, frozenset(skipped)

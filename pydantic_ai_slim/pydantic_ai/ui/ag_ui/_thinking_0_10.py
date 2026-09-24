@@ -1,23 +1,20 @@
 # pyright: reportPrivateUsage=false
-"""Thinking event handlers for AG-UI protocol < 0.1.11 (THINKING_* events).
+"""Legacy `THINKING_*` event handlers for peers below 0.1.11.
 
-These are extracted class methods of `AGUIEventStream` — the `self` parameter
-is the event stream instance, and access to its private fields is intentional.
+These are extracted class methods of `AGUIEventStream` — the `self` parameter is the event stream
+instance, and access to its private fields is intentional.
+
+The `THINKING_*` event models are defined here because `ag-ui-protocol>=1.0` no longer ships them.
+Below 1.0 the SDK's own classes are used instead, so the native event stream keeps yielding the
+same types it did before; the fields match, so the wire is the same either way.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from ag_ui.core import (
-    BaseEvent,
-    ThinkingEndEvent,
-    ThinkingStartEvent,
-    ThinkingTextMessageContentEvent,
-    ThinkingTextMessageEndEvent,
-    ThinkingTextMessageStartEvent,
-)
+from ag_ui.core import BaseEvent
 
 from ...messages import ThinkingPart, ThinkingPartDelta
 
@@ -25,6 +22,51 @@ if TYPE_CHECKING:
     from ...output import OutputDataT
     from ...tools import AgentDepsT
     from ._event_stream import AGUIEventStream
+
+
+class ThinkingStartEvent(BaseEvent):
+    """Legacy `THINKING_START` event."""
+
+    type: Literal['THINKING_START'] = 'THINKING_START'  # pyright: ignore[reportIncompatibleVariableOverride]
+    title: str | None = None
+
+
+class ThinkingEndEvent(BaseEvent):
+    """Legacy `THINKING_END` event."""
+
+    type: Literal['THINKING_END'] = 'THINKING_END'  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class ThinkingTextMessageStartEvent(BaseEvent):
+    """Legacy thinking message start event."""
+
+    type: Literal['THINKING_TEXT_MESSAGE_START'] = 'THINKING_TEXT_MESSAGE_START'  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class ThinkingTextMessageContentEvent(BaseEvent):
+    """Legacy thinking message content event."""
+
+    type: Literal['THINKING_TEXT_MESSAGE_CONTENT'] = 'THINKING_TEXT_MESSAGE_CONTENT'  # pyright: ignore[reportIncompatibleVariableOverride]
+    delta: str
+
+
+class ThinkingTextMessageEndEvent(BaseEvent):
+    """Legacy thinking message end event."""
+
+    type: Literal['THINKING_TEXT_MESSAGE_END'] = 'THINKING_TEXT_MESSAGE_END'  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+if not TYPE_CHECKING:  # pragma: lax no cover
+    try:
+        from ag_ui.core import (
+            ThinkingEndEvent,
+            ThinkingStartEvent,
+            ThinkingTextMessageContentEvent,
+            ThinkingTextMessageEndEvent,
+            ThinkingTextMessageStartEvent,
+        )
+    except ImportError:
+        pass
 
 
 async def handle_thinking_start(
