@@ -40,7 +40,8 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     working_dir: str | Path
     """The default working directory for commands and the base for relative workspace paths.
 
-    It must be absolute; a leading `~` is expanded to the user's home directory. There is no default,
+    A leading `~` is expanded to the user's home directory, and a relative path, such as `'.'`,
+    resolves against the current directory when the capability is constructed. There is no default,
     so a run never lands in the host process's working directory implicitly. The caller creates and
     removes the directory.
     """
@@ -74,8 +75,9 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     """
 
     def __post_init__(self) -> None:
-        # Surface an unusable `working_dir` or platform where the capability is written, not on the first run.
-        LocalWorkspaceBackend(self.working_dir)
+        # Pin a relative `working_dir` to today's directory, and surface an unusable platform where the
+        # capability is written, not on the first run.
+        self.working_dir = LocalWorkspaceBackend(self.working_dir).ref.id
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         backend = LocalWorkspaceBackend(self.working_dir, env=self.env)

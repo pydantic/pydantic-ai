@@ -111,11 +111,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
     Args:
         working_dir: The default working directory for commands and the base for relative
-            workspace paths. It must be absolute; a leading `~` is expanded to the user's home
-            directory. It is not a confinement boundary. The caller creates and removes it. It is
-            canonicalized on first use so
-            [`working_dir()`][pydantic_ai.workspaces.WorkspaceBackend.working_dir] reports the
-            directory commands actually run in.
+            workspace paths. A leading `~` is expanded to the user's home directory, and relative
+            paths resolve against the current directory when the workspace is constructed. It is not
+            a confinement boundary. The caller creates and removes it. It is canonicalized on first
+            use so [`working_dir()`][pydantic_ai.workspaces.WorkspaceBackend.working_dir] reports
+            the directory commands actually run in.
         env: Environment variables every command in this workspace gets. The per-call `env` of
             [`run`][pydantic_ai.workspaces.SupportsCommands.run] is layered on top.
     """
@@ -128,20 +128,17 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 'workspace instead.'
             )
         expanded = Path(working_dir).expanduser()
-        if not expanded.is_absolute():
-            raise ValueError(
-                f'`working_dir` must be an absolute path or start with `~`, got {str(working_dir)!r}: a relative '
-                "path would depend on the host process's working directory at some later moment. Make the "
-                "intent explicit at the call site instead, e.g. `LocalWorkspaceBackend(Path.cwd() / 'work')`."
-            )
-        self._working_dir = expanded
+        # Absolute from here on, so a later change of the process's directory cannot move the workspace.
+        # Symlinks are left for `working_dir()` to resolve on first use.
+        absolute = expanded if expanded.is_absolute() else Path.cwd() / expanded
+        self._working_dir = absolute
         self._canonical_working_dir: Path | None = None
-        self._ref = WorkspaceRef(provider='local', id=expanded.as_posix())
+        self._ref = WorkspaceRef(provider='local', id=absolute.as_posix())
         self._env = dict(env or {})
 
     @property
     def ref(self) -> WorkspaceRef:
-        """`WorkspaceRef(provider='local', id=...)` naming `working_dir` as given, with `~` expanded.
+        """`WorkspaceRef(provider='local', id=...)` naming `working_dir` as an absolute path, with `~` expanded.
 
         The directory is the environment, so this is the one backend whose ref precedes its first
         operation: it is available from construction and involves no I/O, so symlinks are not

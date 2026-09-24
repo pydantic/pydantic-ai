@@ -133,17 +133,26 @@ async def test_missing_working_dir_is_unavailable_until_it_exists(tmp_path: Path
     assert await workspace.working_dir() == str((tmp_path / 'missing').resolve())
 
 
-@pytest.mark.parametrize('operation', ['working_dir', 'cwd', 'fs'])
-async def test_relative_paths_are_rejected(tmp_path: Path, operation: str):
+@pytest.mark.parametrize('operation', ['cwd', 'filesystem_path'])
+async def test_relative_cwd_and_filesystem_paths_are_rejected(tmp_path: Path, operation: str):
     """A relative path would resolve against the host process's working directory rather than the
-    workspace's, so every entry point rejects it instead of silently depending on ambient state."""
+    workspace's, so the backend rejects it instead of silently depending on ambient state."""
     with pytest.raises(ValueError, match='absolute'):
-        if operation == 'working_dir':
-            LocalWorkspaceBackend('work')
-        elif operation == 'cwd':
+        if operation == 'cwd':
             await LocalWorkspaceBackend(tmp_path).run(['pwd'], cwd='subdir')
         else:
-            await LocalWorkspaceBackend(tmp_path).write_bytes('outside.txt', b'escape')
+            await LocalWorkspaceBackend(tmp_path).write_bytes('relative.txt', b'data')
+
+
+async def test_relative_working_dir_resolves_against_the_directory_at_construction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.chdir(tmp_path)
+    workspace = LocalWorkspaceBackend('.')
+    monkeypatch.chdir('/')
+
+    assert workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
+    assert await workspace.working_dir() == str(tmp_path.resolve())
 
 
 @pytest.mark.parametrize(
@@ -161,11 +170,6 @@ async def test_working_dir_expands_home(
     assert await workspace.working_dir() == str((tmp_path / expected).resolve())
     result = await workspace.run(['pwd'])
     assert result.stdout.rstrip('\n') == await workspace.working_dir()
-
-
-def test_relative_working_dir_error_mentions_home():
-    with pytest.raises(ValueError, match=r"`working_dir` must be an absolute path or start with `~`, got 'work/dir'"):
-        LocalWorkspaceBackend('work/dir')
 
 
 async def test_run_argv_and_shell(tmp_path: Path):

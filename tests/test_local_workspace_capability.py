@@ -63,9 +63,16 @@ async def test_working_dir_expands_home(tmp_path: Path, monkeypatch: pytest.Monk
     assert await result.workspace.working_dir() == str((tmp_path / 'project').resolve())
 
 
-def test_relative_working_dir_is_rejected_at_construction() -> None:
-    with pytest.raises(ValueError, match='`working_dir` must be an absolute path or start with `~`'):
-        LocalWorkspace('project')
+async def test_dot_supplies_the_directory_the_capability_was_constructed_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace('.')])
+    monkeypatch.chdir('/')
+
+    result = await agent.run('go')
+
+    assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
 
 
 async def test_read_only_allows_reads_and_refuses_writes_and_commands(tmp_path: Path) -> None:
