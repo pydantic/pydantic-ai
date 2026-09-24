@@ -275,7 +275,7 @@ async def test_run_only_backend_supports_bounded_reads_through_shell() -> None:
     assert window.lines == ('one', 'two')
     assert commands == [
         ['head', '-c', '8192', '/workspace/data.txt'],
-        "sed -n '1,3p;3q' /workspace/data.txt | head -c 51200",
+        "sed -n '1,3p;3q' /workspace/data.txt | head -c 51201",
     ]
     assert inner.reads == []
     with pytest.raises(WorkspaceError, match='invalid base64'):
@@ -736,6 +736,22 @@ async def test_read_file_applies_whichever_cap_hits_first() -> None:
     assert '\n'.join(window.lines) != window.text
 
 
+async def test_read_file_window_of_exactly_max_bytes_is_complete() -> None:
+    backend = FakeWorkspace('exact', {'/workspace/data.txt': b'aaaa\nbbbb\n'})
+
+    window = await Workspace(backend).read_file('data.txt', max_bytes=10)
+
+    assert (window.lines, window.truncated, window.total_lines) == (('aaaa', 'bbbb'), False, 2)
+
+
+async def test_read_file_keeps_a_line_that_ends_exactly_at_the_byte_cap() -> None:
+    backend = FakeWorkspace('boundary', {'/workspace/data.txt': b'aaaa\nbbbb\ncccc\n'})
+
+    window = await Workspace(backend).read_file('data.txt', max_bytes=9)
+
+    assert (window.lines, window.truncated_by) == (('aaaa', 'bbbb'), 'bytes')
+
+
 class _HeadUnavailable(FakeWorkspace):
     """A backend whose `head` sniff fails, so `read_file` falls back to the filesystem read."""
 
@@ -779,6 +795,14 @@ async def test_filesystem_fallback_byte_cap_drops_a_partial_line() -> None:
         False,
     )
     assert '1 line remaining' in window.text
+
+
+async def test_filesystem_fallback_names_the_byte_cap_when_it_stops_first() -> None:
+    backend = _HeadUnavailable('sniff-both', {'/workspace/data.txt': b'aaaa\nbbbb\ncccc\ndddd\neeee\nffff\n'})
+
+    window = await Workspace(backend).read_file('data.txt', limit=5, max_bytes=9)
+
+    assert (window.lines, window.truncated_by) == (('aaaa', 'bbbb'), 'bytes')
 
 
 async def test_filesystem_fallback_returns_no_content_for_a_single_overlong_line() -> None:

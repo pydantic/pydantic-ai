@@ -529,7 +529,8 @@ class Workspace(WorkspaceBackend):
         # paths that never finish.
         command = f'sed -n {shlex.quote(sed_expr)} {shlex.quote(resolved_path)}'
         if max_bytes is not None:
-            command = f'{command} | head -c {max_bytes}'
+            # One byte past the cap: output of exactly `max_bytes` means the slice fit, not that it was cut.
+            command = f'{command} | head -c {max_bytes + 1}'
         try:
             result = await self.run(command, shell=True, timeout=_SHELL_SLICE_TIMEOUT)
         except (NotImplementedError, OSError, WorkspaceTimeoutError, UserError):
@@ -537,14 +538,20 @@ class Workspace(WorkspaceBackend):
         if result.exit_code != 0 or result.stderr:
             return None
 
-        byte_capped = max_bytes is not None and len(result.stdout.encode('utf-8')) >= max_bytes
-        lines = list(_split_lines(result.stdout))
+        output = result.stdout.encode('utf-8')
+        byte_capped = max_bytes is not None and len(output) > max_bytes
+        if byte_capped:
+            assert max_bytes is not None
+            # Keep only lines that end within the cap. A line ending exactly at the cap is complete
+            # when the byte after it is its newline; otherwise the ceiling cut it mid-way and it is
+            # dropped, so no partial line is shown as complete. If that was the only line, the window
+            # is empty and `first_line_exceeds_limit` tells the caller to use a byte-range read.
+            kept = output[:max_bytes]
+            if output[max_bytes : max_bytes + 1] != b'\n':
+                kept = kept[: kept.rfind(b'\n') + 1]
+            output = kept
+        lines = list(_split_lines(output.decode('utf-8', errors='replace')))
         if lines and lines[-1] == '':
-            lines.pop()
-        if byte_capped and lines:
-            # The ceiling cut the final line mid-way; drop it so no partial line is shown as
-            # complete. If that was the only line, the window is empty and
-            # `first_line_exceeds_limit` tells the caller to use a byte-range read.
             lines.pop()
         if not lines:
             await self._validate_bounded_read_path(resolved_path)
@@ -664,7 +671,9 @@ def _window_from_data(data: bytes, offset: int, limit: int | None, max_bytes: in
 
     has_more = line_capped or byte_capped or first_line_exceeds
     truncated_by: Literal['lines', 'bytes'] | None = None
-    if first_line_exceeds or (byte_capped and not line_capped):
+    # `byte_capped` is set only when the byte budget stopped selection before `limit` lines, so it
+    # names the cap that actually cut the window even when more lines exist past `limit` too.
+    if byte_capped:
         truncated_by = 'bytes'
     elif line_capped:
         truncated_by = 'lines'

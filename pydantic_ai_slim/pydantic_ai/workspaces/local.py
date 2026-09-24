@@ -19,7 +19,6 @@ from typing import cast
 
 import anyio
 import anyio.abc
-import sniffio
 from typing_extensions import TypeVar
 
 from pydantic_ai._utils import gather, run_in_executor
@@ -60,6 +59,14 @@ until that child exited, and `Process.aclose()` would hang the same way. On thos
 releases the inherited pipe descriptors itself before `aclose()`.
 """
 _EXIT_POLL_INTERVAL = 0.005
+
+
+def _running_on_asyncio() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 async def _shielded(awaitable: Awaitable[T]) -> T:
@@ -353,7 +360,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     @staticmethod
     def _uses_pipe_bound_wait() -> bool:
         # Trio's `wait()` and `aclose()` never waited on the pipes; only asyncio (and uvloop) did.
-        return _PROCESS_WAIT_WAITS_FOR_PIPES and sniffio.current_async_library() == 'asyncio'
+        return _PROCESS_WAIT_WAITS_FOR_PIPES and _running_on_asyncio()
 
     async def _wait_for_exit(self, process: anyio.abc.Process) -> int:
         """Return the exit code as soon as the command itself exits, whatever its children do with the pipes."""
