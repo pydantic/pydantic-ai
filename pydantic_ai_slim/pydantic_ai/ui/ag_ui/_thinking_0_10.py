@@ -4,8 +4,9 @@
 These are extracted class methods of `AGUIEventStream` — the `self` parameter is the event stream
 instance, and access to its private fields is intentional.
 
-The `THINKING_*` event models are defined here because `ag-ui-protocol>=1.0` no longer ships them;
-their fields match the 0.x SDK's, so the wire is the same on every installed version.
+The `THINKING_*` event models are defined here because `ag-ui-protocol>=1.0` no longer ships them.
+Below 1.0 the SDK's own classes are used instead, so the native event stream keeps yielding the
+same types it did before; the fields match, so the wire is the same either way.
 """
 
 from __future__ import annotations
@@ -53,6 +54,19 @@ class ThinkingTextMessageEndEvent(BaseEvent):
     """Legacy thinking message end event."""
 
     type: Literal['THINKING_TEXT_MESSAGE_END'] = 'THINKING_TEXT_MESSAGE_END'  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+if not TYPE_CHECKING:  # pragma: lax no cover
+    try:
+        from ag_ui.core import (
+            ThinkingEndEvent,
+            ThinkingStartEvent,
+            ThinkingTextMessageContentEvent,
+            ThinkingTextMessageEndEvent,
+            ThinkingTextMessageStartEvent,
+        )
+    except ImportError:
+        pass
 
 
 async def handle_thinking_start(
