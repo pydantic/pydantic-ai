@@ -292,8 +292,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         installed models cannot dispatch at all are skipped: a body that is invalid for any other
         reason still raises, so a client bug isn't converted into silent misbehavior.
 
-        A retired `binary` input part is translated into typed media content; one with no MIME type
-        or payload is malformed and still raises.
+        On a 1.0 install, a retired `binary` input part is translated into typed media content; one
+        with no MIME type or payload is malformed and still raises.
         """
         try:
             return RunAgentInput.model_validate_json(body)

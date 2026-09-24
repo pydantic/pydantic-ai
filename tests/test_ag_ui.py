@@ -8314,16 +8314,27 @@ async def test_run_started_protocol_version_is_omitted_below_1_0() -> None:
     assert 'protocolVersion' not in next(event for event in events if event['type'] == 'RUN_STARTED')
 
 
-@requires_ag_ui('1.0.0')
-async def test_run_finished_cancelled_outcome() -> None:
-    """A cancelled run ends with a `cancelled` outcome on 1.0 and reports the usage of the calls it made;
-    below 1.0 see `test_run_cancelled_finishes_without_error_or_outcome`."""
+def _cancelling_agent() -> Agent:
+    """An agent whose only tool cancels the run.
+
+    `cancel()` returns; the cancellation lands at the next await point, so the tool completes
+    normally first and its (discarded) result is recorded.
+    """
     agent = Agent(model=TestModel())
 
     @agent.tool
     async def tool(ctx: RunContext, query: str) -> str:
         ctx.cancel()
         return 'completed before the cancellation took effect'
+
+    return agent
+
+
+@requires_ag_ui('1.0.0')
+async def test_run_finished_cancelled_outcome() -> None:
+    """A cancelled run ends with a `cancelled` outcome on 1.0 and reports the usage of the calls it made;
+    below 1.0 see `test_run_cancelled_finishes_without_error_or_outcome`."""
+    agent = _cancelling_agent()
 
     events = await _collect_adapter_events(
         agent,
@@ -8335,7 +8346,6 @@ async def test_run_finished_cancelled_outcome() -> None:
 
     assert run_finished['outcome'] == {'type': 'cancelled'}
     assert [entry['model'] for entry in run_finished['usage']] == ['test']
-    assert 'RUN_ERROR' not in [event['type'] for event in events]
 
 
 @requires_ag_ui('1.0.0')
@@ -8499,12 +8509,7 @@ async def test_undeclared_client_gets_plain_success_outcome() -> None:
 @requires_ag_ui('1.0.0')
 async def test_undeclared_client_gets_bare_run_finished_on_cancellation() -> None:
     """The `cancelled` outcome is withheld from a client that declares no `protocolVersion`."""
-    agent = Agent(model=TestModel())
-
-    @agent.tool
-    async def tool(ctx: RunContext, query: str) -> str:
-        ctx.cancel()
-        return 'completed before the cancellation took effect'
+    agent = _cancelling_agent()
 
     events = await _collect_adapter_events(
         agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='1.0.0'
@@ -8515,12 +8520,7 @@ async def test_undeclared_client_gets_bare_run_finished_on_cancellation() -> Non
 @requires_ag_ui('1.0.0')
 async def test_unreadable_client_protocol_version_is_treated_as_newer() -> None:
     """A `protocolVersion` we cannot parse is handled like a newer one: warn, and send the 1.0 shapes."""
-    agent = Agent(model=TestModel())
-
-    @agent.tool
-    async def tool(ctx: RunContext, query: str) -> str:
-        ctx.cancel()
-        return 'completed before the cancellation took effect'
+    agent = _cancelling_agent()
 
     with pytest.warns(UserWarning, match="protocol version 'next'"):
         events = await _collect_adapter_events(
@@ -8606,24 +8606,27 @@ def test_retired_binary_part_without_payload_is_rejected(content: list[dict[str,
 
 @requires_ag_ui('1.0.0')
 def test_file_source_loads_as_uploaded_file() -> None:
-    """A `file` source with a known provider loads as `UploadedFile`; an unknown or missing provider is
-    skipped with a warning."""
+    """A `file` source with a known provider loads as `UploadedFile`."""
     source = FileSource(value='file-123', provider='openai', mime_type='image/png')
     messages = AGUIAdapter.load_messages([UserMessage(id='m1', content=[ImageInputContent(source=source)])])
     uploaded = message_part(messages, UserPromptPart).content[0]
     assert uploaded == UploadedFile(file_id='file-123', provider_name='openai', media_type='image/png')
 
-    with pytest.warns(UserWarning, match=r"provider 'unknown' was skipped"):
-        unknown = AGUIAdapter.load_messages(
-            [UserMessage(id='m1', content=[ImageInputContent(source=FileSource(value='x', provider='unknown'))])]
-        )
-    assert unknown == []
 
-    with pytest.warns(UserWarning, match=r'with no provider was skipped'):
-        missing = AGUIAdapter.load_messages(
-            [UserMessage(id='m1', content=[ImageInputContent(source=FileSource(value='x'))])]
-        )
-    assert missing == []
+@requires_ag_ui('1.0.0')
+@pytest.mark.parametrize(
+    ('provider', 'match'),
+    [
+        pytest.param('unknown', r"provider 'unknown' was skipped", id='unknown_provider'),
+        pytest.param(None, r'with no provider was skipped', id='missing_provider'),
+    ],
+)
+def test_file_source_without_known_provider_is_skipped(provider: str | None, match: str) -> None:
+    """A `file` source Pydantic AI has no provider mapping for is dropped with a warning."""
+    source = FileSource(value='x', provider=provider)
+    with pytest.warns(UserWarning, match=match):
+        messages = AGUIAdapter.load_messages([UserMessage(id='m1', content=[ImageInputContent(source=source)])])
+    assert messages == []
 
 
 @pytestmark_interrupts
@@ -8664,14 +8667,7 @@ async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: py
 
 @requires_ag_ui('0.1.11')
 async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
-    agent = Agent(model=TestModel())
-
-    @agent.tool
-    async def tool(ctx: RunContext, query: str) -> str:
-        ctx.cancel()
-        # `cancel()` returns; the cancellation lands at the next await point, so this
-        # tool completes normally first and its (discarded) result is recorded.
-        return 'completed before the cancellation took effect'
+    agent = _cancelling_agent()
 
     events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
     event_types = [event['type'] for event in events]

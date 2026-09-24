@@ -151,6 +151,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     include_usage: bool = False
     """Whether `RUN_FINISHED` reports token usage per provider and model; see `AGUIAdapter.include_usage`."""
+
     _use_reasoning: bool = field(default=False, init=False)
     _emit_1_0_fields: bool = field(default=False, init=False)
     _emit_1_0_outcomes: bool = field(default=False, init=False)
@@ -235,16 +236,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield agui_event
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
-        extra: dict[str, Any] = {}
+        timestamp = self._get_timestamp()
         if self._emit_1_0_fields:
             # The producer declares its own version, not the input version.
-            extra['protocol_version'] = PROTOCOL_VERSION
-        yield RunStartedEvent(
-            thread_id=self.thread_id,
-            run_id=self.run_id,
-            timestamp=self._get_timestamp(),
-            **extra,
-        )
+            yield RunStartedEvent(
+                thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp, protocol_version=PROTOCOL_VERSION
+            )
+        else:
+            yield RunStartedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp)
 
     async def before_response(self) -> AsyncIterator[BaseEvent]:
         # Prevent parts from a subsequent response being tied to parts from an earlier response.

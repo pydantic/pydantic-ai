@@ -43,8 +43,7 @@ constructing the event raises — see `REASONING_MESSAGE_ROLE`.
 """
 
 MULTIMODAL_VERSION = (0, 1, 15)
-"""AG-UI version that introduced typed multimodal input content."""
-
+"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document)."""
 
 ACTIVITY_EVENTS_VERSION = (0, 1, 19)
 """AG-UI version that introduced activity snapshot and delta events."""
@@ -114,7 +113,7 @@ def media_part_type(mime_type: str) -> MediaPartType:
     """The AG-UI media part type for a MIME type."""
     prefix = mime_type.split('/', 1)[0].lower()
     if prefix in ('image', 'audio', 'video'):
-        return cast(MediaPartType, prefix)
+        return cast(MediaPartType, prefix)  # the `in` check narrows it, but pyright can't see that
     return 'document'
 
 
