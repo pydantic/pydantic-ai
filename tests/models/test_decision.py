@@ -304,7 +304,7 @@ def refund(amount: float) -> str:
 
 async def escalate(ctx: RunContext[None]) -> str:
     """Escalate to a person on the support team."""
-    return 'escalated'  # pragma: no cover
+    return 'escalated'
 
 
 class Priority(str, Enum):
@@ -320,7 +320,7 @@ def assign(team: Literal['billing', 'technical']) -> str:
     Args:
         team: Which team should handle it?
     """
-    return team  # pragma: no cover
+    return team
 
 
 def route_question(model: InMemoryDecisionModel, key: str = 'route') -> ChoiceQuestion:
