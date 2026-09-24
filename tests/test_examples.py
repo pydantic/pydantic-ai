@@ -1048,14 +1048,8 @@ async def model_logic(  # noqa: C901
                     tool_name=_output_tool_named(info, 'Reply'),
                     args={
                         'body': (
-                            'Hi there, sorry about the trouble signing in. Login has been having problems since '
-                            "09:12 UTC. That's why your team can't get in. The problem is on our side, and a fix is "
-                            'going out now.\n\n'
-                            "You don't need to change anything or reset any passwords. Once the fix is finished, your "
-                            "team should be able to sign in as usual. If anyone still can't sign in after that, please "
-                            "reply here and tell us which app they're using (web, iOS or Android) and what error they "
-                            "see. We'll look into it right away.\n\n"
-                            'Thanks for your patience, and sorry again for the disruption.'
+                            "Yes, login has been having problems since 09:12 UTC, and that's why your team can't sign in. "
+                            'Our engineers are rolling out a fix now, so please try again shortly.'
                         )
                     },
                 )

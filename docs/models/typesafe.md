@@ -238,7 +238,7 @@ See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this inte
 
 ## Model settings
 
-Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request. [`TypeSafeModelSettings`][pydantic_ai.models.typesafe.TypeSafeModelSettings] adds the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_tool_call_threshold`. The tool-call default of 0.6 was chosen against Jev: there, its tool picks agree with a frontier model's as often as two frontier models agree with each other.
+Jev has no sampling knobs, so the generic `temperature`, `top_p` and similar settings are ignored. `timeout`, `extra_headers` and `extra_body` are forwarded to the request. [`TypeSafeModelSettings`][pydantic_ai.models.typesafe.TypeSafeModelSettings] adds the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_tool_call_threshold`.
 
 The former `typesafe_tool_call_threshold` and `typesafe_boolean_threshold` names remain as deprecated aliases.
 

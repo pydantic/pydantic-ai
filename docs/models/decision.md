@@ -170,7 +170,7 @@ class Refund(BaseModel):
 class Reply(BaseModel):
     """Answer the customer: a question, or a problem the status page already explains."""
 
-    body: str = Field(description='The reply to send.')
+    body: str = Field(description='The reply to send, in two sentences at most.')
 
 
 def check_status(service: Literal['payments', 'login', 'reports']) -> str:
@@ -203,7 +203,7 @@ print(repr(result.output))
 result = support.run_sync('Is login down? None of my team can sign in.')
 print(repr(result.output))
 """
-Reply(body="Hi there, sorry about the trouble signing in. Login has been having problems since 09:12 UTC. That's why your team can't get in. The problem is on our side, and a fix is going out now.\n\nYou don't need to change anything or reset any passwords. Once the fix is finished, your team should be able to sign in as usual. If anyone still can't sign in after that, please reply here and tell us which app they're using (web, iOS or Android) and what error they see. We'll look into it right away.\n\nThanks for your patience, and sorry again for the disruption.")
+Reply(body="Yes, login has been having problems since 09:12 UTC, and that's why your team can't sign in. Our engineers are rolling out a fix now, so please try again shortly.")
 """
 print(result.response.model_name)
 #> claude-opus-5-5
