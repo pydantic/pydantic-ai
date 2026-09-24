@@ -26,6 +26,7 @@ from .prompt_keys import PromptKeys
 from .prompt_resize import resize_notifications
 from .prompt_surface import PromptSurface
 from .prompt_transcript import TranscriptBuffer
+from .shell_passthrough import shell_command
 from .spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
 from .tool_output import terminal_text
 
@@ -197,11 +198,16 @@ class LivePrompt:
                 self.submit(text)
 
     def steer_queued(self) -> None:
-        """Promote the oldest follow-up without bypassing commands or control signals."""
+        """Promote the oldest follow-up without bypassing commands, shell lines, or control signals."""
         if not self._submissions or self.steer is None:
             return
         text = self._submissions[0]
-        if not isinstance(text, str) or is_command_input(text) or not self.steer(text):
+        if (
+            not isinstance(text, str)
+            or is_command_input(text)
+            or shell_command(text) is not None
+            or not self.steer(text)
+        ):
             return
         self._submissions.popleft()
         if not self._submissions:

@@ -112,6 +112,32 @@ interrupted turns are closed out by core on the next prompt, without replaying
 those tools. External application cancellation still propagates, and completed
 tool side effects cannot be undone.
 
+## Shell commands with `!`
+
+A line that starts with `!`, after trimming surrounding whitespace, runs in the
+system shell instead of starting an agent turn:
+
+```text
+> !git status
+$ git status
+Shell passthrough, not sent to the agent
+...
+Done (0.1s)
+```
+
+The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
+Windows), not your login shell, so zsh or fish syntax and shell aliases are not
+available. It runs in CLAI's working directory, with the terminal's input and output, so interactive programs and pagers work. CLAI
+reports `Done` or the exit code with the elapsed time. Ctrl-C interrupts the
+command and returns to the prompt. The command shares CLAI's process group, so
+every process it started receives the Ctrl-C from the terminal. If the shell
+itself has not exited 0.25 seconds later it is killed, as `subprocess.run`
+does. A program started by a compound command (`a; b`) that ignores Ctrl-C can
+outlive that shell. As at other times, a second Ctrl-C within two seconds exits
+CLAI. Neither the command nor its output is added to the conversation, and a
+bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
+order with other queued input. `/help` lists the syntax.
+
 ## Prompt area
 
 ```text
@@ -668,8 +694,8 @@ To steer instead, first queue the message with Enter, then press Alt+Enter
 (Option+Enter). This sends the oldest queued follow-up to the active run at its
 next opportunity without cancelling in-flight tools or changing your draft.
 Each Alt+Enter sends one message. If the run is no longer accepting steering,
-the message stays queued. Slash commands and exit signals are not steered or
-skipped over. With no queued message, Alt+Enter does nothing.
+the message stays queued. Slash commands, `!` shell commands, and exit signals
+are not steered or skipped over. With no queued message, Alt+Enter does nothing.
 While running, the input box shows both shortcuts.
 Shift-Enter inserts a newline. CLAI requests modified
 key reporting while the editor is active and releases it for menus and on exit.

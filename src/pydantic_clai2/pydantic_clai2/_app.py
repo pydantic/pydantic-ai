@@ -3,7 +3,7 @@
 import asyncio
 import sys
 from collections.abc import AsyncGenerator, Callable, Sequence
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -60,6 +60,8 @@ from .session_settings import SessionSettings
 from .sessions import Sessions
 from .set_menu import set_command
 from .settings_store import SettingsStore
+from .shell_passthrough import HELP as SHELL_HELP
+from .shell_passthrough import run_shell_command, shell_command
 from .speculation import Speculation
 from .spinner_picker import spinner_command, spinner_completions
 from .spinners import Spinner, Spinners
@@ -358,7 +360,9 @@ def create_shell(
             during_turn=True,
         )
     )
-    commands.register(Command(name='help', description='Show commands', handler=commands.help))
+    commands.register(
+        Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
+    )
 
     new_command = Command(
         name='new',
@@ -538,6 +542,10 @@ class _Shell(Generic[DepsT, OutputT]):
         self.images.notice = f'Steering sent: {text}'
         return True
 
+    def _released(self) -> AbstractAsyncContextManager[None]:
+        """Hand the terminal to a command or shell, restoring the editor afterwards."""
+        return (self.editor.suspended if self.editor is not None else bare_screen)()
+
     def run_now(self, text: str) -> bool:
         """Open a bare `during_turn` command's menu over a streaming turn instead of queueing it."""
         if self._mid_turn is None or not self.commands.runs_during_turn(text):
@@ -581,8 +589,14 @@ class _Shell(Generic[DepsT, OutputT]):
             if self.editor is not None:
                 self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
+            if (command := shell_command(text)) is not None:
+                async with self._released():
+                    await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+                if self.interrupts.exit_requested:
+                    return 'exit'
+                continue
             if is_command_input(text):
-                async with (self.editor.suspended if self.editor is not None else bare_screen)():
+                async with self._released():
                     await self.interrupts.run(
                         _execute_command(self.commands, text, console=self.console, status=self.status)
                     )
