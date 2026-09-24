@@ -378,6 +378,11 @@ terminal owned until the worker restores its screen. Do not fire-and-forget a
 thread that is still reading input. If a menu key needs an async action, follow
 plugin_menu.py's bridge back to the main event loop.
 
+Pass during_turn=True to Command when the menu is safe to open mid-turn, so the
+bare command opens at once instead of queueing behind the running turn. While
+run_worker runs, CLAI holds the turn's output and prints it in order afterwards.
+Only opt in when the running turn cannot observe what the menu changes.
+
 For named validated fields, reuse FieldSource, FieldMenu and run_flow in
 field_menu.py rather than write another editor. SettingsSource in set_menu.py
 shows the adapter; model_menu.py uses the same editor for model settings. Tests

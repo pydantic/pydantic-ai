@@ -286,3 +286,43 @@ def test_release_finishes_partial_output_before_shell_can_overwrite_it(resize: b
     screen.terminal.write('shell prompt')
     assert 'partial streamed response' in screen.terminal.lines()
     assert 'shell prompt' in screen.terminal.lines()
+
+
+@pytest.mark.parametrize('released', [False, True])
+def test_held_output_survives_resize_and_release_until_the_outer_hold_exits(released: bool) -> None:
+    output = io.StringIO()
+    now = 0.0
+    size = (80, 24)
+    surface = PromptSurface(output=output, size=lambda: size, clock=lambda: now)
+    surface.paint(ROWS)
+    surface.write('before\n')
+    with surface.held():
+        surface.write('one\n')
+        with surface.held():
+            surface.write('two\n')
+        assert 'one' not in output.getvalue()
+        size = (100, 40)
+        surface.write('three\n')
+        now = 0.3
+        surface.paint(ROWS)
+        if released:
+            surface.release()
+        assert 'one' not in output.getvalue()
+    text = output.getvalue()
+    assert text.index('before') < text.index('one\n') < text.index('two\n') < text.index('three\n')
+
+
+def test_hold_ending_mid_resize_replays_once_the_viewport_settles() -> None:
+    output = io.StringIO()
+    now = 0.0
+    size = (80, 24)
+    surface = PromptSurface(output=output, size=lambda: size, clock=lambda: now)
+    surface.paint(ROWS)
+    with surface.held():
+        surface.write('held\n')
+        size = (100, 40)
+        surface.paint(ROWS)
+    assert 'held' not in output.getvalue()
+    now = 0.3
+    surface.paint(ROWS)
+    assert 'held\n' in output.getvalue()

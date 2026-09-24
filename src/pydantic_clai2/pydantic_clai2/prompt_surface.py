@@ -2,7 +2,8 @@
 
 import io
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from tempfile import SpooledTemporaryFile
 from threading import RLock
 from typing import IO
@@ -39,6 +40,7 @@ class PromptSurface(io.StringIO):
         self._resize_notice = False
         self._observed_size = (0, 0)
         self._deferred: IO[str] | None = None
+        self._holds = 0
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
@@ -55,11 +57,32 @@ class PromptSurface(io.StringIO):
             self._resize_notice = False
             self._observed_size = size
             self._resize_at = self.clock()
-            if self._deferred is None:
-                # Large tool output during a long drag spills to a private temp
-                # file rather than growing memory without bound or being dropped.
-                self._deferred = SpooledTemporaryFile(max_size=1_000_000, mode='w+t', encoding='utf-8', newline='')
+            self._spool()
             self._transaction('\x1b[?25l\x1b[r\x1b[2J\x1b[1;1H')
+
+    def _spool(self) -> None:
+        if self._deferred is None:
+            # Large output during a long drag or an open menu spills to a private
+            # temp file rather than growing memory without bound or being dropped.
+            self._deferred = SpooledTemporaryFile(max_size=1_000_000, mode='w+t', encoding='utf-8', newline='')
+
+    @contextmanager
+    def held(self) -> Generator[None]:
+        """Spool writes while another widget owns the terminal, then replay them in order.
+
+        Holds nest; output is replayed when the outermost one exits, unless a resize
+        rebuild is still pending, which replays it once the viewport settles.
+        """
+        with self._lock:
+            self._holds += 1
+            self._spool()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._holds -= 1
+                if self._resize_at is None:
+                    self._flush_deferred()
 
     def _emit(self, text: str) -> None:
         self.transcript.write(text)
@@ -160,6 +183,8 @@ class PromptSurface(io.StringIO):
         self._flush_deferred()
 
     def _flush_deferred(self) -> None:
+        if self._holds:
+            return
         deferred, self._deferred = self._deferred, None
         if deferred is not None:
             try:
@@ -194,7 +219,7 @@ class PromptSurface(io.StringIO):
                 parts.extend([f'\x1b[{bottom};1H', '\x1b[>4;0m\x1b[0m\x1b[?2004l\x1b[?25h'])
                 self._transaction(''.join(parts))
             finally:
-                if self._deferred is not None:
+                if self._deferred is not None and not self._holds:
                     self._deferred.close()
                     self._deferred = None
                 self._rows = ()

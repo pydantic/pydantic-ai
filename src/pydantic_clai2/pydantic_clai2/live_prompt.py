@@ -43,6 +43,7 @@ class LivePrompt:
         interrupts: Interrupts,
         toolbar: Callable[[], list[tuple[str, str]]],
         steer: Callable[[str], bool] | None = None,
+        run_now: Callable[[str], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
         transcript: TranscriptBuffer | None = None,
         chords: Mapping[str, Callable[[], str]] | None = None,
@@ -53,6 +54,7 @@ class LivePrompt:
 
         `chords` maps a two-key sequence such as `'ctrl-x ctrl-s'` to an action returning a
         footer notice. `pinned` returns an optional styled row painted above the footer.
+        `run_now` may take an accepted draft instead of queueing it, returning whether it did.
         `spinner` returns the working animation; it is read on every frame, so a new choice shows at once.
         """
         self.console = console
@@ -62,6 +64,7 @@ class LivePrompt:
         self.interrupts = interrupts
         self.toolbar = toolbar
         self.steer = steer
+        self.run_now = run_now
         self.clock = clock
         self.chords = dict(chords or {})
         self.pinned = pinned
@@ -189,7 +192,9 @@ class LivePrompt:
             self.buffer.history.append(text)
             self.buffer.history_index = None
             self.buffer.replace('')
-            self.submit(expand_bare_command(text))
+            text = expand_bare_command(text)
+            if self.run_now is None or not self.run_now(text):
+                self.submit(text)
 
     def steer_queued(self) -> None:
         """Promote the oldest follow-up without bypassing commands or control signals."""

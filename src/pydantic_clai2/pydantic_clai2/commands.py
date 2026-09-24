@@ -47,6 +47,13 @@ class Command:
     description: str
     handler: Callable[[list[str]], str | Awaitable[str]]
     complete: Callable[[list[str]], Iterable[str]] = lambda _: ()
+    during_turn: bool = False
+    """Open the bare command's menu as soon as it is entered, even while a turn streams.
+
+    Only for menus whose changes the running turn cannot observe, such as settings that
+    take effect on the next turn. The run's output is held while the menu owns the screen.
+    With arguments the command still queues, keeping its order among queued follow-ups.
+    """
 
 
 class Commands(Completer):
@@ -88,6 +95,14 @@ class Commands(Completer):
         if command is None:
             raise ValueError(f'Unknown command /{name}. Use /help.')
         return command.handler(args)
+
+    def runs_during_turn(self, text: str) -> bool:
+        """Whether `text` is a bare command that opted into opening its menu mid-turn."""
+        words = text.split()
+        if len(words) != 1 or not is_command_input(text):
+            return False
+        command = self._commands.get(words[0][1:])
+        return command is not None and command.during_turn
 
     async def execute_async(self, text: str) -> str:
         """Await asynchronous plugin commands without blocking the event loop."""

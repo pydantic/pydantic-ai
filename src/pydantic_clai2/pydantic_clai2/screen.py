@@ -38,3 +38,13 @@ class Screen:
         """Own the terminal until the block exits. Give this to `PluginHost` as its `full_screen`."""
         async with self._owner, self._take(), (self.editor or bare_screen)():
             yield
+
+    @asynccontextmanager
+    async def overlay(self) -> AsyncGenerator[None]:
+        """Own the terminal for a menu the user opened mid-turn, leaving the stream running.
+
+        Unlike `full()`, the turn is not paused: its output is held by the menu worker
+        instead. Widgets still take turns, so a question the agent asks waits for the menu.
+        """
+        async with self._owner, (self.editor or bare_screen)():
+            yield
