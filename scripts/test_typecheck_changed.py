@@ -546,6 +546,26 @@ def test_a_failing_nested_project_fails_the_run_after_the_root_one(project: Path
     assert _checkpoint(project).read_bytes() == recorded
 
 
+def test_the_time_budget_covers_the_root_and_nested_runs_together(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    # Each run fits the budget on its own, but the two together do not.
+    _add_nested_project(project)
+    _typecheck()
+    recorded = _checkpoint(project).read_bytes()
+    _edit(project, 'pkg_src/pkg/aside.py')
+    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')
+    clock = _Clock(0.0)
+
+    def run(command: Sequence[str]) -> int:
+        clock.now += 6.0
+        return 0
+
+    assert typecheck_changed.main(run, clock) == 1
+    assert 'Pyright passed in 12.0s, over the 10.0s `PYRIGHT_TIME_BUDGET`.' in capsys.readouterr().out
+    assert _checkpoint(project).read_bytes() == recorded
+
+
 def test_pyright_reports_an_error_in_the_nested_project(project: Path, capfd: pytest.CaptureFixture[str]):
     # A root-project run hands Pyright nothing under `.github/`, so only `-p` reaches this error.
     _add_nested_project(project)

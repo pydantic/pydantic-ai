@@ -170,9 +170,12 @@ class _BudgetedRunner:
     clock: Clock
     budget: float | None
 
-    def __call__(self, command: Sequence[str]) -> int:
+    def __call__(self, *commands: Sequence[str]) -> int:
+        """Run every command, so a failure in one does not hide the errors in another, and time them together."""
         started = self.clock()
-        code = self.run(command)
+        code = 0
+        for command in commands:
+            code = self.run(command) or code
         elapsed = self.clock() - started
         if code != 0 or self.budget is None or elapsed <= self.budget:
             return code
@@ -275,7 +278,7 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
     # outside `tests/`, but every worker is a full Node process that redoes the shared parse and
     # bind, and on a laptop they swap and come out slower than the single process; see
     # https://github.com/pydantic/pydantic-ai/pull/8075.
-    code = _run_pyright(runner, options, paths, nested)
+    code = runner(*_pyright_commands(options, paths, nested))
 
     if code != 0:
         # The checkpoint records what Pyright accepted, so a failing run leaves it alone.
@@ -297,14 +300,13 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
     return 0
 
 
-def _run_pyright(run: Runner, options: Sequence[str], paths: Sequence[str], nested: Sequence[str]) -> int:
-    """Check `paths` in the root project and each `nested` project whole, and return an exit code."""
-    code = run([sys.executable, '-m', 'pyright', *options, *paths]) if paths else 0
+def _pyright_commands(options: Sequence[str], paths: Sequence[str], nested: Sequence[str]) -> list[list[str]]:
+    """Check `paths` in the root project, then each `nested` project whole."""
+    commands = [[sys.executable, '-m', 'pyright', *options, *paths]] if paths else []
     for project in nested:
         print(f'Type-checking the `{project}` project.')
-        # Every project runs, so a failure in one does not hide the errors in another.
-        code = run([sys.executable, '-m', 'pyright', '-p', project, *options]) or code
-    return code
+        commands.append([sys.executable, '-m', 'pyright', '-p', project, *options])
+    return commands
 
 
 def _check_everything(run: Runner, reason: str) -> int:
