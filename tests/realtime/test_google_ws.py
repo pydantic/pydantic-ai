@@ -43,9 +43,8 @@ from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
-    from pydantic_ai.profiles.google import GoogleRealtimeModelProfile
     from pydantic_ai.providers import Provider
-    from pydantic_ai.realtime.google import GoogleRealtimeModel
+    from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelProfile
 
 pytestmark = [
     pytest.mark.anyio,

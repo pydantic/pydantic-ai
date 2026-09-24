@@ -1,17 +1,15 @@
 from __future__ import annotations as _annotations
 
-from typing import Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
 from ..native_tools import WebSearchTool
-
-# Imported at runtime, not under `TYPE_CHECKING`, because `GoogleRealtimeModelProfile` below inherits
-# from it: a `TypedDict` base has to exist when the class body runs. `pydantic_ai.realtime` is
-# first-party and dependency-free (the provider adapters that need `google-genai` are submodules it
-# doesn't import), so this pulls in no optional dependency.
-from ..realtime.profiles import RealtimeModelProfile
 from . import ModelProfile
+
+if TYPE_CHECKING:
+    from ..realtime.google import GoogleRealtimeModelProfile
+    from ..realtime.profiles import RealtimeModelProfile
 
 GoogleThinkingLevel: TypeAlias = Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']
 """Native Gemini `thinking_level` values."""
@@ -254,63 +252,6 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
     return profile
-
-
-class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
-    """Profile for Gemini Live models, adding the Gemini-specific fields to the shared realtime profile.
-
-    Mirrors the [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile] /
-    [`ModelProfile`][pydantic_ai.profiles.ModelProfile] split on the request-response side.
-    """
-
-    google_thinking_levels: frozenset[GoogleThinkingLevel]
-    """Thinking levels the Live model accepts. Default: unset.
-
-    Same meaning as [`google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
-    on a standard model: unset means the full [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS]
-    scale, and a unified [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] effort snaps to the
-    nearest level in the set.
-    """
-
-    google_thinking_always_enabled: bool
-    """Whether the model always reasons, so its API requires a thinking level. Default: `False`.
-
-    Mirrors [`ModelProfile.thinking_always_enabled`][pydantic_ai.profiles.ModelProfile.thinking_always_enabled].
-    A session that sets no [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] still sends
-    the cheapest level the model accepts, and `thinking=False` means "as little as possible" rather than a
-    `thinking_budget=0` the model would reject. `gemini-3.8-live-extended-thinking` closes the handshake
-    with `1007 Thinking level must be specified for this model` without a level.
-    """
-
-    google_async_tool_calls_by_default: bool
-    """Whether the model runs a tool call asynchronously when its declaration sets no `behavior`. Default: `False`.
-
-    True of the Gemini 3.8 Live family, where Google made `NON_BLOCKING` the default. Tool calls stay
-    blocking unless
-    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
-    asks otherwise, so on such a model the declaration says `BLOCKING` explicitly instead of leaving it unset.
-    """
-
-    google_requires_async_tool_calls: bool
-    """Whether the model *only* runs tool calls asynchronously, having no blocking mode. Default: `False`.
-
-    Stronger than [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]:
-    tool calls are declared `NON_BLOCKING` whatever
-    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
-    says, since a `BLOCKING` declaration closes the session. `gemini-3.8-live-extended-thinking` answers
-    `1007 BLOCKING function calls are not supported for this model`.
-    """
-
-    google_supports_async_tool_call_scheduling: bool
-    """Whether the model takes a `scheduling` field on an async tool call's result. Default: `False`.
-
-    Separate from whether the call runs asynchronously at all: that is decided when the call is
-    declared, while scheduling says how its result enters the speech the model is producing when it
-    arrives. Pydantic AI sends `FunctionResponseScheduling.INTERRUPT`, so the result cuts in rather
-    than waiting for the model to go idle. `gemini-3.8-live-extended-thinking` runs every call
-    asynchronously but paces results against its own reasoning, and closes the session with `1007
-    Function response scheduling is not supported for this model` if the field is sent at all.
-    """
 
 
 def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:

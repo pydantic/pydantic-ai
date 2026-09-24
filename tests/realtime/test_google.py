@@ -80,13 +80,13 @@ with try_import() as imports_successful:
     from websockets.exceptions import WebSocketException
 
     from pydantic_ai.models import google as model_google
-    from pydantic_ai.profiles.google import GoogleRealtimeModelProfile
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.realtime import google as rt_google
     from pydantic_ai.realtime.google import (
         GoogleRealtimeConnection,
         GoogleRealtimeModel,
+        GoogleRealtimeModelProfile,
         GoogleRealtimeModelSettings,
     )
 
