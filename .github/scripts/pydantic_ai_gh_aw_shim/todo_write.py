@@ -1,10 +1,11 @@
 """Claude's `TodoWrite` tool -- record the agent's task checklist.
 
 Backed by pydantic-ai-harness's `planning` capability: the adapter
-maps Claude's todo schema onto the harness `PlanItem` list and calls the same
-`write_plan` the capability exposes, so the checklist is rendered (with the
-harness's advisory note when more than one step is `in_progress`) instead of a
-hand-rolled ack.
+maps Claude's todo schema onto the harness `PlanItem` list and renders it with
+the harness's `render_plan`, the checklist its `write_plan` tool returns, with the
+same advisory note when more than one step is `in_progress`. `write_plan` itself
+can't be called here: it emits plan events, which only a capability-owned tool
+inside an agent run may do, and `TodoWrite` is a plain tool.
 
 The Claude `TodoWrite` signature (`content` / `status` /
 `activeForm` items) is preserved; `activeForm` is the present-tense label Claude
@@ -12,7 +13,7 @@ shows while a step runs and has no harness equivalent, so it's dropped (the
 headless shim renders nothing live anyway).
 """
 
-from pydantic_ai_harness.planning import PlanItem, Planning, PlanningToolset, TaskStatus
+from pydantic_ai_harness.planning import PlanItem, TaskStatus, render_plan
 from typing_extensions import TypedDict
 
 
@@ -35,10 +36,7 @@ def _to_status(value: str) -> TaskStatus:
 async def todo_write(todos: list[TodoItem]) -> str:
     """Record the agent's task checklist."""
     items = [PlanItem(content=t.get('content', ''), status=_to_status(t.get('status', ''))) for t in todos]
-    # A fresh capability per call gives a fresh plan state; Claude resends the
-    # full list every time, so no cross-call state needs to be retained.
-    # `get_toolset()` is typed `AgentToolset | None` but always returns the
-    # planning toolset, so narrow to reach `write_plan` without a private import.
-    toolset = Planning[None]().get_toolset()
-    assert isinstance(toolset, PlanningToolset)
-    return await toolset.write_plan(items)
+    # Claude resends the full list every time, so no plan state is retained across calls.
+    in_progress = sum(1 for item in items if item.status is TaskStatus.in_progress)
+    note = '' if in_progress <= 1 else '\n\nNote: keep only one step in_progress at a time.'
+    return f'Plan updated: {len(items)} step(s).\n\n{render_plan(items)}{note}'

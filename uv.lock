@@ -23,7 +23,6 @@ exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
 listentome = false
-typesafe-sdk = false
 logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
@@ -32,8 +31,9 @@ anthropic = "2026-09-22T16:25:39Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
-openai = "2026-09-03T19:51:09Z"
+pydantic-ai-harness = false
 logfire-api = false
+openai = "2026-09-03T19:51:09Z"
 
 [manifest]
 members = [
