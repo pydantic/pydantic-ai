@@ -40,11 +40,21 @@ provider prefix alone cannot tell the two protocols apart. Use the
 [official OpenAI model documentation](https://platform.openai.com/docs/models) as the canonical model
 list.
 
-The *backend* model, the one that does the delegated work, is a second model name. Since it runs the
-agent's instructions and tools, it is the agent's own model when that is an OpenAI model reached the
-same way as the Live model (directly, or through the same gateway route), so an agent built on
-`'openai:gpt-5.6-sol'` delegates to `gpt-5.6-sol`. Name a different backend after a `+` in the
-realtime model name, which reads as the composite it is:
+The *backend* model, the one that does the delegated work, is a second model name. Pydantic AI picks
+it from the first of these that names one:
+
+1. `openai_live_delegation={'model': ...}` in the [settings](#settings).
+2. A model named after a `+` in the realtime model name: `'openai:gpt-live-1+gpt-6-luna'` delegates to
+   `gpt-6-luna`.
+3. The agent's own model, since the backend runs the agent's instructions and tools. It counts when it
+   is an OpenAI model reached the same way as the Live model, directly or through the same gateway
+   route, so an agent built on `'openai:gpt-5.6-sol'` delegates to `gpt-5.6-sol`.
+4. `'auto'`: the model Pydantic AI currently recommends
+   ([`AUTO_BACKEND_MODEL`][pydantic_ai.realtime.openai_live.AUTO_BACKEND_MODEL]), which moves as OpenAI
+   releases new models.
+
+There is always a backend, so a session never fails for want of one; pin it (1 or 2) when its behavior
+needs to stay put.
 
 ```python
 from pydantic_ai import Agent
@@ -57,11 +67,6 @@ realtime = agent.realtime('openai:gpt-live-1')
 # Delegates to gpt-6-luna instead:
 realtime = agent.realtime('openai:gpt-live-1+gpt-6-luna')
 ```
-
-`openai_live_delegation={'model': ...}`, described below, takes precedence over both. With none of
-them, or with the agent on a model the Live session can't reach the same way, the backend is `'auto'`: the model Pydantic AI
-currently recommends ([`AUTO_BACKEND_MODEL`][pydantic_ai.realtime.openai_live.AUTO_BACKEND_MODEL]),
-which moves as OpenAI releases new models. Pin one when the backend's behavior needs to stay put.
 
 ## How delegation works
 

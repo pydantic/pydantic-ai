@@ -213,9 +213,11 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     model: str
     """The Responses model that handles delegated work.
 
-    When unset, the backend is the one named after a `+` in the model name
-    (`'gpt-live-1+gpt-5.6-sol'`), else the agent's own model if it is an OpenAI model, else `'auto'`,
-    which resolves to [`AUTO_BACKEND_MODEL`][pydantic_ai.realtime.openai_live.AUTO_BACKEND_MODEL].
+    When unset, the backend is, first match wins: the model named after a `+` in the Live model name
+    (`'gpt-live-1+gpt-5.6-sol'`); the agent's own model, when it is an OpenAI model reached the same way
+    as the Live model (directly, or through the same gateway route); then `'auto'`, which resolves to
+    [`AUTO_BACKEND_MODEL`][pydantic_ai.realtime.openai_live.AUTO_BACKEND_MODEL]. There is always a
+    backend, so nothing raises for want of one.
     """
     instructions: str
     """Extra backend instructions, appended after the agent's own instructions."""
