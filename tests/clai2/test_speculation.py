@@ -61,7 +61,7 @@ class TestSwitch:
     def test_toggle_persists_and_shows_row_only_while_on(self, tmp_path: Path) -> None:
         switch = speculation(tmp_path)
         assert switch.row() == ''
-        assert switch.capabilities() == []
+        assert switch.capabilities([]) == []
 
         assert switch.toggle() == 'Speculative execution on from the next turn. Ctrl+X Ctrl+S toggles it.'
         assert SettingsStore(tmp_path / 'config.db').overrides() == {'run.speculative_code_mode': True}
@@ -70,7 +70,7 @@ class TestSwitch:
         switch.counters.hits = 2
         assert switch.toggle().startswith('Speculative execution off')
         assert switch.row() == ''
-        assert switch.capabilities() == []
+        assert switch.capabilities([]) == []
         switch.toggle()
         assert plain(switch.row()).startswith('Speculative Execution  2 hits')
 
@@ -81,7 +81,7 @@ class TestSwitch:
         switch = speculation(tmp_path, Console(file=output, width=200))
         switch.toggle()
         monkeypatch.setitem(sys.modules, 'pydantic_clai2.speculative_mode', None)
-        assert switch.capabilities() == []
+        assert switch.capabilities([]) == []
         assert 'Speculative execution is unavailable' in output.getvalue()
 
 

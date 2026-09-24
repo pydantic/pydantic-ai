@@ -12,7 +12,8 @@ from pathlib import Path
 
 import anyio
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.capabilities import DynamicCapability
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -34,12 +35,13 @@ from pydantic_clai2.sandbox_calls import SandboxCallFinishedEvent, SandboxCallSt
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.speculation import Speculation, SpeculationCounters
 from pydantic_clai2.speculative_mode import (
-    GUIDANCE,
     NATIVE_TOOLS,
     SPECULATIVE_TOOLS,
     ShowSandboxCalls,
     SpeculativeExecution,
+    guidance,
     speculative_capabilities,
+    workspace_mount,
 )
 
 
@@ -66,7 +68,9 @@ def fold_agent(model: FunctionModel, counters: SpeculationCounters, root: Path) 
     """Coder's own `FileSystem` provides the read tools, as in CLAI, so they may speculate."""
     for name in ('a.py', 'b.py'):
         (root / name).write_text(f'contents of {name}\n')
-    return Agent(model, capabilities=[FileSystem(root_dir=root), *speculative_capabilities(counters)])
+    file_system = FileSystem(root_dir=root)
+    sandbox = speculative_capabilities(counters, (file_system,))
+    return Agent(model, capabilities=[file_system, *sandbox])
 
 
 def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
@@ -76,7 +80,7 @@ def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
     )
     switch = Speculation(context=context, console=Console(file=io.StringIO()))
     switch.toggle()
-    assert [type(capability).__name__ for capability in switch.capabilities()] == [
+    assert [type(capability).__name__ for capability in switch.capabilities([])] == [
         'CodeMode',
         'EagerTiming',
         'SpeculativeExecution',
@@ -112,10 +116,12 @@ class TestFold:
             return script  # pragma: no cover -- only the tool surface is inspected.
 
         workflow = Tool(run_workflow, metadata={'code_arg_name': 'script'})
+        coder = Coder(repo_context=False)
+        sandbox = speculative_capabilities(SpeculationCounters(), (coder,))
         agent: Agent[None, str] = Agent(
             streamed(respond),
             tools=[workflow],
-            capabilities=[Coder(repo_context=False), *speculative_capabilities(SpeculationCounters())],
+            capabilities=[coder, *sandbox],
         )
         await agent.run('hi')
         [info] = seen
@@ -133,7 +139,7 @@ class TestFold:
         await fold_agent(streamed(respond), SpeculationCounters(), tmp_path).run('hi')
         [info] = seen
         assert sorted(tool.name for tool in info.function_tools) == ['edit_file', 'run_code', 'write_file']
-        assert GUIDANCE.strip() in (info.instructions or '')
+        assert guidance(workspace_mount([FileSystem[None](root_dir=tmp_path)])).strip() in (info.instructions or '')
         assert (info.model_settings or {}).get('anthropic_eager_input_streaming') is True
 
     @pytest.mark.parametrize(
@@ -167,7 +173,7 @@ class TestFold:
         agent: Agent[None, str] = Agent(
             FunctionModel(stream_function=stream),
             tools=[Tool(read_file, metadata=metadata)],
-            capabilities=speculative_capabilities(counters),
+            capabilities=speculative_capabilities(counters, []),
         )
         with anyio.fail_after(10):
             await agent.run('go')
@@ -231,6 +237,93 @@ class TestEagerTiming:
         await fold_agent(streamed(respond), counters, tmp_path).run('go')
         assert counters.eager_ms == 0
         assert counters.misses == 1
+
+
+PATHLIB_SNIPPET = """\
+import pathlib
+secret = pathlib.Path({path!r})
+try:
+    seen = secret.read_text()
+except Exception as error:
+    seen = type(error).__name__
+try:
+    secret.write_text('overwritten')
+except Exception as error:
+    seen = seen + ' ' + type(error).__name__
+seen
+"""
+
+
+class TestWorkspaceMount:
+    """The sandbox mount grants `pathlib` no more than the run's `FileSystem` grants its tools (Veria, #1078)."""
+
+    def test_unrestricted_coder_mounts_its_workspace_read_write(self, tmp_path: Path) -> None:
+        mount = workspace_mount([Coder[None](tmp_path, unrestricted_filesystem=True, repo_context=False)])
+        assert mount is not None
+        assert (mount.host_path, mount.virtual_path, mount.mode) == (str(tmp_path.resolve()),) * 2 + ('read-write',)
+
+    @pytest.mark.parametrize(
+        'file_system',
+        [
+            FileSystem[None](),
+            FileSystem[None](protected_patterns=[], read_only=True),
+            FileSystem[None](protected_patterns=[], tools=['read_file', 'list_files']),
+            FileSystem[None](protected_patterns=[], tools=['read_file', 'edit_file']),
+        ],
+        ids=['protected', 'read_only', 'read_tools', 'no_write_file'],
+    )
+    def test_write_limits_mount_read_only(self, file_system: FileSystem[None]) -> None:
+        mount = workspace_mount([file_system])
+        assert mount is not None
+        assert mount.mode == 'read-only'
+
+    def test_patterns_or_ambiguity_leave_nothing_mounted(self, tmp_path: Path) -> None:
+        def dynamic(ctx: RunContext[None]) -> FileSystem[None]:
+            return FileSystem[None](root_dir=tmp_path)  # pragma: no cover -- only inspected, never run.
+
+        for granted in (
+            [FileSystem[None](denied_patterns=['.env'])],
+            [FileSystem[None](allowed_patterns=['src/*'])],
+            [FileSystem[None](protected_patterns=[], tools=['write_file'])],
+            [FileSystem[None](tools=['file_info', 'list_directory'])],
+            [customization_guide()],
+            [FileSystem[None](), FileSystem[None](root_dir=tmp_path)],
+            [FileSystem[None](protected_patterns=[]), dynamic],
+            [FileSystem[None](protected_patterns=[]), DynamicCapability[None](dynamic)],
+        ):
+            assert workspace_mount(granted) is None
+
+    @pytest.mark.parametrize(
+        ('file_system', 'seen', 'kept'),
+        [
+            (FileSystem(protected_patterns=[]), 'original', False),
+            (FileSystem(), 'original PermissionError', True),
+            (FileSystem(denied_patterns=['.env']), 'FileNotFoundError FileNotFoundError', True),
+        ],
+        ids=['unrestricted', 'protected', 'denied'],
+    )
+    async def test_pathlib_honours_file_system_restrictions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file_system: FileSystem[object], seen: str, kept: bool
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        sandbox = speculative_capabilities(SpeculationCounters(), (file_system,))
+        await Agent(streamed(respond), capabilities=[file_system, *sandbox]).run('go')
+        assert returned == [seen]
+        assert secret.read_text() == ('original' if kept else 'overwritten')
 
 
 def claimed(*, ready: bool, elapsed_ms: float, launch_id: str = 'l') -> SpeculativeCallClaimedEvent:

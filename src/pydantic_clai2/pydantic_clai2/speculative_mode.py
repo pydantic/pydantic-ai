@@ -12,17 +12,25 @@ launch speculatively. That allowlist is the safety contract: an early launch may
 calls that are harmless to re-run or discard. Everything else waits for eager or normal
 execution.
 
-The sandbox mounts the working directory read-write at its real path and gets Monty's
-`OSAccess` (isolated environment, host clock, in-memory scratch files). There is no network in
-the sandbox; anything remote goes through a wrapped tool such as `shell`.
+The sandbox gets Monty's `OSAccess` (isolated environment, host clock, in-memory scratch files)
+and, when the run's `FileSystem` allows it, a mount of that file system's working directory at
+its real path (`workspace_mount`). There is no network in the sandbox; anything remote goes
+through a wrapped tool such as `shell`.
 """
 
-import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import TypeGuard
 
 from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapToolExecuteHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentCapability,
+    DynamicCapability,
+    ValidatedToolArgs,
+    WrapToolExecuteHandler,
+)
 from pydantic_ai.messages import AgentStreamEvent, RetryPromptPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
@@ -73,8 +81,7 @@ not attempt to call those functions as native tools. `await` the functions that
 
 The sandbox also has direct capabilities, no function call needed:
 
-- The workspace is mounted read-write at its real absolute path: use
-  `pathlib.Path` to read, write, glob, and stat project files directly.
+{workspace}
 - Environment variables (isolated) and in-memory scratch files work. For the
   real clock use `datetime.datetime.now()` or `datetime.date.today()`; the
   `time` module and `asyncio.sleep` are unavailable.
@@ -130,6 +137,59 @@ determines how fast it runs:
 """
 
 
+WORKSPACE_GUIDANCE: Mapping[str | None, str] = {
+    'read-write': """\
+- The workspace is mounted read-write at its real absolute path: use
+  `pathlib.Path` to read, write, glob, and stat project files directly.""",
+    'read-only': """\
+- The workspace is mounted read-only at its real absolute path: use
+  `pathlib.Path` to read, glob, and stat project files directly; `pathlib`
+  writes to it fail.""",
+    None: """\
+- No host directory is mounted: `pathlib.Path` only reaches in-memory scratch
+  files. Use the file functions to read project files.""",
+}
+"""The `GUIDANCE` line for each `workspace_mount` mode, `None` when nothing is mounted."""
+
+
+def guidance(mount: MountDir | None) -> str:
+    """Code Puppy's guidance, describing the workspace the sandbox actually has."""
+    return GUIDANCE.format(workspace=WORKSPACE_GUIDANCE[None if mount is None else mount.mode])
+
+
+def _is_capability(capability: AgentCapability[AgentDepsT]) -> TypeGuard[AbstractCapability[AgentDepsT]]:
+    return isinstance(capability, AbstractCapability)
+
+
+def workspace_mount(granted: Sequence[AgentCapability[AgentDepsT]]) -> MountDir | None:
+    """Mount only what the run's `FileSystem` already lets its tools reach, or nothing.
+
+    `pathlib` calls on a mount never pass through `FileSystem`'s checks, so an unconditional
+    read-write mount of the working directory let sandboxed code read or overwrite files the
+    caller had restricted (Veria, #1078). The mount is its working directory, and only when it
+    registers `read_file`, since `pathlib` reads any file's content. It is writable only when it
+    may also write every file there: `write_file` registered, not `read_only`, and no
+    `protected_patterns`. A mount cannot express `allowed_patterns` or `denied_patterns`, so either one
+    leaves the sandbox unmounted, as do zero or several file systems and any capability function
+    or `DynamicCapability`, which may only resolve to a file system at run time.
+    """
+    leaves: list[AbstractCapability[AgentDepsT]] = []
+    for capability in granted:
+        if not _is_capability(capability):
+            return None
+        capability.apply(leaves.append)
+    file_systems = [leaf for leaf in leaves if isinstance(leaf, FileSystem)]
+    if len(file_systems) != 1 or any(isinstance(leaf, DynamicCapability) for leaf in leaves):
+        return None
+    [file_system] = file_systems
+    tools = set(file_system.tools)
+    if file_system.allowed_patterns or file_system.denied_patterns or 'read_file' not in tools:
+        return None
+    writable = 'write_file' in tools and not file_system.read_only and not file_system.protected_patterns
+    directory = str(Path(file_system.root_dir if file_system.cwd is None else file_system.cwd).resolve())
+    return MountDir(virtual_path=directory, host_path=directory, mode='read-write' if writable else 'read-only')
+
+
 def _sandboxed(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
     return tool_def.name not in NATIVE_TOOLS
 
@@ -158,10 +218,12 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """Fold code tools in, teach the snippet shape, stream tool arguments, and count outcomes."""
 
     counters: SpeculationCounters
+    mount: MountDir | None = None
+    """The sandbox's `workspace_mount`, so the guidance describes it."""
 
     def get_instructions(self) -> str:
         """Code Puppy's guidance, with CLAI's tool and argument names."""
-        return GUIDANCE
+        return guidance(self.mount)
 
     def get_model_settings(self) -> AnthropicModelSettings:
         """Anthropic buffers a tool call's input by default, which leaves eager execution no runway.
@@ -268,9 +330,14 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
             await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id)))
 
 
-def speculative_capabilities(counters: SpeculationCounters) -> 'list[AbstractCapability[AgentDepsT]]':
-    """Fold tools into `run_code` with eager execution and read-only speculation."""
-    workspace = os.getcwd()
+def speculative_capabilities(
+    counters: SpeculationCounters, granted: Sequence[AgentCapability[AgentDepsT]]
+) -> 'list[AbstractCapability[AgentDepsT]]':
+    """Fold tools into `run_code` with eager execution and read-only speculation.
+
+    `granted` is every other capability the run binds; the sandbox mount follows its `FileSystem`.
+    """
+    mount = workspace_mount(granted)
     return [
         CodeMode(
             tools=_sandboxed,
@@ -279,10 +346,10 @@ def speculative_capabilities(counters: SpeculationCounters) -> 'list[AbstractCap
             # Eager runs each streamed statement as it closes; speculation launches the
             # read-only calls beyond that frontier, and the eager feed claims them.
             eager=True,
-            mount=MountDir(virtual_path=workspace, host_path=workspace, mode='read-write'),
+            mount=mount,
             os_access=OSAccess(),
         ),
         EagerTiming(),
-        SpeculativeExecution(counters),
+        SpeculativeExecution(counters, mount),
         ShowSandboxCalls(),
     ]

@@ -6,9 +6,10 @@ with. The wiring itself lives in `speculative_mode`, imported only while the swi
 Monty stays out of startup.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.tools import AgentDepsT
 from rich.console import Console
 
@@ -83,8 +84,11 @@ class Speculation:
         """The pinned stats row while the switch is on; nothing while it is off."""
         return self.counters.row() if self.enabled else ''
 
-    def capabilities(self) -> 'list[AbstractCapability[AgentDepsT]]':
-        """The speculative CodeMode bundle for one run, or nothing while the switch is off."""
+    def capabilities(self, granted: Sequence[AgentCapability[AgentDepsT]]) -> 'list[AbstractCapability[AgentDepsT]]':
+        """The speculative CodeMode bundle for one run, or nothing while the switch is off.
+
+        `granted` is the run's other capabilities; the sandbox mounts only what their `FileSystem` allows.
+        """
         if not self.enabled:
             return []
         try:
@@ -94,7 +98,7 @@ class Speculation:
                 f'Speculative execution is unavailable: {exc}', style=theme.color(theme.WARNING), markup=False
             )
             return []
-        return speculative_capabilities(self.counters)
+        return speculative_capabilities(self.counters, granted)
 
 
 def _lit(on: bool, text: str, role: str) -> str:

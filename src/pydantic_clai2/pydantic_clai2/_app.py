@@ -522,8 +522,12 @@ class _Shell(Generic[DepsT, OutputT]):
         )
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
-        """Capabilities bound to the next run: supplied, plugin-registered, then speculation."""
-        return (*self.plugins, *self.loader.capabilities(), *self.speculation.capabilities())
+        """Capabilities bound to the next run: supplied, plugin-registered, then speculation.
+
+        Speculation sees the others, so its sandbox mount stays within their `FileSystem`.
+        """
+        granted = (*self.plugins, *self.loader.capabilities())
+        return (*granted, *self.speculation.capabilities(granted))
 
     def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
         """A separately saved session configured like the foreground one, seeded with `history`."""
