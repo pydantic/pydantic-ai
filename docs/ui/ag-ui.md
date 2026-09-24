@@ -299,7 +299,7 @@ def authenticated_workspace(request: Request) -> str:
 @app.post('/')
 async def run_agent(request: Request) -> Response:
     adapter = await AGUIAdapter[ChannelDeps, str].from_request(request, agent=agent)
-    deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.run_input.context)
+    deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.run_input.context or [])
     return adapter.streaming_response(adapter.run_stream(deps=deps))
 ```
 
