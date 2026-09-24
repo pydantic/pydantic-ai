@@ -305,6 +305,31 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
     assert request_kwargs['input'][0]['type'] == 'additional_tools'
 
 
+async def test_openai_responses_service_tier_empty_string(allow_model_requests: None):
+    """An empty provider-reported `service_tier` is preserved in provider details."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    ).model_copy(update={'service_tier': ''})
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_details or {}).get('service_tier') == ''
+
+
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
     c = response_message(
         [
@@ -13381,6 +13406,49 @@ async def test_background_marker_stamped_from_terminal_event_only(allow_model_re
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert (response.provider_details or {}).get('background') is True
+
+
+async def test_openai_responses_stream_service_tier_empty_string(allow_model_requests: None):
+    """An empty `service_tier` reported on the terminal event is preserved in provider details."""
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseTextDeltaEvent(
+                content_index=0,
+                delta='done',
+                item_id='output-1',
+                logprobs=[],
+                output_index=0,
+                sequence_number=1,
+                type='response.output_text.delta',
+            ),
+            resp.ResponseCompletedEvent(
+                response=response_message(
+                    [
+                        ResponseOutputMessage(
+                            id='output-1',
+                            content=cast(
+                                list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]
+                            ),
+                            role='assistant',
+                            status='completed',
+                            type='message',
+                        )
+                    ]
+                ).model_copy(update={'status': 'completed', 'service_tier': ''}),
+                type='response.completed',
+                sequence_number=0,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    async with agent.run_stream('') as result:
+        assert await result.get_output() == 'done'
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_details or {}).get('service_tier') == ''
 
 
 async def test_stream_response_incomplete_finish_reason_length(allow_model_requests: None):
