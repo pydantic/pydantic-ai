@@ -9,7 +9,17 @@ import pytest
 from vcr.cassette import Cassette
 from vcr.record_mode import RecordMode
 
-from pydantic_ai import Agent
+from pydantic_ai import (
+    Agent,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolAvailabilityDeltaPart,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
 from .._inline_snapshot import snapshot
@@ -184,4 +194,73 @@ async def test_codex_deferred_tool_search(
                 'defer_loading': True,
             },
         ]
+    )
+
+
+async def test_codex_calls_additional_tool(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    codex_credentials: OpenAICodexCredentials,
+):
+    """Astra calls a revealed tool declared only through the native `additional_tools` item."""
+    request_capture.client.event_hooks['request'].insert(0, reject_refresh)
+    model = OpenAICodexModel(
+        'gpt-6-astra',
+        provider=OpenAICodexProvider(credentials=codex_credentials, http_client=request_capture.client),
+    )
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'order_id': {'type': 'string'}},
+            'required': ['order_id'],
+        },
+        defer_loading=True,
+    )
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
+    )
+    messages = model.prepare_messages(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Process the refund for order-123 using the available capability.')]
+            ),
+            ModelResponse(parts=[TextPart(content='I will load the required capability.')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+        ],
+        parameters,
+    )
+
+    response = await model.request(messages, None, parameters)
+
+    assert len(response.parts) == 1
+    call = response.parts[0]
+    assert isinstance(call, ToolCallPart)
+    assert call.tool_name == 'lookup_refund_policy'
+    assert call.args == '{"order_id":"order-123"}'
+    body = request_capture.bodies('/responses')[-1]
+    assert 'tools' not in body
+    request_input = body['input']
+    assert isinstance(request_input, list)
+    assert request_input[-1] == snapshot(
+        {
+            'type': 'additional_tools',
+            'role': 'developer',
+            'tools': [
+                {
+                    'type': 'function',
+                    'name': 'lookup_refund_policy',
+                    'description': 'Look up the refund policy for an order.',
+                    'parameters': {
+                        'type': 'object',
+                        'properties': {'order_id': {'type': 'string'}},
+                        'required': ['order_id'],
+                        'additionalProperties': False,
+                    },
+                    'strict': True,
+                }
+            ],
+        }
     )
