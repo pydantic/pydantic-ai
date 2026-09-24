@@ -289,13 +289,12 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     result interrupts a reply the model has barely started, leaving an extra interrupted turn in
     history with nothing in it. Verified live against `gemini-2.5-flash-native-audio-latest`.
 
-    Supported by Gemini native-audio models and `gemini-3.8-live-extended-thinking` (see
+    Supported by the Gemini native-audio models and `gemini-3.8-live` (see
     [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]).
     Other models silently ignore it.
 
-    Extended thinking has no blocking mode at all, so it runs tool calls asynchronously whether or not
-    this is set, and an explicit `False` raises [`UserError`][pydantic_ai.exceptions.UserError] rather
-    than promising a mode the model doesn't have.
+    `gemini-3.8-live-extended-thinking` has no blocking mode at all, so it runs tool calls
+    asynchronously whether or not this is set, and ignores an explicit `False` the same way.
     """
 
 
@@ -366,7 +365,7 @@ def _thinking_to_config(thinking: ThinkingLevel, profile: GoogleRealtimeModelPro
     rather than a `thinking_budget=0` it would reject, mirroring how the request-response path resolves
     `thinking=False` on a Gemini 3+ model.
     """
-    if thinking is False and not profile.get('thinking_always_enabled', False):
+    if thinking is False and not profile.get('google_thinking_always_enabled', False):
         return genai_types.ThinkingConfig(thinking_budget=0)  # disable thinking
     effort: ThinkingEffort = (
         _IMPLIED_THINKING_EFFORT if thinking is False else 'medium' if thinking is True else thinking
@@ -790,22 +789,16 @@ class GoogleRealtimeModel(RealtimeModel):
         Opt-in, and only where the model actually honors it — the other Live families accept
         `NON_BLOCKING` and then block anyway, so enabling it there would promise something the
         provider doesn't deliver. A model that has no blocking mode
-        ([`requires_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.requires_async_tool_calls])
+        ([`google_requires_async_tool_calls`][pydantic_ai.profiles.google.GoogleRealtimeModelProfile.google_requires_async_tool_calls])
         runs them asynchronously whether or not the session asked, since a `BLOCKING` declaration
-        closes the session outright.
+        closes the session outright. Either way a setting the model can't honor is ignored, not raised.
         """
-        requested = model_settings.get('google_async_tool_calls') if model_settings else None
-        if self.profile.get('requires_async_tool_calls', False):
-            if requested is False:
-                raise UserError(
-                    f'`google_async_tool_calls=False` is not supported by {self.model!r}, which runs every '
-                    'tool call asynchronously and rejects blocking function declarations. Remove the '
-                    'setting, or use a model with a blocking mode.'
-                )
+        profile = cast('GoogleRealtimeModelProfile', self.profile)
+        if profile.get('google_requires_async_tool_calls', False):
             return True
-        if not requested:
+        if not (model_settings and model_settings.get('google_async_tool_calls', False)):
             return False
-        return self.profile.get('supports_async_tool_calls', False)
+        return profile.get('supports_async_tool_calls', False)
 
     def _check_proactive_audio_api_version(self, settings: GoogleRealtimeModelSettings) -> None:
         """Reject a proactive-audio session on a client that can't carry the setting.
@@ -936,7 +929,7 @@ class GoogleRealtimeModel(RealtimeModel):
             if (
                 thinking_config.thinking_level is None
                 and thinking_config.thinking_budget is None
-                and profile.get('thinking_always_enabled', False)
+                and profile.get('google_thinking_always_enabled', False)
             ):
                 # A raw config that only turns on, say, `include_thoughts` still has to carry a level on a
                 # model that demands one, or the handshake is rejected outright. An explicit level or
@@ -946,7 +939,7 @@ class GoogleRealtimeModel(RealtimeModel):
         elif (thinking := model_settings.get('thinking')) is not None:
             if profile.get('supports_thinking', False):
                 config.thinking_config = _thinking_to_config(thinking, profile)
-        elif profile.get('thinking_always_enabled', False):
+        elif profile.get('google_thinking_always_enabled', False):
             # The session asked for nothing, but the model's API demands a level: `gemini-3.8-live-extended-thinking`
             # closes the handshake with `1007 Thinking level must be specified for this model` when it's absent.
             config.thinking_config = _thinking_to_config(_IMPLIED_THINKING_EFFORT, profile)
@@ -1008,7 +1001,7 @@ class GoogleRealtimeModel(RealtimeModel):
                             t,
                             async_tool_calls=async_tool_calls,
                             explicit_blocking=cast('GoogleRealtimeModelProfile', self.profile).get(
-                                'google_tool_calls_non_blocking_by_default', False
+                                'google_async_tool_calls_by_default', False
                             ),
                         )
                         for t in advertised_tools
@@ -1158,8 +1151,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # Whether the model takes a `scheduling` field at all: extended thinking paces results against its
         # own reasoning and closes the session if one is sent. A connection built without a profile keeps
         # sending it, as it did before the flag existed; `GoogleRealtimeModel.connect` always passes one.
-        self._async_tool_call_scheduling_enabled = profile is None or profile.get(
-            'supports_async_tool_call_scheduling', False
+        self._async_tool_call_scheduling_enabled = profile is None or cast('GoogleRealtimeModelProfile', profile).get(
+            'google_supports_async_tool_call_scheduling', False
         )
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged

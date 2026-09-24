@@ -55,9 +55,8 @@ differs from every other Live model in three ways the model handles for you:
   level the model accepts, because reasoning costs latency. Ask for more with
   [`thinking`](../capabilities/thinking.md)`='medium'` or `'high'`. `thinking=False` means "as little as
   possible" here rather than "off", since the model has no off.
-- **Its tool calls are always asynchronous.** `google_async_tool_calls` is on regardless, and setting it
-  to `False` raises [`UserError`][pydantic_ai.exceptions.UserError] rather than promising a blocking mode
-  the model doesn't have.
+- **Its tool calls are always asynchronous.** `google_async_tool_calls` is on regardless, and an
+  explicit `False` is ignored, since the model has no blocking mode.
 - **Its spoken filler doesn't end the turn.** Gemini closes the filler's response and says the
   interaction is still in progress, so the filler and the tool call it was stalling for are recorded
   as one `ModelResponse`, and `RealtimeTurnCompleteEvent` and

@@ -36,13 +36,14 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.realtime import RealtimeModelProfile, RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
+    from pydantic_ai.profiles.google import GoogleRealtimeModelProfile
     from pydantic_ai.providers import Provider
     from pydantic_ai.realtime.google import GoogleRealtimeModel
 
@@ -478,7 +479,7 @@ def test_profile_allow_seeding() -> None:
     interruption (automatic VAD only).
     """
     profile = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest').profile
-    assert profile == RealtimeModelProfile(
+    assert profile == GoogleRealtimeModelProfile(
         supports_image_input=True,
         supports_manual_turn_control=False,
         supports_interruption=False,
@@ -489,13 +490,8 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=False,
         supports_thinking=True,  # native-audio and 3.x Live models take a thinking config
-        thinking_always_enabled=False,
         # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
         supports_async_tool_calls=True,
-        # `gemini-2.5-flash-native-audio-latest` has a blocking mode too, and takes the scheduling
-        # field that paces an async result against its speech.
-        requires_async_tool_calls=False,
-        supports_async_tool_call_scheduling=True,
         # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
         supports_tool_return_schema=True,
         # Search grounding only: Live models reject or silently ignore code execution and URL context.
@@ -505,6 +501,11 @@ def test_profile_allow_seeding() -> None:
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,
         context_window=None,
+        # Thinking is optional, tool calls block unless opted in, and an async result can be scheduled.
+        google_thinking_always_enabled=False,
+        google_async_tool_calls_by_default=False,
+        google_requires_async_tool_calls=False,
+        google_supports_async_tool_call_scheduling=True,
     )
 
 

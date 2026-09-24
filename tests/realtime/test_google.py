@@ -80,6 +80,7 @@ with try_import() as imports_successful:
     from websockets.exceptions import WebSocketException
 
     from pydantic_ai.models import google as model_google
+    from pydantic_ai.profiles.google import GoogleRealtimeModelProfile
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.realtime import google as rt_google
@@ -1083,7 +1084,7 @@ async def test_send_tool_result_async_scheduling(
     session = _RecordingSession()
     conn = GoogleRealtimeConnection(
         cast('AsyncSession', session),
-        profile=RealtimeModelProfile(supports_async_tool_call_scheduling=supports_scheduling),
+        profile=GoogleRealtimeModelProfile(google_supports_async_tool_call_scheduling=supports_scheduling),
         async_tool_calls=async_tool_calls,
     )
     conn._map_message(  # pyright: ignore[reportPrivateUsage]
@@ -2452,13 +2453,12 @@ def test_async_tool_calls_resolution(
     assert model._async_tool_calls(settings) is expected  # pyright: ignore[reportPrivateUsage]
 
 
-def test_async_tool_calls_opt_out_rejected_where_required() -> None:
-    """Asking for blocking tool calls on a model that has none fails loudly rather than being ignored."""
+def test_async_tool_calls_opt_out_ignored_where_required() -> None:
+    """Asking for blocking tool calls on a model that has none is ignored, like any setting a model can't honor."""
     model = GoogleRealtimeModel(
         'gemini-3.8-live-extended-thinking', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
     )
-    with pytest.raises(UserError, match='runs every tool call asynchronously'):
-        model._async_tool_calls({'google_async_tool_calls': False})  # pyright: ignore[reportPrivateUsage]
+    assert model._async_tool_calls({'google_async_tool_calls': False}) is True  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(
@@ -2552,7 +2552,7 @@ def test_profile_recognizes_resource_name_spelling(
     """
     profile = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession()))).profile
     assert profile.get('supports_thinking', False) is expects_thinking
-    assert profile.get('thinking_always_enabled', False) is always_enabled
+    assert cast('GoogleRealtimeModelProfile', profile).get('google_thinking_always_enabled', False) is always_enabled
 
 
 @pytest.mark.parametrize(
