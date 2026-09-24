@@ -6,14 +6,15 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ...messages import ModelMessage, ModelResponse
+from ...usage import RunUsage
 
 if TYPE_CHECKING:
-    from ag_ui.core import PROTOCOL_VERSION, RunFinishedCancelledOutcome, TokenUsage, aggregate_token_usage
+    from ag_ui.core import PROTOCOL_VERSION, RunFinishedCancelledOutcome, TokenUsage
 
     HAS_LIFECYCLE_1_0 = True
 else:
     try:
-        from ag_ui.core import PROTOCOL_VERSION, RunFinishedCancelledOutcome, TokenUsage, aggregate_token_usage
+        from ag_ui.core import PROTOCOL_VERSION, RunFinishedCancelledOutcome, TokenUsage
 
         HAS_LIFECYCLE_1_0 = True
     except ImportError:
@@ -43,39 +44,41 @@ _MAX_TOKEN_COUNT = 2**53 - 1
 def _reported(count: int) -> int | None:
     """A count as the protocol reads it: absent when zero, which means "not reported", or outside the wire's range.
 
-    `RequestUsage` doesn't bound its counts, and `TokenUsage` rejects one below zero or above the
-    ceiling in its constructor, which would fail the run at its terminal event. Losing the count is
-    strictly better than losing the run, as the SDK's own producers reason.
+    `RunUsage` doesn't bound its counts, and `TokenUsage` rejects one below zero or above the ceiling
+    in its constructor, which would fail the run at its terminal event. Losing the count is strictly
+    better than losing the run, as the SDK's own producers reason.
     """
     return count if 0 < count <= _MAX_TOKEN_COUNT else None
 
 
 def token_usage_from_messages(messages: Sequence[ModelMessage]) -> list[TokenUsage]:
-    """Return one `TokenUsage` per `(provider, model)` pair in the messages.
+    """Return one `TokenUsage` per `(provider, model)` pair in the messages, in order of first appearance.
 
-    `RequestUsage` defaults every count to `0`, and the protocol reads a zero as "reported zero" but
-    an absent count as "not reported". So a response with no input or output tokens contributes
-    nothing, and every other zero count is left absent rather than claimed as measured.
+    Responses are summed before any count is bounded, so what reaches the wire is the group's own
+    total. `RequestUsage` defaults every count to `0`, and the protocol reads a zero as "reported
+    zero" but an absent count as "not reported": a pair with no input or output tokens contributes
+    nothing, and every other zero count is left absent rather than claimed as measured. The total is
+    the sum of the input and output counts sent, so a consumer can read it as such.
     """
-    if not HAS_LIFECYCLE_1_0:
-        raise RuntimeError('`token_usage_from_messages` needs ag-ui-protocol >= 1.0; check `HAS_LIFECYCLE_1_0` first.')
-    entries: list[TokenUsage] = []
+    assert HAS_LIFECYCLE_1_0, '`token_usage_from_messages` needs ag-ui-protocol >= 1.0'
+    by_model: dict[tuple[str | None, str | None], RunUsage] = {}
     for message in messages:
-        if not isinstance(message, ModelResponse):
-            continue
-        usage = message.usage
+        if isinstance(message, ModelResponse):
+            by_model.setdefault((message.provider_name, message.model_name), RunUsage()).incr(message.usage)
+    entries: list[TokenUsage] = []
+    for (provider, model), usage in by_model.items():
         input_tokens, output_tokens = _reported(usage.input_tokens), _reported(usage.output_tokens)
         if input_tokens is None and output_tokens is None:
             continue
         entries.append(
             TokenUsage(
-                provider=message.provider_name,
-                model=message.model_name,
+                provider=provider,
+                model=model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                total_tokens=_reported(usage.total_tokens),
+                total_tokens=_reported((input_tokens or 0) + (output_tokens or 0)),
                 cached_input_tokens=_reported(usage.cache_read_tokens),
                 cache_write_input_tokens=_reported(usage.cache_write_tokens),
             )
         )
-    return aggregate_token_usage(entries)
+    return entries

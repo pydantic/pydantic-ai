@@ -12,6 +12,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    cast,
 )
 
 from pydantic import ValidationError
@@ -48,6 +49,7 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
     narrow_message_parts,
+    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import (
@@ -509,15 +511,22 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
                     if isinstance(tool_msg.content, list):
-                        # From 1.0 a tool message can carry content parts. A text part holds what string
-                        # content holds (a structured return serialized to text), so it rehydrates the same
-                        # way; media parts load as they do in a user message, so `sanitize_messages` sees
-                        # them as typed content rather than as opaque JSON.
-                        parts = [
-                            rehydrate_tool_return_content(item) if isinstance(item, str) else item
-                            for item in _input_content_to_user_content(tool_msg.content)
-                        ]
-                        content = parts[0] if len(parts) == 1 else parts
+                        # From 1.0 a tool message can carry content parts. They load as a user message's
+                        # do, then pass the validation a string return's JSON does, so media narrows to
+                        # the type a reloaded return has and `sanitize_messages` sees typed content. A
+                        # single part is the return itself, so a lone text part rehydrates like string
+                        # content. A message with no parts left keeps its place with no content, which is
+                        # what `sanitize_messages` leaves an emptied return with.
+                        parts = cast(
+                            list[Any],  # validating a list gives a list; the adapter's type is the whole union
+                            tool_return_content_ta.validate_python(_input_content_to_user_content(tool_msg.content)),
+                        )
+                        if not parts:
+                            content = None
+                        elif len(parts) == 1:
+                            content = rehydrate_tool_return_content(parts[0])
+                        else:
+                            content = parts
                     else:
                         # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
                         # multimodal content comes back as real types; see `rehydrate_tool_return_content`.

@@ -88,7 +88,8 @@ async def update_plan_step(
     Returns:
         StateDeltaEvent containing the changes made to the plan.
     """
-    # JSON Patch (RFC 6902) operations, validated by `StateDeltaEvent`.
+    # JSON Patch (RFC 6902) operations, validated by `StateDeltaEvent`. `Any` because `delta` is
+    # `list[Any]` below ag-ui-protocol 1.0 and a union of operation models `ag_ui.core` doesn't export on 1.0.
     changes: list[Any] = []
     if description is not None:
         changes.append(

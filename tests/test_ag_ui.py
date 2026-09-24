@@ -70,6 +70,7 @@ from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    sanitize_messages,
 )
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -134,7 +135,6 @@ with try_import() as imports_successful:
         ag_ui as ag_ui_package,
     )
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
-    from pydantic_ai.ui.ag_ui._lifecycle_1_0 import token_usage_from_messages
     from pydantic_ai.ui.ag_ui._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
         REASONING_MESSAGE_ROLE,
@@ -8498,14 +8498,37 @@ async def test_run_finished_has_no_usage_when_responses_report_no_tokens() -> No
 
 @requires_ag_ui('1.0.0')
 async def test_run_finished_usage_drops_counts_outside_the_wire_range() -> None:
-    """A count `TokenUsage` cannot encode is left absent rather than failing the run at `RUN_FINISHED`."""
-    agent = Agent(model=TestModel())
+    """A count `TokenUsage` cannot encode is left absent rather than failing the run at `RUN_FINISHED`.
+
+    The bound applies to a `(provider, model)` pair's sum, so two responses that only overflow together
+    are caught too, and `totalTokens` is the sum of the counts actually sent.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        tool_returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if tool_returns < 2:
+            yield {0: DeltaToolCall(name='tool', json_args='{}')}
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def tool() -> str:
+        return 'called'
 
     def set_usage(run_result: AgentRunResult[Any]) -> None:
-        response = next(message for message in run_result.new_messages() if isinstance(message, ModelResponse))
-        response.provider_name = 'provider'
-        response.model_name = 'model'
-        response.usage = RequestUsage(input_tokens=-5, output_tokens=3, cache_read_tokens=2**53)
+        responses = [message for message in run_result.new_messages() if isinstance(message, ModelResponse)]
+        assert len(responses) == 3
+        responses[0].provider_name = 'provider-a'
+        responses[0].model_name = 'model-a'
+        responses[0].usage = RequestUsage(input_tokens=-5, output_tokens=10, cache_read_tokens=2**53)
+        for response in responses[1:]:
+            response.provider_name = 'provider-b'
+            response.model_name = 'model-b'
+            response.usage = RequestUsage(input_tokens=2**52 + 1, output_tokens=1)
 
     events = await _collect_adapter_events(
         agent,
@@ -8515,14 +8538,12 @@ async def test_run_finished_usage_drops_counts_outside_the_wire_range() -> None:
         include_usage=True,
     )
     run_finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
-    assert run_finished['usage'] == snapshot([{'provider': 'provider', 'model': 'model', 'outputTokens': 3}])
-
-
-@pytest.mark.skipif(_has_ag_ui('1.0.0'), reason='ag-ui-protocol >= 1.0 has token usage')
-def test_token_usage_from_messages_requires_1_0() -> None:
-    """Below 1.0 the helper refuses up front instead of failing on a stub; its gate is the caller's job."""
-    with pytest.raises(RuntimeError, match=r'needs ag-ui-protocol >= 1\.0'):
-        token_usage_from_messages([])
+    assert run_finished['usage'] == snapshot(
+        [
+            {'provider': 'provider-a', 'model': 'model-a', 'outputTokens': 10, 'totalTokens': 10},
+            {'provider': 'provider-b', 'model': 'model-b', 'outputTokens': 2, 'totalTokens': 2},
+        ]
+    )
 
 
 @requires_ag_ui('1.0.0')
@@ -8584,9 +8605,10 @@ async def test_frontend_tool_calls_are_pending_on_success() -> None:
     )
     outcome = next(event for event in events if event['type'] == 'RUN_FINISHED')['outcome']
     assert outcome['type'] == 'success'
-    call_ids = [event['toolCallId'] for event in events if event['type'] == 'TOOL_CALL_START']
-    assert len(call_ids) == 3
-    assert outcome['pendingToolCallIds'] == [call_ids[0], call_ids[2]]
+    call_ids = {event['toolCallName']: event['toolCallId'] for event in events if event['type'] == 'TOOL_CALL_START'}
+    results = {event['toolCallId']: event['content'] for event in events if event['type'] == 'TOOL_CALL_RESULT'}
+    assert results == {call_ids['get_time']: 'noon'}
+    assert outcome['pendingToolCallIds'] == [call_ids['get_weather'], call_ids['get_weather_parts']]
 
     legacy_events = await _collect_adapter_events(
         agent,
@@ -8752,10 +8774,10 @@ def test_file_source_without_known_provider_is_skipped(provider: str | None, mat
 
 @requires_ag_ui('1.0.0')
 def test_tool_message_content_parts_load_as_typed_content(tiny_image: BinaryImage) -> None:
-    """From 1.0 a tool message can carry content parts: text rehydrates like string content, media loads typed.
+    """From 1.0 a tool message can carry content parts: a lone text part rehydrates like string content, media
+    loads as the typed content a reloaded return has, and `sanitize_messages` checks it like a user message's.
 
-    Typed media is what `sanitize_messages` inspects, so a `file` source in a tool result is subject to
-    `allow_uploaded_files` like one in a user message.
+    A tool message left with no parts keeps its place with no content, so its call isn't orphaned.
     """
     messages: list[Message] = [
         AssistantMessage(id='m1', tool_calls=[ToolCall(id='c1', function=FunctionCall(name='chart', arguments='{}'))]),
@@ -8764,7 +8786,9 @@ def test_tool_message_content_parts_load_as_typed_content(tiny_image: BinaryImag
             tool_call_id='c1',
             content=[
                 TextInputContent(text='here is the chart'),
-                ImageInputContent(source=InputContentDataSource(value=tiny_image.base64, mime_type='image/png')),
+                ImageInputContent(
+                    source=InputContentDataSource(value=tiny_image.base64, mime_type=tiny_image.media_type)
+                ),
             ],
         ),
         AssistantMessage(id='m3', tool_calls=[ToolCall(id='c2', function=FunctionCall(name='lookup', arguments='{}'))]),
@@ -8775,19 +8799,26 @@ def test_tool_message_content_parts_load_as_typed_content(tiny_image: BinaryImag
             tool_call_id='c3',
             content=[ImageInputContent(source=FileSource(value='file-1', provider='openai', mime_type='image/png'))],
         ),
+        AssistantMessage(id='m7', tool_calls=[ToolCall(id='c4', function=FunctionCall(name='fetch', arguments='{}'))]),
+        ToolMessage(id='m8', tool_call_id='c4', content=[ImageInputContent(source=FileSource(value='file-2'))]),
     ]
 
-    chart, lookup, fetch = (
-        part
-        for message in AGUIAdapter.load_messages(messages)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    )
-    image = BinaryContent(data=tiny_image.data, media_type='image/png')
+    def tool_returns(history: list[ModelMessage]) -> list[ToolReturnPart]:
+        return [part for message in history for part in message.parts if isinstance(part, ToolReturnPart)]
+
+    with pytest.warns(UserWarning, match='with no provider was skipped'):
+        loaded = AGUIAdapter.load_messages(messages)
+    chart, lookup, fetch, emptied = tool_returns(loaded)
+    image = BinaryImage(data=tiny_image.data, media_type=tiny_image.media_type, identifier=tiny_image.identifier)
     assert chart.content == ['here is the chart', image]
     assert chart.files == [image]
     assert lookup.content == {'answer': 42}
     assert fetch.content == UploadedFile(file_id='file-1', provider_name='openai', media_type='image/png')
+    assert emptied.content is None
+
+    with pytest.warns(UserWarning, match='uploaded file'):
+        sanitized = tool_returns(sanitize_messages(loaded))
+    assert [part.content for part in sanitized] == [['here is the chart', image], {'answer': 42}, None, None]
 
 
 @pytestmark_interrupts

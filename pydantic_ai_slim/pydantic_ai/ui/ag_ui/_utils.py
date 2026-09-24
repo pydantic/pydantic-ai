@@ -59,7 +59,9 @@ INTERRUPTS_VERSION = (0, 1, 19)
 LIFECYCLE_1_0_VERSION = (1,)
 """AG-UI version that added `RUN_STARTED.protocolVersion`, the `cancelled` outcome, `pendingToolCallIds` and `usage`.
 
-One component, so `'1'`, `'1.0'` and `'1.0.0'` all qualify.
+One component, so `'1'`, `'1.0'` and `'1.0.0'` all qualify as an `ag_ui_version`. A client's
+`protocolVersion` declaration is read with `parse_protocol_declaration` instead, which only admits
+`MAJOR.MINOR`.
 """
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'

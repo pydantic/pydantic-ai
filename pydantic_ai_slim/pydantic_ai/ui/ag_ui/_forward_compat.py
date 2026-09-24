@@ -74,18 +74,15 @@ HAS_BINARY_INPUT_PART = 'binary' in _KNOWN_INPUT_CONTENT_TYPES
 """Whether the installed SDK still accepts the retired `binary` input part."""
 
 
-def _unknown_tag(
-    item: dict[str, JsonValue], discriminator: str, known: frozenset[str], *, label: str | None = None
-) -> str | None:
+def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozenset[str]) -> str | None:
     """A `"role='reasoning'"`-style label when `item`'s discriminator value is one the installed models don't know.
 
     `None` for an item that carries no string tag: that isn't new functionality, it's malformed, and
-    validation should still report it. `label` names the tag in place of `discriminator` when the tag
-    sits below the item, as `source.type` does.
+    validation should still report it.
     """
     tag = item.get(discriminator)
     if isinstance(tag, str) and tag not in known:
-        return f'{label or discriminator}={tag!r}'
+        return f'{discriminator}={tag!r}'
     return None
 
 
@@ -98,7 +95,8 @@ def _unknown_source_tag(item: dict[str, JsonValue]) -> str | None:
     source = item.get('source')
     if known_sources is None or not isinstance(source, dict):
         return None
-    return _unknown_tag(source, 'type', known_sources, label='source.type')
+    unknown = _unknown_tag(source, 'type', known_sources)
+    return f'source.{unknown}' if unknown is not None else None
 
 
 def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
