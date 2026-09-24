@@ -462,7 +462,7 @@ async def test_the_route_question_stays_clear_of_a_field_named_route(allow_model
 
 
 class RoutingDecisionModel(InMemoryDecisionModel):
-    """Answers the route question from a fixed distribution over the routes offered, and the rest as its parent does."""
+    """Answers the route question, which every request to it carries, from a fixed distribution over the routes offered."""
 
     def __init__(self, route: dict[str, float]):
         super().__init__()
@@ -470,13 +470,14 @@ class RoutingDecisionModel(InMemoryDecisionModel):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         response = await super().decide(request, model_settings)
-        if isinstance(question := request.questions.get('route'), ChoiceQuestion):
-            # A route that is no longer offered keeps its probability out of the answer, as a real model's would.
-            probabilities = {label: self.route[label] for label in question.criteria}
-            choice = max(probabilities, key=lambda label: probabilities[label])
-            response.answers['route'] = ChoiceAnswer(
-                choice=choice, confidence=probabilities[choice], probabilities=probabilities
-            )
+        question = request.questions['route']
+        assert isinstance(question, ChoiceQuestion)
+        # A route that is no longer offered keeps its probability out of the answer, as a real model's would.
+        probabilities = {label: self.route[label] for label in question.criteria}
+        choice = max(probabilities, key=lambda label: probabilities[label])
+        response.answers['route'] = ChoiceAnswer(
+            choice=choice, confidence=probabilities[choice], probabilities=probabilities
+        )
         return response
 
 
