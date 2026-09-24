@@ -391,7 +391,7 @@ async def test_fallback_on_low_confidence(allow_model_requests: None, noul: floa
         pytest.param([Handling, str], 'Text output is not supported', id='text-in-union'),
         pytest.param(
             [Handling, EnumAndProbability],
-            "'final_result_EnumAndProbability' says nothing about itself",
+            "'EnumAndProbability' says nothing about itself",
             id='a union member with no docstring',
         ),
         pytest.param(NativeOutput(Handling), 'Native structured output is not supported', id='native'),
@@ -525,12 +525,12 @@ def refund(amount: float) -> str:
 
 
 def tool_answers(choice: str, probability: float) -> httpx2.Response:
-    """Jev's answers to a `Ticket` with `refund` attached: a sure `urgent`, and the tool question as given."""
+    """Jev's answers to a `Ticket` with `refund` attached: a sure `urgent`, and the route question as given."""
     rest = round(1 - probability, 2)
-    other = 'refund' if choice == 'final_result' else 'final_result'
+    other = 'refund' if choice == 'Ticket' else 'Ticket'
     return answers(
         urgent={'type': 'noul', 'noul': 0.9},
-        tool={
+        route={
             'type': 'choice',
             'choice': choice,
             'confidence': 0.7,
@@ -548,14 +548,14 @@ async def test_a_tool_is_proposed_not_called(
     with pytest.raises(ToolCallProposed) as exc_info:
         await agent.run('You charged my card twice for the same month. Put the second one back.')
     assert exc_info.value.tool_name == 'refund'
-    assert exc_info.value.probability == snapshot(1.0)
+    assert exc_info.value.probability == snapshot(0.99)
     assert str(exc_info.value) == snapshot(
-        "jev-latest proposed calling 'refund' (probability 1.00) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step."
+        "jev-latest proposed calling 'refund' (probability 0.99) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step."
     )
-    assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['tool'] == snapshot(
+    assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['route'] == snapshot(
         {
             'type': 'choice',
-            'criteria': {'final_result': 'Triage a support ticket.', 'refund': 'Return a payment to the customer.'},
+            'criteria': {'Ticket': 'Triage a support ticket.', 'refund': 'Return a payment to the customer.'},
             'instructions': 'Which of these does this call for?',
         }
     )
@@ -603,7 +603,7 @@ async def test_the_fill_names_the_route_that_was_picked(allow_model_requests: No
         for name, question in body['questions'].items():
             if question['type'] == 'choice':
                 options = list(question['criteria'])
-                pick = 'no_docstring_tool' if name == 'tool' else options[0]
+                pick = 'no_docstring_tool' if name == 'route' else options[0]
                 given[name] = {
                     'type': 'choice',
                     'choice': pick,
@@ -626,19 +626,19 @@ async def test_the_fill_names_the_route_that_was_picked(allow_model_requests: No
 
 
 async def test_the_fill_names_a_union_member_by_what_the_user_called_it(allow_model_requests: None):
-    """A union route is named `final_result_<Member>`; only the member is the user's, so only it is sent."""
+    """A union route's tool is named `final_result_<Member>`; only the member is the user's, so only it is sent."""
     seen: list[dict[str, Any]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         seen.append(body)
-        if 'tool' in body['questions']:
+        if 'route' in body['questions']:
             return answers(
-                tool={
+                route={
                     'type': 'choice',
-                    'choice': 'final_result_Escalation',
+                    'choice': 'Escalation',
                     'confidence': 0.9,
-                    'probabilities': {'final_result_Ticket': 0.1, 'final_result_Escalation': 0.9},
+                    'probabilities': {'Ticket': 0.1, 'Escalation': 0.9},
                 }
             )
         return answers(security={'type': 'noul', 'noul': 0.9})
@@ -691,11 +691,11 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
         if len(seen) == 1:
             return answers(
                 urgent={'type': 'noul', 'noul': 0.9},
-                tool={
+                route={
                     'type': 'choice',
                     'choice': 'configure_contact',
                     'confidence': 0.9,
-                    'probabilities': {'final_result': 0.05, 'configure_contact': 0.95},
+                    'probabilities': {'Ticket': 0.05, 'configure_contact': 0.95},
                 },
             )
         if len(seen) == 2:
@@ -777,7 +777,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
             'requests': 2,
         }
     )
-    assert list(seen[0]['questions']) == ['urgent', 'tool']
+    assert list(seen[0]['questions']) == ['urgent', 'route']
     assert seen[1]['questions'] == snapshot(
         {
             'team': {
@@ -879,11 +879,11 @@ async def test_a_selected_tool_fill_failure_does_not_fall_back_to_another_route(
         if seen == 1:
             return answers(
                 urgent={'type': 'noul', 'noul': 0.9},
-                tool={
+                route={
                     'type': 'choice',
                     'choice': 'set_direction',
                     'confidence': 0.9,
-                    'probabilities': {'final_result': 0.05, 'set_direction': 0.95},
+                    'probabilities': {'Ticket': 0.05, 'set_direction': 0.95},
                 },
             )
         return httpx2.Response(503, json={'detail': 'temporarily unavailable'})
@@ -957,7 +957,7 @@ async def test_tool_arguments_live(
         }
     )
     first, second = request_capture.bodies('/v1/systemone')
-    assert list(cast(dict[str, Any], first['questions'])) == ['urgent', 'tool']
+    assert list(cast(dict[str, Any], first['questions'])) == ['urgent', 'route']
     assert list(cast(dict[str, Any], second['questions'])) == ['direction']
 
 
@@ -991,7 +991,7 @@ async def test_a_tool_below_the_threshold_is_a_lean(
 
 
 async def test_the_output_tool_is_one_of_the_options(allow_model_requests: None):
-    jev = mock_model(lambda _: tool_answers('final_result', 0.9))
+    jev = mock_model(lambda _: tool_answers('Ticket', 0.9))
     result = await Agent(jev, output_type=Ticket, tools=[refund]).run('Is my invoice due?')
     assert result.output == Ticket(urgent=True)
     assert (result.response.provider_details or {})['tool'] == {
@@ -1001,29 +1001,29 @@ async def test_the_output_tool_is_one_of_the_options(allow_model_requests: None)
     }
 
 
-async def test_the_tool_question_stays_clear_of_a_field_named_tool(allow_model_requests: None):
+async def test_the_route_question_stays_clear_of_a_field_named_route(allow_model_requests: None):
     seen: list[dict[str, Any]] = []
 
     class Uses(BaseModel):
         """Say what a text is about."""
 
-        tool: bool = Field(description='Does it mention a tool?')
+        route: bool = Field(description='Does it mention a route?')
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         return answers(
-            tool={'type': 'noul', 'noul': 0.9},
-            tool_={
+            route={'type': 'noul', 'noul': 0.9},
+            route_={
                 'type': 'choice',
-                'choice': 'final_result',
+                'choice': 'Uses',
                 'confidence': 0.9,
-                'probabilities': {'final_result': 0.9, 'refund': 0.1},
+                'probabilities': {'Uses': 0.9, 'refund': 0.1},
             },
         )
 
     result = await Agent(mock_model(record), output_type=Uses, tools=[refund]).run('A hammer.')
-    assert result.output == Uses(tool=True)
-    assert list(seen[0]['questions']) == ['tool', 'tool_']
+    assert result.output == Uses(route=True)
+    assert list(seen[0]['questions']) == ['route', 'route_']
 
 
 @pytest.mark.parametrize(
@@ -1033,7 +1033,7 @@ async def test_the_tool_question_stays_clear_of_a_field_named_tool(allow_model_r
             {'type': 'noul', 'noul': 0.9}, 'Unexpected answer from the model for the route question', id='not a choice'
         ),
         pytest.param(
-            {'type': 'choice', 'choice': 'refund', 'confidence': 0.8, 'probabilities': {'final_result': 0.1}},
+            {'type': 'choice', 'choice': 'refund', 'confidence': 0.8, 'probabilities': {'Ticket': 0.1}},
             'Unexpected answer from the model for the route question',
             id='no probability for the choice',
         ),
@@ -1047,7 +1047,7 @@ async def test_the_tool_question_stays_clear_of_a_field_named_tool(allow_model_r
                 'type': 'choice',
                 'choice': 'refund',
                 'confidence': 0.8,
-                'probabilities': {'refund': 1.7, 'final_result': -0.7},
+                'probabilities': {'refund': 1.7, 'Ticket': -0.7},
             },
             'Unexpected answer from the model for the route question',
             id='a probability outside 0 to 1',
@@ -1055,7 +1055,7 @@ async def test_the_tool_question_stays_clear_of_a_field_named_tool(allow_model_r
     ],
 )
 async def test_an_unexpected_tool_answer(allow_model_requests: None, tool: dict[str, object], match: str):
-    jev = mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': 0.9}, tool=tool))
+    jev = mock_model(lambda _: answers(urgent={'type': 'noul', 'noul': 0.9}, route=tool))
     with pytest.raises(UnexpectedModelBehavior, match=match):
         await Agent(jev, output_type=Ticket, tools=[refund]).run('anything')
 
@@ -1066,12 +1066,12 @@ async def test_a_withheld_tool_is_not_offered(allow_model_requests: None):
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
-        return tool_answers('final_result', 0.9)
+        return tool_answers('Ticket', 0.9)
 
     agent = Agent(mock_model(record), output_type=Ticket, tools=[approve])
     agent.tool_plain(defer_loading=True)(reject)
     await agent.run('Fine by me.')
-    criteria = seen[0]['questions']['tool']['criteria']
+    criteria = seen[0]['questions']['route']['criteria']
     assert 'approve' in criteria and 'reject' not in criteria
 
 
@@ -1179,12 +1179,15 @@ async def test_the_instructions_describe_an_output_type_without_a_docstring(allo
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
-        return tool_answers('final_result', 0.9)
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.9},
+            route=_route('Undescribed', {'Undescribed': 0.9, 'refund': 0.1}),
+        )
 
     agent = Agent(mock_model(record), output_type=Undescribed, tools=[refund], instructions='Triage the ticket.')
     await agent.run('anything')
-    assert seen[0]['questions']['tool']['criteria'] == snapshot(
-        {'final_result': 'Triage the ticket.', 'refund': 'Return a payment to the customer.'}
+    assert seen[0]['questions']['route']['criteria'] == snapshot(
+        {'Undescribed': 'Triage the ticket.', 'refund': 'Return a payment to the customer.'}
     )
 
 
@@ -1204,13 +1207,13 @@ async def test_a_tool_that_asked_for_a_retry_stays_on_offer(allow_model_requests
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         if len(seen) < 3:
-            return answers(urgent={'type': 'noul', 'noul': 0.9}, tool=tool_answers_for('flaky'))
-        return answers(urgent={'type': 'noul', 'noul': 0.9}, tool=tool_answers_for('final_result'))
+            return answers(urgent={'type': 'noul', 'noul': 0.9}, route=tool_answers_for('flaky'))
+        return answers(urgent={'type': 'noul', 'noul': 0.9}, route=tool_answers_for('Ticket'))
 
     result = await Agent(mock_model(record), output_type=Ticket, tools=[flaky], retries=2).run('Try it.')
     assert attempts == 2 and result.output == Ticket(urgent=True)
-    assert [list(request['questions'].get('tool', {}).get('criteria', {})) for request in seen] == snapshot(
-        [['final_result', 'flaky'], ['final_result', 'flaky'], []]
+    assert [list(request['questions'].get('route', {}).get('criteria', {})) for request in seen] == snapshot(
+        [['Ticket', 'flaky'], ['Ticket', 'flaky'], []]
     )
 
 
@@ -1220,7 +1223,7 @@ async def test_the_last_route_left_is_taken_without_asking(allow_model_requests:
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
-        return answers(tool=tool_answers_for('approve'))
+        return answers(route=tool_answers_for('approve'))
 
     result = await Agent(mock_model(record), output_type=[reject], tools=[approve]).run('Decide.')
     assert result.output == 'rejected'
@@ -1244,7 +1247,7 @@ async def test_a_tool_that_returned_is_not_proposed_again(allow_model_requests: 
         ModelRequest(parts=[ToolReturnPart('refund', 'Refunded', 'call_1')]),
     ]
     await Agent(mock_model(record), output_type=Ticket, tools=[refund]).run(message_history=history)
-    assert 'tool' not in seen[0]['questions']
+    assert 'route' not in seen[0]['questions']
 
 
 class Undescribed(BaseModel):
@@ -1262,10 +1265,10 @@ async def test_the_composed_stock_description_is_no_description_either(
 async def test_below_the_threshold_with_nothing_to_fill_the_likeliest_hand_off_is_taken(
     allow_model_requests: None,
 ):
-    probabilities = {'refund': 0.4, 'final_result_approve': 0.35, 'final_result_reject': 0.25}
+    probabilities = {'refund': 0.4, 'approve': 0.35, 'reject': 0.25}
     jev = mock_model(
         lambda _: answers(
-            tool={'type': 'choice', 'choice': 'refund', 'confidence': 0.1, 'probabilities': probabilities}
+            route={'type': 'choice', 'choice': 'refund', 'confidence': 0.1, 'probabilities': probabilities}
         )
     )
     result = await Agent(jev, output_type=[approve, reject], tools=[refund]).run('Looks fine.')
@@ -1314,10 +1317,10 @@ async def test_an_output_function_is_a_hand_off_jev_picks(
             'offered': ['final_result_escalate'],
         }
     )
-    assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['tool']['criteria'] == snapshot(
+    assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['route']['criteria'] == snapshot(
         {
-            'final_result_Ticket': 'Triage a support ticket.',
-            'final_result_escalate': 'Hand the ticket to a person on the support team.',
+            'Ticket': 'Triage a support ticket.',
+            'escalate': 'Hand the ticket to a person on the support team.',
         }
     )
 
@@ -1371,12 +1374,12 @@ async def test_an_arg_less_tool_is_called_by_jev_itself(allow_model_requests: No
         # Jev would pick the tool again with its result in view; it is not offered again, so this is ignored.
         return answers(
             urgent={'type': 'noul', 'noul': 0.9},
-            tool={'type': 'choice', 'choice': 'approve', 'confidence': 0.8, 'probabilities': {'approve': 0.9}},
+            route={'type': 'choice', 'choice': 'approve', 'confidence': 0.8, 'probabilities': {'approve': 0.9}},
         )
 
     result = await Agent(mock_model(record), output_type=Ticket, tools=[approve]).run('Fine by me.')
     assert result.output == Ticket(urgent=True)
-    assert 'tool' in seen[0]['questions'] and 'tool' not in seen[1]['questions']
+    assert 'route' in seen[0]['questions'] and 'route' not in seen[1]['questions']
     assert seen[1]['state'] == snapshot(
         {
             'history': [
@@ -1394,7 +1397,7 @@ async def test_a_tool_called_in_an_earlier_turn_is_offered_again(allow_model_req
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
-        return answers(urgent={'type': 'noul', 'noul': 0.9}, tool=tool_answers_for('final_result'))
+        return answers(urgent={'type': 'noul', 'noul': 0.9}, route=tool_answers_for('Ticket'))
 
     agent = Agent(mock_model(record), output_type=Ticket, tools=[approve])
     first = await agent.run('Fine by me.')
@@ -1404,7 +1407,7 @@ async def test_a_tool_called_in_an_earlier_turn_is_offered_again(allow_model_req
         ModelRequest(parts=[ToolReturnPart('approve', 'approved', 'call_1')]),
     ]
     await agent.run('And this one?', message_history=earlier)
-    assert 'approve' in seen[-1]['questions']['tool']['criteria']
+    assert 'approve' in seen[-1]['questions']['route']['criteria']
 
 
 def tool_answers_for(choice: str) -> dict[str, object]:
@@ -1412,11 +1415,11 @@ def tool_answers_for(choice: str) -> dict[str, object]:
 
 
 async def test_with_nothing_to_fill_the_pick_is_the_answer(allow_model_requests: None):
-    """Output functions and no output type: the tool question is the whole question, taken at any probability."""
-    probabilities = {'final_result_approve': 0.55, 'final_result_reject': 0.45}
+    """Output functions and no output type: the route question is the whole question, taken at any probability."""
+    probabilities = {'approve': 0.55, 'reject': 0.45}
     jev = mock_model(
         lambda _: answers(
-            tool={'type': 'choice', 'choice': 'final_result_approve', 'confidence': 0.1, 'probabilities': probabilities}
+            route={'type': 'choice', 'choice': 'approve', 'confidence': 0.1, 'probabilities': probabilities}
         )
     )
     result = await Agent(jev, output_type=[approve, reject]).run('Looks fine.')
@@ -1525,7 +1528,7 @@ async def test_below_the_threshold_with_no_hand_off_left_the_pick_stands(allow_m
     """Below the threshold, with nothing to fill and every output function returned, the lean is taken anyway."""
     jev = mock_model(
         lambda _: answers(
-            tool={
+            route={
                 'type': 'choice',
                 'choice': 'refund',
                 'confidence': 0.2,
@@ -1919,8 +1922,8 @@ async def test_a_tools_whole_number_argument_is_filled_by_jev(allow_model_reques
 
     def respond(request: httpx2.Request) -> httpx2.Response:
         questions = json.loads(request.content)['questions']
-        if 'tool' in questions:
-            return answers(tool=tool_answers_for('check'), urgent={'type': 'noul', 'noul': 0.1})
+        if 'route' in questions:
+            return answers(route=tool_answers_for('check'), urgent={'type': 'noul', 'noul': 0.1})
         if 'status' in questions:
             return choose('404')(request)
         # With the result in view, the output is what is left to fill.
@@ -1950,11 +1953,11 @@ def _named_tool(name: str) -> Callable[[], str]:
 async def test_a_tool_with_unsupported_arguments_is_proposed_even_with_nothing_to_fill(allow_model_requests: None):
     jev = mock_model(
         lambda _: answers(
-            tool={
+            route={
                 'type': 'choice',
                 'choice': 'refund',
                 'confidence': 0.2,
-                'probabilities': {'refund': 0.6, 'final_result_approve': 0.4},
+                'probabilities': {'refund': 0.6, 'output': 0.4},
             }
         )
     )
@@ -2218,8 +2221,8 @@ async def test_none_of_these_leaves_a_nested_model_default_to_apply_in_a_union_m
     """The fill of a union member Jev picked leaves out a nested model's default the same way."""
 
     def handle(request: httpx2.Request) -> httpx2.Response:
-        if list(json.loads(request.content)['questions']) == ['tool']:
-            return tool_answers('final_result_Escalated', 0.9)
+        if list(json.loads(request.content)['questions']) == ['route']:
+            return tool_answers('Escalated', 0.9)
         return none_of_these(request)
 
     result = await Agent(mock_model(handle), output_type=[Escalation, Escalated]).run('Hello.')
@@ -2243,7 +2246,7 @@ async def test_none_of_these_leaves_a_tool_argument_default_to_apply(allow_model
         if requests == 2:
             # The second request fills `assign`, which Jev picked in the first.
             return none_of_these(request)
-        return tool_answers('assign' if requests == 1 else 'final_result', 0.9)
+        return tool_answers('assign' if requests == 1 else 'Ticket', 0.9)
 
     def assign(team: Literal['billing', 'shipping'] | None = 'shipping') -> None:
         """Assign the ticket.
@@ -2870,12 +2873,7 @@ async def test_a_union_picks_the_type_then_fills_only_that_one(allow_model_reque
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         if len(seen) == 1:
-            return answers(
-                tool=_route(
-                    'final_result_Escalation',
-                    {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8},
-                )
-            )
+            return answers(route=_route('Escalation', {'Ticket': 0.2, 'Escalation': 0.8}))
         return answers(security={'type': 'noul', 'noul': 0.9})
 
     agent = Agent(mock_model(record), output_type=[Ticket, Escalation])
@@ -2883,7 +2881,7 @@ async def test_a_union_picks_the_type_then_fills_only_that_one(allow_model_reque
 
     assert result.output == Escalation(security=True)
     # The first request asks nothing but the route; the second asks nothing but the chosen type's fields.
-    assert list(seen[0]['questions']) == ['tool']
+    assert list(seen[0]['questions']) == ['route']
     assert list(seen[1]['questions']) == ['security']
     assert result.response.provider_details == snapshot(
         {
@@ -2909,12 +2907,7 @@ async def test_a_union_member_jev_cannot_express_is_offered_and_hands_off_when_p
 
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
-        return answers(
-            tool=_route(
-                'final_result_DraftedReply',
-                {'final_result_Ticket': 0.1, 'final_result_DraftedReply': 0.9},
-            )
-        )
+        return answers(route=_route('DraftedReply', {'Ticket': 0.1, 'DraftedReply': 0.9}))
 
     agent = Agent(mock_model(record), output_type=[Ticket, DraftedReply])
     with pytest.raises(ToolCallProposed) as exc_info:
@@ -2929,12 +2922,7 @@ async def test_a_union_member_jev_cannot_express_is_filled_by_the_model_behind_i
     """`ToolCallProposed` is a `ModelAPIError`, so `FallbackModel` gives the whole step to a language model."""
 
     def record(request: httpx2.Request) -> httpx2.Response:
-        return answers(
-            tool=_route(
-                'final_result_DraftedReply',
-                {'final_result_Ticket': 0.1, 'final_result_DraftedReply': 0.9},
-            )
-        )
+        return answers(route=_route('DraftedReply', {'Ticket': 0.1, 'DraftedReply': 0.9}))
 
     agent = Agent(FallbackModel(mock_model(record), TestModel()), output_type=[Ticket, DraftedReply])
     result = await agent.run('Write back and say sorry.')
@@ -2961,12 +2949,7 @@ async def test_a_union_below_the_threshold_fills_the_likeliest_output_type(allow
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         if len(seen) == 1:
-            return answers(
-                tool=_route(
-                    'refund',
-                    {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.5, 'refund': 0.3},
-                )
-            )
+            return answers(route=_route('refund', {'Ticket': 0.2, 'Escalation': 0.5, 'refund': 0.3}))
         return answers(security={'type': 'noul', 'noul': 0.9})
 
     agent = Agent(mock_model(record), output_type=[Ticket, Escalation], tools=[refund])
@@ -2983,7 +2966,7 @@ async def test_a_union_member_needs_its_own_docstring(allow_model_requests: None
         raise AssertionError('a union member without a docstring must be refused before any request')
 
     agent = Agent(mock_model(unreachable), output_type=[Ticket, WithOptional], instructions='Handle the ticket.')
-    with pytest.raises(UserError, match="'final_result_WithOptional' says nothing about itself"):
+    with pytest.raises(UserError, match="'WithOptional' says nothing about itself"):
         await agent.run('anything')
 
 
@@ -3000,10 +2983,7 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
         seen.append(json.loads(request.content))
         return answers(
             urgent={'type': 'noul', 'noul': 0.2},
-            tool=_route(
-                'final_result_None',
-                {'final_result_Ticket': 0.1, 'final_result_None': 0.9},
-            ),
+            route=_route('None', {'Ticket': 0.1, 'None': 0.9}),
         )
 
     agent = Agent(mock_model(record), output_type=[Ticket, None])
@@ -3013,9 +2993,9 @@ async def test_none_is_a_route_the_library_describes_itself(allow_model_requests
     # One output type is left once `None` becomes a route, so its fields ride along with the route question
     # and declining costs one request, not two.
     assert len(seen) == 1
-    assert sorted(seen[0]['questions']) == snapshot(['tool', 'urgent'])
-    assert seen[0]['questions']['tool']['criteria'] == snapshot(
-        {'final_result_Ticket': 'Triage a support ticket.', 'final_result_None': 'None of these.'}
+    assert sorted(seen[0]['questions']) == snapshot(['route', 'urgent'])
+    assert seen[0]['questions']['route']['criteria'] == snapshot(
+        {'Ticket': 'Triage a support ticket.', 'None': 'None of these.'}
     )
     # The `None` is written into the wrapper Pydantic AI put around it, not asked for and not left out.
     call = next(part for part in result.response.parts if isinstance(part, ToolCallPart))
@@ -3030,7 +3010,7 @@ async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_
         seen.append(json.loads(request.content))
         return answers(
             urgent={'type': 'noul', 'noul': 0.1},
-            tool=_route('nothing', {'final_result_Ticket': 0.05, 'nothing': 0.95}),
+            route=_route('nothing', {'Ticket': 0.05, 'nothing': 0.95}),
         )
 
     agent = Agent(
@@ -3040,8 +3020,8 @@ async def test_a_named_none_route_keeps_what_the_user_said_about_it(allow_model_
     result = await agent.run('Thanks, all sorted.')
 
     assert result.output is None
-    assert seen[0]['questions']['tool']['criteria'] == snapshot(
-        {'final_result_Ticket': 'Triage a support ticket.', 'nothing': 'Nothing needs doing here.'}
+    assert seen[0]['questions']['route']['criteria'] == snapshot(
+        {'Ticket': 'Triage a support ticket.', 'nothing': 'Nothing needs doing here.'}
     )
 
 
@@ -3066,20 +3046,17 @@ async def test_a_described_none_route_keeps_what_the_user_said_about_it(allow_mo
         seen.append(json.loads(request.content))
         return answers(
             urgent={'type': 'noul', 'noul': 0.1},
-            tool=_route('final_result_None', {'final_result_Ticket': 0.05, 'final_result_None': 0.95}),
+            route=_route('None', {'Ticket': 0.05, 'None': 0.95}),
         )
 
     agent: Agent[None, Any] = Agent(mock_model(record), output_type=output_type)
     result = await agent.run('Thanks, all sorted.')
 
     assert result.output is None
-    assert seen[0]['questions']['tool'] == snapshot(
+    assert seen[0]['questions']['route'] == snapshot(
         {
             'type': 'choice',
-            'criteria': {
-                'final_result_Ticket': 'Triage a support ticket.',
-                'final_result_None': 'Nothing needs doing here.',
-            },
+            'criteria': {'Ticket': 'Triage a support ticket.', 'None': 'Nothing needs doing here.'},
             'instructions': 'Which of these does this call for?',
         }
     )
@@ -3097,7 +3074,7 @@ async def test_a_choices_route_is_described_by_what_the_set_says_about_itself(al
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         if len(seen) == 1:
-            return answers(tool=_route('final_result_triage', {'final_result_triage': 0.9, 'final_result_Ticket': 0.1}))
+            return answers(route=_route('triage', {'triage': 0.9, 'Ticket': 0.1}))
         # The set is the picked route's one field, so it is asked on its own in the second request.
         return answers(response=_route('urgent', {'urgent': 0.8, 'normal': 0.2}))
 
@@ -3111,8 +3088,8 @@ async def test_a_choices_route_is_described_by_what_the_set_says_about_itself(al
 
     assert result.output == snapshot('urgent')
 
-    assert seen[0]['questions']['tool']['criteria'] == snapshot(
-        {'final_result_triage': 'Triage the ticket.', 'final_result_Ticket': 'Triage a support ticket.'}
+    assert seen[0]['questions']['route']['criteria'] == snapshot(
+        {'triage': 'Triage the ticket.', 'Ticket': 'Triage a support ticket.'}
     )
 
 
@@ -3124,7 +3101,7 @@ async def test_a_route_that_says_nothing_anywhere_is_still_refused(allow_model_r
 
     # A bare `Literal` beside another type is refused at run time, which is what this asserts.
     agent = Agent(mock_model(unreachable), output_type=[Literal['urgent', 'normal'], Ticket])
-    with pytest.raises(UserError, match="'final_result_Literal' says nothing about itself"):
+    with pytest.raises(UserError, match="'Literal' says nothing about itself"):
         await agent.run('anything')
 
 
@@ -3141,16 +3118,14 @@ async def test_the_fill_repeats_the_state_and_carries_the_picked_routes_purpose(
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         if len(seen) == 1:
-            return answers(
-                tool=_route('final_result_Escalation', {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8})
-            )
+            return answers(route=_route('Escalation', {'Ticket': 0.2, 'Escalation': 0.8}))
         return answers(security={'type': 'noul', 'noul': 0.9})
 
     agent = Agent(mock_model(record), output_type=[Ticket, Escalation])
     await agent.run('Someone else can see my invoices when they log in.')
 
     assert seen[0]['state'] == seen[1]['state'] == snapshot('Someone else can see my invoices when they log in.')
-    assert 'tool' not in seen[1]['questions']
+    assert 'route' not in seen[1]['questions']
     assert seen[1]['questions']['security']['instructions'] == snapshot(
         {
             'field': 'security',
@@ -3176,11 +3151,11 @@ async def test_a_proposed_tool_call_hands_the_whole_step_over_and_jev_judges_the
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         questions = seen[-1]['questions']
-        if 'tool' in questions:
+        if 'route' in questions:
             # `refund` takes a `float`, which Jev cannot write, so picking it proposes the call.
             return answers(
                 urgent={'type': 'noul', 'noul': 0.9},
-                tool=_route('refund', {'final_result': 0.05, 'refund': 0.95}),
+                route=_route('refund', {'Ticket': 0.05, 'refund': 0.95}),
             )
         return answers(urgent={'type': 'noul', 'noul': 0.9})
 
@@ -3224,11 +3199,11 @@ async def test_below_the_threshold_a_likelier_none_beats_the_output_type(allow_m
     def record(request: httpx2.Request) -> httpx2.Response:
         return answers(
             urgent={'type': 'noul', 'noul': 0.9},
-            tool={
+            route={
                 'type': 'choice',
                 'choice': 'refund',
                 'confidence': 0.4,
-                'probabilities': {'final_result_Ticket': 0.1, 'final_result_None': 0.5, 'refund': 0.4},
+                'probabilities': {'Ticket': 0.1, 'None': 0.5, 'refund': 0.4},
             },
         )
 
@@ -3286,7 +3261,7 @@ async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: N
         seen.append(json.loads(request.content))
         if len(seen) == 1:
             # A below-threshold tool pick, with neither output type priced.
-            return answers(tool=_route('refund', {'refund': 0.3}))
+            return answers(route=_route('refund', {'refund': 0.3}))
         return answers(urgent={'type': 'noul', 'noul': 0.9})
 
     agent = Agent(mock_model(record), output_type=[Ticket, Escalation], tools=[refund])
@@ -3336,9 +3311,7 @@ async def test_a_union_with_one_fillable_member_is_still_offered(allow_model_req
     def record(request: httpx2.Request) -> httpx2.Response:
         seen.append(json.loads(request.content))
         if len(seen) == 1:
-            return answers(
-                tool=_route('final_result_Ticket', {'final_result_Ticket': 0.9, 'final_result_DraftedReply': 0.1})
-            )
+            return answers(route=_route('Ticket', {'Ticket': 0.9, 'DraftedReply': 0.1}))
         return answers(urgent={'type': 'noul', 'noul': 0.9})
 
     agent = Agent(mock_model(record), output_type=[Ticket, DraftedReply])
@@ -3346,7 +3319,7 @@ async def test_a_union_with_one_fillable_member_is_still_offered(allow_model_req
 
     assert result.output == Ticket(urgent=True)
     # Both were offered: the hand-off now depends on which one the text calls for.
-    assert set(seen[0]['questions']['tool']['criteria']) == {'final_result_Ticket', 'final_result_DraftedReply'}
+    assert set(seen[0]['questions']['route']['criteria']) == {'Ticket', 'DraftedReply'}
 
 
 @pytest.mark.parametrize('setting', ['decision_tool_call_threshold', 'decision_boolean_threshold'])

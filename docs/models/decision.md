@@ -223,9 +223,18 @@ A nested model is its fields, asked as `outer.inner` and put back in place; the 
 
 Fields are what the model fills. When there is more than one *thing* the text could call for, the model is asked one more question, the route question: which of these does this call for. The options are the output type (or each member of a [union](#a-union-of-output-types)) and every [tool](#tools-pick-then-fill) on offer, each described by its docstring.
 
+Each option goes by the name you gave the route:
+
+- a tool or an [output function](../output.md#output-functions) by the function's name;
+- an output type by its class name, or by the `name` you gave it with [`ToolOutput`][pydantic_ai.output.ToolOutput];
+- a `None` member of a union as `None`;
+- a single output type with no class name of its own, such as a bare `bool` or `Literal`, as `output`.
+
+Where a tool and an output type would share a name, the tool keeps it and the output type's option becomes, say, `Refund (output)`.
+
 The route the model picks is the one that runs, and how much it costs to fill depends on which route it is. A single output type's fields ride along in the *same* request as the route question, so its answers are already in hand when the pick comes back. Every other route is picked first and filled after: a chosen tool's arguments, or a chosen [union](#a-union-of-output-types) member's fields, go out in a second request carrying only that route's questions. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone, with no second request at all.
 
-The second request is about the same text as the first, which on its own would leave nothing in it saying a route had been picked. So each of its questions names the chosen route alongside the field's own question and whatever the route's docstring said about it: a union member by the name you gave the type, a tool by the name you gave the function. What you already said in the text is unchanged between the two requests; only the questions differ.
+The second request is about the same text as the first, which on its own would leave nothing in it saying a route had been picked. So each of its questions names the chosen route, under the same name the route question offered it by, alongside the field's own question and whatever the route's docstring said about it. What you already said in the text is unchanged between the two requests; only the questions differ.
 
 The questions in one request are answered independently. A field cannot depend on another field's answer: two arguments of the same tool are decided separately, and neither sees the other. Where one judgement genuinely follows from another, they belong in different steps, not in two fields of the same call. That is the whole mechanism behind the [patterns below](#decision-models-inside-an-agent-run): an output function is a candidate the model can choose, and choosing it *is* calling it.
 
@@ -506,7 +515,7 @@ print(result.response.provider_details['requests'])
 
 Each member is described by **its own docstring**, which is what the model weighs the routes against. With one output type the agent's instructions can say what filling it is for; with several they cannot, because one instruction cannot describe two different routes, so a member without a docstring is a [`UserError`][pydantic_ai.exceptions.UserError].
 
-The pick is reported in `provider_details['tool']`, with the probability of every member, and `provider_details['requests']` is `2`. The [tool threshold](#tools-pick-then-fill) gates tools, not output types: picking an output type says which result to fill, not that something else should be done, so a tool picked below the threshold falls back to the likeliest output type rather than being taken.
+The pick is reported in `provider_details['tool']`, with the probability of every member, and `provider_details['requests']` is `2`. There, routes go by the names of the tool calls in the message history, such as `final_result_Escalation`, rather than by the names the route question offered them under. The [tool threshold](#tools-pick-then-fill) gates tools, not output types: picking an output type says which result to fill, not that something else should be done, so a tool picked below the threshold falls back to the likeliest output type rather than being taken.
 
 ### Declining with `None`
 

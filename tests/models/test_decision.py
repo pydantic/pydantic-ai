@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext, ToolOutput
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
@@ -127,7 +127,7 @@ async def test_no_choice_limit(allow_model_requests: None):
         ModelRequestParameters(function_tools=tools, allow_text_output=False),
     )
 
-    question = model.requests[0].questions['tool']
+    question = model.requests[0].questions['route']
     assert isinstance(question, ChoiceQuestion)
     assert len(question.criteria) == 256
     assert len(response.parts) == 1
@@ -287,3 +287,152 @@ async def test_text_output_is_refused(allow_model_requests: None):
     with pytest.raises(UserError, match='Text output is not supported by this model'):
         await Agent(model, output_type=[Triage, str]).run('The checkout page returns a 500 for every customer.')
     assert model.requests == []
+
+
+class Escalation(BaseModel):
+    """Hand the ticket to a person."""
+
+    security: bool = Field(description='Is this a security issue?')
+
+
+def refund(amount: float) -> str:
+    """Return a payment to the customer."""
+    return f'Refunded {amount}'  # pragma: no cover
+
+
+async def escalate(ctx: RunContext[None]) -> str:
+    """Escalate to a person on the support team."""
+    return 'escalated'  # pragma: no cover
+
+
+def route_question(model: InMemoryDecisionModel, key: str = 'route') -> ChoiceQuestion:
+    question = model.requests[0].questions[key]
+    assert isinstance(question, ChoiceQuestion)
+    return question
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    'output_type,labels',
+    [
+        pytest.param(Triage, ['Triage', 'refund'], id='a single output type goes by its class name'),
+        pytest.param(bool, ['output', 'refund'], id='a wrapped bare output type goes by `output`'),
+        pytest.param(
+            ToolOutput(Triage, name='triage_it'), ['triage_it', 'refund'], id='a named output goes by its name'
+        ),
+        pytest.param(
+            [Triage, Escalation, None],
+            ['Triage', 'Escalation', 'None', 'refund'],
+            id='union members go by their own names',
+        ),
+        pytest.param([Triage, escalate], ['Triage', 'escalate', 'refund'], id='a hand-off goes by its name'),
+    ],
+)
+async def test_route_labels(allow_model_requests: None, output_type: Any, labels: list[str]):
+    """Each route is offered under the name the user gave it, never the name of the tool Pydantic AI made for it."""
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=output_type, tools=[refund], instructions='Is it urgent?').run('Charged twice.')
+    assert list(route_question(model).criteria) == labels
+
+
+@pytest.mark.anyio
+async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_requests: None):
+    """One route, one name: the fill's `chosen` is the label the route question offered and the model answered."""
+    model = InMemoryDecisionModel()
+    result = await Agent(model, output_type=[Escalation, Triage]).run('Someone else can see my invoices.')
+
+    assert result.output == Escalation(security=True)
+    assert model.requests == snapshot(
+        [
+            DecisionRequest(
+                state='Someone else can see my invoices.',
+                questions={
+                    'route': ChoiceQuestion(
+                        criteria={'Escalation': 'Hand the ticket to a person.', 'Triage': 'Triage a support ticket.'},
+                        instructions='Which of these does this call for?',
+                    )
+                },
+            ),
+            DecisionRequest(
+                state='Someone else can see my invoices.',
+                questions={
+                    'security': NoulQuestion(
+                        instructions={
+                            'field': 'security',
+                            'question': 'Is this a security issue?',
+                            'chosen': 'Escalation',
+                            'goal': 'Hand the ticket to a person.',
+                        }
+                    )
+                },
+            ),
+        ]
+    )
+    # `provider_details` keeps naming routes by their tools, which is what the `ToolCallPart`s in history carry.
+    assert (result.response.provider_details or {})['tool'] == snapshot(
+        {
+            'choice': 'final_result_Escalation',
+            'probabilities': {'final_result_Escalation': 1.0, 'final_result_Triage': 0.0},
+            'offered': [],
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_a_route_label_collision_renames_the_output_route(allow_model_requests: None):
+    """A tool keeps its name; an output route that would share it gets ` (output)`, and is still read back right."""
+    output_tools = [
+        ToolDefinition(
+            name=f'final_result_{name}',
+            description=f'{name} the ticket.',
+            kind='output',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'urgent': {'type': 'boolean', 'description': 'Is it urgent?'}},
+            },
+        )
+        for name in ('Refund', 'Triage')
+    ]
+    function_tool = ToolDefinition(
+        name='Refund', description='Refund the customer.', parameters_json_schema={'type': 'object'}
+    )
+    model = InMemoryDecisionModel()
+
+    response = await model.request(
+        [ModelRequest(parts=[UserPromptPart('Charged twice.')])],
+        None,
+        ModelRequestParameters(
+            output_mode='tool', output_tools=output_tools, function_tools=[function_tool], allow_text_output=False
+        ),
+    )
+
+    assert route_question(model).criteria == snapshot(
+        {'Refund (output)': 'Refund the ticket.', 'Triage': 'Triage the ticket.', 'Refund': 'Refund the customer.'}
+    )
+    assert [part.tool_name for part in response.parts if isinstance(part, ToolCallPart)] == ['final_result_Refund']
+    assert model.requests[1].questions == snapshot(
+        {
+            'urgent': NoulQuestion(
+                instructions={
+                    'field': 'urgent',
+                    'question': 'Is it urgent?',
+                    'chosen': 'Refund (output)',
+                    'goal': 'Refund the ticket.',
+                }
+            )
+        }
+    )
+
+
+class Routed(BaseModel):
+    """Route a support ticket."""
+
+    route: bool = Field(description='Does it name a delivery route?')
+
+
+@pytest.mark.anyio
+async def test_the_route_question_stays_clear_of_a_field_named_route(allow_model_requests: None):
+    model = InMemoryDecisionModel()
+    await Agent(model, output_type=Routed, tools=[refund]).run('Take the A2.')
+    assert list(model.requests[0].questions) == ['route', 'route_']
+    assert list(route_question(model, 'route_').criteria) == ['Routed', 'refund']

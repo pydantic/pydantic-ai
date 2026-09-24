@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '464'
+      - '459'
       content-type:
       - application/json
       host:
@@ -17,9 +17,9 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        tool:
+        route:
           criteria:
-            final_result: Triage a support ticket.
+            Ticket: Triage a support ticket.
             refund: Return a payment to the customer.
           instructions: Which of these does this call for?
           type: choice
@@ -34,25 +34,25 @@ interactions:
   response:
     headers:
       content-length:
-      - '254'
+      - '251'
       content-type:
       - application/json
     parsed_body:
       answers:
-        tool:
+        route:
           choice: refund
           confidence: 0.99
           probabilities:
-            final_result: 0.0
-            refund: 1.0
+            Ticket: 0.01
+            refund: 0.99
           type: choice
         urgent:
           noul: 0.54
           type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 379
-        output_tokens: 48
+        input_tokens: 378
+        output_tokens: 47
     status:
       code: 200
       message: OK

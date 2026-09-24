@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '379'
+      - '354'
       content-type:
       - application/json
       host:
@@ -17,10 +17,10 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        tool:
+        route:
           criteria:
-            final_result_Ticket: Triage a support ticket.
-            final_result_route_to_team: Hand the ticket to the specialist team that handles it.
+            Ticket: Triage a support ticket.
+            route_to_team: Hand the ticket to the specialist team that handles it.
           instructions: Which of these does this call for?
           type: choice
       state: I have contacted you four times about being double charged and I am about to call my lawyer.
@@ -28,22 +28,22 @@ interactions:
   response:
     headers:
       content-length:
-      - '261'
+      - '223'
       content-type:
       - application/json
     parsed_body:
       answers:
-        tool:
-          choice: final_result_route_to_team
-          confidence: 0.63
+        route:
+          choice: route_to_team
+          confidence: 0.64
           probabilities:
-            final_result_Ticket: 0.19
-            final_result_route_to_team: 0.81
+            Ticket: 0.18
+            route_to_team: 0.82
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 349
-        output_tokens: 42
+        input_tokens: 344
+        output_tokens: 35
     status:
       code: 200
       message: OK
@@ -56,7 +56,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '470'
+      - '524'
       content-type:
       - application/json
       host:
@@ -71,11 +71,13 @@ interactions:
             legal: null
             technical: null
           instructions:
+            chosen: route_to_team
             field: team
             goal: Hand the ticket to the specialist team that handles it.
           type: choice
         urgent:
           instructions:
+            chosen: route_to_team
             field: urgent
             goal: Hand the ticket to the specialist team that handles it.
           type: noul
@@ -91,18 +93,18 @@ interactions:
       answers:
         team:
           choice: billing
-          confidence: 0.68
+          confidence: 0.71
           probabilities:
-            billing: 0.79
-            legal: 0.21
+            billing: 0.81
+            legal: 0.19
             technical: 0.0
           type: choice
         urgent:
-          noul: 0.82
+          noul: 0.71
           type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 364
+        input_tokens: 384
         output_tokens: 55
     status:
       code: 200
