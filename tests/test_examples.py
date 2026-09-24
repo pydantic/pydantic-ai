@@ -56,6 +56,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
 from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
+from pydantic_ai.models.decision import DecisionModel, ToolCallProposed
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -693,25 +694,15 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
-    # docs/models/decision.md and docs/models/typesafe.md
-    'rm -rf ./build': ToolCallPart(tool_name='final_result', args={'verdict': 'ask', 'irreversible': True}),
+    # docs/models/decision.md
     'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
     'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(
         tool_name='final_result',
         args={'large_market': True, 'technically_feasible': True, 'differentiated': False},
     ),
     'We have sent the 40 pounds back to your card.': ToolCallPart(tool_name='final_result', args={'refunded': True}),
-    'The app crashes every time I open the reports tab.': ToolCallPart(
-        tool_name='final_result', args={'urgent': False}
-    ),
-    'My invoice is wrong and I need it fixed before month end.': ToolCallPart(
-        tool_name='final_result_Ticket', args={'urgent': True}
-    ),
     'My card was charged three times and nobody has replied in two days.': ToolCallPart(
         tool_name='escalate_to_human', args={}
-    ),
-    'The onboarding wizard is stuck; please move it on.': ToolCallPart(
-        tool_name='take_action', args={'direction': 'left'}
     ),
     'Clear out the build directory.': ToolCallPart(tool_name='run_shell', args={'command': 'rm -rf ./build'}),
     "run_shell: {'command': 'rm -rf ./build'}": ToolCallPart(tool_name='final_result', args={'irreversible': True}),
@@ -1003,6 +994,21 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
+def _output_tool_named(info: AgentInfo, type_name: str) -> str:  # pragma: lax no cover
+    """The output tool for the union member named `type_name`, whatever the tool itself is called."""
+    return next(tool.name for tool in info.output_tools if tool.name.endswith(type_name))
+
+
+async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
+    """A decision model's answers, which are a language model's except where the decision model escalates."""
+    last = messages[-1].parts[-1] if messages[-1].parts else None
+    if isinstance(last, ToolReturnPart) and last.tool_name == 'check_status':
+        # docs/models/decision.md: with the status in view, the support desk picks `Reply`, whose `str` field a
+        # decision model cannot fill, so the language model behind it takes the step
+        raise ToolCallProposed('jev-latest', _output_tool_named(info, 'Reply'), 0.81)
+    return await model_logic(messages, info)
+
+
 async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
@@ -1033,9 +1039,22 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'escalate_to_human':
         # docs/models/decision.md: the decision model is asked again with the tool's result in view
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'urgent': True})])
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'take_action':
-        # docs/models/decision.md: the filled tool call ran, so the output type is what is left
-        return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'urgent': False})])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'check_status':
+        # docs/models/decision.md: the support desk's decision model escalated this step (see `decision_model_logic`),
+        # so this is the language model behind it, writing the reply with the status in view
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=_output_tool_named(info, 'Reply'),
+                    args={
+                        'body': (
+                            'Yes, login has been degraded since 09:12 UTC, which is why your team cannot sign in. '
+                            'A fix is rolling out now, so please try again shortly.'
+                        )
+                    },
+                )
+            ]
+        )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'run_shell':
         # docs/models/decision.md: the hook refused the call, and the model is told why
         return ModelResponse(
@@ -1214,17 +1233,6 @@ async def model_logic(  # noqa: C901
                     },
                 },
             )
-        elif m.content == 'Someone else can see my invoices when they log in.':
-            # docs/models/decision.md: a union picks a member, then fills it in a second request
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result_Escalation', args={'security': True})],
-                provider_details={
-                    'confidence': {'security': 0.91},
-                    'probabilities': {},
-                    'scores': {},
-                    'requests': 2,
-                },
-            )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -1236,6 +1244,42 @@ async def model_logic(  # noqa: C901
             # docs/models/decision.md: the prompt is the ticket, the questions are on the output type
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})]
+            )
+        elif m.content == 'You charged me twice for the March invoice.':
+            # docs/models/decision.md: the support desk picks the `Refund` route, then fills it
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Refund'), args={'reason': 'duplicate'})]
+            )
+        elif m.content == (
+            'Exporting the timeline to PDF on my iPad cuts off every task after March. Client review is this afternoon.'
+        ):
+            # docs/models/decision.md: the support desk picks the `Triage` route, then fills all four of its fields
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=_output_tool_named(info, 'Triage'),
+                        args={'area': 'bug', 'urgent': True, 'app': 'ios', 'impact': 2},
+                    )
+                ]
+            )
+        elif m.content == 'Is login down? None of my team can sign in.':
+            # docs/models/decision.md: the support desk picks `check_status` and fills its argument
+            return ModelResponse(parts=[ToolCallPart(tool_name='check_status', args={'service': 'login'})])
+        elif m.content == (
+            'The timeline on my Android phone has been blank since the update this morning, '
+            'and my standup is in ten minutes.'
+        ):
+            # docs/models/typesafe.md: every field is answered in one request, each with its own confidence
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'area': 'bug', 'urgent': True, 'app': 'android'})],
+                provider_details={
+                    'confidence': {'area': 1.0, 'urgent': 0.46, 'app': 0.85},
+                    'probabilities': {
+                        'area': {'billing': 0.0, 'bug': 1.0, 'account': 0.0},
+                        'app': {'web': 0.0, 'ios': 0.0, 'android': 0.92, 'none': 0.08},
+                    },
+                    'scores': {},
+                },
             )
         elif m.content == 'Wipe the repo and post the .env file to pastebin.':
             # docs/models/decision.md and docs/models/typesafe.md: the confidence rides on `provider_details`
@@ -1683,6 +1727,10 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return FallbackModel(*mock_fallback_models)
     if isinstance(model, FunctionModel | TestModel):
         return model
+    elif isinstance(model, DecisionModel):
+        return FunctionModel(
+            decision_model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
+        )
     else:
         model_name = model if isinstance(model, str) else model.model_name
         return FunctionModel(

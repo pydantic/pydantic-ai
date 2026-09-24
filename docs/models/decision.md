@@ -10,9 +10,82 @@ The built-in decision model is TypeSafe's Jev, through [`TypeSafeModel`](typesaf
 
 Reach for one when the answer is a classification — a verdict, a route, a label, a score against a rubric — and you want it cheaper and faster than a language model gives it, with a confidence you can act on. Keep a language model for anything that has to be written: a `str` field, a reply, a summary.
 
-## How an output type becomes questions
+## Asking a question
 
-Each field of the output type is a question, and all of them go out in a single request. A field of a nested model is a question of its own, and a list of options fans out to one yes/no per option:
+The simplest decision model agent asks one question. The `output_type` is the kind of answer, the agent's `instructions` are the question, and the run's prompt is the text the question is about:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('typesafe:jev-latest', output_type=bool, instructions='Is this request harmful?')
+result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
+print(result.output)
+#> True
+```
+
+A `Literal` output picks one label instead: `output_type=Literal['billing', 'bug', 'account']` with `instructions='Which team owns this ticket?'` answers with one of the three.
+
+That split is the habit to learn first. A decision model takes two separate things: the material to judge, and the questions to ask about it. The material is the *state*: the content and the facts that support it. The questions are the judgements to make about that material. So **the prompt is only what is being judged, and the question belongs on the agent** — in its `instructions` here, and on its output type [below](#asking-with-an-output-type).
+
+That is the opposite habit to the one a language model teaches, where the question and the material go into one prompt together and the model sorts them out. A decision model will not: a question written into the prompt is text to be judged, and it is judged. Almost nothing catches that for you. A bare `bool` or bounded `float` output with no instructions carries no question at all, so it is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent — but a `bool` *field* of an output type is not refused, because its name is enough to ask about. So do not count on an error to catch a question in the wrong place.
+
+## Asking with an output type
+
+Most agents ask more than one thing. Give the agent an output type and each field is a question of its own, all of them sent in a single request and answered together. The type is also where the wording goes:
+
+- The class docstring says what the answers are for. It is the goal on every question about the type.
+- A field's description is that field's question.
+- An `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings], with a docstring under each member, says what each option means. The options of a `Literal`, or of a plain `Enum`, are seen by their names alone.
+- [`BoolCriteria`][pydantic_ai.output.BoolCriteria] says what a yes and a no mean. It is `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime, and it says enough that the field needs no description of its own.
+
+```python
+from enum import Enum
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
+
+
+class Area(UseEnumMemberDocstrings, str, Enum):
+    """The team that owns the ticket."""
+
+    billing = 'billing'
+    """Charges, invoices, plans and payment methods."""
+
+    bug = 'bug'
+    """Part of the product does not work as it should."""
+
+    account = 'account'
+    """Logging in, access, and account settings."""
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    area: Area = Field(description='Which team owns this ticket?')
+    urgent: Annotated[
+        bool,
+        BoolCriteria(
+            true='The customer is losing money or has a deadline today.',
+            false='It can wait its turn in the queue.',
+        ),
+    ]
+
+
+agent = Agent('typesafe:jev-latest', output_type=Ticket)
+result = agent.run_sync(
+    'You have charged me twice and my account is now overdrawn. I need this reversed today.'
+)
+print(result.output)
+#> area=<Area.billing: 'billing'> urgent=True
+```
+
+With an output type to describe, the agent's `instructions` are no longer the question. They are sent as framing shared by every question — the product, the domain, the voice to judge in — as in the [example below](#a-support-desk-end-to-end). [Where the wording comes from](#where-the-wording-comes-from) maps every input to the agent onto the state or the questions.
+
+### Supported field types
+
+A field of a nested model is a question of its own, and a list of options fans out to one yes/no per option:
 
 | Field type | Question | Answer |
 |---|---|---|
@@ -25,95 +98,201 @@ Each field of the output type is a question, and all of them go out in a single 
 | `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or the field's default, or `None` |
 | a nested model of these | its fields, asked as `outer.inner` | the model |
 
-A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type the model is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-pick-then-fill) the model cannot fill is not an error — it is still offered as a route, and picking it hands the step to the model behind it.
+[What each field type does](#what-each-field-type-does) goes through them in detail.
 
-A backend can also cap how many options a pick-one or how many levels a rubric may have, through [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels]. A pick-one over its cap is refused the same way, before a request is sent, while whole numbers with more levels than a rubric's cap are not a rubric, and are [a pick-one instead](#what-each-mapping-does). Jev's caps are on the [TypeSafe page](typesafe.md#limits).
+A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type the model is asked to fill. A [union member](#a-union-of-output-types) or a [tool](#tools-pick-then-fill) the model cannot fill is not an error — it is still offered as a route, and picking it [escalates](#escalating-to-a-language-model) the step to the model behind it.
 
-With tools attached, or a union of output types, there is more than one thing the text could call for, and one more question asks which: the [route question](#routes-which-thing-to-do).
+A backend can also cap how many options a pick-one or how many levels a rubric may have, through [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels]. A pick-one over its cap is refused the same way, before a request is sent, while whole numbers with more levels than a rubric's cap are not a rubric, and are [a pick-one instead](#what-each-field-type-does). Jev's caps are on the [TypeSafe page](typesafe.md#limits).
 
-### Where the wording comes from
+## A support desk, end to end
 
-A decision model takes two separate things: the material to judge, and the questions to ask about it. The material is the *state*: the content and the facts that support it. The questions are the judgements to make about that material. So **the prompt is only what is being judged, and the question belongs on the output type**.
+The pieces combine into an agent that does real work. This one runs a support desk: it triages problems for the team that owns them, refunds charges the customer did not owe, checks the status page when a service might be down, and leaves anything that has to be written to a language model:
 
-That is the opposite habit to the one a language model teaches, where the question and the material go into one prompt together and the model sorts them out. A decision model will not: a question written into the prompt is text to be judged, and it is judged. Almost nothing catches that for you. A yes/no with nothing at all to ask is refused before a request is sent — a bare `bool` or bounded `float` output has no field name to go on, so with no description and no instructions it carries no question and is a [`UserError`][pydantic_ai.exceptions.UserError] — but a `bool` *field* is not refused, because its name is enough to ask about. So do not count on an error to catch a question in the wrong place.
+```python {title="support_desk.py"}
+from enum import Enum, IntEnum
+from typing import Annotated, Literal
 
-Put the question on the field, and the prompt carries the ticket alone:
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
+from pydantic_ai.models.fallback import FallbackModel
+
+
+class Area(UseEnumMemberDocstrings, str, Enum):
+    """The team that owns the ticket."""
+
+    billing = 'billing'
+    """Charges, invoices, plans and payment methods."""
+
+    bug = 'bug'
+    """Part of the product does not work as it should."""
+
+    account = 'account'
+    """Logging in, access, and account settings."""
+
+
+class Impact(UseEnumMemberDocstrings, IntEnum):
+    """How badly the problem gets in the customer's way."""
+
+    cosmetic = 0
+    """An annoyance; the customer can do everything they need to."""
+
+    degraded = 1
+    """Something is slow or broken, and there is a way around it."""
+
+    blocked = 2
+    """The customer cannot do their work until it is fixed."""
+
+
+class Triage(BaseModel):
+    """Route a problem to the team that owns it."""
+
+    area: Area = Field(description='Which team owns this ticket?')
+    urgent: Annotated[
+        bool,
+        BoolCriteria(
+            true='The customer is losing money or has a deadline today.',
+            false='It can wait its turn in the queue.',
+        ),
+    ]
+    app: Literal['web', 'ios', 'android'] | None = Field(description='Which app is it about?')
+    impact: Impact = Field(description='How badly does this get in their way?')
+
+
+class Refund(BaseModel):
+    """Give back money for a charge the customer did not owe."""
+
+    reason: Literal['duplicate', 'unrecognised', 'after_cancelling'] = Field(
+        description='Why was the charge not owed?'
+    )
+
+
+class Reply(BaseModel):
+    """Answer the customer: a question, or a problem the status page already explains."""
+
+    body: str = Field(description='The reply to send.')
+
+
+def check_status(service: Literal['payments', 'login', 'reports']) -> str:
+    """Check the status page for an incident on a service.
+
+    Args:
+        service: Which service is the customer having trouble with?
+    """
+    return f'{service}: degraded since 09:12 UTC; a fix is rolling out.'
+
+
+support = Agent(
+    FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
+    output_type=[Triage, Refund, Reply],
+    instructions='Tickets to the support desk of a project-management app.',
+    tools=[check_status],
+)
+
+result = support.run_sync('You charged me twice for the March invoice.')
+print(repr(result.output))
+#> Refund(reason='duplicate')
+
+result = support.run_sync(
+    'Exporting the timeline to PDF on my iPad cuts off every task after March. '
+    'Client review is this afternoon.'
+)
+print(repr(result.output))
+#> Triage(area=<Area.bug: 'bug'>, urgent=True, app='ios', impact=<Impact.blocked: 2>)
+
+result = support.run_sync('Is login down? None of my team can sign in.')
+print(repr(result.output))
+"""
+Reply(body='Yes, login has been degraded since 09:12 UTC, which is why your team cannot sign in. A fix is rolling out now, so please try again shortly.')
+"""
+print(result.response.model_name)
+#> gpt-5.6-sol
+```
+
+`Area` is a pick-one whose options are described by their docstrings, `urgent` a yes/no with [`BoolCriteria`][pydantic_ai.output.BoolCriteria] saying what each answer means, `app` a pick-one that can answer "none of these", and `Impact` a [rubric](#what-each-field-type-does): ordered levels, each described. `Reply` asks for a `str`, which no decision model can fill, and that is deliberate: it is the route that needs a language model.
+
+### How it runs
+
+Each ticket is a run, and Jev takes every step it can:
+
+1. **The route question.** The first request asks Jev one pick-one question over the ticket: does it call for `Triage`, `Refund`, `Reply`, or `check_status`? Each option is described by its docstring. No fields are asked yet, since until a route is picked there is no telling which fields apply.
+2. **The fill.** A second request asks only the picked route's questions, over the same ticket: `Refund`'s `reason`, or all four of `Triage`'s fields at once. The run ends with that output. The first two tickets go this way, and cost two Jev requests each and no language model call.
+3. **A tool call.** A picked tool is filled the same way — here, `check_status`'s `service` — as long as the model gave the pick a probability of at least [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] (0.6). Your function runs, and the next step asks Jev the route question again, with the result in the history. `check_status` is not offered a second time in the same run.
+4. **Escalation.** `Reply` has a field Jev cannot fill, so picking it — like picking a tool with such an argument — raises [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The `FallbackModel` hands the whole step to the language model, with the same tools and output types, and the language model decides afresh: it could triage, refund or check the status as well. On the third ticket, Jev checked the status and then picked `Reply`, so the language model wrote the reply with the status in view, and the response names it as the model that answered. That one step is the only language model call; the steps before it stayed on Jev.
+
+The rest of this page takes each piece in turn: [where the wording comes from](#where-the-wording-comes-from), [each field type](#what-each-field-type-does), [routes](#routes-which-thing-to-do) through [tools](#tools-pick-then-fill) and [unions](#a-union-of-output-types), [escalation](#escalating-to-a-language-model), and [confidence](#confidence-and-thresholds) — where the same `FallbackModel` can also take the steps Jev was unsure about.
+
+## Where the wording comes from
+
+Every input to the agent ends up in one of two places: the state, which is judged, or the questions, which are asked.
+
+**Judged**, as the state:
+
+| Agent input | Where it ends up |
+|---|---|
+| the run's prompt | the whole state when there is no history, otherwise its `text` |
+| the message history | the state's `history`, as user prompts, answers, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
+| a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
+
+**Asked**, as the questions:
+
+| Agent input | Where it ends up |
+|---|---|
+| the agent's `instructions` | the question itself, when the output is a bare `bool`, `Literal` or `float` with no field to describe; otherwise, shared framing on every question |
+| the output type's docstring | the goal, on every question about it, and its description when it is offered as a [route](#routes-which-thing-to-do) |
+| a field's description — `Field(description=...)`, or an `Enum` field's class docstring when the field has none | that field's question |
+| a description on an option in the schema, such as an `Enum` member's docstring | that option's meaning |
+| [`BoolCriteria`][pydantic_ai.output.BoolCriteria] on a `bool` field | what a yes and a no mean |
+| a description on the `None` itself, `Annotated[None, Field(description=...)]` | what "none of these" means |
+| a tool's description, and its arguments' descriptions | the tool's option on the route question, and the questions that [fill its arguments](#tools-pick-then-fill) |
+
+Dependencies and anything else on the run context are not sent, unless a prompt, instructions function or history processor puts them into one of the rows above.
+
+Prefer an output type with fields to a bare output with its question in `instructions`: each field carries its own question, so several questions can be asked in one request. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
+
+Unless the schema describes an option, the model sees it by its name alone, so name `Literal` and `Enum` options for what they mean. A `Literal` has nowhere to write a meaning per option; where the difference between two options needs explaining, use an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] and put a docstring under each member, which is what puts a description on each option in the schema.
+
+## Ask one thing per field
+
+This is the other habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible answer with low confidence, and you find out later.
+
+So instead of one field asking `'Is this a good pitch?'`, ask three and combine them in code:
 
 ```python
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
 
 
-class Ticket(BaseModel):
-    """Triage a support ticket."""
+class Pitch(BaseModel):
+    """Assess a startup pitch."""
 
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-    area: Literal['billing', 'bug', 'account', 'other'] = Field(description='Which team owns it?')
+    large_market: bool = Field(description='Does this address a market worth more than $1B a year?')
+    technically_feasible: bool = Field(description='Could a small team build this with current technology?')
+    differentiated: bool = Field(description='Does this do something competitors do not already do?')
+
+    @property
+    def promising(self) -> bool:
+        return sum([self.large_market, self.technically_feasible, self.differentiated]) >= 2
 
 
-agent = Agent('typesafe:jev-latest', output_type=Ticket)
-result = agent.run_sync(
-    'You have charged me twice and my account is now overdrawn. I need this reversed today.'
-)
+agent = Agent('typesafe:jev-latest', output_type=Pitch)
+result = agent.run_sync('A dashboard that shows every SaaS subscription a company pays for.')
 print(result.output)
-#> urgent=True area='billing'
+#> large_market=True technically_feasible=True differentiated=False
+print(result.output.promising)
+#> True
 ```
 
-Every input to the agent ends up in exactly one of the two, and on one side it is judged, on the other it is asked:
+Every field goes out in the same request, so a field you only need on some inputs costs no extra round trip. What it does cost depends on the backend: on Jev, an extra field [costs tokens rather than time](typesafe.md#limits).
 
-| Agent input | Where it ends up | Judged or asked |
-|---|---|---|
-| the latest user prompt | the state: the whole state when there is no history, otherwise its `text` | judged |
-| the message history | the state's `history`, as user prompts, answers, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) | judged |
-| a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) | judged |
-| a field's description — `Field(description=...)`, or an `Enum` field's class docstring when the field has none | that field's question | asked |
-| the output type's docstring | the goal, on every question about it, and its description when it is offered as a [route](#routes-which-thing-to-do) | asked |
-| the agent's `instructions` | shared framing on every question — or the question itself, when there is no field to describe | asked |
-| a description on an option in the schema | that option's meaning | asked |
-| a description on the `None` itself, `Annotated[None, Field(description=...)]` | what "none of these" means | asked |
-| a tool's description, and its arguments' descriptions | the tool's option on the route question, and the questions that [fill its arguments](#tools-pick-then-fill) | asked |
-
-Dependencies and anything else on the run context are not sent, unless a prompt, instructions function or history processor puts them into one of the rows above.
-
-A bare `bool`, `Literal` or `float` as the `output_type` is a single question with no field to describe, so the agent's `instructions` are sent as the question, as in the [confidence example below](#confidence-and-thresholds). Prefer an output type with fields anyway: each field carries its own question, so several questions can be asked in one request. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
-
-Unless the schema describes an option, the model sees it by its name alone, so name `Literal` and `Enum` options for what they mean. A `Literal` has nowhere to write a meaning per option; where the difference between two options needs explaining, use an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] and put a docstring under each member, which is what puts a description on each option in the schema.
-
-### What each mapping does
+## What each field type does
 
 The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as the model gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones answered yes.
 
 An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, so that "nothing fits" is an answer the model can give rather than something read off low confidence, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, and a field without one gets `None`. The same goes for a nested model with a default when nothing under it was answered: it gets its own default, not one built from the defaults of the fields inside it. A `default_factory` is not in the schema, which is all the answers are read against, so it counts as no default. Any pick-one, of strings or whole numbers, can be optional; a rubric cannot, since its levels are ordered and `None` is not one of them. To say what picking nothing means on this field rather than take the stock phrase, describe the `None` itself: `Area | Annotated[None, Field(description='Nothing here needs routing.')]` makes that description the option's meaning.
 
-A yes/no is a `bool`, which says what is being asked but nothing about what a yes or a no would mean. That is the one place the model is asked to judge without being told what it is judging against: a pick-one carries a description per option and a rubric one per level, while a yes/no has only the question unless the two answers are spelled out. [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells them out as `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime:
-
-```python {title="describe_what_yes_and_no_mean.py"}
-from typing import Annotated
-
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent, BoolCriteria
-
-
-class Settled(BaseModel):
-    """Review the transcript."""
-
-    refunded: Annotated[
-        bool,
-        BoolCriteria(true='Money was returned to the customer.', false='No refund was issued.'),
-    ] = Field(description='Was a refund issued?')
-
-
-agent = Agent('typesafe:jev-latest', output_type=Settled)
-result = agent.run_sync('We have sent the 40 pounds back to your card.')
-print(result.output.refunded)
-#> True
-```
-
-The two descriptions become the question's `criteria`, which is what the model weighs the text against, so a field that has them is answering a sharper question than the same field without. They are enough on their own, so unlike a bare `bool` such a field needs no description of its own.
+A yes/no is a `bool`, which says what is being asked but nothing about what a yes or a no would mean. That is the one place the model is asked to judge without being told what it is judging against: a pick-one carries a description per option and a rubric one per level, while a yes/no has only the question unless the two answers are spelled out. [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells them out, as in the [`Ticket` above](#asking-with-an-output-type). The two descriptions become the question's `criteria`, which is what the model weighs the text against, so a field that has them is answering a sharper question than the same field without.
 
 Where the answer should be a named thing rather than `True` or `False` — because it is stored, or branched on by name — an `Enum` of `True` and `False` mixing in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] asks exactly the same question, and the field's value is the member the answer picks:
 
@@ -193,21 +372,43 @@ print(result.response.provider_details['scores'])
 
 A nested model is its fields, asked as `outer.inner` and put back in place; the parent field's description is not sent, so put the context each question needs on the field that asks it. A dot in a field name is how a nested field is named, so a field whose own name contains one is refused.
 
-### Routes: which thing to do
+## Routes: which thing to do
 
-Fields are what the model fills. When there is more than one *thing* the text could call for, the model is asked one more question, the route question: which of these does this call for. The options are the output type (or each member of a [union](#a-union-of-output-types)) and every [tool](#tools-pick-then-fill) on offer, each described by its docstring.
+Fields are what the model fills. When there is more than one *thing* the text could call for — tools attached, or a union of output types — the model is asked one more question, the route question: which of these does this call for. The options are the output type (or each member of a [union](#a-union-of-output-types)) and every [tool](#tools-pick-then-fill) on offer, each described by its docstring.
 
 The route the model picks is the one that runs, and how much it costs to fill depends on which route it is. A single output type's fields ride along in the *same* request as the route question, so its answers are already in hand when the pick comes back. Every other route is picked first and filled after: a chosen tool's arguments, or a chosen [union](#a-union-of-output-types) member's fields, go out in a second request carrying only that route's questions. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone, with no second request at all.
 
 The second request is about the same text as the first, which on its own would leave nothing in it saying a route had been picked. So each of its questions names the chosen route alongside the field's own question and whatever the route's docstring said about it: a union member by the name you gave the type, a tool by the name you gave the function. What you already said in the text is unchanged between the two requests; only the questions differ.
 
+The response sums the input and output tokens from both requests, but [`RequestUsage.requests`][pydantic_ai.usage.RequestUsage.requests] is fixed at one request per model step and cannot carry the real count, so `provider_details['requests']` is `2` when the model picked and then filled.
+
+The second request has already committed to the selected route. If that request fails or returns invalid answers, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] names the route and stops the run; the default `FallbackModel` does not replay the original step and quietly choose another one.
+
 The questions in one request are answered independently. A field cannot depend on another field's answer: two arguments of the same tool are decided separately, and neither sees the other. Where one judgement genuinely follows from another, they belong in different steps, not in two fields of the same call. That is the whole mechanism behind the [patterns below](#decision-models-inside-an-agent-run): an output function is a candidate the model can choose, and choosing it *is* calling it.
 
-## Ask one thing per field
+Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what the other routes are weighed against. Asking whether the model *can* answer, rather than what the text calls for, is a question about the question rather than about the text, and [on Jev](typesafe.md#what-jev-answers-badly) it hands off nearly everything.
 
-This is the other habit that does not carry over from a language model. Ask each field the kind of judgement a knowledgeable person makes in a second. A question that weighs several things at once does not fail — it returns a plausible answer with low confidence, and you find out later.
+### Tools: pick, then fill
 
-So instead of one field asking `'Is this a good pitch?'`, ask three and combine them in code:
+With tools attached, the first request carries the route question, with every output type first among the options and every tool after them. Each tool is described by its docstring, and the output type by its own docstring or, without one, by the agent's instructions; with tools attached one of the two is required, since it is what filling the output is weighed against. The pick decides which path the request takes:
+
+| The model picks | What runs | Language model call |
+|---|---|---|
+| a single output type | the decision model fills the fields, in the same request | none |
+| one member of a union of output types | the decision model fills that member's fields in a second request | none |
+| a tool with no arguments | your function, then the decision model again with its result in view | none |
+| an output function with no arguments | your function, and the run ends | only if the function makes one |
+| a tool whose arguments the model can express | the decision model fills its arguments in a second request, then your function runs | none |
+| a tool with any unsupported argument, at or above `decision_tool_call_threshold` | the model behind the decision model [takes the whole step](#escalating-to-a-language-model), tools and all | one |
+| a function tool, below that threshold | the decision model fills the fields, or with only output functions takes the likeliest of them; the lean is in `provider_details['tool']` | none |
+
+A function tool is only taken at or above [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] (default 0.6), while there is still an output type to fill or an output function left to hand to. Higher takes fewer tools, and is right more often when it does; tune it on labelled examples of your own. With no output type to fill, a pick below the threshold goes to the likeliest output function instead, and the route actually taken is named in `provider_details['tool']['taken']`. The threshold gates function tools only: an output function is a result to hand to, not something else to be done, so a pick below the bar still takes it.
+
+With no output type to fill and every other route already returned this turn, the one route left is taken without a route question at all: the model still fills its supported arguments in one request, and a route with no arguments costs no request.
+
+A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool that sends mail or charges an account is one a decision model can set off, and approval and limits are the agent's job here as anywhere.
+
+**A tool with no arguments: the decision model alone.** There is nothing to fill, so the call is made on the pick, and its result comes back as history for the next request. The model can work through a sequence of such tools. A tool whose result is already in the turn is not offered again, because a decision model has no notion of having made a call and would pick it again with the result in view; one that asked for a retry stays on offer. What was on offer is in `provider_details['tool']['offered']`. Every request here is a decision model request:
 
 ```python
 from pydantic import BaseModel, Field
@@ -215,27 +416,134 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 
-class Pitch(BaseModel):
-    """Assess a startup pitch."""
+class Ticket(BaseModel):
+    """Triage a support ticket."""
 
-    large_market: bool = Field(description='Does this address a market worth more than $1B a year?')
-    technically_feasible: bool = Field(description='Could a small team build this with current technology?')
-    differentiated: bool = Field(description='Does this do something competitors do not already do?')
-
-    @property
-    def promising(self) -> bool:
-        return sum([self.large_market, self.technically_feasible, self.differentiated]) >= 2
+    urgent: bool = Field(description='Does this need a reply within the hour?')
 
 
-agent = Agent('typesafe:jev-latest', output_type=Pitch)
-result = agent.run_sync('A dashboard that shows every SaaS subscription a company pays for.')
+escalated: list[str] = []
+
+
+def escalate_to_human() -> str:
+    """Hand the ticket to a person on the support team."""
+    escalated.append('case #4821')
+    return 'Escalated: case #4821 opened.'
+
+
+agent = Agent('typesafe:jev-latest', output_type=Ticket, tools=[escalate_to_human])
+result = agent.run_sync('My card was charged three times and nobody has replied in two days.')
 print(result.output)
-#> large_market=True technically_feasible=True differentiated=False
-print(result.output.promising)
-#> True
+#> urgent=True
+print(escalated)
+#> ['case #4821']
 ```
 
-Every field goes out in the same request, so a field you only need on some inputs costs no extra round trip. What it does cost depends on the backend: on Jev, an extra field [costs tokens rather than time](typesafe.md#limits).
+Put a `UsageLimits(request_limit=...)` on a decision model agent with tools all the same, as on any agent that loops.
+
+**An output function with no arguments: a hand-off that ends the run.** An output function that takes nothing, or only the run context, is picked the same way, and the run ends with what it returns — to a person, a queue, or another agent. The language model runs only inside the hand-off, so only the requests the decision model handed off pay for one:
+
+```python
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, RunContext
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+support = Agent('openai:gpt-5.6-sol', instructions='Reply to the customer.')
+
+
+async def reply(ctx: RunContext) -> str:
+    """Write the customer a reply."""
+    # `ctx.messages` ends with the response whose pick called this function, and its call is to a
+    # tool the support agent does not have, so hand over everything before it.
+    result = await support.run(message_history=ctx.messages[:-1])
+    return result.output
+
+
+agent = Agent('typesafe:jev-latest', output_type=[Ticket, reply])
+
+
+async def main():
+    result = await agent.run('Could you tell me when my order ships?')
+    print(result.output)
+    #> It shipped this morning; the tracking link is on its way to you now.
+```
+
+**Supported arguments: the model picks, then fills.** Tool arguments use the same [mapping](#supported-field-types) as output fields. The argument name is the field, its `Args:` entry in the function docstring is the question, and the tool description is the goal. The first request picks the tool; the second carries only its argument questions over the same text and history, as `check_status` does in the [support desk](#a-support-desk-end-to-end).
+
+An `Args:` entry describes the *argument*, not its options: a `Literal` argument's options go out named and nothing more, the same as [a `Literal` output field](#where-the-wording-comes-from). Where the difference between two of them needs explaining, make the argument an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] with a docstring under each member, or a [`Choices`][pydantic_ai.output.Choices] set built from a mapping of option to meaning — either puts a description on each option in the schema, which is what the model weighs them by. `Choices` built from a bare sequence of names describes nothing, and leaves the model weighing the names alone like a `Literal` does.
+
+**Unsupported arguments: the model behind it.** A plain `str`, an unbounded number, or any other unsupported argument cannot be filled, so picking the tool [escalates](#escalating-to-a-language-model) the step.
+
+### A union of output types
+
+An `output_type` of several structured types is a set of routes. The model picks which one the text calls for, then a second request asks only that type's fields — the same two steps a [selected tool's arguments](#tools-pick-then-fill) take, because it is the same question asked twice. The [support desk](#a-support-desk-end-to-end) is one: `Triage`, `Refund` and `Reply` are three routes.
+
+Each member is described by **its own docstring**, which is what the model weighs the routes against. With one output type the agent's instructions can say what filling it is for; with several they cannot, because one instruction cannot describe two different routes, so a member without a docstring is a [`UserError`][pydantic_ai.exceptions.UserError].
+
+The pick is reported in `provider_details['tool']`, with the probability of every member, and `provider_details['requests']` is `2`. The [tool threshold](#tools-pick-then-fill) gates tools, not output types: picking an output type says which result to fill, not that something else should be done, so a tool picked below the threshold falls back to the likeliest output type rather than being taken.
+
+#### Declining with `None`
+
+`None` is a route like any other. Include it in the union and the model is offered one more option, "None of these.", for the text that calls for nothing at all:
+
+```python {title="union_none.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+
+
+class Escalation(BaseModel):
+    """Hand the ticket to a human specialist."""
+
+    security: bool = Field(description='Does this involve a security risk?')
+
+
+agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation, None])
+
+result = agent.run_sync('Thanks, that fixed it. Nothing else needed.')
+print(result.output)
+#> None
+```
+
+`None` cannot carry a docstring, so the library describes it, the same way an [optional pick-one field](#what-each-field-type-does) gets its "None of these." option. There is nothing to fill either, so the route is taken on the pick alone: declining costs one request, never two.
+
+To say what declining means on your agent rather than take the stock phrase, name the route yourself with [`ToolOutput`][pydantic_ai.output.ToolOutput]: `ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')` puts that description on the route instead.
+
+## Escalating to a language model
+
+A route the model cannot fill is still offered, and picking it hands the step on: a tool with any unsupported argument, such as a plain `str` or an unbounded number, or a union member with such a field, like the support desk's `Reply`. The pick becomes a [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] rather than a response. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind the decision model hands that model the whole step, with the same tools and output types, and the language model decides the step again for itself. The rest of the requests never leave the decision model. Without a model behind it, the proposal is the error, and it says which route the model wanted and how sure it was. The request that proposed the call is not on the fallback response's usage.
+
+The decision model answers the tickets it can and hands over the ones that need writing, so only those cost a language model call. How many that is depends on your tickets and the [tool threshold](#tools-pick-then-fill), and `provider_details['tool']` on each response is how to see it.
+
+A lone `output_type` the model cannot fill is refused before any request instead. There is no other route the run could have taken, so an unfillable one can only ever fail — that is a coding error, and finding out at setup beats finding out from the bill. Offered beside others, it is a route like any other; a union in which *no* member can be filled is refused the same way, since every answer to the question would hand off and the request asking it would buy nothing.
+
+The same `FallbackModel` can also take the steps the decision model answered but [was unsure about](#falling-back-on-low-confidence).
+
+!!! warning "Watch the hand-off rate"
+    A union that hands off on most requests costs a language model call **plus** a decision model call, and is
+    slower than not using a decision model at all. Measure the rate on your own data before relying on the
+    arrangement.
+
+    Note where the number is. On a request the decision model answers, its pick is in
+    `provider_details['tool']['probabilities']`. On a hand-off it is not:
+    [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] is raised instead of a response, and
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] returns the *next* model's response, which carries
+    none of the decision model's numbers. So counting hand-offs by their absence in `provider_details` is the
+    measurement, and the exception carries `tool_name` and `probability` if you would rather catch it: run the
+    models separately, or wrap the fallback, when you want both.
 
 ## Confidence and thresholds
 
@@ -326,286 +634,6 @@ The handler runs on every model in the chain, and a language model reports no `c
 
 Watch how often the fallback fires, not only how accurate the pair is. A chain that hands off nearly everything is accurate and costs full price, and the rate is the only number that shows it.
 
-## Tools: pick, then fill
-
-With tools attached, the first request carries the [route question](#routes-which-thing-to-do): which of these does the text call for, with every output type first among the options and every tool after them. Each tool is described by its docstring, and the output type by its own docstring or, without one, by the agent's instructions; with tools attached one of the two is required, since it is what filling the output is weighed against. The model answers it like any other question, and the pick decides which path the request takes:
-
-| The model picks | What runs | Language model call |
-|---|---|---|
-| a single output type | the decision model fills the fields, in the same request | none |
-| one member of a union of output types | the decision model fills that member's fields in a second request | none |
-| a tool with no arguments | your function, then the decision model again with its result in view | none |
-| an output function with no arguments | your function, and the run ends | only if the function makes one |
-| a tool whose arguments the model can express | the decision model fills its arguments in a second request, then your function runs | none |
-| a tool with any unsupported argument, at or above `decision_tool_call_threshold` | the model behind the decision model takes the whole step, tools and all | one |
-| a function tool, below that threshold | the decision model fills the fields, or with only output functions takes the likeliest of them; the lean is in `provider_details['tool']` | none |
-
-A function tool is only taken at or above [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] (default 0.6), while there is still an output type to fill or an output function left to hand to. Higher takes fewer tools, and is right more often when it does; tune it on labelled examples of your own. With no output type to fill, a pick below the threshold goes to the likeliest output function instead, and the route actually taken is named in `provider_details['tool']['taken']`. The threshold gates function tools only: an output function is a result to hand to, not something else to be done, so a pick below the bar still takes it.
-
-With no output type to fill and every other route already returned this turn, the one route left is taken without a route question at all: the model still fills its supported arguments in one request, and a route with no arguments costs no request.
-
-A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool that sends mail or charges an account is one a decision model can set off, and approval and limits are the agent's job here as anywhere.
-
-**A tool with no arguments: the decision model alone.** There is nothing to fill, so the call is made on the pick, and its result comes back as history for the next request. The model can work through a sequence of such tools. A tool whose result is already in the turn is not offered again, because a decision model has no notion of having made a call and would pick it again with the result in view; one that asked for a retry stays on offer. What was on offer is in `provider_details['tool']['offered']`. Every request here is a decision model request:
-
-```python
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent
-
-
-class Ticket(BaseModel):
-    """Triage a support ticket."""
-
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-
-
-escalated: list[str] = []
-
-
-def escalate_to_human() -> str:
-    """Hand the ticket to a person on the support team."""
-    escalated.append('case #4821')
-    return 'Escalated: case #4821 opened.'
-
-
-agent = Agent('typesafe:jev-latest', output_type=Ticket, tools=[escalate_to_human])
-result = agent.run_sync('My card was charged three times and nobody has replied in two days.')
-print(result.output)
-#> urgent=True
-print(escalated)
-#> ['case #4821']
-```
-
-Put a `UsageLimits(request_limit=...)` on a decision model agent with tools all the same, as on any agent that loops.
-
-**An output function with no arguments: a hand-off that ends the run.** An output function that takes nothing, or only the run context, is picked the same way, and the run ends with what it returns — to a person, a queue, or another agent. The language model runs only inside the hand-off, so only the requests the decision model handed off pay for one:
-
-```python
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent, RunContext
-
-
-class Ticket(BaseModel):
-    """Triage a support ticket."""
-
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-
-
-support = Agent('openai:gpt-5.6-sol', instructions='Reply to the customer.')
-
-
-async def reply(ctx: RunContext) -> str:
-    """Write the customer a reply."""
-    # `ctx.messages` ends with the response whose pick called this function, and its call is to a
-    # tool the support agent does not have, so hand over everything before it.
-    result = await support.run(message_history=ctx.messages[:-1])
-    return result.output
-
-
-agent = Agent('typesafe:jev-latest', output_type=[Ticket, reply])
-
-
-async def main():
-    result = await agent.run('Could you tell me when my order ships?')
-    print(result.output)
-    #> It shipped this morning; the tracking link is on its way to you now.
-```
-
-**Supported arguments: the model picks, then fills.** Tool arguments use the same [mapping](#how-an-output-type-becomes-questions) as output fields. The argument name is the field, its `Args:` entry in the function docstring is the question, and the tool description is the goal. The first request picks the tool; the second carries only its argument questions over the same text and history:
-
-```python
-from typing import Literal
-
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent
-
-
-class Ticket(BaseModel):
-    """Triage a support ticket."""
-
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-
-
-def take_action(direction: Literal['left', 'right']) -> str:
-    """Take the requested action.
-
-    Args:
-        direction: Which direction should be taken?
-    """
-    return f'Turned {direction}.'
-
-
-agent = Agent('typesafe:jev-latest', output_type=Ticket, tools=[take_action])
-result = agent.run_sync('The onboarding wizard is stuck; please move it on.')
-print(result.output)
-#> urgent=False
-```
-
-An `Args:` entry describes the *argument*, not its options: a `Literal` argument's options go out named and nothing more, the same as [a `Literal` output field](#where-the-wording-comes-from). Where the difference between two of them needs explaining, make the argument an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] with a docstring under each member, or a [`Choices`][pydantic_ai.output.Choices] set built from a mapping of option to meaning — either puts a description on each option in the schema, which is what the model weighs them by. `Choices` built from a bare sequence of names describes nothing, and leaves the model weighing the names alone like a `Literal` does.
-
-The response sums the input and output tokens from both requests, but [`RequestUsage.requests`][pydantic_ai.usage.RequestUsage.requests] is fixed at one request per model step and cannot carry the real count, so `provider_details['requests']` is `2` when the model picked and then filled.
-
-The second request has already committed to the selected route. If that request fails or returns invalid answers, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] names the route and stops the run; the default `FallbackModel` does not replay the original step and quietly choose another one.
-
-**Unsupported arguments: the model behind it.** A plain `str`, an unbounded number, or any other unsupported argument leaves the selected call as a [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed]. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind the decision model hands that model the whole step, tools and all; the rest of the requests never leave the decision model. Without a model behind it, the proposal is the error, and it says which tool the model wanted and how sure it was. The request that proposed the call is not on the fallback response's usage.
-
-```python
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent
-from pydantic_ai.models.fallback import FallbackModel
-
-
-class Ticket(BaseModel):
-    """Triage a support ticket."""
-
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-
-
-def escalate_to_human() -> str:
-    """Hand the ticket to a person on the support team."""
-    return 'Escalated: case #4821 opened.'
-
-
-def refund(amount: float) -> str:
-    """Return a payment to the customer."""
-    return f'Refunded {amount}'
-
-
-model = FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol')
-agent = Agent(model, output_type=Ticket, tools=[escalate_to_human, refund])
-result = agent.run_sync('The app crashes every time I open the reports tab.')
-print(result.output)
-#> urgent=False
-```
-
-Here the decision model triages what it can, opens a case itself when the ticket calls for one and triages again with the case number in view, and leaves a refund's unbounded amount to the language model behind it. Most requests never leave the decision model; how many depends on your tickets and the threshold, and `provider_details['tool']` on each response is how to see it.
-
-Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what the tools are weighed against. Asking whether the model *can* answer, rather than what the text calls for, is a question about the question rather than about the text, and [on Jev](typesafe.md#what-jev-answers-badly) it hands off nearly everything.
-
-## A union of output types
-
-An `output_type` of several structured types is a set of routes. The model picks which one the text calls for, then a second request asks only that type's fields — the same two steps a [selected tool's arguments](#tools-pick-then-fill) take, because it is the same question asked twice.
-
-```python {title="union_output.py"}
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent
-
-
-class Ticket(BaseModel):
-    """Triage a support ticket."""
-
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-
-
-class Escalation(BaseModel):
-    """Hand the ticket to a human specialist."""
-
-    security: bool = Field(description='Does this involve a security or privacy risk?')
-
-
-agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation])
-result = agent.run_sync('Someone else can see my invoices when they log in.')
-print(result.output)
-#> security=True
-assert result.response.provider_details is not None
-print(result.response.provider_details['requests'])
-#> 2
-```
-
-Each member is described by **its own docstring**, which is what the model weighs the routes against. With one output type the agent's instructions can say what filling it is for; with several they cannot, because one instruction cannot describe two different routes, so a member without a docstring is a [`UserError`][pydantic_ai.exceptions.UserError].
-
-The pick is reported in `provider_details['tool']`, with the probability of every member, and `provider_details['requests']` is `2`. The [tool threshold](#tools-pick-then-fill) gates tools, not output types: picking an output type says which result to fill, not that something else should be done, so a tool picked below the threshold falls back to the likeliest output type rather than being taken.
-
-### Declining with `None`
-
-`None` is a route like any other. Include it in the union and the model is offered one more option, "None of these.", for the text that calls for nothing at all:
-
-```python {title="union_none.py"}
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent
-
-
-class Ticket(BaseModel):
-    """Triage a support ticket."""
-
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-
-
-class Escalation(BaseModel):
-    """Hand the ticket to a human specialist."""
-
-    security: bool = Field(description='Does this involve a security risk?')
-
-
-agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation, None])
-
-result = agent.run_sync('Thanks, that fixed it. Nothing else needed.')
-print(result.output)
-#> None
-assert result.response.provider_details is not None
-print(result.response.provider_details['tool']['choice'])
-#> final_result_None
-```
-
-`None` cannot carry a docstring, so the library describes it, the same way an [optional pick-one field](#what-each-mapping-does) gets its "None of these." option. There is nothing to fill either, so the route is taken on the pick alone: declining costs one request, never two.
-
-To say what declining means on your agent rather than take the stock phrase, name the route yourself with [`ToolOutput`][pydantic_ai.output.ToolOutput]: `ToolOutput(type_=None, name='nothing', description='Nothing needs doing here.')` puts that description on the route instead.
-
-### A member the model cannot fill
-
-A union member may use fields the model cannot express, such as a `str`. It is still offered as a route, and picking it raises [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] — a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with a language model behind the decision model hands it the whole step:
-
-```python {title="union_handoff.py"}
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent
-from pydantic_ai.models.fallback import FallbackModel
-
-
-class Ticket(BaseModel):
-    """Triage a support ticket."""
-
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-
-
-class DraftedReply(BaseModel):
-    """Write the customer a reply."""
-
-    body: str
-
-
-agent = Agent(
-    FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
-    output_type=[Ticket, DraftedReply],
-)
-result = agent.run_sync('My invoice is wrong and I need it fixed before month end.')
-print(result.output)
-#> urgent=True
-```
-
-The decision model answers the tickets it can and hands over the ones that need writing, so only those cost a language model call.
-
-A lone `output_type` the model cannot fill is refused before any request instead. There is no other route the run could have taken, so an unfillable one can only ever fail — that is a coding error, and finding out at setup beats finding out from the bill. Offered beside others, it is a route like any other; a union in which *no* member can be filled is refused the same way, since every answer to the question would hand off and the request asking it would buy nothing.
-
-!!! warning "Watch the hand-off rate"
-    A union that hands off on most requests costs a language model call **plus** a decision model call, and is
-    slower than not using a decision model at all. Measure the rate on your own data before relying on the
-    arrangement.
-
-    Note where the number is. On a request the decision model answers, its pick is in
-    `provider_details['tool']['probabilities']`. On a hand-off it is not:
-    [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] is raised instead of a response, and
-    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] returns the *next* model's response, which carries
-    none of the decision model's numbers. So counting hand-offs by their absence in `provider_details` is the
-    measurement, and the exception carries `tool_name` and `probability` if you would rather catch it: run the
-    models separately, or wrap the fallback, when you want both.
-
 ## Judging a conversation
 
 A run's message history goes to the model as `history`: user prompts, answers, tool calls and their results, and retry prompts, from whichever model produced them. With no new prompt, the conversation is the whole state, so a decision model agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
@@ -677,7 +705,7 @@ async def main():
     #> Give the container `display: flex` and both `place-items: center`.
 ```
 
-The decision model fills `tier` and the framework calls `route`, which runs the assistant and returns its answer, so one `router.run(...)` is the whole thing. The question itself is not an argument: it is already the text being judged, and [`ctx.prompt`][pydantic_ai.tools.RunContext.prompt] hands the same text to the function, so `tier` is the only question asked and the routing costs one request and no extra plumbing. A `str` parameter would not work here in any case — it is not [a type a decision model can fill](#how-an-output-type-becomes-questions), and an agent asking for one is refused before a request is sent.
+The decision model fills `tier` and the framework calls `route`, which runs the assistant and returns its answer, so one `router.run(...)` is the whole thing. The question itself is not an argument: it is already the text being judged, and [`ctx.prompt`][pydantic_ai.tools.RunContext.prompt] hands the same text to the function, so `tier` is the only question asked and the routing costs one request and no extra plumbing. A `str` parameter would not work here in any case — it is not [a type a decision model can fill](#supported-field-types), and an agent asking for one is refused before a request is sent.
 
 The argument's `Literal` becomes the pick-one question and its `Args:` entry becomes the wording. The model sees that wording as the question and the function's summary line as what the run is for — but *not* a meaning per option, which is what an [`Enum` with described members](#where-the-wording-comes-from) is for. The pick's confidence is in `provider_details['confidence']`, so an unsure route can go to the capable model rather than the cheap one, which is the conservative direction when a wrong route is expensive.
 
@@ -904,7 +932,7 @@ Two things to hold on to. A classifier in the loop is a component like any other
 
 ## What decision models cannot do
 
-A decision model does not write text or read files, and it only fills tool arguments that map to the [typed questions](#how-an-output-type-becomes-questions) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
+A decision model does not write text or read files, and it only fills tool arguments that map to the [typed questions](#supported-field-types) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be made of the field types above: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-pick-then-fill) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to the model; supported arguments are [filled after it is picked](#tools-pick-then-fill), while any unsupported argument makes the pick a `ToolCallProposed` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
