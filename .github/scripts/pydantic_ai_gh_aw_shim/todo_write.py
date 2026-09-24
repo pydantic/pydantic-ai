@@ -25,12 +25,17 @@ class TodoItem(TypedDict):
     activeForm: str
 
 
+_CLAUDE_STATUSES = frozenset({TaskStatus.pending, TaskStatus.in_progress, TaskStatus.completed})
+"""Claude's todo statuses. The harness's `blocked` needs its subtask dependencies, which `TodoWrite` lacks."""
+
+
 def _to_status(value: str) -> TaskStatus:
     """Map a Claude todo status onto a harness `TaskStatus`, defaulting to `pending`."""
     try:
-        return TaskStatus(value)
+        status = TaskStatus(value)
     except ValueError:
         return TaskStatus.pending
+    return status if status in _CLAUDE_STATUSES else TaskStatus.pending
 
 
 async def todo_write(todos: list[TodoItem]) -> str:

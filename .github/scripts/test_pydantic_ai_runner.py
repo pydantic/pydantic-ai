@@ -812,10 +812,12 @@ def test_todo_write_renders_plan_via_harness():
             [
                 {'content': 'a', 'status': 'completed', 'activeForm': ''},
                 {'content': 'b', 'status': 'bogus', 'activeForm': ''},
+                # `blocked` is a harness status Claude's schema doesn't have.
+                {'content': 'c', 'status': 'blocked', 'activeForm': ''},
             ]
         )
     )
-    assert '[x] a' in out2 and '[ ] b' in out2 and '(1/2 completed)' in out2
+    assert '[x] a' in out2 and '[ ] b' in out2 and '[ ] c' in out2 and '(1/3 completed)' in out2
 
 
 def test_exit_plan_mode_returns_ack():
