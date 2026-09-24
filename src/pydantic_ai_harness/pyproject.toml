@@ -121,6 +121,9 @@ logfire-mcp = [
 linear = [
     "pydantic-ai-slim[mcp]>=2.44.0",
 ]
+notion = [
+    "pydantic-ai-slim[mcp]>=2.44.0",
+]
 
 [project.urls]
 Homepage = 'https://github.com/pydantic/pydantic-ai-harness'
