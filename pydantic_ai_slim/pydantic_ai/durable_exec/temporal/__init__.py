@@ -138,6 +138,9 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # sandbox. Safe to pass through: the call only happens once at module init.
             'fastmcp',
             'mcp',
+            # FastMCP 4's tasks extension, imported when an `MCPToolset` is constructed; its settings
+            # read `~/.env` on import, which the sandbox restricts.
+            'fastmcp_tasks',
             # The `anthropic` SDK (>=0.99.0) calls `Path.home()` during client construction to
             # resolve its credentials/profile config directory (`~/.config/anthropic`) — restricted
             # by the workflow sandbox. This trips when a model is constructed inside the workflow,

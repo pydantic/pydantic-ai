@@ -109,6 +109,7 @@ except ImportError:  # pragma: lax no cover
 try:
     from fastmcp.client.transports import StdioTransport
 
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -384,7 +385,8 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             content=attributes.get('event') or attributes['logfire.msg'],
         )
         for span in spans
-        if (attributes := span.get('attributes'))
+        # MCP SDK v2 adds its own client spans; SDK v1 has none, so leave them out to keep one snapshot.
+        if (attributes := span.get('attributes')) and not span['name'].startswith('MCP send ')
     }
 
     assert len(basic_spans_by_id) > 0, 'No spans were exported'
@@ -2270,11 +2272,17 @@ _mcp_task_dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
 )
 
 
+# Read once at import: it touches the filesystem, which blockbuster rejects inside async tests.
+MCP_SDK_V2 = is_mcp_sdk_v2()
+
+
 async def test_dbos_mcptoolset_preserves_task_routing(dbos: DBOS):
     """Effective task routing in `ToolDefinition.metadata` survives DBOS steps."""
     result = await _mcp_task_dbos_agent.run('Call both tools')
 
-    assert result.output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    # FastMCP 3 honours the client's `prefer_tasks=False`; on FastMCP 4 the server decides, and runs it as a task.
+    optional = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
+    assert result.output == f'{{"required_task_tool":"required_completed","optional_task_tool":"{optional}"}}'
 
 
 def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4697,6 +4705,6 @@ async def test_dbos_mcp_server_keeps_one_session_per_workflow(dbos: DBOS, deprec
         return (await durable_agent.run('go')).output
 
     assert await run_workflow() == 'done'
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     # The workflow closed the session it held; nothing keeps the server connected between runs.
     assert not toolset.is_running

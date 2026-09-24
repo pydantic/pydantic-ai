@@ -122,8 +122,10 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
+    from fastmcp import FastMCP
     from fastmcp.client.transports import StdioTransport
 
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -198,7 +200,8 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     methods_called: list[str] = []
 
     async def tracking_send_request(self_: ClientSession, request: ClientRequest, *args: Any, **kwargs: Any) -> Any:
-        methods_called.append(request.root.method)
+        # SDK v1 wraps requests in a `RootModel`; SDK v2 passes the request itself.
+        methods_called.append(getattr(request, 'root', request).method)
         return await original_send_request(self_, request, *args, **kwargs)
 
     with patch.object(ClientSession, 'send_request', tracking_send_request):
@@ -811,8 +814,24 @@ async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_req
 
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset returning an MCPToolset works with Temporal workflows.
-# Uses an HTTP-based MCP server rather than subprocess-based since the subprocess transports
-# don't play nicely with Temporal's sandbox.
+# The server is an in-process stand-in for DeepWiki's MCP server, whose tools the recorded model
+# responses call: a recorded remote handshake can't replay on both MCP SDK v1 and v2.
+deepwiki_stand_in = FastMCP('deepwiki')
+
+
+@deepwiki_stand_in.tool
+def read_wiki_structure(repoName: str) -> str:
+    return f'{repoName}: Overview, Agents, Tools, Models'
+
+
+@deepwiki_stand_in.tool
+def read_wiki_contents(repoName: str) -> str:
+    return f'{repoName} is a Python agent framework built by the Pydantic team.'
+
+
+@deepwiki_stand_in.tool
+def ask_question(repoName: str, question: str) -> str:
+    return f'{repoName} is a Python agent framework built by the Pydantic team.'
 
 
 mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset_agent')
@@ -821,7 +840,7 @@ mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset
 @mcptoolset_dynamic_toolset_agent.toolset(id='mcptoolset_dynamic')
 def my_mcptoolset_dynamic_toolset(ctx: RunContext) -> MCPToolset:
     """Dynamic toolset that returns an `MCPToolset` — exercises lifecycle + `TemporalMCPToolset`."""
-    return MCPToolset('https://mcp.deepwiki.com/mcp')
+    return MCPToolset(deepwiki_stand_in)
 
 
 mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
@@ -1275,7 +1294,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
 mcptoolset_agent = Agent(
     model,
     name='mcptoolset_agent',
-    toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+    toolsets=[MCPToolset(deepwiki_stand_in, id='deepwiki')],
 )
 
 
@@ -1336,6 +1355,10 @@ class MCPTaskSupportWorkflow:
         return (await _mcp_task_temporal_agent.run(prompt)).output
 
 
+# Read once at import: it touches the filesystem, which blockbuster rejects inside async tests.
+MCP_SDK_V2 = is_mcp_sdk_v2()
+
+
 async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
     """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
     async with Worker(
@@ -1351,7 +1374,9 @@ async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
             task_queue=TASK_QUEUE,
         )
 
-    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    # FastMCP 3 honours the client's `prefer_tasks=False`; on FastMCP 4 the server decides, and runs it as a task.
+    optional = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
+    assert output == f'{{"required_task_tool":"required_completed","optional_task_tool":"{optional}"}}'
 
 
 nested_multimodal_tool_return_agent = Agent(TestModel(), name='nested_multimodal_tool_return_agent')

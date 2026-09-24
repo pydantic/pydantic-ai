@@ -1854,7 +1854,8 @@ async def test_durability_complex_agent_logfire_span_tree(
             content=attributes.get('event') or attributes['logfire.msg'],
         )
         for span in spans
-        if (attributes := span.get('attributes'))
+        # MCP SDK v2 adds its own client spans; SDK v1 has none, so leave them out to keep one snapshot.
+        if (attributes := span.get('attributes')) and not span['name'].startswith('MCP send ')
     }
     root_span = None
     for basic_span in basic_spans_by_id.values():

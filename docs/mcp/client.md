@@ -13,6 +13,8 @@ You need to either install [`pydantic-ai`](../install.md), or [`pydantic-ai-slim
 pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
+That installs the MCP client only. To run the example servers on this page, also install the full [`fastmcp`](https://gofastmcp.com) package: `pip install fastmcp`.
+
 !!! note "FastMCP 4"
     The command above installs FastMCP 4, which `MCPToolset` supports alongside FastMCP 3. Its
     modern protocol mode does not support server-initiated sampling or elicitation, and cannot
@@ -51,7 +53,7 @@ The [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-ht
 Before creating the toolset, we need to run a server that supports the Streamable HTTP transport.
 
 ```python {title="streamable_http_server.py" dunder_name="not_main"}
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 app = FastMCP()
 
@@ -288,19 +290,18 @@ async def main():
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
 
-How the server reads the injected metadata is MCP server SDK specific. For example, with the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) it's accessible via the [`ctx: Context`](https://github.com/modelcontextprotocol/python-sdk#context) argument on tool handlers:
+How the server reads the injected metadata is MCP server SDK specific. For example, with [FastMCP](https://gofastmcp.com) it's accessible via the [`ctx: Context`](https://gofastmcp.com/servers/context) argument on tool handlers:
 
 ```python {title="mcp_server.py"}
 from typing import Any
 
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.session import ServerSession
+from fastmcp import Context, FastMCP
 
 mcp = FastMCP('Pydantic AI MCP Server')
 
 
 @mcp.tool()
-async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
+async def echo_deps(ctx: Context) -> dict[str, Any]:
     """Echo the run context.
 
     Args:
@@ -311,6 +312,7 @@ async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
     """
     await ctx.info('This is an info message')
 
+    assert ctx.request_context is not None
     deps: Any = getattr(ctx.request_context.meta, 'deps')
     return {'echo': 'This is an echo message', 'deps': deps}
 
@@ -383,7 +385,7 @@ For [FastMCP 3](https://gofastmcp.com/v3/servers/tasks) servers, install the tas
 `pip install "fastmcp[tasks]>=3,<4"` and declare task support per tool with
 `task=TaskConfig(mode=...)`:
 
-```python {title="background_task_server.py" dunder_name="not_main"}
+```python {title="background_task_server.py" dunder_name="not_main" test="skip" lint="skip"}
 from fastmcp import FastMCP
 from fastmcp.server.tasks import TaskConfig
 
@@ -426,7 +428,7 @@ Text content is returned as `str`, and binary content as [`BinaryContent`][pydan
 Before consuming resources, we need to run a server that exposes some:
 
 ```python {title="mcp_resource_server.py"}
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 mcp = FastMCP('Pydantic AI MCP Server')
 
@@ -611,8 +613,8 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
     import re
     from pathlib import Path
 
+    from fastmcp import Context, FastMCP
     from mcp import SamplingMessage
-    from mcp.server.fastmcp import Context, FastMCP
     from mcp.types import TextContent
 
     app = FastMCP()
@@ -691,7 +693,7 @@ This allows for a more interactive and user-friendly experience, especially for 
 To enable elicitation, provide an `elicitation_handler` when creating your `MCPToolset`:
 
 ```python {title="restaurant_server.py"}
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
 mcp = FastMCP(name='Restaurant Booking')
@@ -709,7 +711,7 @@ class BookingDetails(BaseModel):
 async def book_table(ctx: Context) -> str:
     """Book a restaurant table with user input."""
     # Ask user for booking details using Pydantic schema
-    result = await ctx.elicit(message='Please provide your booking details:', schema=BookingDetails)
+    result = await ctx.elicit(message='Please provide your booking details:', response_type=BookingDetails)
 
     if result.action == 'accept' and result.data:
         booking = result.data
@@ -747,12 +749,12 @@ async def handle_elicitation(
     """Handle elicitation requests from MCP server."""
     print(f'\n{message}')
 
-    if not isinstance(params, ElicitRequestFormParams) or not params.requestedSchema:
+    if not isinstance(params, ElicitRequestFormParams) or not params.requested_schema:
         response = input('Response: ')
         return ElicitResult(action='accept', content={'response': response})
 
     # Collect data for each field
-    properties = params.requestedSchema['properties']
+    properties = params.requested_schema['properties']
     data: dict[str, Any] = {}
 
     for field, info in properties.items():

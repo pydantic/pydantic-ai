@@ -38,8 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # tests import each from where it actually lives, not from a re-export.
 import agentic_workflow_guard
 import pydantic_ai_gh_aw_shim as pkg
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from fastmcp.exceptions import McpError
 from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
@@ -1860,7 +1859,7 @@ def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path: Path):
 # from the gh-aw gateway escaped `MCPToolset` and killed the whole run).
 # --------------------------------------------------------------------------- #
 def _mcp_error(message: str) -> McpError:
-    return McpError(ErrorData(code=-32602, message=message))
+    return McpError(code=-32602, message=message)
 
 
 def _error_hook_ctx() -> RunContext[None]:

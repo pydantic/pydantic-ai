@@ -150,6 +150,7 @@ except ImportError:  # pragma: lax no cover
 try:
     from fastmcp.client.transports import StdioTransport
 
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
     from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -578,7 +579,8 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
             content=attributes.get('event') or attributes['logfire.msg'],
         )
         for span in spans
-        if (attributes := span.get('attributes'))
+        # MCP SDK v2 adds its own client spans; SDK v1 has none, so leave them out to keep one snapshot.
+        if (attributes := span.get('attributes')) and not span['name'].startswith('MCP send ')
     }
     root_span = None
     for basic_span in basic_spans_by_id.values():
@@ -1059,6 +1061,10 @@ async def test_prefect_toolset_legacy_constructors() -> None:
     assert wrapped_mcp.id is None
 
 
+# Read once at import: it touches the filesystem, which blockbuster rejects inside async tests.
+MCP_SDK_V2 = is_mcp_sdk_v2()
+
+
 async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     """Effective task routing forwards through Prefect task wrappers end-to-end.
 
@@ -1083,7 +1089,9 @@ async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     async def run_agent() -> str:
         return (await agent.run('Call both tools')).output
 
-    assert await run_agent() == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    # FastMCP 3 honours the client's `prefer_tasks=False`; on FastMCP 4 the server decides, and runs it as a task.
+    optional = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
+    assert await run_agent() == f'{{"required_task_tool":"required_completed","optional_task_tool":"{optional}"}}'
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -4753,6 +4761,6 @@ async def test_prefect_mcp_server_keeps_one_session_per_flow(blockbuster_enabled
         return (await agent.run('go')).output
 
     assert await run_flow() == 'done'
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     # The run closed the session it held; nothing keeps the server connected between runs.
     assert not toolset.is_running
