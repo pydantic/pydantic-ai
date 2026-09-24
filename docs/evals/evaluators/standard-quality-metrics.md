@@ -1,5 +1,5 @@
 ---
-description: "Express widely used LLM evaluation methods such as G-Eval chain-of-thought scoring with Pydantic Evals primitives, from faithfulness to answer relevance."
+description: "Score LLM outputs with G-Eval in Pydantic Evals, plus LLM judge rubrics for RAG faithfulness, answer relevance, context precision and recall, and translation."
 ---
 
 # Standard Quality Metrics

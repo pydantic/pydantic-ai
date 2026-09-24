@@ -1,5 +1,5 @@
 ---
-description: "Create, save, load and generate Pydantic Evals datasets, including generating test cases with an LLM, so your evaluation suite grows with your application."
+description: "Build Pydantic Evals datasets in Python or YAML and JSON files, add cases as you find bugs, and generate synthetic test cases from a typed schema with an LLM."
 ---
 
 # Dataset Management

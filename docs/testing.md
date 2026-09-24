@@ -1,5 +1,5 @@
 ---
-description: "Write fast, deterministic unit tests for Pydantic AI applications with TestModel, FunctionModel and Agent.override, without calling a real LLM provider."
+description: "Unit test Pydantic AI agents with pytest by swapping in TestModel or FunctionModel via Agent.override, for fast, deterministic tests with no real LLM calls."
 ---
 
 # Unit testing

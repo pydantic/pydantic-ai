@@ -1,5 +1,5 @@
 ---
-description: "Access and reuse the messages from a Pydantic AI agent run to continue conversations, store chat history as JSON, and process history before each model request."
+description: "Continue multi-turn conversations with Pydantic AI message history: reuse and store messages as JSON, inject messages mid-run, and trim or summarize history."
 ---
 
 # Messages and chat history

@@ -1,5 +1,5 @@
 ---
-description: "Serve Pydantic AI agents to frontends over the Agent-User Interaction (AG-UI) protocol, with streamed events, frontend tools and shared state."
+description: "Serve Pydantic AI agents to CopilotKit and other AG-UI frontends, with streamed events, frontend tools, shared state, tool approval interrupts and Slack bots."
 ---
 
 # Agent-User Interaction (AG-UI) Protocol

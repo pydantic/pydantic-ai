@@ -1,5 +1,5 @@
 ---
-description: "Migrate an agent application from another framework to Pydantic AI with the bundled migration skills, porting one working path at a time with your coding agent."
+description: "Migrate an agent app from LangChain, LangGraph, the OpenAI Agents SDK, Google ADK, Mastra and other frameworks to Pydantic AI with bundled coding agent skills."
 ---
 
 # Migrate to Pydantic AI

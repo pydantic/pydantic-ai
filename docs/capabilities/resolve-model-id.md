@@ -1,5 +1,5 @@
 ---
-description: "Turn application-specific model IDs into Pydantic AI Model instances with ResolveModelId, using run dependencies for per-tenant providers or credentials."
+description: "Map custom model names to Pydantic AI models with ResolveModelId, using run dependencies for per-user API keys, per-tenant providers or model registries."
 ---
 
 # Resolve Model ID

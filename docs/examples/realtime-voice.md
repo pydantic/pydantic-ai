@@ -1,5 +1,5 @@
 ---
-description: "A Pydantic AI voice assistant example that streams your microphone to a realtime speech-to-speech model, calls tools mid-conversation, and supports barge-in."
+description: "A Pydantic AI voice assistant example that streams your microphone to OpenAI's gpt-realtime model, calls tools mid-conversation and supports barge-in."
 ---
 
 Example of a voice assistant built on a [realtime](../realtime/overview.md) speech-to-speech model: it

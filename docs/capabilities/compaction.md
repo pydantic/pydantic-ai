@@ -1,5 +1,5 @@
 ---
-description: "Keep long Pydantic AI conversations within the context window by trimming, clearing or summarizing older messages, natively or with model-agnostic compaction."
+description: "Keep long Pydantic AI conversations within the context window using OpenAI or Anthropic native compaction, or trim and summarize message history on any model."
 ---
 
 # Compaction

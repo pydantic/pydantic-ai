@@ -1,5 +1,5 @@
 ---
-description: "Save and load Pydantic Evals datasets as YAML or JSON, with support for custom evaluators and JSON schemas that give you IDE autocompletion when editing them."
+description: "Save and load Pydantic Evals datasets as YAML or JSON files, load custom evaluators with custom_evaluator_types, and get IDE autocomplete from a JSON Schema."
 ---
 
 # Dataset Serialization

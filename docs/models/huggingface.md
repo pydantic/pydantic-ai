@@ -1,5 +1,5 @@
 ---
-description: "Use open source models through Hugging Face Inference Providers with Pydantic AI, including DeepSeek R1, with a custom provider or Hugging Face client."
+description: "Use open source models like Qwen and DeepSeek through Hugging Face Inference Providers with Pydantic AI, choosing the provider and the organization billed."
 ---
 
 # Hugging Face

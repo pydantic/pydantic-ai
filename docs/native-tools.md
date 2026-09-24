@@ -1,5 +1,5 @@
 ---
-description: "Use provider-executed native tools with Pydantic AI, such as web search, code execution, image generation and MCP servers, and see which providers support each."
+description: "Use provider-executed native tools (formerly builtin tools) in Pydantic AI: web search, code execution, web fetch, image generation, file search, MCP and more."
 ---
 
 # Native Tools

@@ -1,5 +1,5 @@
 ---
-description: "Assess subjective qualities of outputs against a rubric with the Pydantic Evals LLMJudge evaluator, and learn when an LLM judge is the right tool."
+description: "Use an LLM as a judge in Pydantic Evals: grade outputs against a rubric with LLMJudge, get pass/fail or scores, pick the judge model and write good rubrics."
 ---
 
 # LLM Judge Deep Dive

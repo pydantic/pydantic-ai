@@ -1,5 +1,5 @@
 ---
-description: "Attach Pydantic Evals evaluators to production or staging functions so every call, or a sampled subset, is evaluated in the background without blocking it."
+description: "Evaluate Pydantic AI agents and functions in production with Pydantic Evals: score every call or a sample in the background and emit OpenTelemetry events."
 ---
 
 # Online Evaluation

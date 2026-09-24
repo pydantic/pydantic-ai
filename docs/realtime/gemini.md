@@ -1,5 +1,5 @@
 ---
-description: "Connect a Pydantic AI agent to Gemini Live with GoogleRealtimeModel, for spoken conversations with native audio, live images and provider-native tools."
+description: "Connect a Pydantic AI agent to Gemini Live on the Gemini API or Vertex AI with GoogleRealtimeModel: native audio, live video, Google Search and settings."
 ---
 
 # Google Gemini Live

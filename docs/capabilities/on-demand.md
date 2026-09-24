@@ -1,5 +1,5 @@
 ---
-description: "Load Pydantic AI capabilities on demand with defer_loading, so the model sees a short catalog entry and pulls in instructions and tools only when needed."
+description: "Load Pydantic AI capabilities on demand like Agent Skills: the model sees a one-line catalog entry and pulls in instructions and tools only when needed."
 ---
 
 # On-Demand Capabilities

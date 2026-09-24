@@ -1,6 +1,6 @@
 ---
 title: Embeddings
-description: "Generate text embeddings in Python across OpenAI, Cohere, and more: one typed Embedder API for semantic search, RAG retrieval, similarity and clustering."
+description: "Generate text embeddings with Pydantic AI using OpenAI, Google, Cohere, VoyageAI, Bedrock or local Sentence Transformers, for semantic search and RAG."
 ---
 
 # Embeddings

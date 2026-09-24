@@ -1,5 +1,5 @@
 ---
-description: "Run a Pydantic AI agent on Jev from TypeSafe, which answers typed questions about a text with confidence scores instead of writing text, for decision tasks."
+description: "Run Pydantic AI agents on Jev from TypeSafe, a classifier that answers typed questions with confidence scores, for routing, guards and judging conversations."
 ---
 
 # TypeSafe (Jev)

@@ -1,5 +1,5 @@
 ---
-description: "Build your own Pydantic AI capability by subclassing AbstractCapability to bundle tools, instructions, model settings and lifecycle hooks into a reusable unit."
+description: "Write your own Pydantic AI capability by subclassing AbstractCapability to bundle tools, instructions, settings and hooks, for guardrails or middleware."
 ---
 
 # Building Custom Capabilities

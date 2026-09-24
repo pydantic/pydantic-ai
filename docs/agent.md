@@ -1,5 +1,5 @@
 ---
-description: "Create, configure and run Pydantic AI agents: instructions, tools, output types, dependencies, model settings, streaming, and iterating over a run step by step."
+description: "Create and run Pydantic AI agents: run, run_sync, streaming and step-by-step iteration, plus instructions, model settings, usage limits and cancellation."
 ---
 
 ## Introduction

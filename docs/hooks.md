@@ -1,5 +1,5 @@
 ---
-description: "Intercept and modify a Pydantic AI agent at every stage of a run, from model requests to tool calls and stream events, with decorators or constructor arguments."
+description: "Add lifecycle hooks to a Pydantic AI agent to log, modify, retry or skip model requests, tool calls, output and stream events, without subclassing."
 ---
 
 

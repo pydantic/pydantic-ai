@@ -1,5 +1,5 @@
 ---
-description: "A Pydantic AI realtime example that streams microphone audio and camera frames to a speech-to-speech model, then plays and captions its spoken answers."
+description: "A Pydantic AI realtime camera example that streams mic audio and webcam frames to Gemini Live or OpenAI Realtime, with web search and spoken, captioned answers."
 ---
 
 This camera agent streams microphone audio and one camera frame per second into a

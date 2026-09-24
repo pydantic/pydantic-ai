@@ -1,5 +1,5 @@
 ---
-description: "Install Pydantic AI from PyPI, or install pydantic-ai-slim with only the optional dependency groups for the model providers and integrations you actually use."
+description: "Install Pydantic AI with pip or uv on Python 3.10+, or install pydantic-ai-slim with only the optional extras for the model providers and integrations you use."
 ---
 
 # Installation

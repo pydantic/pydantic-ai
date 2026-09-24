@@ -1,5 +1,5 @@
 ---
-description: "Get started with Pydantic Evals: install it, define a dataset of cases and evaluators, run your first evaluation of an AI function, and read the report."
+description: "Install Pydantic Evals and run your first eval in Python: define test cases and evaluators, add an LLM judge or latency check, and print the evaluation report."
 ---
 
 # Pydantic Evals quickstart

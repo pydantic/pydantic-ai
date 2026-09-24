@@ -1,5 +1,5 @@
 ---
-description: "The smallest Pydantic AI realtime example: send plain text from Python and hear the model speak the reply, with no microphone or turn-taking to manage."
+description: "The smallest Pydantic AI realtime example: send text to OpenAI's gpt-realtime model, stream the spoken reply and save it as a WAV file, no microphone needed."
 ---
 
 The smallest possible [realtime session](../realtime/overview.md): send plain text from Python and hear

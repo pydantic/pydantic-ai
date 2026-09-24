@@ -1,5 +1,5 @@
 ---
-description: "Run Pydantic AI realtime voice agents on Azure with AzureRealtimeModel, using the Azure OpenAI GA protocol by default or Azure AI Voice Live."
+description: "Run Pydantic AI realtime voice agents on Azure OpenAI or Azure AI Voice Live with AzureRealtimeModel: deployment names, transcription, Entra ID auth and WebRTC."
 ---
 
 # Azure Realtime

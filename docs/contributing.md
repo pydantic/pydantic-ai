@@ -1,5 +1,5 @@
 ---
-description: "How to contribute to Pydantic AI: how maintainers prioritize issues and PRs, what to expect in review, setting up your environment, and running tests."
+description: "How to contribute to Pydantic AI: agree an approach before opening a PR, what to expect in review, dev setup and tests, and rules for adding model providers."
 ---
 
 We'd love you to contribute to Pydantic AI!

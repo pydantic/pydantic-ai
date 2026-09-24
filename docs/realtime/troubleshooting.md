@@ -1,5 +1,5 @@
 ---
-description: "Fix common problems with Pydantic AI realtime voice sessions, from audio and turn-taking issues to connection errors, with links to the underlying behavior."
+description: "Fix common Pydantic AI realtime voice problems: no audio, a model that never replies or answers twice, echo cutoffs, stalled tools, lost reconnects."
 ---
 
 # Realtime troubleshooting

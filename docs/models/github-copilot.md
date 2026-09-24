@@ -1,5 +1,5 @@
 ---
-description: "Use Anthropic, OpenAI, Google and xAI models from your GitHub Copilot subscription with Pydantic AI, with device login, plan-based model IDs and thinking."
+description: "Use Claude, Gemini, GPT and Kimi models from your GitHub Copilot subscription with Pydantic AI, with device login, plan-dependent model IDs and thinking."
 ---
 
 # GitHub Copilot

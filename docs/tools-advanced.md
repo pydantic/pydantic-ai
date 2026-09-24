@@ -1,5 +1,5 @@
 ---
-description: "Go further with Pydantic AI function tools: rich tool output, custom schemas, strict mode, dynamic tools, tool choice, retries and failures, and tool search."
+description: "Advanced Pydantic AI function tools: return images and files, custom schemas, strict mode, dynamic tools, tool choice, retries, parallel calls and tool search."
 ---
 
 # Advanced Tool Features

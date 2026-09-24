@@ -1,5 +1,5 @@
 ---
-description: "Filter or modify function and output tool definitions on every step of a Pydantic AI run with the PrepareTools and PrepareOutputTools capabilities."
+description: "Hide, filter or modify the tools the model sees on each step of a Pydantic AI run with the PrepareTools and PrepareOutputTools capabilities."
 ---
 
 # Prepare Tools

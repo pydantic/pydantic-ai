@@ -1,5 +1,5 @@
 ---
-description: "Send images, audio, video and documents to a Pydantic AI agent alongside text, by URL or as binary content, on models that support multimodal input."
+description: "Send images, audio, video, PDFs and other documents to a Pydantic AI agent by URL, as binary content, or as files uploaded to a provider's Files API."
 ---
 
 # Multimodal Input

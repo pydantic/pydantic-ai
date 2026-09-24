@@ -1,5 +1,5 @@
 ---
-description: "Fix common Pydantic AI errors, including event loop errors in Jupyter notebooks, missing provider API keys, and monitoring the underlying HTTPX requests."
+description: "Fix common Pydantic AI errors: 'This event loop is already running' in Jupyter, 'Event loop is closed', run_sync inside a tool, and missing provider API keys."
 ---
 
 # Troubleshooting

@@ -1,5 +1,5 @@
 ---
-description: "Upgrade to Pydantic AI V2: what changed since V1, how to install it, and the breaking changes for each version with the recommended upgrade path for your code."
+description: "Pydantic AI upgrade guide and changelog: the breaking changes in each release, how to install V2, and the recommended path to migrate your code from V1."
 ---
 
 # Upgrade Guide

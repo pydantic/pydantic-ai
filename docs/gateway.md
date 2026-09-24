@@ -1,7 +1,7 @@
 ---
 title: Pydantic AI Gateway
 status: new
-description: "Reach many AI providers with one key through Pydantic AI Gateway, managed in Pydantic Logfire, with OpenTelemetry tracing, cost monitoring and failover."
+description: "Pydantic AI Gateway: one API key for OpenAI, Anthropic, Google, Groq and Bedrock models, with spending limits, failover, load balancing and observability."
 ---
 
 # Pydantic AI Gateway

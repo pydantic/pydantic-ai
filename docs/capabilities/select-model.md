@@ -1,5 +1,5 @@
 ---
-description: "Choose the model for each Pydantic AI run or step from dependencies, message history or usage with the SelectModel capability, without a constructor model."
+description: "Route each Pydantic AI run or step to a different model, chosen from dependencies, message history or usage, with the SelectModel capability."
 ---
 
 # Select Model

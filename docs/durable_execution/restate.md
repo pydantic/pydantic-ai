@@ -1,5 +1,5 @@
 ---
-description: "Make Pydantic AI agents durable with Restate, the lightweight durable execution runtime, using the Pydantic AI integration in the Restate Python SDK."
+description: "Make Pydantic AI agents durable with Restate, journaling model calls and tool steps so a crashed agent replays and resumes, via the Restate SDK's RestateAgent."
 ---
 
 # Durable Execution with Restate

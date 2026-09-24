@@ -1,5 +1,5 @@
 ---
-description: "Compute experiment-wide statistics in Pydantic Evals with report evaluators, such as confusion matrices, precision-recall curves, accuracy and custom tables."
+description: "Compute experiment-wide metrics with Pydantic Evals report evaluators: confusion matrices, precision-recall and ROC curves with AUC, accuracy and custom tables."
 ---
 
 # Report Evaluators

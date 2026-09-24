@@ -1,5 +1,5 @@
 ---
-description: "Use the evaluators that ship with Pydantic Evals: comparison and type checks, performance limits, LLM judges, span-based checks and report evaluators."
+description: "Reference for the evaluators built into Pydantic Evals: exact match, contains, type checks, max duration, LLM judge, G-Eval, span checks and confusion matrices."
 ---
 
 # Native Evaluators

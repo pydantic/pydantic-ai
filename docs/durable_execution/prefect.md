@@ -1,5 +1,5 @@
 ---
-description: "Make Pydantic AI agents durable with Prefect, caching model requests and tool calls as tasks so a failed flow resumes where it stopped instead of starting over."
+description: "Make Pydantic AI agents durable with Prefect, running model requests and tool calls as cached, retryable tasks in a flow you can deploy and run on a schedule."
 ---
 
 # Durable Execution with Prefect

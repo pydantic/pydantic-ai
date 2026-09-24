@@ -1,5 +1,5 @@
 ---
-description: "A browser voice agent example where audio goes to the provider over WebRTC while a Pydantic AI sideband on your server runs tools and keeps the API key private."
+description: "A Pydantic AI browser voice agent example: audio goes to OpenAI or Azure Realtime over WebRTC while a server sideband runs tools and keeps the API key private."
 ---
 
 This example is a browser voice agent where the **browser exchanges audio with the provider (OpenAI

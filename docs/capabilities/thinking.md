@@ -1,5 +1,5 @@
 ---
-description: "Enable model thinking and reasoning across providers with the Pydantic AI Thinking capability, using unified settings or each provider's own thinking options."
+description: "Enable thinking and reasoning effort in Pydantic AI with the Thinking capability, or use native settings for OpenAI, Anthropic, Google, Bedrock and more."
 ---
 
 # Thinking

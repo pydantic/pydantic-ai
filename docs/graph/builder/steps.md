@@ -1,5 +1,5 @@
 ---
-description: "Define steps, the async functions that are the units of work in a pydantic-graph workflow, receiving a StepContext and returning a value for the next node."
+description: "Define steps in a pydantic-graph workflow: async functions that read state, dependencies and inputs from StepContext, plus streaming steps that yield values."
 ---
 
 # Steps

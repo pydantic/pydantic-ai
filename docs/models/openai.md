@@ -1,5 +1,5 @@
 ---
-description: "Use OpenAI models with Pydantic AI through the Responses or Chat Completions API, or connect any OpenAI-compatible provider, with reasoning and native tools."
+description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, or any OpenAI-compatible API such as DeepSeek, Azure, vLLM or LiteLLM."
 ---
 
 # OpenAI

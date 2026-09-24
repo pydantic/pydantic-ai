@@ -1,5 +1,5 @@
 ---
-description: "Find third-party capabilities that extend Pydantic AI agents, next to the first-party options in Pydantic AI and the Harness, grouped by use case."
+description: "Find community capability packages for Pydantic AI, covering todos, context management, subagents, guardrails, sandboxing, Agent Skills, SQL analytics and RAG."
 ---
 
 # Third-Party Capabilities

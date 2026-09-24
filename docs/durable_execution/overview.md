@@ -1,5 +1,5 @@
 ---
-description: "Build durable Pydantic AI agents that survive failures and restarts and handle long-running and human-in-the-loop work, with Temporal, DBOS, Prefect and more."
+description: "Add durable execution to Pydantic AI agents so runs survive crashes, restarts and API failures, using Temporal, DBOS, Prefect, Restate or another engine."
 ---
 
 # Durable Execution

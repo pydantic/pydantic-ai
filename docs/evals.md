@@ -1,6 +1,6 @@
 ---
 title: Pydantic Evals
-description: "Test AI systems with Pydantic Evals: grade agent outputs and tool-call trajectories against datasets in code, or evaluate a sample of live production traffic."
+description: "Pydantic Evals is a code-first Python framework for evaluating LLM apps and agents: score outputs and tool-call trajectories on datasets or live traffic."
 ---
 
 # Pydantic Evals

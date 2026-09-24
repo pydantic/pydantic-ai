@@ -1,5 +1,5 @@
 ---
-description: "Pydantic AI is model-agnostic: see the built-in model providers, OpenAI-compatible providers, and how to use fallback models or implement your own model."
+description: "See every LLM provider Pydantic AI supports, how models, providers and profiles relate, and how to add fallback models, concurrency limits or a custom model."
 ---
 
 # Model Providers

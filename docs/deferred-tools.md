@@ -1,5 +1,5 @@
 ---
-description: "Pause a Pydantic AI agent run on tool calls that need human approval or external execution, then resume the run once the approvals or results are available."
+description: "Add human-in-the-loop tool approval to Pydantic AI agents, or hand tool calls to a frontend or background worker, and resume the run with the results."
 ---
 
 # Deferred Tools

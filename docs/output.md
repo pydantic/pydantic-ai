@@ -1,5 +1,5 @@
 ---
-description: "Get plain text, validated structured data, images or function call results from a Pydantic AI agent run, with output validators and streamed structured output."
+description: "Get structured output from Pydantic AI agents as validated Pydantic models or text, with tool, native or prompted output modes, validators and streaming."
 ---
 
 "Output" refers to the final value returned from [running an agent](agent.md#running-agents). This can be either plain text, [structured data](#structured-output), an [image](#image-output), or the result of a [function](#output-functions) called with arguments provided by the model.

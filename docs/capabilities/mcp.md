@@ -1,5 +1,5 @@
 ---
-description: "Connect a Pydantic AI agent to MCP servers with the MCP capability, which runs servers locally by default or uses the provider's native MCP support."
+description: "Connect a Pydantic AI agent to local or remote MCP servers with the MCP capability, calling tools from your own process or via provider-native MCP."
 ---
 
 # MCP

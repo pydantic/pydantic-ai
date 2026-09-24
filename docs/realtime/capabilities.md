@@ -1,5 +1,5 @@
 ---
-description: "Use Pydantic AI capabilities and hooks in a realtime voice session, and see how their lifecycle maps onto one persistent provider connection."
+description: "See which Pydantic AI capabilities and hooks run in a realtime voice session, which do not, and how tools and hooks reach the live session through RunContext."
 ---
 
 # Capabilities and hooks

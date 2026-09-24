@@ -1,5 +1,5 @@
 ---
-description: "Resolve deferred tool calls that need approval or external execution inline during a Pydantic AI run with the HandleDeferredToolCalls capability."
+description: "Approve or resolve deferred tool calls from a handler inside a Pydantic AI run with HandleDeferredToolCalls, so human-in-the-loop approval does not end the run."
 ---
 
 # Handle Deferred Tool Calls

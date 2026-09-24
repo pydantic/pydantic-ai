@@ -1,5 +1,5 @@
 ---
-description: "Use Google Gemini models with Pydantic AI through the Gemini API or Google Cloud, with multimodal input, image generation, thinking and model settings."
+description: "Use Google Gemini models with Pydantic AI through the Gemini API or Vertex AI, with video and file input, image generation, thinking and safety settings."
 ---
 
 # Google

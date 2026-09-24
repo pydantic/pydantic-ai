@@ -1,5 +1,5 @@
 ---
-description: "A Pydantic AI example of a data analyst agent that keeps query results in dependencies, so tools can share a DataFrame without sending every row to the model."
+description: "A Pydantic AI data analyst agent example that loads a Hugging Face dataset into pandas and queries it with DuckDB SQL, sharing DataFrames between tools in deps."
 ---
 
 # Data Analyst

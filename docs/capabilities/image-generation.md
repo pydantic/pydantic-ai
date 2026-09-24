@@ -1,6 +1,6 @@
 ---
 title: ImageGeneration Capability
-description: "Let an agent decide when to generate an image: the ImageGeneration capability prefers the model provider's native image tool and falls back to a dedicated image model."
+description: "Let a Pydantic AI agent generate images when it decides to, via the provider's native image tool or a fallback image model or image-capable subagent."
 ---
 
 # ImageGeneration Capability

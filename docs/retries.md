@@ -1,5 +1,5 @@
 ---
-description: "Understand the seven kinds of retry in a Pydantic AI agent run, from HTTP and model retries to tool and output validation retries, and what configures each."
+description: "Configure retries in Pydantic AI: HTTP transport retries for rate limits and 5xx errors, provider SDK retries, tool and output retries, and how they multiply."
 ---
 
 # Retries

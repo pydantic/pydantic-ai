@@ -1,5 +1,5 @@
 ---
-description: "Manage the persistent provider connection behind a Pydantic AI realtime session, and recover from drops and provider session limits with a reconnect policy."
+description: "Manage a Pydantic AI realtime session's connection: reconnect after drops and session limits, hang up on idle timeouts, and handle realtime errors."
 ---
 
 # Connection lifecycle

@@ -1,5 +1,5 @@
 ---
-description: "Use Amazon Bedrock models with Pydantic AI through the Bedrock Converse API or the OpenAI-compatible Mantle API, with AWS credentials and model settings."
+description: "Use Amazon Bedrock models like Claude, Nova and GPT-OSS with Pydantic AI via the Converse or Mantle API, with guardrails, prompt caching and inference profiles."
 ---
 
 # Bedrock

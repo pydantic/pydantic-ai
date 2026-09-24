@@ -1,5 +1,5 @@
 ---
-description: "Handle transient failures such as rate limits in Pydantic Evals tasks and evaluators with automatic retry configuration, so one flaky call does not fail a run."
+description: "Retry rate-limited or timed-out tasks and LLM judge evaluators in Pydantic Evals, with Tenacity stop conditions and exponential backoff passed to evaluate()."
 ---
 
 # Retry Strategies

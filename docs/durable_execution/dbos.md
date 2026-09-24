@@ -1,5 +1,5 @@
 ---
-description: "Make Pydantic AI agents durable with DBOS, checkpointing workflow state in a database so runs resume from the last completed step after a failure or restart."
+description: "Make Pydantic AI agents durable with DBOS, checkpointing model requests and MCP calls to Postgres or SQLite so a workflow resumes from its last completed step."
 ---
 
 # Durable Execution with DBOS

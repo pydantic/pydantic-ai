@@ -1,5 +1,5 @@
 ---
-description: "Bound how long each step of a Pydantic AI agent run may take, from model requests to tool calls, and end a run from inside a tool when you need to stop early."
+description: "Set timeouts in Pydantic AI for model requests, tool calls, hooks, MCP servers and realtime sessions, bound a whole run, and end a run early from inside a tool."
 ---
 
 # Timeouts

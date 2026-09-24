@@ -1,5 +1,5 @@
 ---
-description: "A Pydantic AI example of a medical triage agent that delegates to specialist agents, showing agent delegation, structured output types and tools."
+description: "A multi-agent Pydantic AI example where a medical triage agent delegates to specialist agents through tools and combines their structured reports."
 ---
 
 Medical triage and delegation system built with **Pydantic AI**, demonstrating how an orchestrator agent (`triage_agent`) coordinates multiple specialized agents (e.g. cardiology, neurology, and senior clinician).

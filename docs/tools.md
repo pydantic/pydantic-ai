@@ -1,5 +1,5 @@
 ---
-description: "Give a Pydantic AI agent function tools to take actions and fetch context, with arguments validated from type hints and docstrings used as tool descriptions."
+description: "Give a Pydantic AI agent function tools for LLM tool calling with @agent.tool, validating arguments from type hints and using docstrings as descriptions."
 ---
 
 # Function Tools

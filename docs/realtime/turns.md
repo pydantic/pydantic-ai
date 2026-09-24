@@ -1,5 +1,5 @@
 ---
-description: "Control turn-taking in Pydantic AI realtime voice sessions with voice activity detection, explicit interruption and manual turn control for push-to-talk apps."
+description: "Control turn-taking in Pydantic AI realtime voice agents: voice activity detection (VAD), barge-in when the user talks over the model, and push-to-talk."
 ---
 
 # Turns and interruptions

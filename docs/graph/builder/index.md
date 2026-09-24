@@ -1,5 +1,5 @@
 ---
-description: "Construct parallel execution graphs with the pydantic-graph builder API, which interoperates with the original BaseNode-based graph API from Pydantic AI."
+description: "Build typed workflow graphs with the pydantic-graph GraphBuilder API: async steps, conditional branching, parallel fan-out, joins and Mermaid diagrams."
 ---
 
 # Graph Builder API

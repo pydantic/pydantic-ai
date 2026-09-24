@@ -1,5 +1,5 @@
 ---
-description: "Build multi-agent applications with Pydantic AI, from agent delegation through tools and programmatic hand-off to graph-based control flow and deep agents."
+description: "Build multi-agent systems with Pydantic AI: delegate to sub-agents through tools, hand off between agents in your code, or orchestrate them with graphs."
 ---
 
 # Multi-agent Applications
