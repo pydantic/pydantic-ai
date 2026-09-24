@@ -706,7 +706,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     ),
     'Clear out the build directory.': ToolCallPart(tool_name='run_shell', args={'command': 'rm -rf ./build'}),
     "run_shell: {'command': 'rm -rf ./build'}": ToolCallPart(tool_name='final_result', args={'irreversible': True}),
-    'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(tool_name='reject_all', args={}),
+    'A cookie banner covers the page, with Accept all and Reject all.': ToolCallPart(
+        tool_name='final_result', args={'response': 'reject_all'}
+    ),
     'What does this repo do?': 'It is a provider-agnostic agent framework for Python.',
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
@@ -1048,8 +1050,8 @@ async def model_logic(  # noqa: C901
                     tool_name=_output_tool_named(info, 'Reply'),
                     args={
                         'body': (
-                            "Yes, login has been having problems since 09:12 UTC, and that's why your team can't sign in. "
-                            'Our engineers are rolling out a fix now, so please try again shortly.'
+                            "Yes, login has been having problems since 09:12 UTC and that's why your team can't sign in. "
+                            'A fix is rolling out now, so please try again shortly.'
                         )
                     },
                 )
@@ -1207,11 +1209,11 @@ async def model_logic(  # noqa: C901
         elif m.content == 'Fixed a bug in the parser.':
             # docs/models/decision.md: a rubric answer is a position along the levels, rounded to one
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'clarity': 1})],
+                parts=[ToolCallPart(tool_name='final_result', args={'clarity': 0})],
                 provider_details={
-                    'confidence': {'clarity': 0.62},
-                    'probabilities': {'clarity': {'0': 0.2, '1': 0.6, '2': 0.2}},
-                    'scores': {'clarity': 1.2},
+                    'confidence': {'clarity': 0.82},
+                    'probabilities': {'clarity': {'0': 0.88, '1': 0.12, '2': 0.0}},
+                    'scores': {'clarity': 0.12},
                 },
             )
         elif m.content == 'Thanks, that fixed it. Nothing else needed.':
@@ -1243,7 +1245,22 @@ async def model_logic(  # noqa: C901
         elif m.content == 'You have charged me twice and my account is now overdrawn. I need this reversed today.':
             # docs/models/decision.md: the prompt is the ticket, the questions are on the output type
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})]
+                parts=[ToolCallPart(tool_name='final_result', args={'urgent': True, 'area': 'billing'})],
+                provider_details={
+                    'confidence': {'area': 1.0, 'urgent': 0.8600000000000001},
+                    'probabilities': {'area': {'billing': 1.0, 'bug': 0.0, 'account': 0.0}},
+                    'scores': {},
+                },
+            )
+        elif m.content == 'The app on my Pixel logs me out every time I lock the screen.':
+            # docs/models/decision.md: a `Choices` set built at run time is a pick-one like any other
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 'mobile'})],
+                provider_details={
+                    'confidence': {'response': 0.73},
+                    'probabilities': {'response': {'payments': 0.0, 'mobile': 0.82, 'identity': 0.18}},
+                    'scores': {},
+                },
             )
         elif m.content == 'You charged me twice for the March invoice.':
             # docs/models/decision.md: the support desk picks the `Refund` route, then fills it
@@ -1273,10 +1290,10 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'area': 'bug', 'urgent': True, 'app': 'android'})],
                 provider_details={
-                    'confidence': {'area': 1.0, 'urgent': 0.46, 'app': 0.85},
+                    'confidence': {'area': 1.0, 'urgent': 0.24, 'app': 0.81},
                     'probabilities': {
-                        'area': {'billing': 0.0, 'bug': 1.0, 'account': 0.0},
-                        'app': {'web': 0.0, 'ios': 0.0, 'android': 0.92, 'none': 0.08},
+                        'area': {'account': 0.0, 'bug': 1.0, 'billing': 0.0},
+                        'app': {'android': 0.86, 'web': 0.0, 'ios': 0.0, 'none': 0.14},
                     },
                     'scores': {},
                 },

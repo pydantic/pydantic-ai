@@ -9,58 +9,6 @@
     onto Jev's questions**, and what the answers mean, with a [worked example](decision.md#a-support-desk-end-to-end)
     that combines them and escalates to a language model where Jev cannot answer.
 
-Give an agent an output type, and Jev answers every field of it in one request, each with its own confidence:
-
-```python {title="triage_with_jev.py"}
-from enum import Enum
-from typing import Annotated, Literal
-
-from pydantic import BaseModel, Field
-
-from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
-
-
-class Area(UseEnumMemberDocstrings, str, Enum):
-    """The team that owns the ticket."""
-
-    billing = 'billing'
-    """Charges, invoices, plans and payment methods."""
-
-    bug = 'bug'
-    """Part of the product does not work as it should."""
-
-    account = 'account'
-    """Logging in, access, and account settings."""
-
-
-class Ticket(BaseModel):
-    """Triage a support ticket."""
-
-    area: Area = Field(description='Which team owns this ticket?')
-    urgent: Annotated[
-        bool,
-        BoolCriteria(
-            true='The customer is losing money or has a deadline today.',
-            false='It can wait its turn in the queue.',
-        ),
-    ]
-    app: Literal['web', 'ios', 'android'] | None = Field(description='Which app is it about?')
-
-
-agent = Agent('typesafe:jev-latest', output_type=Ticket)
-result = agent.run_sync(
-    'The timeline on my Android phone has been blank since the update this morning, '
-    'and my standup is in ten minutes.'
-)
-print(result.output)
-#> area=<Area.bug: 'bug'> urgent=True app='android'
-assert result.response.provider_details is not None
-print(result.response.provider_details['confidence'])
-#> {'area': 1.0, 'urgent': 0.46, 'app': 0.85}
-```
-
-The prompt is only the ticket; the questions are on the output type, in its field descriptions, its `Enum` members' docstrings and the [`BoolCriteria`][pydantic_ai.output.BoolCriteria] saying what counts as urgent. Jev is sure of the team and the app, and much less sure the ticket is urgent, which is the answer to send to a person or to [a language model behind it](decision.md#falling-back-on-low-confidence). Every answer is a value of the type, so there is no text to parse and no answer outside the options.
-
 ## Install
 
 To use `TypeSafeModel`, install `pydantic-ai-slim` (or `pydantic-ai`) with the `typesafe` optional group:
@@ -77,7 +25,7 @@ To use Jev through the [TypeSafe](https://typesafe.ai) API, get an API key from 
 export TYPESAFE_API_KEY='your-api-key'
 ```
 
-You can then use `TypeSafeModel` by name, as `typesafe:jev-latest` in the example above, or initialise the model directly with just the model name:
+You can then use `TypeSafeModel` by name, as `typesafe:jev-latest`, or initialise the model directly with just the model name:
 
 ```python
 from pydantic_ai import Agent
@@ -105,6 +53,65 @@ print(result.output)
 
 [`ModelResponse.model_name`][pydantic_ai.messages.ModelResponse.model_name] reports the versioned id that answered, so a run logged against `jev-latest` still records which model produced it. Because `jev-latest` moves, a new release can shift the numbers under a [threshold](decision.md#confidence-and-thresholds) you have tuned; once you have tuned one, pin the version it was tuned against (`typesafe:jev-1.13.0`) and move deliberately.
 
+## Example
+
+Give an agent an output type, and Jev answers every field of it in one request, each with its own confidence:
+
+```python {title="triage_with_jev.py"}
+from enum import Enum
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
+
+
+class Area(UseEnumMemberDocstrings, str, Enum):
+    billing = 'billing'
+    """Charges, invoices, plans and payment methods."""
+
+    bug = 'bug'
+    """Part of the product does not work as it should."""
+
+    account = 'account'
+    """Logging in, access, and account settings."""
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
+    area: Area
+    """Which team owns this ticket?"""
+
+    urgent: Annotated[
+        bool,
+        BoolCriteria(
+            true='The customer is losing money or has a deadline today.',
+            false='It can wait its turn in the queue.',
+        ),
+    ]
+    """Should this ticket jump the queue?"""
+
+    app: Literal['web', 'ios', 'android'] | None
+    """Which app is it about?"""
+
+
+agent = Agent('typesafe:jev-latest', output_type=Ticket)
+result = agent.run_sync(
+    'The timeline on my Android phone has been blank since the update this morning, '
+    'and my standup is in ten minutes.'
+)
+print(result.output)
+#> area=<Area.bug: 'bug'> urgent=True app='android'
+assert result.response.provider_details is not None
+print(result.response.provider_details['confidence'])
+#> {'area': 1.0, 'urgent': 0.24, 'app': 0.81}
+```
+
+The prompt is only the ticket; the questions are on the output type: its docstring is the goal, the docstring under each field is that field's question, and the `Enum` members' docstrings and the [`BoolCriteria`][pydantic_ai.output.BoolCriteria] say what each answer means. Jev is sure of the team and the app, and much less sure the ticket is urgent, which is the answer to send to a person or to [a language model behind it](decision.md#falling-back-on-low-confidence). Every answer is a value of the type, so there is no text to parse and no answer outside the options.
+
 ## Costs and limits {#limits}
 
 Jev answers the questions in one request in parallel, so asking several costs little more than asking one: a field you only need on some inputs costs tokens rather than time.
@@ -131,53 +138,6 @@ Everything below returns an answer rather than an error, which is what makes it 
 
 !!! note "Measure on your own data"
     Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.
-
-## Asking Jev directly
-
-An `output_type` is the question in almost every case, and it is what makes the same agent run on a language model later. One thing it cannot carry is a state that is a record rather than prose.
-
-The TypeSafe SDK client is on the model for that, configured with the same API key, base URL and HTTP client:
-
-```python {title="ask_jev_directly.py"}
-from typesafe_sdk import Choice, JSONValue, Noul, NoulAnswer, NoulCriteria
-
-from pydantic_ai.models.typesafe import TypeSafeModel
-
-model = TypeSafeModel('jev-latest')
-
-
-async def judge_order(order: dict[str, JSONValue]) -> float:
-    response = await model.client.system_one(
-        {'order': order, 'policy': 'Refunds are allowed within 30 days.'},
-        {
-            'refundable': Noul(
-                instructions='The order can still be refunded under the policy.',
-                criteria=NoulCriteria(
-                    true='The order is inside the refund window.',
-                    false='The order is outside it, or was refunded already.',
-                ),
-            ),
-            'risk': Choice(
-                instructions='How risky is refunding anyway?',
-                criteria={'low': None, 'high': 'The customer has prior chargebacks.'},
-            ),
-        },
-        model=model.model_name,
-    )
-    refundable = response.answers['refundable']
-    assert isinstance(refundable, NoulAnswer)
-    return refundable.noul
-```
-
-This is the one example on this page that is not run by the documentation tests: the call never reaches a
-[`Model`][pydantic_ai.models.Model], so there is nothing for the test suite to stand in for, and running it needs
-a TypeSafe API key.
-
-Pass `model=` yourself. The client does not know which model the `TypeSafeModel` around it was built with, so without it the SDK falls back to its own default, which `TYPESAFE_DEFAULT_MODEL` can change underneath you.
-
-Nothing else in Pydantic AI sees a call made this way: no agent run, no message history, no usage on a run's total, no fallback to another model, and the span the rest of an agent's work appears under is not opened. It is the escape hatch, not the main road. Reach for it when the question genuinely will not fit an output type, and go back to an `output_type` as soon as it will. Spelling out what counts as a yes and what counts as a no fits one: that is what [`BoolCriteria`](decision.md#what-each-field-type-does) is for.
-
-Passing a record as a mapping rather than as text is a convenience, not an accuracy setting. Jev reads a rendered sentence at least as well as the object it came from, so there is no need to restructure a prompt to get at this.
 
 ## `provider` argument
 
