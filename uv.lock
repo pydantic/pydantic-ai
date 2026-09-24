@@ -22,19 +22,19 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+openai = "2026-09-23T00:08:49Z"
 listentome = false
-typesafe-sdk = false
 logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
+google-genai = "2026-09-22T17:23:02Z"
 anthropic = "2026-09-22T16:25:39Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
-openai = "2026-09-23T00:08:49Z"
+pydantic-ai-harness = false
 logfire-api = false
-google-genai = "2026-09-22T17:23:02Z"
 
 [manifest]
 members = [
