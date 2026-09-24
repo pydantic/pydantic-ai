@@ -2477,6 +2477,48 @@ class TestPublicPath:
         assert summary_conversations == {'conversation-1'}
 
     @pytest.mark.anyio
+    async def test_summarization_capabilities_run_on_the_summary_run(self):
+        @dataclasses.dataclass
+        class RecordModels(AbstractCapability[None]):
+            models: list[str | None] = dataclasses.field(default_factory=list[str | None])
+
+            async def after_model_request(
+                self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+            ) -> ModelResponse:
+                self.models.append(response.model_name)
+                return response
+
+        outer, summary = RecordModels(), RecordModels()
+        summarizer = FunctionModel(
+            lambda _messages, _info: ModelResponse(parts=[TextPart(content='the summary')]),
+            model_name='summarizer',
+        )
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            TestModel(),
+            deps_type=type(None),
+            capabilities=[
+                outer,
+                SummarizingCompaction(
+                    summarizer,
+                    max_messages=4,
+                    keep_messages=1,
+                    preserve_first_user_message=False,
+                    summarization_capabilities=[summary],
+                ),
+            ],
+        )
+
+        await agent.run('next', message_history=history)
+
+        # The summary run's own requests reach the capability attached to it, and only those:
+        # the outer agent's capabilities never see a request made by a separate `Agent`.
+        assert summary.models == ['summarizer']
+        assert outer.models == ['test']
+
+    @pytest.mark.anyio
     async def test_capabilities_wired_into_agent(self):
 
         agent = Agent(

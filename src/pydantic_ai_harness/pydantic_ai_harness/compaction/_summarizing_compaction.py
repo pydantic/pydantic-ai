@@ -328,6 +328,15 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     `RunContext`, never the outer run's, and the outer `Agent.run(...)` handler is not inherited.
     """
 
+    summarization_capabilities: Sequence[AbstractCapability[None]] = field(default=(), kw_only=True)
+    """Capabilities attached to the agent that writes the summary.
+
+    The summary runs on its own `Agent`, so capabilities on the outer agent do not run on it.
+    Capabilities listed here do, with every hook of that run.
+
+    The summary agent has no `deps`, so these are `AbstractCapability[None]`.
+    """
+
     max_messages: int | None = None
     """Trigger compaction when message count exceeds this value."""
 
@@ -696,8 +705,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         agent: Agent[None, str] = Agent(
             cast('Model[Any] | str', model),
             name='summarizing_compaction',
+            deps_type=type(None),
             instructions=self.instructions,
             model_settings=self.model_settings,
+            capabilities=list(self.summarization_capabilities),
         )
         result = await agent.run(
             prompt,
