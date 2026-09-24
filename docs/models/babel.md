@@ -46,13 +46,14 @@ agent = Agent(model)
 - Provider-specific model settings, such as `anthropic_cache_instructions` or `openai_continuous_usage_stats`, are applied as they are by the parent model.
 - Prompt-cache breakpoints (`CachePoint`) and the Anthropic 4-breakpoint limit behave as in [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel].
 - A `ThinkingPart` replays its signature only to the provider that produced it, so a history that moves between providers never sends one provider's signature to another.
-- Media URLs a provider cannot fetch itself (audio and documents for OpenAI, everything for Google and Bedrock, and any `FileUrl` with `force_download` set) are downloaded and inlined, with the same SSRF protection as the parent models.
+- `provider_details`, `finish_reason` and the response `state` are read from the raw response the way the parent model reads them: the raw finish reason, and per provider the refusal, safety ratings, blocked-prompt feedback, logprobs, moderation, service tier, guardrail trace, container id and input transformations. Inline files a model returns become `FilePart`s.
+- Model profile flags the parents apply to a stream, such as `ignore_streamed_leading_whitespace` and `openai_chat_streaming_requires_finish_reason`, apply the same way.
+- Media URLs a provider cannot fetch itself (audio and documents for OpenAI, everything for Google, everything but `s3://` objects for Bedrock, and any `FileUrl` with `force_download` set) are downloaded and inlined, with the same SSRF protection as the parent models.
 
 ## Limitations
 
 - Server-side (native) tool calls and results are replayed only to the provider that produced them; the babel models do not yet map grounding sources or file outputs.
 - Deferred tools, tool search and capability-loading parts are not supported and raise a `UserError`.
-- Response metadata beyond the model name, response id and finish reason is not carried into `provider_details`, except for OpenAI's raw finish reason and timestamp, and Anthropic's raw finish reason, refusal details, container id and input transformations, which the native model's next request depends on.
 - Gemini's per-file `media_resolution` and `video_metadata` from a file's `vendor_metadata` are not sent; only OpenAI's image `detail` is carried.
 - Every `SystemPromptPart` in the history is sent as the request-level system prompt, as the Anthropic, Google and Bedrock models do; a system message placed later in a hand-built history is not kept in place for OpenAI as `OpenAIChatModel` keeps it.
 

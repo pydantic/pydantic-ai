@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timezone
+from datetime import timezone
 from typing import Any, cast, get_args
 from unittest.mock import AsyncMock
 
@@ -12,6 +12,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     DocumentUrl,
     ImageUrl,
     ModelRequest,
@@ -343,9 +344,7 @@ def test_ir_to_model_response_openai():
     assert response.model_name == 'gpt-4o'
     assert response.finish_reason == 'tool_call'
     assert response.provider_response_id == 'resp_42'
-    assert response.provider_details == snapshot(
-        {'finish_reason': 'tool_calls', 'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc)}
-    )
+    assert response.provider_details == snapshot(None)
 
 
 def test_ir_to_model_response_fallbacks():
@@ -413,7 +412,7 @@ def test_ir_to_model_response_anthropic_usage_and_signatures():
             ThinkingPart(content='because', signature='S', provider_name='anthropic'),
             ThinkingPart(content='', id='redacted_thinking', signature='ENC==', provider_name='anthropic'),
             CompactionPart(content='## summary', provider_name='anthropic'),
-            NativeToolCallPart(tool_name='web_search', args='{"q":"x"}', tool_call_id='s1', provider_name='anthropic'),
+            NativeToolCallPart(tool_name='web_search', args={'q': 'x'}, tool_call_id='s1', provider_name='anthropic'),
             NativeToolReturnPart(
                 tool_name='web_search',
                 content=[{'url': 'u'}],
@@ -659,3 +658,96 @@ def test_gemini_rest_to_sdk():
         }
     )
     assert gemini_rest_to_sdk('scalar') == 'scalar'
+
+
+def test_finish_reason_map_gives_the_raw_reasons_their_native_meaning():
+    assert _FINISH_REASON['refusal'] == 'content_filter'
+    assert _FINISH_REASON['malformed_tool_use'] == 'error'
+
+
+def test_ir_to_model_response_keeps_structured_args_as_dicts():
+    ir = _response_ir()
+    for fmt in ('anthropic-messages', 'gemini', 'bedrock-converse'):
+        response = ir_to_model_response(ir, fmt=fmt, provider_name='p', provider_url='u')
+        assert response.parts[-1] == ToolCallPart(tool_name='g', args={'x': 2}, tool_call_id='c9')
+
+
+def test_ir_to_model_response_takes_details_finish_reason_and_state():
+    response = ir_to_model_response(
+        _response_ir(),
+        fmt='openai-chat',
+        provider_name='o',
+        provider_url='u',
+        provider_details={'finish_reason': 'stop', 'service_tier': 'flex'},
+        finish_reason='error',
+        state='suspended',
+    )
+    assert response.provider_details == {'finish_reason': 'stop', 'service_tier': 'flex'}
+    assert response.finish_reason == 'error'
+    assert response.state == 'suspended'
+    # An explicit `None` finish reason is kept too; only an unset one falls back to babel's stop reason.
+    assert (
+        ir_to_model_response(_response_ir(), fmt='openai-chat', provider_name='o', provider_url='u', finish_reason=None)
+    ).finish_reason is None
+
+
+def test_ir_to_model_response_without_candidates():
+    response = ir_to_model_response({'candidates': []}, fmt='gemini', provider_name='google', provider_url='u')
+    assert response.parts == []
+    assert response.finish_reason is None
+    assert response.usage == RequestUsage()
+
+
+def test_ir_to_model_response_inline_file_parts():
+    ir = _response_ir()
+    ir['candidates'][0]['content'] = [
+        {'kind': 'file', 'source': 'base64', 'media_type': 'image/png', 'data': 'iVBORw=='},
+        {'kind': 'file', 'source': 'base64', 'data': 'AAEC'},
+        {'kind': 'file', 'source': 'url', 'media_type': 'image/png', 'data': 'https://x/y.png'},
+    ]
+    response = ir_to_model_response(ir, fmt='gemini', provider_name='google', provider_url='u')
+    assert response.parts == snapshot(
+        [
+            FilePart(content=BinaryImage(data=b'\x89PNG', media_type='image/png')),
+            FilePart(content=BinaryContent(data=b'\x00\x01\x02', media_type='application/octet-stream')),
+        ]
+    )
+
+
+def test_fold_stream_emits_file_and_finish_reason_fallback():
+    parts_manager = ModelResponsePartsManager(ModelRequestParameters())
+    response = _streamed_response()
+    response.finish_reason = 'length'
+    events = list(
+        fold_stream_emits(
+            [
+                {'kind': 'file', 'source': 'base64', 'media_type': 'image/png', 'data': 'iVBORw=='},
+                {'kind': 'file', 'source': 'url', 'media_type': 'image/png', 'data': 'https://x/y.png'},
+                {'kind': 'meta', 'stop_reason': 'end_turn'},
+            ],
+            parts_manager,
+            response,
+        )
+    )
+    assert [type(event) for event in events] == [PartStartEvent]
+    assert parts_manager.get_parts() == [FilePart(content=BinaryImage(data=b'\x89PNG', media_type='image/png'))]
+    # The caller mapped the finish reason from the raw event; the meta emit does not replace it.
+    assert response.finish_reason == 'length'
+
+
+def test_fold_stream_emits_ignores_leading_whitespace_when_asked():
+    parts_manager = ModelResponsePartsManager(ModelRequestParameters())
+    emits: list[dict[str, Any]] = [{'kind': 'text', 'text': '\n\n'}, {'kind': 'text', 'text': 'Paris'}]
+    events = list(fold_stream_emits(emits, parts_manager, _streamed_response(), ignore_leading_whitespace=True))
+    assert [type(event) for event in events] == [PartStartEvent]
+    assert parts_manager.get_parts() == [TextPart(content='Paris')]
+
+
+async def test_download_url_media_passes_through_schemes_the_wire_takes(mocker: Any):
+    download = mocker.patch('pydantic_ai.models.babel._adapters.download_item', AsyncMock())
+    request = ModelRequest(
+        parts=[UserPromptPart(content=[ImageUrl(url='s3://bucket/a.png', force_download=True)])],
+    )
+    messages = await download_url_media([request], frozenset(), passthrough_schemes=frozenset({'s3'}))
+    assert messages[0] is request
+    assert download.await_count == 0

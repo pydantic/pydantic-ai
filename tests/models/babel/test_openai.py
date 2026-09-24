@@ -8,12 +8,12 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AudioUrl, ModelRequest, TextPart, ToolCallPart
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import FinalResultEvent, PartDeltaEvent, PartEndEvent, PartStartEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
-from ...conftest import try_import
+from ...conftest import IsNow, try_import
 from ..mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -38,17 +38,58 @@ pytestmark = [
 ]
 
 
-def completion(message: dict[str, Any], finish_reason: str) -> chat.ChatCompletion:
+def completion(
+    message: dict[str, Any], finish_reason: str | None, choice: dict[str, Any] | None = None, **extra: Any
+) -> chat.ChatCompletion:
     return chat.ChatCompletion.model_validate(
         {
             'id': 'chatcmpl-1',
             'object': 'chat.completion',
             'created': 1704067200,
             'model': 'gpt-4o-123',
-            'choices': [{'index': 0, 'finish_reason': finish_reason, 'message': {'role': 'assistant', **message}}],
+            'choices': [
+                {
+                    'index': 0,
+                    'finish_reason': finish_reason,
+                    'message': {'role': 'assistant', **message},
+                    **(choice or {}),
+                }
+            ],
             'usage': {'prompt_tokens': 20, 'completion_tokens': 8, 'total_tokens': 28},
+            **extra,
         }
     )
+
+
+def raw_chunk(choices: list[dict[str, Any]], **extra: Any) -> chat.ChatCompletionChunk:
+    return chat.ChatCompletionChunk.model_validate(
+        {
+            'id': 'chunk-1',
+            'object': 'chat.completion.chunk',
+            'created': 1704067200,
+            'model': 'gpt-4o-123',
+            'choices': choices,
+            **extra,
+        }
+    )
+
+
+_MODERATION_RESULTS = {
+    'model': 'omni-moderation-latest',
+    'type': 'moderation_results',
+    'results': [
+        {
+            'categories': {'harassment': False},
+            'category_applied_input_types': {'harassment': ['text']},
+            'category_scores': {'harassment': 0.01},
+            'flagged': False,
+            'model': 'omni-moderation-latest',
+            'type': 'moderation_result',
+        }
+    ],
+}
+MODERATION = {'input': _MODERATION_RESULTS, 'output': _MODERATION_RESULTS}
+LOGPROBS = {'content': [{'token': 'hi', 'logprob': -0.5, 'bytes': [104, 105], 'top_logprobs': []}]}
 
 
 def chunk(
@@ -131,11 +172,53 @@ async def test_tool_loop(allow_model_requests: None):
     )
 
 
-async def test_plain_text_response_body(allow_model_requests: None):
+async def test_plain_text_response_body_is_rejected(allow_model_requests: None):
+    # The SDK hands a non-JSON body back as a string; the native model rejects it the same way.
     model = make_model(MockOpenAI.create_mock(completion({'content': 'hi'}, 'stop')))
-    body = completion({'content': 'from a string body'}, 'stop').model_dump_json()
-    response = model._process_response(body)  # pyright: ignore[reportPrivateUsage]
-    assert response.parts == [TextPart(content='from a string body')]
+    with pytest.raises(UnexpectedModelBehavior, match='expected JSON data'):
+        model._process_response('<html>')  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_invalid_completion_is_rejected(allow_model_requests: None):
+    model = make_model(MockOpenAI.create_mock(completion({'content': 'hi'}, 'stop')))
+    broken = chat.ChatCompletion.model_construct(
+        id='1', object='chat.completion', created=1, model='m', choices=[{'index': 0}]
+    )
+    with pytest.raises(UnexpectedModelBehavior, match='validation error'):
+        model._process_response(broken)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_response_details_are_read_from_the_raw_completion(allow_model_requests: None):
+    model = make_model(MockOpenAI.create_mock(completion({'content': 'hi'}, 'stop')))
+    raw = completion(
+        {'content': 'hi'}, 'stop', choice={'logprobs': LOGPROBS}, moderation=MODERATION, service_tier='flex'
+    )
+    # The SDK does not validate what it returns: local Ollama sends no finish reason, and some proxies no timestamp.
+    raw.choices[0].finish_reason = None  # type: ignore[assignment]
+    raw.created = 0
+    response = model._process_response(raw)  # pyright: ignore[reportPrivateUsage]
+    # A missing finish reason (local Ollama) reads as `stop`, and a missing timestamp as now.
+    assert response.finish_reason == 'stop'
+    assert response.provider_details == snapshot(
+        {
+            'logprobs': [{'token': 'hi', 'logprob': -0.5, 'bytes': [104, 105], 'top_logprobs': []}],
+            'finish_reason': 'stop',
+            'moderation': MODERATION,
+            'service_tier': 'flex',
+            'timestamp': IsNow(tz=timezone.utc),
+        }
+    )
+
+
+async def test_refusal_has_no_parts_and_a_content_filter(allow_model_requests: None):
+    model = make_model(MockOpenAI.create_mock(completion({'content': 'hi'}, 'stop')))
+    response = model._process_response(completion({'content': None, 'refusal': 'no'}, 'stop'))  # pyright: ignore[reportPrivateUsage]
+    assert response.parts == []
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == snapshot(
+        {'refusal': 'no', 'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc)}
+    )
+    assert response.provider_response_id == 'chatcmpl-1'
 
 
 async def test_system_prompt_profile(allow_model_requests: None):
@@ -258,3 +341,74 @@ async def test_stream_continuous_usage_stats(allow_model_requests: None):
     # Each chunk reports the cumulative total, so the last one is the total.
     assert response.usage == snapshot(RequestUsage(input_tokens=2, output_tokens=1))
     assert response.get().parts == [TextPart(content='ab')]
+
+
+async def test_stream_details_are_read_from_the_raw_chunks(allow_model_requests: None):
+    stream = [
+        raw_chunk([], moderation=MODERATION, service_tier='flex'),
+        raw_chunk([{'index': 0, 'delta': {'role': 'assistant', 'content': 'hi'}, 'logprobs': LOGPROBS}]),
+        raw_chunk([{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]),
+    ]
+    model = make_model(MockOpenAI.create_mock_stream(stream))
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as response:
+        _ = [event async for event in response]
+    assert response.get().parts == [TextPart(content='hi')]
+    assert response.finish_reason == 'stop'
+    assert response.provider_details == snapshot(
+        {
+            'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc),
+            'moderation': MODERATION,
+            'service_tier': 'flex',
+            'finish_reason': 'stop',
+            'logprobs': [{'token': 'hi', 'logprob': -0.5, 'bytes': [104, 105], 'top_logprobs': []}],
+        }
+    )
+
+
+async def test_stream_refusal(allow_model_requests: None):
+    stream = [
+        raw_chunk([{'index': 0, 'delta': {'role': 'assistant', 'refusal': 'no '}}]),
+        raw_chunk([{'index': 0, 'delta': {'refusal': 'way'}}]),
+        # The finish reason that follows a refusal is not recorded: the content filter is.
+        raw_chunk([{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]),
+        # Azure's asynchronous content filter can send a choice with no delta at all.
+        chat.ChatCompletionChunk.model_construct(
+            id='chunk-2',
+            object='chat.completion.chunk',
+            created=1704067200,
+            model='gpt-4o-123',
+            choices=[ChunkChoice.model_construct(index=0, delta=None, finish_reason=None)],
+        ),
+    ]
+    model = make_model(MockOpenAI.create_mock_stream(stream))
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as response:
+        _ = [event async for event in response]
+    assert response.get().parts == []
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == snapshot(
+        {'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc), 'refusal': 'no way'}
+    )
+
+
+async def test_stream_without_finish_reason_when_the_profile_requires_one(allow_model_requests: None):
+    stream = [raw_chunk([{'index': 0, 'delta': {'role': 'assistant', 'content': 'hi'}}])]
+    profile = OpenAIModelProfile(openai_chat_streaming_requires_finish_reason=True)
+    model = make_model(MockOpenAI.create_mock_stream(stream), profile=profile)
+    with pytest.raises(ModelAPIError, match='without a `finish_reason`'):
+        async with model.request_stream(
+            [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
+        ) as response:
+            _ = [event async for event in response]
+
+
+async def test_stream_ignores_leading_whitespace_when_the_profile_says_so(allow_model_requests: None):
+    stream = [
+        raw_chunk([{'index': 0, 'delta': {'role': 'assistant', 'content': '\n\n'}}]),
+        raw_chunk([{'index': 0, 'delta': {'content': 'Paris'}}]),
+        raw_chunk([{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]),
+    ]
+    profile = OpenAIModelProfile(ignore_streamed_leading_whitespace=True)
+    model = make_model(MockOpenAI.create_mock_stream(stream), profile=profile)
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as response:
+        _ = [event async for event in response]
+    assert response.get().parts == [TextPart(content='Paris')]

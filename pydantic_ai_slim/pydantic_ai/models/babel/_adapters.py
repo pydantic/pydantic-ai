@@ -8,11 +8,12 @@ compiled transform; this module only crosses the boundary in both directions.
 
 from __future__ import annotations as _annotations
 
+import base64
 import dataclasses
 import re
 from collections.abc import Callable, Iterator, Sequence
-from datetime import datetime, timezone
 from typing import Any, Literal, TypeAlias, TypeVar, cast
+from urllib.parse import urlparse
 
 from llm_transform import ir_build
 from llm_transform.ir_types import IRRequestDict, MessageDict, PartDict, TextPartDict
@@ -36,6 +37,7 @@ from ...messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     MultiModalContent,
     NativeToolCallPart,
@@ -100,27 +102,19 @@ _RESPONSE_ID_FIELD: dict[BabelFormat, str] = {
     'gemini': 'responseId',
 }
 
-# babel `StopReason` -> Pydantic AI `FinishReason`. Exhaustive over babel's `StopReason` literal,
-# which `tests/models/babel/test_adapters.py` pins.
+# babel `StopReason` -> Pydantic AI `FinishReason`, with the meanings the native models give the raw
+# stop reasons (a refusal is a content filter, a malformed tool call is an error). Exhaustive over
+# babel's `StopReason` literal, which `tests/models/babel/test_adapters.py` pins.
 _FINISH_REASON: dict[str, FinishReason | None] = {
     'end_turn': 'stop',
     'max_tokens': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
     'content_filter': 'content_filter',
-    'refusal': 'stop',
-    'malformed_tool_use': 'tool_call',
+    'refusal': 'content_filter',
+    'malformed_tool_use': 'error',
     'context_window_exceeded': 'length',
     'other': None,
-}
-
-# babel `StopReason` -> the raw OpenAI `finish_reason` the native model records in `provider_details`.
-_OPENAI_RAW_FINISH_REASON: dict[str, str] = {
-    'end_turn': 'stop',
-    'max_tokens': 'length',
-    'tool_use': 'tool_calls',
-    'content_filter': 'content_filter',
-    'refusal': 'stop',
 }
 
 _CAMEL_CASE_BOUNDARY = re.compile(r'([A-Z])')
@@ -330,14 +324,17 @@ def ir_to_model_response(
     usage: RequestUsage | None = None,
     model_name: str | None = None,
     provider_response_id: str | None = None,
+    provider_details: dict[str, Any] | None = None,
+    finish_reason: FinishReason | None | _utils.Unset = _utils.UNSET,
+    state: ModelResponseState = 'complete',
 ) -> ModelResponse:
     """Read a decoded babel IR response into a `ModelResponse`.
 
-    Text, reasoning and tool-call parts of the first candidate are mapped; a reasoning part's replay
-    signature is read from `fmt`'s `provider_ext` bucket and the resulting `ThinkingPart` is tagged
-    with `provider_name`, so it replays through `messages_to_ir` under the same namespace.
-    Provider-executed tool calls and results become native tool parts. Grounding sources are not
-    carried.
+    Text, reasoning, tool-call and inline file parts of the first candidate are mapped; a reasoning
+    part's replay signature is read from `fmt`'s `provider_ext` bucket and the resulting
+    `ThinkingPart` is tagged with `provider_name`, so it replays through `messages_to_ir` under the
+    same namespace. Provider-executed tool calls and results become native tool parts. Grounding
+    sources are not carried. A response without candidates (a blocked prompt) has no parts.
 
     Args:
         ir: The IR response from `llm_transform.registry.decode_response`.
@@ -348,9 +345,15 @@ def ir_to_model_response(
             cache reads and writes folded into `input_tokens` to match `RequestUsage`'s inclusive counts.
         model_name: The model name to record when the response body carries none, as Bedrock's does not.
         provider_response_id: The response id when it is not in the body, as Bedrock's is not.
+        provider_details: The provider details to record. The babel models read them from the raw
+            response the way the native models do; the IR is not consulted.
+        finish_reason: The finish reason when the caller maps it from the raw stop reason, as the
+            babel models do for parity with the native models. Defaults to babel's stop reason.
+        state: The response state, `suspended` for a paused server-side turn.
     """
-    candidate: IR = ir['candidates'][0]
-    content: list[IR] = candidate['content']
+    candidates: list[IR] = ir.get('candidates') or []
+    candidate: IR | None = candidates[0] if candidates else None
+    content: list[IR] = candidate['content'] if candidate else []
     parts: list[ModelResponsePart] = []
     for part in content:
         kind = part['kind']
@@ -374,7 +377,7 @@ def ir_to_model_response(
                 parts.append(
                     NativeToolCallPart(
                         tool_name=part['name'],
-                        args=_tool_args(part['input']),
+                        args=_tool_args(part['input'], fmt),
                         tool_call_id=part.get('id') or '',
                         provider_name=provider_name,
                     )
@@ -382,7 +385,7 @@ def ir_to_model_response(
             else:
                 parts.append(
                     ToolCallPart(
-                        tool_name=part['name'], args=_tool_args(part['input']), tool_call_id=part.get('id') or ''
+                        tool_name=part['name'], args=_tool_args(part['input'], fmt), tool_call_id=part.get('id') or ''
                     )
                 )
         elif kind == 'tool_result' and part.get('provider_executed'):
@@ -394,8 +397,12 @@ def ir_to_model_response(
                     provider_name=provider_name,
                 )
             )
+        elif kind == 'file' and part.get('source') == 'base64':
+            parts.append(_file_ir_to_part(part))
     response_provider_ext: dict[str, Any] = ir.get('provider_ext') or {}
     response_ext: dict[str, Any] = response_provider_ext.get(fmt) or {}
+    if isinstance(finish_reason, _utils.Unset):
+        finish_reason = _FINISH_REASON.get(candidate.get('stop_reason', 'other')) if candidate else None
     return ModelResponse(
         parts=parts,
         usage=usage if usage is not None else _ir_usage(ir, fmt),
@@ -403,8 +410,9 @@ def ir_to_model_response(
         provider_name=provider_name,
         provider_url=provider_url,
         provider_response_id=provider_response_id or response_ext.get(_RESPONSE_ID_FIELD.get(fmt, '')),
-        provider_details=_openai_provider_details(candidate, response_ext) if fmt == 'openai-chat' else None,
-        finish_reason=_FINISH_REASON.get(candidate['stop_reason']),
+        provider_details=provider_details,
+        finish_reason=finish_reason,
+        state=state,
     )
 
 
@@ -416,8 +424,25 @@ def _text_ir_to_part(part: IR, provider_name: str) -> TextPart | CompactionPart:
     return TextPart(content=part['text'])
 
 
-def _tool_args(value: Any) -> Any:
-    """Serialize decoded tool-call arguments to the string form a `ToolCallPart` carries.
+def _file_ir_to_part(part: IR) -> FilePart:
+    """An inline (base64) file the model produced, as the native models return one."""
+    content = BinaryContent(
+        data=base64.b64decode(part['data']), media_type=part.get('media_type') or 'application/octet-stream'
+    )
+    return FilePart(content=BinaryContent.narrow_type(content))
+
+
+def _tool_args(value: Any, fmt: BabelFormat) -> Any:
+    """The `ToolCallPart.args` form the native model for `fmt` keeps.
+
+    The Chat Completions wire carries arguments as a JSON string and `OpenAIChatModel` keeps that
+    string; the other wires carry an object and their models keep the dict.
+    """
+    return _tool_args_json(value) if fmt == 'openai-chat' else value
+
+
+def _tool_args_json(value: Any) -> Any:
+    """Serialize decoded tool-call arguments to a JSON string.
 
     Decoded IR keeps JSON numbers as byte-faithful tokens the standard library cannot dump, so babel's
     `canonical_json` serializes them, matching how the native models forward the wire's argument string.
@@ -440,18 +465,6 @@ def _ir_usage(ir: IR, fmt: BabelFormat) -> RequestUsage:
     )
 
 
-def _openai_provider_details(candidate: IR, response_ext: dict[str, Any]) -> dict[str, Any] | None:
-    """Rebuild the `provider_details` the native OpenAI model records: the raw `finish_reason` and the `created` timestamp."""
-    provider_details: dict[str, Any] = {}
-    raw_finish_reason = _OPENAI_RAW_FINISH_REASON.get(candidate['stop_reason'])
-    if raw_finish_reason is not None:
-        provider_details['finish_reason'] = raw_finish_reason
-    created = response_ext.get('created')
-    if created is not None:
-        provider_details['timestamp'] = datetime.fromtimestamp(int(created), tz=timezone.utc)
-    return provider_details or None
-
-
 def fold_stream_emits(
     emits: Sequence[IR],
     parts_manager: ModelResponsePartsManager,
@@ -459,19 +472,25 @@ def fold_stream_emits(
     *,
     provider_name: str | None = None,
     on_usage: Callable[[IR], None] | None = None,
+    ignore_leading_whitespace: bool = False,
 ) -> Iterator[ModelResponseStreamEvent]:
     """Route the emits of one babel `stream_step` into the parts manager, yielding the resulting events.
 
     Text and reasoning deltas stream through the parts manager under fixed vendor part ids. A
     `tool_call_start` opens the tool-call part with its name; the later `tool_call` fills in the
     complete arguments, so a streamed tool call arrives as a start event and one argument delta.
-    A `meta` emit sets the response's finish reason; a `usage` emit is handed to `on_usage`, since
-    accumulating usage across chunks is the caller's job.
+    An inline `file` emit becomes a file part. A `meta` emit sets the response's finish reason
+    unless the caller already set one from the raw event; a `usage` emit is handed to `on_usage`,
+    since accumulating usage across chunks is the caller's job. `ignore_leading_whitespace` is the
+    model profile's `ignore_streamed_leading_whitespace`, applied to text deltas as the native
+    models apply it.
     """
     for emit in emits:
         kind = emit['kind']
         if kind == 'text':
-            yield from parts_manager.handle_text_delta(vendor_part_id='content', content=emit['text'])
+            yield from parts_manager.handle_text_delta(
+                vendor_part_id='content', content=emit['text'], ignore_leading_whitespace=ignore_leading_whitespace
+            )
         elif kind == 'reasoning':
             yield from parts_manager.handle_thinking_delta(
                 vendor_part_id='thinking',
@@ -485,51 +504,66 @@ def fold_stream_emits(
             event = parts_manager.handle_tool_call_delta(
                 vendor_part_id=emit.get('id') or emit['name'],
                 tool_name=emit['name'] if kind == 'tool_call_start' else None,
-                args=_tool_args(emit['input']) if kind == 'tool_call' else None,
+                args=_tool_args_json(emit['input']) if kind == 'tool_call' else None,
                 tool_call_id=emit.get('id'),
             )
             if event is not None:
                 yield event
+        elif kind == 'file':
+            if emit.get('source') == 'base64':
+                yield parts_manager.handle_part(vendor_part_id=None, part=_file_ir_to_part(emit))
         elif kind == 'usage':
             if on_usage is not None:
                 on_usage(emit)
         elif kind == 'meta':
-            response.finish_reason = _FINISH_REASON.get(emit['stop_reason'])
+            if response.finish_reason is None:
+                response.finish_reason = _FINISH_REASON.get(emit['stop_reason'])
 
 
-async def download_url_media(messages: Sequence[ModelMessage], url_ok: frozenset[str]) -> list[ModelMessage]:
+async def download_url_media(
+    messages: Sequence[ModelMessage], url_ok: frozenset[str], *, passthrough_schemes: frozenset[str] = frozenset()
+) -> list[ModelMessage]:
     """Replace URL media a wire cannot take as a URL with downloaded `BinaryContent`.
 
     `url_ok` is the set of media kinds the target wire accepts by URL (babel's `MEDIA_URL_OK` table);
     every other `FileUrl` in a user prompt or a tool return, and any with `force_download` set, is
-    downloaded with `download_item`. Returns a new history; messages without such media are shared,
-    not copied.
+    downloaded with `download_item`. A URL whose scheme is in `passthrough_schemes` is never
+    downloaded: the wire takes it by reference, as Converse takes `s3://`. Returns a new history;
+    messages without such media are shared, not copied.
     """
     result: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelRequest):
-            parts = [await _download_request_media(part, url_ok) for part in message.parts]
+            parts = [await _download_request_media(part, url_ok, passthrough_schemes) for part in message.parts]
             if any(new is not old for new, old in zip(parts, message.parts)):
                 message = dataclasses.replace(message, parts=parts)
         result.append(message)
     return result
 
 
-async def _download_request_media(part: ModelRequestPart, url_ok: frozenset[str]) -> ModelRequestPart:
+async def _download_request_media(
+    part: ModelRequestPart, url_ok: frozenset[str], passthrough_schemes: frozenset[str]
+) -> ModelRequestPart:
     if isinstance(part, UserPromptPart):
         if isinstance(part.content, str):
             return part
-        items: list[UserContent] = [await _download_file_url(item, url_ok) for item in part.content]
+        items: list[UserContent] = [
+            await _download_file_url(item, url_ok, passthrough_schemes) for item in part.content
+        ]
         return _replace_content(part, items)
     if isinstance(part, ToolReturnPart):
         # A tool's files trail its result as user content (see `_request_to_ir`), so they need the
         # same treatment as a user prompt's. A `ToolReturnPart` holds a file directly or in a list.
         tool_content: Any = part.content
         if isinstance(tool_content, list):
-            content: list[Any] = [await _download_file_url(item, url_ok) for item in cast(list[Any], tool_content)]
+            content: list[Any] = [
+                await _download_file_url(item, url_ok, passthrough_schemes) for item in cast(list[Any], tool_content)
+            ]
             return _replace_content(part, content)
         if isinstance(tool_content, FileUrl):
-            return _replace_content(part, [await _download_file_url(tool_content, url_ok)], single=True)
+            return _replace_content(
+                part, [await _download_file_url(tool_content, url_ok, passthrough_schemes)], single=True
+            )
     return part
 
 
@@ -544,8 +578,12 @@ def _replace_content(part: _RequestPartT, items: list[Any], *, single: bool = Fa
     return dataclasses.replace(part, content=items[0] if single else items)
 
 
-async def _download_file_url(item: _T, url_ok: frozenset[str]) -> _T | BinaryContent:
-    if isinstance(item, FileUrl) and (item.force_download or _url_media_kind(item) not in url_ok):
+async def _download_file_url(
+    item: _T, url_ok: frozenset[str], passthrough_schemes: frozenset[str]
+) -> _T | BinaryContent:
+    if not isinstance(item, FileUrl) or urlparse(item.url).scheme in passthrough_schemes:
+        return item
+    if item.force_download or _url_media_kind(item) not in url_ok:
         downloaded = await download_item(item, data_format='bytes')
         return BinaryContent(
             data=downloaded['data'], media_type=downloaded['data_type'], vendor_metadata=item.vendor_metadata

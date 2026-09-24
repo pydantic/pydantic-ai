@@ -123,7 +123,7 @@ async def test_tool_loop_with_thinking(allow_model_requests: None):
     assert response.parts == snapshot(
         [
             ThinkingPart(content='Paris needs a lookup.', signature='SIG', provider_name='anthropic'),
-            ToolCallPart(tool_name='get_weather', args='{"city":"Paris"}', tool_call_id='toolu_1'),
+            ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='toolu_1'),
         ]
     )
     # The cache reads count towards the input tokens, as they do for the native model.

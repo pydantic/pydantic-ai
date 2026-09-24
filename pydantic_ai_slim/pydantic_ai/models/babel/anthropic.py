@@ -2,7 +2,6 @@
 
 from __future__ import annotations as _annotations
 
-import dataclasses
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, Literal, cast
 
@@ -14,14 +13,16 @@ from anthropic.types.beta import (
     BetaRawMessageDeltaEvent,
     BetaRawMessageStartEvent,
     BetaRefusalStopDetails,
+    BetaStopReason,
     BetaTextBlockParam,
 )
 from llm_transform.media import MEDIA_URL_OK
 from llm_transform.registry import decode_response, encode, stream_step
 
-from ...messages import InstructionPart, ModelMessage, ModelResponse, ModelResponseStreamEvent
+from ...messages import FinishReason, InstructionPart, ModelMessage, ModelResponse, ModelResponseStreamEvent
 from .. import ModelRequestParameters
 from ..anthropic import (
+    _FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
     AnthropicModel,
     AnthropicModelSettings,
     AnthropicStreamedResponse,
@@ -64,6 +65,7 @@ class BabelAnthropicStreamedResponse(AnthropicStreamedResponse):
                         input_transformations=event.input_transformations,
                     )
                     if event.delta.stop_reason:
+                        self.finish_reason = _finish_reason(event.delta.stop_reason)
                         self.state = _response_state(event.delta.stop_reason)
                 result = stream_step('anthropic-messages', state, event.model_dump())
                 state = result['state']
@@ -135,23 +137,28 @@ class BabelAnthropicModel(AnthropicModel):
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
     ) -> ModelResponse:
-        model_response = ir_to_model_response(
-            decode_response('anthropic-messages', response.model_dump()),
-            fmt='anthropic-messages',
-            provider_name=self._provider.name,
-            provider_url=self._provider.base_url,
-            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
-            model_name=self.model_name,
-        )
         details = _provider_details(
             stop_reason=response.stop_reason,
             stop_details=response.stop_details,
             container=response.container,
             input_transformations=response.input_transformations,
         )
-        return dataclasses.replace(
-            model_response, provider_details=details or None, state=_response_state(response.stop_reason)
+        return ir_to_model_response(
+            decode_response('anthropic-messages', response.model_dump()),
+            fmt='anthropic-messages',
+            provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
+            model_name=self.model_name,
+            provider_details=details or None,
+            finish_reason=_finish_reason(response.stop_reason),
+            state=_response_state(response.stop_reason),
         )
+
+
+def _finish_reason(stop_reason: BetaStopReason | None) -> FinishReason | None:
+    """The finish reason the native model gives a raw stop reason."""
+    return _FINISH_REASON_MAP.get(stop_reason) if stop_reason else None
 
 
 def _response_state(stop_reason: str | None) -> Literal['complete', 'suspended']:

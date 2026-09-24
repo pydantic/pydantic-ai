@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart, ToolCallPart
+from pydantic_ai import Agent, ImageUrl, ModelRequest, ModelResponse, TextPart, ThinkingPart, ToolCallPart
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import FinalResultEvent, PartDeltaEvent, PartEndEvent, PartStartEvent
 from pydantic_ai.models import ModelRequestParameters
@@ -22,6 +22,7 @@ with try_import() as imports_successful:
     from botocore.hooks import HierarchicalEmitter
 
     from pydantic_ai.models.babel.bedrock import BabelBedrockConverseModel, BabelBedrockStreamedResponse
+    from pydantic_ai.providers.bedrock import BedrockModelProfile
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='boto3 or llm-babel not installed'),
@@ -127,7 +128,7 @@ async def test_tool_loop(allow_model_requests: None):
     assert response.parts == snapshot(
         [
             ThinkingPart(content='lookup', signature='SIG', provider_name='bedrock'),
-            ToolCallPart(tool_name='get_weather', args='{"city":"Paris"}', tool_call_id='tool_1'),
+            ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='tool_1'),
         ]
     )
     assert response.usage == snapshot(RequestUsage(input_tokens=16, cache_read_tokens=6, output_tokens=4))
@@ -247,3 +248,59 @@ async def test_stream_without_request_id(allow_model_requests: None):
     assert response.provider_response_id is None
     assert response.get().parts == [TextPart(content='hi')]
     assert response.finish_reason == 'stop'
+
+
+async def test_guardrail_trace_and_raw_stop_reason(allow_model_requests: None):
+    trace = {'guardrail': {'modelOutput': ['blocked']}}
+    client = _StubBedrockClient(
+        responses=[{**converse_response([{'text': 'hello'}], 'guardrail_intervened'), 'trace': trace}]
+    )
+    response = await make_model(client).request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == {'finish_reason': 'guardrail_intervened', 'trace': trace}
+
+
+async def test_stream_guardrail_trace(allow_model_requests: None):
+    trace = {'guardrail': {'modelOutput': ['blocked']}}
+    client = _StubBedrockClient(
+        stream=[
+            {'messageStart': {'role': 'assistant'}},
+            {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}},
+            {'contentBlockStop': {'contentBlockIndex': 0}},
+            {'messageStop': {'stopReason': 'guardrail_intervened'}},
+            {'metadata': {'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2}, 'trace': trace}},
+        ]
+    )
+    model = make_model(client)
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as response:
+        _ = [event async for event in response]
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == {'finish_reason': 'guardrail_intervened', 'trace': trace}
+
+
+async def test_s3_urls_are_passed_through(allow_model_requests: None):
+    client = _StubBedrockClient(responses=[converse_response([{'text': 'an image'}])])
+    await Agent(make_model(client)).run(['look', ImageUrl(url='s3://bucket/a.png')])
+    assert client.calls[0]['messages'][0]['content'] == snapshot(
+        [{'text': 'look'}, {'image': {'format': 'png', 'source': {'s3Location': {'uri': 's3://bucket/a.png'}}}}]
+    )
+
+
+async def test_stream_ignores_leading_whitespace_when_the_profile_says_so(allow_model_requests: None):
+    client = _StubBedrockClient(
+        stream=[
+            {'messageStart': {'role': 'assistant'}},
+            {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': '\n\n'}}},
+            {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'Paris'}}},
+            {'contentBlockStop': {'contentBlockIndex': 0}},
+            {'messageStop': {'stopReason': 'end_turn'}},
+        ]
+    )
+    model = BabelBedrockConverseModel(
+        'qwen.qwen3-coder-next',
+        provider=_StubBedrockProvider(client),
+        profile=BedrockModelProfile(ignore_streamed_leading_whitespace=True),
+    )
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as response:
+        _ = [event async for event in response]
+    assert response.get().parts == [TextPart(content='Paris')]
