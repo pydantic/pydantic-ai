@@ -368,12 +368,13 @@ async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_
             ),
         ]
     )
-    # `provider_details` keeps naming routes by their tools, which is what the `ToolCallPart`s in history carry.
-    assert (result.response.provider_details or {})['tool'] == snapshot(
+    # `provider_details` names routes by their labels too, not by the tools Pydantic AI made for them.
+    assert (result.response.provider_details or {})['route'] == snapshot(
         {
-            'choice': 'final_result_Escalation',
-            'probabilities': {'final_result_Escalation': 1.0, 'final_result_Triage': 0.0},
-            'offered': [],
+            'choice': 'Escalation',
+            'probabilities': {'Escalation': 1.0, 'Triage': 0.0},
+            'offered': ['Escalation', 'Triage'],
+            'taken': 'Escalation',
         }
     )
 
@@ -475,12 +476,40 @@ async def test_the_lean_weighs_every_function_tool_together(allow_model_requests
 
     [first, *_] = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
     assert [part.tool_name for part in first.parts if isinstance(part, ToolCallPart)] == ['look_up_order']
+    # The output's fields were asked beside the route question, but the tool call was not built from them.
+    assert first.provider_details == snapshot(
+        {
+            'confidence': {},
+            'probabilities': {},
+            'scores': {},
+            'route': {
+                'choice': 'look_up_order',
+                'probabilities': {'Triage': 0.0, 'look_up_order': 0.59, 'issue_refund': 0.41},
+                'offered': ['Triage', 'look_up_order', 'issue_refund'],
+                'taken': 'look_up_order',
+            },
+        }
+    )
 
 
 @pytest.mark.anyio
 async def test_the_function_tools_together_below_the_bar_are_a_lean(allow_model_requests: None):
-    model = RoutingDecisionModel({'Triage': 0.45, 'look_up_order': 0.3, 'issue_refund': 0.25})
+    """A tool is picked, but the tools together fall short of the bar, so the output is filled and the lean reported."""
+    model = RoutingDecisionModel({'Triage': 0.44, 'look_up_order': 0.46, 'issue_refund': 0.1})
     result = await Agent(model, output_type=Triage, tools=[look_up_order, issue_refund]).run('Where is my order?')
 
     assert result.output == Triage(urgent=True, action='review')
     assert len(model.requests) == 1
+    assert result.response.provider_details == snapshot(
+        {
+            'confidence': {'urgent': 0.6000000000000001, 'action': 0.9},
+            'probabilities': {'action': {'approve': 0.0, 'review': 1.0}},
+            'scores': {},
+            'route': {
+                'choice': 'look_up_order',
+                'probabilities': {'Triage': 0.44, 'look_up_order': 0.46, 'issue_refund': 0.1},
+                'offered': ['Triage', 'look_up_order', 'issue_refund'],
+                'taken': 'Triage',
+            },
+        }
+    )

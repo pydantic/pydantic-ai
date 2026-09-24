@@ -1203,14 +1203,11 @@ async def model_logic(  # noqa: C901
                     'confidence': {},
                     'probabilities': {},
                     'scores': {},
-                    'tool': {
-                        'choice': 'final_result_None',
-                        'probabilities': {
-                            'final_result_Ticket': 0.03,
-                            'final_result_Escalation': 0.01,
-                            'final_result_None': 0.96,
-                        },
-                        'offered': ['final_result_None'],
+                    'route': {
+                        'choice': 'None',
+                        'probabilities': {'Ticket': 0.03, 'Escalation': 0.01, 'None': 0.96},
+                        'offered': ['Ticket', 'Escalation', 'None'],
+                        'taken': 'None',
                     },
                 },
             )
@@ -1223,6 +1220,12 @@ async def model_logic(  # noqa: C901
                     'probabilities': {},
                     'scores': {},
                     'requests': 2,
+                    'route': {
+                        'choice': 'Escalation',
+                        'probabilities': {'Ticket': 0.12, 'Escalation': 0.88},
+                        'offered': ['Ticket', 'Escalation'],
+                        'taken': 'Escalation',
+                    },
                 },
             )
         elif response := text_responses.get(m.content):

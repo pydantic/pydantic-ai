@@ -769,10 +769,11 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
                 'contact.method': {'email': 0.9, 'phone': 0.1},
             },
             'scores': {},
-            'tool': {
+            'route': {
                 'choice': 'configure_contact',
-                'probabilities': {'final_result': 0.05, 'configure_contact': 0.95},
-                'offered': ['configure_contact'],
+                'probabilities': {'Ticket': 0.05, 'configure_contact': 0.95},
+                'offered': ['Ticket', 'configure_contact'],
+                'taken': 'configure_contact',
             },
             'requests': 2,
         }
@@ -948,10 +949,11 @@ async def test_tool_arguments_live(
             'confidence': {'direction': 1.0},
             'probabilities': {'direction': {'left': 1.0, 'right': 0.0}},
             'scores': {},
-            'tool': {
+            'route': {
                 'choice': 'set_direction',
-                'probabilities': {'final_result': 0.0, 'set_direction': 1.0},
-                'offered': ['set_direction'],
+                'probabilities': {'output': 0.0, 'set_direction': 1.0},
+                'offered': ['output', 'set_direction'],
+                'taken': 'set_direction',
             },
             'requests': 2,
         }
@@ -981,10 +983,11 @@ async def test_a_tool_below_the_threshold_is_a_lean(
             'confidence': {'urgent': 0.8},
             'probabilities': {},
             'scores': {},
-            'tool': {
+            'route': {
                 'choice': 'refund',
-                'probabilities': {'refund': probability, 'final_result': round(1 - probability, 2)},
-                'offered': ['refund'],
+                'probabilities': {'refund': probability, 'Ticket': round(1 - probability, 2)},
+                'offered': ['Ticket', 'refund'],
+                'taken': 'Ticket',
             },
         }
     )
@@ -994,10 +997,11 @@ async def test_the_output_tool_is_one_of_the_options(allow_model_requests: None)
     jev = mock_model(lambda _: tool_answers('Ticket', 0.9))
     result = await Agent(jev, output_type=Ticket, tools=[refund]).run('Is my invoice due?')
     assert result.output == Ticket(urgent=True)
-    assert (result.response.provider_details or {})['tool'] == {
-        'choice': 'final_result',
-        'probabilities': {'final_result': 0.9, 'refund': 0.1},
-        'offered': ['refund'],
+    assert (result.response.provider_details or {})['route'] == {
+        'choice': 'Ticket',
+        'probabilities': {'Ticket': 0.9, 'refund': 0.1},
+        'offered': ['Ticket', 'refund'],
+        'taken': 'Ticket',
     }
 
 
@@ -1228,8 +1232,8 @@ async def test_the_last_route_left_is_taken_without_asking(allow_model_requests:
     result = await Agent(mock_model(record), output_type=[reject], tools=[approve]).run('Decide.')
     assert result.output == 'rejected'
     assert len(seen) == 1
-    assert (result.response.provider_details or {})['tool'] == snapshot(
-        {'choice': 'final_result', 'probabilities': {'final_result': 1.0}, 'offered': ['final_result']}
+    assert (result.response.provider_details or {})['route'] == snapshot(
+        {'choice': 'output', 'probabilities': {'output': 1.0}, 'offered': ['output'], 'taken': 'output'}
     )
 
 
@@ -1273,7 +1277,7 @@ async def test_below_the_threshold_with_nothing_to_fill_the_likeliest_hand_off_i
     )
     result = await Agent(jev, output_type=[approve, reject], tools=[refund]).run('Looks fine.')
     assert result.output == 'approved'
-    assert (result.response.provider_details or {})['tool']['taken'] == 'final_result_approve'
+    assert (result.response.provider_details or {})['route']['taken'] == 'approve'
 
 
 async def test_a_streamed_run_can_be_cancelled_early(allow_model_requests: None):
@@ -1310,11 +1314,12 @@ async def test_an_output_function_is_a_hand_off_jev_picks(
     agent = Agent(typesafe_model, output_type=[Ticket, escalate])
     result = await agent.run('I have explained this to your bot four times. I want a person to call me back today.')
     assert result.output == snapshot('escalated after 2 messages')
-    assert (result.response.provider_details or {})['tool'] == snapshot(
+    assert (result.response.provider_details or {})['route'] == snapshot(
         {
-            'choice': 'final_result_escalate',
-            'probabilities': {'final_result_escalate': 1.0, 'final_result_Ticket': 0.0},
-            'offered': ['final_result_escalate'],
+            'choice': 'escalate',
+            'probabilities': {'Ticket': 0.0, 'escalate': 1.0},
+            'offered': ['Ticket', 'escalate'],
+            'taken': 'escalate',
         }
     )
     assert cast(dict[str, Any], request_capture.body('/v1/systemone')['questions'])['route']['criteria'] == snapshot(
@@ -1340,7 +1345,7 @@ async def test_an_output_functions_arguments_are_filled_like_an_output_types_fie
         'I have contacted you four times about being double charged and I am about to call my lawyer.'
     )
     assert result.output == snapshot('routed to billing, urgent=True')
-    assert (result.response.provider_details or {})['tool']['choice'] == snapshot('final_result_route_to_team')
+    assert (result.response.provider_details or {})['route']['choice'] == snapshot('route_to_team')
     # The route is picked first, then its arguments go out as their own questions in a second request.
     assert cast(dict[str, Any], request_capture.bodies('/v1/systemone')[-1]['questions']) == snapshot(
         {
@@ -1497,10 +1502,11 @@ async def test_the_last_route_left_has_its_supported_arguments_filled(allow_mode
     assert response.usage == RequestUsage(input_tokens=10)
     assert response.provider_details == snapshot(
         {
-            'tool': {
+            'route': {
                 'choice': 'set_direction',
                 'probabilities': {'set_direction': 1.0},
                 'offered': ['set_direction'],
+                'taken': 'set_direction',
             },
             'confidence': {'direction': 0.9},
             'probabilities': {'direction': {'left': 0.9, 'right': 0.1}},
@@ -2888,10 +2894,11 @@ async def test_a_union_picks_the_type_then_fills_only_that_one(allow_model_reque
             'confidence': {'security': 0.8},
             'probabilities': {},
             'scores': {},
-            'tool': {
-                'choice': 'final_result_Escalation',
-                'probabilities': {'final_result_Ticket': 0.2, 'final_result_Escalation': 0.8},
-                'offered': [],
+            'route': {
+                'choice': 'Escalation',
+                'probabilities': {'Ticket': 0.2, 'Escalation': 0.8},
+                'offered': ['Ticket', 'Escalation'],
+                'taken': 'Escalation',
             },
             'requests': 2,
         }
@@ -3269,7 +3276,7 @@ async def test_a_route_jev_did_not_price_is_still_filled(allow_model_requests: N
 
     assert result.output == Ticket(urgent=True)
     details = result.response.provider_details or {}
-    assert details['tool']['probabilities'] == {'refund': 0.3}
+    assert details['route']['probabilities'] == {'refund': 0.3}
     assert details['requests'] == 2
 
 

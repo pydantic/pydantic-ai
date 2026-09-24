@@ -23,7 +23,6 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    ModelResponsePart,
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -369,12 +368,13 @@ class DecisionModel(Model[InterfaceClient]):
         ]
         offered = [*hand_offs, *function_tools]
         tools = _tools_left(messages, offered)
+        routes = _route_labels(output_tools, tools)
         forced_tool = tools[0] if not output_tools and len(tools) == 1 and len(offered) > 1 else None
         if forced_tool is not None and (
             _none_route(forced_tool) or not _properties(forced_tool.parameters_json_schema)
         ):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
-            return self._forced(forced_tool)
+            return self._forced(forced_tool, next(iter(routes)))
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
@@ -387,7 +387,7 @@ class DecisionModel(Model[InterfaceClient]):
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
             return await self._forced_with_arguments(
-                forced_tool, state, instructions, settings, boolean_threshold, limits
+                forced_tool, next(iter(routes)), state, instructions, settings, boolean_threshold, limits
             )
         if len(output_tools) > 1 and not any(_expressible(tool, instructions, limits) for tool in output_tools):
             # A member the model cannot fill is a hand-off, but only while some other member is a real alternative.
@@ -400,42 +400,39 @@ class DecisionModel(Model[InterfaceClient]):
                 'it from this model.'
             )
         ask = _Ask.about(output_tool, instructions, limits) if output_tool else _Ask.nothing()
-        routes = _route_labels(output_tools, tools)
         route_key = _route_question(ask.questions, routes, output_tools, tools, instructions, limits)
 
         response = await self.decide(DecisionRequest(state=state, questions=ask.questions), settings)
         response_usage = response.usage
-        args, provider_details = ask.answers(response, boolean_threshold)
-        parts: list[ModelResponsePart] = []
-        if output_tool:
-            parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
-        if route_key is not None:
-            picked = _tool_call(
-                response.answers.get(route_key),
-                routes,
-                output_tools,
-                tools,
-                {tool.name for tool in hand_offs},
-                threshold,
-                provider_details,
-            )
-            if isinstance(picked, ToolCallPart):
-                parts = [picked]
-            elif picked is not None and picked is not output_tool:
-                # `_tool_call` tolerates an offered route missing from `probabilities` when it falls back to
-                # the likeliest one, so the route it returns is not necessarily one the model priced.
-                probability = provider_details['tool']['probabilities'].get(picked.name, 0.0)
-                label = next(label for label, route in routes.items() if route is picked)
-                response, args, argument_details = await self._fill(
-                    picked, label, probability, state, instructions, settings, boolean_threshold, limits
+        if route_key is None:
+            # One output type and nothing else on offer: there was no route to pick, only fields to fill.
+            assert output_tool is not None  # `_route_question` refuses a request with neither
+            args, provider_details = ask.answers(response, boolean_threshold)
+            parts = [ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id())]
+        else:
+            route_details = _route_taken(response.answers.get(route_key), routes, threshold)
+            label = route_details['taken']
+            route = routes[label]
+            if route is output_tool:
+                # The fields were asked beside the route question, speculatively, and are only read now that the
+                # output is what was taken: answers to a route not taken describe nothing in this response.
+                args, provider_details = ask.answers(response, boolean_threshold)
+            elif not _none_route(route) and _properties(route.parameters_json_schema):
+                # The model may lean to a route it did not price, so a missing probability is none at all.
+                probability = route_details['probabilities'].get(label, 0.0)
+                response, args, provider_details = await self._fill(
+                    route, label, probability, state, instructions, settings, boolean_threshold, limits
                 )
                 response_usage += response.usage
-                provider_details.update(argument_details)
                 # `RequestUsage.requests` is fixed at 1, so usage cannot say that this turn asked twice: the
                 # choice and the fill are two requests inside one step. The count is reported here, and only
                 # here, so it appears exactly when it differs from what usage reports. See #8498.
                 provider_details['requests'] = 2
-                parts = [ToolCallPart(picked.name, args, _utils.generate_tool_call_id())]
+            else:
+                # Nothing to write, so the call is made on the pick alone, and no answer built it.
+                args, provider_details = _route_args(route), _unanswered()
+            parts = [ToolCallPart(route.name, args, _utils.generate_tool_call_id())]
+            provider_details['route'] = route_details
 
         return ModelResponse(
             parts=parts,
@@ -491,6 +488,7 @@ class DecisionModel(Model[InterfaceClient]):
     async def _forced_with_arguments(
         self,
         tool: ToolDefinition,
+        label: str,
         state: JsonValue,
         instructions: str | None,
         settings: DecisionModelSettings,
@@ -498,12 +496,10 @@ class DecisionModel(Model[InterfaceClient]):
         limits: _Limits,
     ) -> ModelResponse:
         """Fill the arguments of the one route left, without a choice request."""
-        details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
-        [label] = _route_labels([], [tool])
-        response, args, argument_details = await self._fill(
+        response, args, details = await self._fill(
             tool, label, 1.0, state, instructions, settings, boolean_threshold, limits
         )
-        details.update(argument_details)
+        details['route'] = _forced_route(label)
         return ModelResponse(
             parts=[ToolCallPart(tool.name, args, _utils.generate_tool_call_id())],
             usage=response.usage,
@@ -514,9 +510,9 @@ class DecisionModel(Model[InterfaceClient]):
             finish_reason='tool_call',
         )
 
-    def _forced(self, tool: ToolDefinition) -> ModelResponse:
+    def _forced(self, tool: ToolDefinition, label: str) -> ModelResponse:
         """Call the one argumentless route left, without asking the model."""
-        details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
+        details = {**_unanswered(), 'route': _forced_route(label)}
         return ModelResponse(
             parts=[ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(),
@@ -694,27 +690,20 @@ def _answers(
     return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}
 
 
-def _tool_call(
-    answer: object,
-    routes: dict[str, ToolDefinition],
-    output_tools: list[ToolDefinition],
-    tools: list[ToolDefinition],
-    hand_offs: set[str],
-    threshold: float,
-    provider_details: dict[str, Any],
-) -> ToolDefinition | ToolCallPart | None:
-    """The output or tool call to take from the model's answer to the route question.
+def _route_taken(answer: object, routes: dict[str, ToolDefinition], threshold: float) -> dict[str, Any]:
+    """The model's answer to the route question as `provider_details['route']` reports it, with the route taken.
 
-    A tool picked while the function tools together fall below the threshold is a lean: the likeliest output type
-    is filled, or with none to fill, the likeliest output function is taken instead. A selected route with fields is
-    returned for a second request.
+    Everything in it is a route label, the name the route question offered each route under, looked up in
+    `routes`. `taken` is the pick, unless the pick was a lean.
+
+    A lean is a function tool picked while the function tools together fall below the threshold: the likeliest
+    output type or `None` route is taken instead, or with neither, the likeliest output function. The probability
+    is summed over the function tools because the bar asks whether to do something rather than give a result, and
+    probability split between two tools still says a tool is wanted, even when neither clears the bar alone.
 
     The threshold gates tools, not output types. Picking an output type says which result to fill, not that
     something else should be done; there is nothing to hand off to and nothing to be unsure about beyond the pick
     itself, whose confidence is reported either way.
-
-    The model answers in route labels, which are read back through `routes` into the tools they stand for; from
-    here on, and in `provider_details`, a route goes by its tool name, the one the `ToolCallPart` carries.
     """
     if (
         not isinstance(answer, ChoiceAnswer)
@@ -722,51 +711,46 @@ def _tool_call(
         or not all(0 <= p <= 1 for p in answer.probabilities.values())
     ):
         raise UnexpectedModelBehavior(f'Unexpected answer from the model for the route question: {answer!r}')
-    tool = routes.get(answer.choice)
-    if tool is None:
+    picked = routes.get(answer.choice)
+    if picked is None:
         raise UnexpectedModelBehavior(f'The model picked a route it was not offered: {answer.choice!r}')
-    # An option the model priced but was not offered has no tool to be named for, so it keeps its label.
-    probabilities = {
-        route.name if (route := routes.get(label)) else label: p for label, p in answer.probabilities.items()
-    }
     # The pick, its probabilities and what was on offer are reported either way, so the hand-off rate can be
     # watched, and a tool that was withheld this turn can be seen to have been.
-    provider_details['tool'] = {
-        'choice': tool.name,
-        'probabilities': probabilities,
-        'offered': [offered.name for offered in tools],
+    details: dict[str, Any] = {
+        'choice': answer.choice,
+        'probabilities': dict(answer.probabilities),
+        'offered': list(routes),
+        'taken': answer.choice,
     }
-    if tool in output_tools:
-        return tool
-    # The bar is for doing something rather than giving a result, so it is weighed against every function tool
-    # together: probability split between two tools still says a tool is wanted, even when neither clears the bar
-    # alone, and leaning to a result then would take the one route the model priced lowest.
+    if picked.kind == 'output':
+        return details
     tool_probability = sum(
         p for label, p in answer.probabilities.items() if (route := routes.get(label)) and route.kind != 'output'
     )
-    if tool.name not in hand_offs and tool_probability < threshold:
-        # A `None` route is a result to take, not something else to be done, so it is weighed here with the
-        # output types rather than below with the hand-offs, even though it is offered as one of those.
-        results = [*output_tools, *(candidate for candidate in tools if _none_route(candidate))]
-        if likeliest_output := max(results, key=lambda candidate: probabilities.get(candidate.name, 0.0), default=None):
-            if _none_route(likeliest_output):
-                # Nothing to fill, so it is called on the fallback itself rather than asked about again.
-                return ToolCallPart(
-                    likeliest_output.name, _route_args(likeliest_output), _utils.generate_tool_call_id()
-                )
-            return likeliest_output
-        likeliest = max(
-            (candidate for candidate in tools if candidate.name in hand_offs),
-            key=lambda candidate: probabilities.get(candidate.name, 0.0),
-            default=None,
-        )
-        if likeliest is not None:
-            provider_details['tool']['taken'] = likeliest.name
-            tool = likeliest
-    if not _none_route(tool) and tool.parameters_json_schema.get('properties'):
-        return tool
-    # Nothing to write, so the call is made on the pick alone.
-    return ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())
+    if tool_probability >= threshold:
+        return details
+    # A `None` route is a result to take, not something else to be done, so it is weighed with the output types
+    # rather than with the output functions, even though it takes no arguments like they do.
+    results = [
+        label
+        for label, route in routes.items()
+        if route.kind == 'output' and (_none_route(route) or _properties(route.parameters_json_schema))
+    ]
+    hand_offs = [label for label, route in routes.items() if route.kind == 'output' and label not in results]
+    # With no result to lean to, there is nothing else to do but the tool that was picked.
+    leanable = results or hand_offs or [answer.choice]
+    details['taken'] = max(leanable, key=lambda label: answer.probabilities.get(label, 0.0))
+    return details
+
+
+def _forced_route(label: str) -> dict[str, Any]:
+    """`provider_details['route']` for the one route left, taken without asking: certain, because it was alone."""
+    return {'choice': label, 'probabilities': {label: 1.0}, 'offered': [label], 'taken': label}
+
+
+def _unanswered() -> dict[str, Any]:
+    """`provider_details` for a response no answer built: a route taken on the pick alone has no fields to report."""
+    return {'confidence': {}, 'probabilities': {}, 'scores': {}}
 
 
 def _expressible(tool: ToolDefinition, instructions: str | None, limits: _Limits) -> bool:
