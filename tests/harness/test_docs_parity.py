@@ -163,6 +163,7 @@ _CAPABILITY_PAGE_META = {
     'logfire-mcp.md': ('logfire_mcp', 'Logfire MCP'),
     'linear.md': ('linear', 'Linear'),
     'notion.md': ('notion', 'Notion'),
+    'ordinal.md': ('ordinal', 'Ordinal'),
     'stackone.md': ('stackone', 'StackOne'),
     'slack.md': ('slack', 'Slack'),
     'acp.md': ('experimental/acp', 'ACP (Agent Client Protocol)'),

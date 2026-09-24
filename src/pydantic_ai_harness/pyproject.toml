@@ -103,6 +103,9 @@ stackone = [
     "fastmcp>=3.4.5,<4",
     "pydantic-ai-slim[mcp]>=2.18.0",
 ]
+ordinal = [
+    "pydantic-ai-slim[mcp]>=2.44.0",
+]
 prompt-injection-defender = [
     "stackone-defender>=0.7.3,<0.8 ; python_full_version >= '3.11'",
 ]
