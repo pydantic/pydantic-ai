@@ -396,6 +396,7 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
 
     When a run resumes from a response with tool calls still to run, the step's request is their
     results, which don't exist before the model is selected, so the messages end with that response.
+    They also end with the response when it's a suspended one being continued, as no request is sent.
 
     It's a new list, so adding or removing messages doesn't change the run's, but the messages in
     it are the run's own.
