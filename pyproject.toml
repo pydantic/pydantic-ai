@@ -194,12 +194,6 @@ logfire-api = false
 # TODO(DouweM): Remove after 2026-09-29 16:25 UTC. https://github.com/pydantic/pydantic-ai/issues/8636
 # This admits only the reviewed 1.8.0 artifacts; later Anthropic artifacts remain quarantined.
 anthropic = "2026-09-22T16:25:39Z"
-# OpenAI 3.12.0 is the first release shipping `openai.types.live`, which `realtime/openai_live.py` parses
-# GPT-Live frames with. (It supersedes the 3.8.0 pin taken for `gpt-6-astra`, whose window has
-# since passed.)
-# TODO: Remove after 2026-09-17 17:29 UTC, when the 7-day `exclude-newer` window admits it anyway.
-# This admits only the reviewed 3.12.0 artifacts; later OpenAI artifacts remain quarantined.
-openai = "2026-09-10T17:29:32Z"
 
 [dependency-groups]
 dev = [
