@@ -39,7 +39,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
     FileWindow,
-    UnavailableWorkspace,
     Workspace,
     WorkspaceCommand,
     WorkspaceError,
@@ -450,17 +449,6 @@ WorkspaceBoundOperation: TypeAlias = BoundDurableOperation[
 ]
 
 
-def attached_workspace(workspace: Workspace) -> bool:
-    """Whether `workspace` reaches a real backend rather than the unattached placeholder.
-
-    Walks wrappers through `wrapped` rather than `backend`, which a `DurableWorkspace` refuses to
-    answer inside a durable container.
-    """
-    while isinstance(workspace, WrapperWorkspace):
-        workspace = workspace.wrapped
-    return not isinstance(workspace.backend, UnavailableWorkspace)
-
-
 def resolve_run_workspace(
     capability: AbstractCapability[Any], ctx: RunContext[Any], ref: WorkspaceRef | None
 ) -> Workspace | None:
@@ -693,7 +681,7 @@ class RejectWorkspaceInContainer(AbstractCapability[AgentDepsT]):
         self._capability = capability
 
     def _wrap_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
-        if attached_workspace(workspace):
+        if workspace.attached:
             raise UserError(
                 f'Workspaces are not supported inside a {self._engine} {self._container_noun} through the deprecated '
                 f'wrapper agent. Use `Agent(..., capabilities=[{self._capability}()])`, which runs every workspace '

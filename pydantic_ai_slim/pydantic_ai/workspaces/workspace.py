@@ -33,6 +33,7 @@ from .protocol import (
     WorkspaceResult,
     WorkspaceTimeoutError,
 )
+from .unavailable import UnavailableWorkspace
 
 __all__ = ('FileWindow', 'Workspace', 'WrapperWorkspace')
 
@@ -331,6 +332,17 @@ class Workspace(WorkspaceBackend):
         to leave mutation tools unregistered instead of offering tools that can only fail.
         """
         return False
+
+    @property
+    def attached(self) -> bool:
+        """Whether this workspace reaches a real environment.
+
+        `False` for the placeholder a run gets when nothing supplies a workspace, and for a
+        deliberate [`UnavailableWorkspace`][pydantic_ai.workspaces.UnavailableWorkspace]. A
+        capability that needs a workspace checks this in `before_run`, so a missing one fails at
+        run start instead of on the first tool call.
+        """
+        return not isinstance(self._backend, UnavailableWorkspace)
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -636,6 +648,11 @@ class WrapperWorkspace(Workspace):
     @property
     def read_only(self) -> bool:
         return self.wrapped.read_only
+
+    @property
+    def attached(self) -> bool:
+        # Through `wrapped`, never `backend`, which a durable wrapper refuses in workflow code.
+        return self.wrapped.attached
 
     async def _read_file_via_shell(
         self, path: str, offset: int, limit: int | None, max_bytes: int | None

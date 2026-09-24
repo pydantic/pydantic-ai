@@ -891,6 +891,14 @@ async def test_unavailable_workspace_uses_the_configured_reason_for_every_operat
             await operation
 
 
+async def test_attached_is_false_only_for_an_unavailable_workspace_even_through_wrappers() -> None:
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    assert not ctx.workspace.attached
+    assert not ReadOnlyWorkspace(Workspace(UnavailableWorkspace('disabled by policy'))).attached
+    assert ReadOnlyWorkspace(Workspace(FakeWorkspace('attached'))).attached
+
+
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 

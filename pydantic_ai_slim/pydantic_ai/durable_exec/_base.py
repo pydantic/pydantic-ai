@@ -137,7 +137,6 @@ from ._workspace import (
     WorkspaceMethod,
     WorkspaceOperationParams,
     WorkspaceOperationResult,
-    attached_workspace,
     execute_workspace_operation,
     resolve_run_workspace,
 )
@@ -440,7 +439,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         workspace = ctx.workspace
         if isinstance(workspace, DurableWorkspace):
             return workspace.wrapped
-        if attached_workspace(workspace):
+        if workspace.attached:
             return workspace
         # The run's own context carries the per-run tree; a deserialized one carries the worker agent's.
         root_capability = ctx.root_capability
@@ -481,7 +480,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         workspace is returned untouched, so a durable-capable agent used as a plain agent keeps the
         very object it selected.
         """
-        if not self.in_durable_context or in_durable_unit() or not attached_workspace(workspace):
+        if not self.in_durable_context or in_durable_unit() or not workspace.attached:
             return workspace
         if not self._bound_workspace_operations:
             raise UserError(
