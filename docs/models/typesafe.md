@@ -181,7 +181,7 @@ Unless the schema describes an option, Jev sees it by its name alone, so name `L
 
 The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as Jev gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones Jev said yes to.
 
-An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, and a field without one gets `None`. A `default_factory` is not in the schema, which is all Jev's answers are read against, so it counts as no default. Any pick-one, of strings or whole numbers, can be optional; a rubric cannot, since its levels are ordered and `None` is not one of them. To say what picking nothing means on this field rather than take the stock phrase, describe the `None` itself: `Area | Annotated[None, Field(description='Nothing here needs routing.')]` makes that description the option's meaning.
+An optional pick-one field, `Area | None`, is the same question with one more option, "None of these.": an explicit option, rather than low confidence read as `None`, which is what the field's confidence is for. Picking it is the absence of an answer, so a field with a default gets its default, and a field without one gets `None`. The same goes for a nested model with a default when nothing under it was answered: it gets its own default, not one built from the defaults of the fields inside it. A `default_factory` is not in the schema, which is all Jev's answers are read against, so it counts as no default. Any pick-one, of strings or whole numbers, can be optional; a rubric cannot, since its levels are ordered and `None` is not one of them. To say what picking nothing means on this field rather than take the stock phrase, describe the `None` itself: `Area | Annotated[None, Field(description='Nothing here needs routing.')]` makes that description the option's meaning.
 
 A yes/no is a `bool`, which says what is being asked but nothing about what a yes or a no would mean. That is the one place Jev is asked to judge without being told what it is judging against: a `Choice` carries a description per option and a `Score` one per level, while a `Noul` has only the question unless the two answers are spelled out. [`BoolCriteria`][pydantic_ai.output.BoolCriteria] spells them out as `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime:
 
@@ -281,6 +281,7 @@ agent = Agent('typesafe:jev-latest', output_type=Review)
 result = agent.run_sync('Fixed a bug in the parser.')
 print(result.output)
 #> clarity=<Clarity.partial: 1>
+assert result.response.provider_details is not None
 print(result.response.provider_details['scores'])
 #> {'clarity': 1.2}
 ```
@@ -370,6 +371,7 @@ agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
 print(result.output)
 #> True
+assert result.response.provider_details is not None
 print(result.response.provider_details['confidence'])
 #> {'response': 0.84}
 ```
@@ -403,7 +405,7 @@ from pydantic_ai import Agent, RunContext
 assistant = Agent(instructions='You are a helpful engineering assistant.')
 
 
-async def route(ctx: RunContext[None], tier: Literal['fast', 'capable']) -> str:
+async def route(ctx: RunContext, tier: Literal['fast', 'capable']) -> str:
     """Answer the question on a model suited to it.
 
     Args:
@@ -464,7 +466,7 @@ router = Agent(
 )
 
 
-async def select_model(ctx: ModelSelectionContext[None]) -> Model:
+async def select_model(ctx: ModelSelectionContext) -> Model:
     if not ctx.messages:
         # `ctx.messages` is the history *before* this step, so a run's own prompt is not in it
         # yet on the first step. A run given `message_history` does have something to read.
@@ -777,7 +779,7 @@ class Ticket(BaseModel):
 support = Agent('openai:gpt-5.6-sol', instructions='Reply to the customer.')
 
 
-async def reply(ctx: RunContext[None]) -> str:
+async def reply(ctx: RunContext) -> str:
     """Write the customer a reply."""
     # `ctx.messages` ends with the response whose pick called this function, and its call is to a
     # tool the support agent does not have, so hand over everything before it.
@@ -899,6 +901,7 @@ agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation])
 result = agent.run_sync('Someone else can see my invoices when they log in.')
 print(result.output)
 #> security=True
+assert result.response.provider_details is not None
 print(result.response.provider_details['requests'])
 #> 2
 ```
@@ -934,6 +937,7 @@ agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation, None])
 result = agent.run_sync('Thanks, that fixed it. Nothing else needed.')
 print(result.output)
 #> None
+assert result.response.provider_details is not None
 print(result.response.provider_details['tool']['choice'])
 #> final_result_None
 ```
@@ -1052,14 +1056,14 @@ An `output_type` is the question in almost every case, and it is what makes the 
 The TypeSafe SDK client is on the model for those, configured with the same API key, base URL and HTTP client:
 
 ```python {title="ask_jev_directly.py"}
-from typesafe_sdk import Choice, Noul, NoulCriteria
+from typesafe_sdk import Choice, JSONValue, Noul, NoulAnswer, NoulCriteria
 
 from pydantic_ai.models.typesafe import TypeSafeModel
 
 model = TypeSafeModel('jev-latest')
 
 
-async def judge_order(order: dict[str, object]) -> float:
+async def judge_order(order: dict[str, JSONValue]) -> float:
     response = await model.client.system_one(
         {'order': order, 'policy': 'Refunds are allowed within 30 days.'},
         {
@@ -1077,7 +1081,9 @@ async def judge_order(order: dict[str, object]) -> float:
         },
         model=model.model_name,
     )
-    return response.answers['refundable'].noul
+    refundable = response.answers['refundable']
+    assert isinstance(refundable, NoulAnswer)
+    return refundable.noul
 ```
 
 This is the one example on this page that is not run by the documentation tests: the call never reaches a

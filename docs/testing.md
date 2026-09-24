@@ -87,7 +87,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
-```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py"}
+```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py" typecheck="skip - dirty-equals matchers stand in for timestamps and IDs"}
 from datetime import timezone
 import pytest
 
@@ -217,6 +217,7 @@ from pydantic_ai import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -233,6 +234,8 @@ def call_weather_forecast(  # (1)!
     if len(messages) == 1:
         # first call, call the weather forecast tool
         user_prompt = messages[0].parts[-1]
+        assert isinstance(user_prompt, UserPromptPart)
+        assert isinstance(user_prompt.content, str)
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!

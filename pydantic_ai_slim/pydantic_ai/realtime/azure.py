@@ -172,7 +172,9 @@ class AzureRealtimeConnection(OpenAIRealtimeConnection):
 
 
 class _AccessToken(Protocol):
-    token: str
+    # Read-only, so `azure.core.credentials.AccessToken` (a `NamedTuple`) matches.
+    @property
+    def token(self) -> str: ...
 
 
 class AzureTokenCredential(Protocol):

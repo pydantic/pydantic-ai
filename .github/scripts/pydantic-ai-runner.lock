@@ -23,8 +23,9 @@ anthropic = "2026-09-22T16:25:39Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
-openai = "2026-09-03T19:51:09Z"
+openai = "2026-09-23T00:08:49Z"
 logfire-api = false
+google-genai = "2026-09-22T17:23:02Z"
 
 [manifest]
 requirements = [
@@ -1158,8 +1159,8 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "genai-prices", specifier = ">=0.1.8" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.19.0" },
-    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.19.0" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.25.0" },
+    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.25.0" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'huggingface') or (platform_machine == 'aarch64' and extra == 'huggingface') or (platform_machine == 'amd64' and extra == 'huggingface') or (platform_machine == 'arm64' and extra == 'huggingface') or (platform_machine == 'x86_64' and extra == 'huggingface')", specifier = "<1.5.0" },
@@ -1169,15 +1170,15 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.9.2" },
-    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.19.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },

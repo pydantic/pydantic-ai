@@ -346,6 +346,7 @@ test_model = TestModel()
 result = agent.run_sync('hello', model=test_model)
 print(result.output)
 #> {"foobar":"x=0 y='a' z=3.14"}
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [

@@ -46,6 +46,7 @@ Retry configurations use [Tenacity](https://tenacity.readthedocs.io/) and suppor
 ```python
 from tenacity import stop_after_attempt, wait_exponential
 
+from pydantic_ai.retries import RetryConfig
 from pydantic_evals import Case, Dataset
 
 
@@ -55,7 +56,7 @@ def my_function(inputs: str) -> str:
 
 dataset = Dataset(name='retry_config', cases=[Case(inputs='test')], evaluators=[])
 
-retry_config = {
+retry_config: RetryConfig = {
     'stop': stop_after_attempt(3),  # Stop after 3 attempts
     'wait': wait_exponential(multiplier=1, min=1, max=10),  # Exponential backoff: 1s, 2s, 4s, 8s (capped at 10s)
     'reraise': True,  # Re-raise the original exception after exhausting retries
@@ -501,6 +502,7 @@ Increase delays or use `max_concurrency`:
 ```python
 from tenacity import stop_after_attempt, wait_exponential
 
+from pydantic_ai.retries import RetryConfig
 from pydantic_evals import Case, Dataset
 
 
@@ -511,7 +513,7 @@ def task(inputs: str) -> str:
 dataset = Dataset(name='rate_limit_config', cases=[Case(inputs='test')], evaluators=[])
 
 # Longer delays
-retry_config = {
+retry_config: RetryConfig = {
     'stop': stop_after_attempt(5),
     'wait': wait_exponential(multiplier=5, min=5, max=60),  # Start at 5s, exponential up to 60s
     'reraise': True,

@@ -567,7 +567,7 @@ reasoning_model = GoogleModel('gemini-3-pro-preview')
 
 
 # Optional: customize how model-name strings are built.
-def resolve_model(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+def resolve_model(ctx: ModelResolutionContext, model_id: str) -> Model | None:
     if model_id.startswith('openai:'):
         provider = OpenAIProvider(api_key=os.environ['OPENAI_API_KEY'])
         return infer_model(model_id, provider_factory=lambda _: provider)
@@ -648,12 +648,12 @@ from pydantic_ai.toolsets import FunctionToolset
 toolset = FunctionToolset(id='research')
 
 
-@toolset.tool(metadata={'temporal': ActivityConfig(start_to_close_timeout=timedelta(minutes=5))})  # (1)!
+@toolset.tool_plain(metadata={'temporal': ActivityConfig(start_to_close_timeout=timedelta(minutes=5))})  # (1)!
 async def fetch_paper(arxiv_id: str) -> str:
     ...
 
 
-@toolset.tool(metadata={'temporal': False})  # (2)!
+@toolset.tool_plain(metadata={'temporal': False})  # (2)!
 async def now() -> str:
     ...
 

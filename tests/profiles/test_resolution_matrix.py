@@ -520,7 +520,7 @@ def test_openai_o3_mini():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openai_codex_gpt_5_6():
-    """The Codex subscription backend: the standard OpenAI profile plus the narrower wire dialect."""
+    """The Codex subscription backend: the first-party OpenAI profile plus the narrower wire dialect."""
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
     profile = OpenAICodexProvider.model_profile('gpt-5.6-luna')
@@ -544,10 +544,12 @@ def test_openai_codex_gpt_5_6():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
+            'tool_addition_mode': 'with_definitions',
             'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
+            'tool_deferral_mode': 'with_tool_search',
         }
     )
 

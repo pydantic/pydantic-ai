@@ -25,7 +25,7 @@ model_response = model_request_sync(
     [ModelRequest.user_text_prompt('What is the capital of France?')]
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 print(model_response.usage)
 #> RequestUsage(input_tokens=56, output_tokens=7)
@@ -124,7 +124,7 @@ model_response = model_request_sync(
     [ModelRequest.user_text_prompt('What is the capital of France?')],
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 ```
 
@@ -147,7 +147,7 @@ model_response = model_request_sync(
     instrument=True
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 ```
 
