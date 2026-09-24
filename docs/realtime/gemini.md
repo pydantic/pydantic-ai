@@ -91,19 +91,18 @@ Gemini-specific control is needed.
     so build the client for it rather than having a session change it underneath them:
 
     ```python {title="proactive_audio.py"}
-    from google import genai
-    from google.genai import types
+    from google.genai import Client, types
 
     from pydantic_ai.providers.google import GoogleProvider
-    from pydantic_ai.realtime.google import GoogleRealtimeModel
+    from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelSettings
 
-    client = genai.Client(
+    client = Client(
         api_key='your-api-key', http_options=types.HttpOptions(api_version='v1alpha')
     )
     model = GoogleRealtimeModel(
         'gemini-2.5-flash-native-audio-latest',
         provider=GoogleProvider(client=client),
-        settings={'google_proactive_audio': True},
+        settings=GoogleRealtimeModelSettings(google_proactive_audio=True),
     )
     ```
 

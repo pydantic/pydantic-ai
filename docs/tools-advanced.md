@@ -249,7 +249,7 @@ As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestM
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 
-agent = Agent('test')
+agent = Agent('test', deps_type=int)
 
 
 async def only_if_42(
@@ -306,6 +306,7 @@ agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machin
 result = agent.run_sync('testing...', deps='human')
 print(result.output)
 #> {"greet":"hello a"}
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
@@ -365,6 +366,7 @@ def echo(message: str) -> str:
 
 
 agent.run_sync('testing...')
+assert test_model.last_model_request_parameters is not None
 assert test_model.last_model_request_parameters.function_tools[0].strict is None
 
 # Set the system attribute of the test_model to 'openai'

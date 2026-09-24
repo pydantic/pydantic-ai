@@ -491,6 +491,8 @@ jobs:
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
       # compatible version; re-enable if a shard then stays comfortably within its timeout.
       BLOCKBUSTER_ENABLED: false
+      # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
+      TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -719,6 +721,8 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
       # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
       BLOCKBUSTER_ENABLED: false
+      # The docs examples are type-checked in the Python 3.14 all-extras jobs.
+      TYPECHECK_EXAMPLES: false
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

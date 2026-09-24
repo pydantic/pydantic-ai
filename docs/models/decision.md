@@ -212,6 +212,7 @@ agent = Agent('typesafe:jev-latest', output_type=Review)
 result = agent.run_sync('Fixed a bug in the parser.')
 print(result.output)
 #> clarity=<Clarity.partial: 1>
+assert result.response.provider_details is not None
 print(result.response.provider_details['scores'])
 #> {'clarity': 1.2}
 ```
@@ -303,6 +304,7 @@ agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
 print(result.output)
 #> True
+assert result.response.provider_details is not None
 print(result.response.provider_details['confidence'])
 #> {'response': 0.84}
 ```
@@ -381,7 +383,7 @@ class Ticket(BaseModel):
 support = Agent('openai:gpt-5.6-sol', instructions='Reply to the customer.')
 
 
-async def reply(ctx: RunContext[None]) -> str:
+async def reply(ctx: RunContext) -> str:
     """Write the customer a reply."""
     # `ctx.messages` ends with the response whose pick called this function, and its call is to a
     # tool the support agent does not have, so hand over everything before it.
@@ -497,6 +499,7 @@ agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation])
 result = agent.run_sync('Someone else can see my invoices when they log in.')
 print(result.output)
 #> security=True
+assert result.response.provider_details is not None
 print(result.response.provider_details['requests'])
 #> 2
 ```
@@ -532,6 +535,7 @@ agent = Agent('typesafe:jev-latest', output_type=[Ticket, Escalation, None])
 result = agent.run_sync('Thanks, that fixed it. Nothing else needed.')
 print(result.output)
 #> None
+assert result.response.provider_details is not None
 print(result.response.provider_details['tool']['choice'])
 #> final_result_None
 ```
@@ -643,7 +647,7 @@ from pydantic_ai import Agent, RunContext
 assistant = Agent(instructions='You are a helpful engineering assistant.')
 
 
-async def route(ctx: RunContext[None], tier: Literal['fast', 'capable']) -> str:
+async def route(ctx: RunContext, tier: Literal['fast', 'capable']) -> str:
     """Answer the question on a model suited to it.
 
     Args:
@@ -693,7 +697,7 @@ router = Agent(
 )
 
 
-async def select_model(ctx: ModelSelectionContext[None]) -> Model:
+async def select_model(ctx: ModelSelectionContext) -> Model:
     if not ctx.messages:
         # `ctx.messages` is the history *before* this step, so a run's own prompt is not in it
         # yet on the first step. A run given `message_history` does have something to read.
@@ -979,6 +983,7 @@ agent = Agent(UndecidedModel(), output_type=Ticket)
 result = agent.run_sync('My invoice lists a plan I never signed up for.')
 print(result.output)
 #> urgent=True area='billing'
+assert result.response.provider_details is not None
 print(result.response.provider_details['confidence'])
 #> {'urgent': 0.0, 'area': 0.0}
 ```

@@ -186,7 +186,7 @@ class MyEvaluator(Evaluator):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8
@@ -234,7 +234,7 @@ class MyEvaluator(Evaluator[str, str]):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8
