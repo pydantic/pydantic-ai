@@ -9,7 +9,7 @@
 | The agent to remember what it learned about someone *across* conversations, not just within one | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | A run to survive the process dying mid-tool-call, and resume exactly where it stopped | [Durable execution](durable_execution/overview.md) | Core |
 
-Coming from LangGraph, where this is a checkpointer? The closest match is [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/), which saves every step of a run so you can continue it later or fork it from any step; to resume a run that crashed partway through a step, use [durable execution](durable_execution/overview.md).
+For checkpoint-style persistence, [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) saves a checkpoint after every step of a run, so you can continue the run later or fork it from any step; to resume a run that crashed partway through a step, use [durable execution](durable_execution/overview.md).
 
 The first two rows are also the answer to "how do I give my agent memory?" for most of what people mean by it: an agent's memory of the conversation it is having *is* its message history. There is no separate memory system to add for that — storing the history and passing it back is the whole mechanism. Memory becomes [its own thing](#remembering-across-conversations) only once it has to outlive the thread.
 
