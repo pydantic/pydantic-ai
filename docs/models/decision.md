@@ -2,11 +2,11 @@
 
 A decision model answers typed questions about a text rather than writing text: is this true or not, which of these labels fits, where does this fall on a rubric. Each answer comes with a probability, or a distribution over the options, so you know how sure it is. An agent runs on one like on any other model, and uses it for the two things a decision can drive: filling a structured [output](../output.md), and picking which [tool](../tools.md) to call.
 
-[`DecisionModel`][pydantic_ai.models.decision.DecisionModel] maps an agent run onto those questions. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output: a `bool` is a yes or no, a `Literal` or `Enum` is one label out of several, a list of labels is a yes or no per label, and a probability or a rubric score are answered as numbers. A Pydantic model with several fields extracts several values in one request. Tools, and the members of a union of output types, become routes: the model picks the one the text calls for, and fills that route's arguments or fields the same way. Change the model name and the same agent runs on a language model, so you can compare the two.
+[`DecisionModel`][pydantic_ai.models.decision.DecisionModel] maps an agent run onto those questions. Each field of the `output_type` becomes one question, the prompt is the text, and the answers come back as the output: a `bool` is a yes or no, a `Literal` or `Enum` is one label out of several, a list of labels is a yes or no per label, a bounded `float` is the probability of yes itself, and a set of described levels is a score against a rubric. A Pydantic model with several fields extracts several values in one request. Tools, and the members of a union of output types, become routes: the model picks the one the text calls for, and fills that route's arguments or fields the same way. Change the model name and the same agent runs on a language model, so you can compare the two.
 
 A decision model can also work together with a language model. When it picks a route it cannot continue down — a tool with an argument it cannot fill, such as a free-form `str`, or one of several output types with such a field — it escalates: behind a [`FallbackModel`](overview.md#fallback-model), a language model takes that whole step, with the same tools and output types to choose from. The same fallback can take the steps the decision model [was unsure about](#falling-back-on-low-confidence). The cheap model answers what it can, and the expensive one only runs when it is needed.
 
-The built-in decision model is TypeSafe's Jev, through [`TypeSafeModel`](typesafe.md), and the examples on this page use it. This page covers what `DecisionModel` does for any backend; the [TypeSafe page](typesafe.md) covers setup, Jev's own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
+The decision model Pydantic AI supports out of the box is TypeSafe's Jev, through the [`TypeSafeModel`](typesafe.md) model class, and the examples on this page use it. This page covers what `DecisionModel` does for any backend; the [TypeSafe page](typesafe.md) covers setup, Jev's own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
 
 Reach for one when the answer is a classification — a verdict, a route, a label, a score against a rubric — and you want it cheaper and faster than a language model gives it, with a confidence you can act on. Keep a language model for anything that has to be written: a `str` field, a reply, a summary.
 
@@ -92,8 +92,8 @@ A field of a nested model is a question of its own, and a list of options fans o
 | `bool`, or `Literal[True, False]` | yes or no | `True` when the probability of yes is at least `decision_boolean_threshold` (0.5) |
 | `Literal[...]` or `Enum` of strings or whole numbers, other than a rubric | pick one | the chosen option |
 | `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | the probability, unrounded, in the field's own units |
-| an `IntEnum` of `0, 1, 2, …` with a docstring under each member | score against a rubric | the nearest level |
-| `list` of a `Literal` or `Enum` | one yes or no per option | the options answered yes |
+| an `IntEnum` of `0, 1, 2, …` with a description per level, from [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] | score against a rubric | the nearest level |
+| `list` of a `Literal` or `Enum` of strings | one yes or no per option | the options answered yes |
 | `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer |
 | `Literal[...]` or `Enum`, or `None` | pick one, or none of these | the option, or the field's default, or `None` |
 | a nested model of these | its fields, asked as `outer.inner` | the model |
@@ -183,7 +183,7 @@ def check_status(service: Literal['payments', 'login', 'reports']) -> str:
 
 
 support = Agent(
-    FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
+    FallbackModel('typesafe:jev-latest', 'anthropic:claude-opus-5-5'),
     output_type=[Triage, Refund, Reply],
     instructions='Tickets to the support desk of a project-management app.',
     tools=[check_status],
@@ -203,10 +203,10 @@ print(repr(result.output))
 result = support.run_sync('Is login down? None of my team can sign in.')
 print(repr(result.output))
 """
-Reply(body='Yes, login has been degraded since 09:12 UTC, which is why your team cannot sign in. A fix is rolling out now, so please try again shortly.')
+Reply(body="Hi there, sorry about the trouble signing in. Login has been having problems since 09:12 UTC. That's why your team can't get in. The problem is on our side, and a fix is going out now.\n\nYou don't need to change anything or reset any passwords. Once the fix is finished, your team should be able to sign in as usual. If anyone still can't sign in after that, please reply here and tell us which app they're using (web, iOS or Android) and what error they see. We'll look into it right away.\n\nThanks for your patience, and sorry again for the disruption.")
 """
 print(result.response.model_name)
-#> gpt-5.6-sol
+#> claude-opus-5-5
 ```
 
 `Area` is a pick-one whose options are described by their docstrings, `urgent` a yes/no with [`BoolCriteria`][pydantic_ai.output.BoolCriteria] saying what each answer means, `app` a pick-one that can answer "none of these", and `Impact` a [rubric](#what-each-field-type-does): ordered levels, each described. `Reply` asks for a `str`, which no decision model can fill, and that is deliberate: it is the route that needs a language model.
@@ -217,7 +217,7 @@ Each ticket is a run, and Jev takes every step it can:
 
 1. **The route question.** The first request asks Jev one pick-one question over the ticket: does it call for `Triage`, `Refund`, `Reply`, or `check_status`? Each option is described by its docstring. No fields are asked yet, since until a route is picked there is no telling which fields apply.
 2. **The fill.** A second request asks only the picked route's questions, over the same ticket: `Refund`'s `reason`, or all four of `Triage`'s fields at once. The run ends with that output. The first two tickets go this way, and cost two Jev requests each and no language model call.
-3. **A tool call.** A picked tool is filled the same way — here, `check_status`'s `service` — as long as the model gave the pick a probability of at least [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] (0.6). Your function runs, and the next step asks Jev the route question again, with the result in the history. `check_status` is not offered a second time in the same run.
+3. **A tool call.** A picked tool is filled the same way — here, `check_status`'s `service` — as long as the model gave the pick a probability of at least [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] (0.6); below that, Jev fills the likeliest output type instead. Your function runs, and the next step asks Jev the route question again, with the result in the history. `check_status` is not offered a second time in the same run.
 4. **Escalation.** `Reply` has a field Jev cannot fill, so picking it — like picking a tool with such an argument — raises [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The `FallbackModel` hands the whole step to the language model, with the same tools and output types, and the language model decides afresh: it could triage, refund or check the status as well. On the third ticket, Jev checked the status and then picked `Reply`, so the language model wrote the reply with the status in view, and the response names it as the model that answered. That one step is the only language model call; the steps before it stayed on Jev.
 
 The rest of this page takes each piece in turn: [where the wording comes from](#where-the-wording-comes-from), [each field type](#what-each-field-type-does), [routes](#routes-which-thing-to-do) through [tools](#tools-pick-then-fill) and [unions](#a-union-of-output-types), [escalation](#escalating-to-a-language-model), and [confidence](#confidence-and-thresholds) — where the same `FallbackModel` can also take the steps Jev was unsure about.
@@ -384,7 +384,7 @@ The response sums the input and output tokens from both requests, but [`RequestU
 
 The second request has already committed to the selected route. If that request fails or returns invalid answers, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] names the route and stops the run; the default `FallbackModel` does not replay the original step and quietly choose another one.
 
-The questions in one request are answered independently. A field cannot depend on another field's answer: two arguments of the same tool are decided separately, and neither sees the other. Where one judgement genuinely follows from another, they belong in different steps, not in two fields of the same call. That is the whole mechanism behind the [patterns below](#decision-models-inside-an-agent-run): an output function is a candidate the model can choose, and choosing it *is* calling it.
+The questions in one request are answered independently. A field cannot depend on another field's answer: two arguments of the same tool are decided separately, and neither sees the other. Where one judgement genuinely follows from another, they belong in different steps, not in two fields of the same call — which is what the [patterns below](#decision-models-inside-an-agent-run) build on: an output function is a route the model can choose, and choosing it *is* calling it.
 
 Write the output type's docstring as the action it is — "Triage a support ticket", "Reply to the customer" — because that is what the other routes are weighed against. Asking whether the model *can* answer, rather than what the text calls for, is a question about the question rather than about the text, and [on Jev](typesafe.md#what-jev-answers-badly) it hands off nearly everything.
 
@@ -400,15 +400,15 @@ With tools attached, the first request carries the route question, with every ou
 | an output function with no arguments | your function, and the run ends | only if the function makes one |
 | a tool whose arguments the model can express | the decision model fills its arguments in a second request, then your function runs | none |
 | a tool with any unsupported argument, at or above `decision_tool_call_threshold` | the model behind the decision model [takes the whole step](#escalating-to-a-language-model), tools and all | one |
-| a function tool, below that threshold | the decision model fills the fields, or with only output functions takes the likeliest of them; the lean is in `provider_details['tool']` | none |
+| a function tool, below that threshold | the decision model fills the likeliest output type, or with only output functions takes the likeliest of them; the lean is reported in `provider_details` | none |
 
-A function tool is only taken at or above [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] (default 0.6), while there is still an output type to fill or an output function left to hand to. Higher takes fewer tools, and is right more often when it does; tune it on labelled examples of your own. With no output type to fill, a pick below the threshold goes to the likeliest output function instead, and the route actually taken is named in `provider_details['tool']['taken']`. The threshold gates function tools only: an output function is a result to hand to, not something else to be done, so a pick below the bar still takes it.
+A function tool is only taken at or above [`decision_tool_call_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_tool_call_threshold] (default 0.6), while there is still an output type to fill or an output function left to hand to. Higher takes fewer tools, and is right more often when it does; tune it on labelled examples of your own. With no output type to fill, a pick below the threshold goes to the likeliest output function instead, and `provider_details` names the route actually taken beside the one picked. The threshold gates function tools only: an output function is a result to hand to, not something else to be done, so a pick below the bar still takes it.
 
 With no output type to fill and every other route already returned this turn, the one route left is taken without a route question at all: the model still fills its supported arguments in one request, and a route with no arguments costs no request.
 
 A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool that sends mail or charges an account is one a decision model can set off, and approval and limits are the agent's job here as anywhere.
 
-**A tool with no arguments: the decision model alone.** There is nothing to fill, so the call is made on the pick, and its result comes back as history for the next request. The model can work through a sequence of such tools. A tool whose result is already in the turn is not offered again, because a decision model has no notion of having made a call and would pick it again with the result in view; one that asked for a retry stays on offer. What was on offer is in `provider_details['tool']['offered']`. Every request here is a decision model request:
+**A tool with no arguments: the decision model alone.** There is nothing to fill, so the call is made on the pick, and its result comes back as history for the next request. The model can work through a sequence of such tools. A tool whose result is already in the turn is not offered again, because a decision model has no notion of having made a call and would pick it again with the result in view; one that asked for a retry stays on offer. The routes that were on offer are reported in `provider_details`. Every request here is a decision model request:
 
 ```python
 from pydantic import BaseModel, Field
@@ -455,7 +455,7 @@ class Ticket(BaseModel):
     urgent: bool = Field(description='Does this need a reply within the hour?')
 
 
-support = Agent('openai:gpt-5.6-sol', instructions='Reply to the customer.')
+support = Agent('anthropic:claude-opus-5-5', instructions='Reply to the customer.')
 
 
 async def reply(ctx: RunContext) -> str:
@@ -487,7 +487,7 @@ An `output_type` of several structured types is a set of routes. The model picks
 
 Each member is described by **its own docstring**, which is what the model weighs the routes against. With one output type the agent's instructions can say what filling it is for; with several they cannot, because one instruction cannot describe two different routes, so a member without a docstring is a [`UserError`][pydantic_ai.exceptions.UserError].
 
-The pick is reported in `provider_details['tool']`, with the probability of every member, and `provider_details['requests']` is `2`. The [tool threshold](#tools-pick-then-fill) gates tools, not output types: picking an output type says which result to fill, not that something else should be done, so a tool picked below the threshold falls back to the likeliest output type rather than being taken.
+The pick is reported in `provider_details`, with the probability of every route, and `provider_details['requests']` is `2`. The [tool threshold](#tools-pick-then-fill) gates tools, not output types: picking an output type says which result to fill, not that something else should be done, so a tool picked below the threshold falls back to the likeliest output type rather than being taken.
 
 #### Declining with `None`
 
@@ -526,7 +526,7 @@ To say what declining means on your agent rather than take the stock phrase, nam
 
 A route the model cannot fill is still offered, and picking it hands the step on: a tool with any unsupported argument, such as a plain `str` or an unbounded number, or a union member with such a field, like the support desk's `Reply`. The pick becomes a [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] rather than a response. That is a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) with a language model behind the decision model hands that model the whole step, with the same tools and output types, and the language model decides the step again for itself. The rest of the requests never leave the decision model. Without a model behind it, the proposal is the error, and it says which route the model wanted and how sure it was. The request that proposed the call is not on the fallback response's usage.
 
-The decision model answers the tickets it can and hands over the ones that need writing, so only those cost a language model call. How many that is depends on your tickets and the [tool threshold](#tools-pick-then-fill), and `provider_details['tool']` on each response is how to see it.
+The decision model answers the tickets it can and hands over the ones that need writing, so only those cost a language model call. How many that is depends on your tickets and the [tool threshold](#tools-pick-then-fill), and the route pick reported in each response's `provider_details` is how to see it.
 
 A lone `output_type` the model cannot fill is refused before any request instead. There is no other route the run could have taken, so an unfillable one can only ever fail — that is a coding error, and finding out at setup beats finding out from the bill. Offered beside others, it is a route like any other; a union in which *no* member can be filled is refused the same way, since every answer to the question would hand off and the request asking it would buy nothing.
 
@@ -537,8 +537,8 @@ The same `FallbackModel` can also take the steps the decision model answered but
     slower than not using a decision model at all. Measure the rate on your own data before relying on the
     arrangement.
 
-    Note where the number is. On a request the decision model answers, its pick is in
-    `provider_details['tool']['probabilities']`. On a hand-off it is not:
+    Note where the number is. On a request the decision model answers, its pick and the probability of every
+    route are in `provider_details`. On a hand-off they are not:
     [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] is raised instead of a response, and
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] returns the *next* model's response, which carries
     none of the decision model's numbers. So counting hand-offs by their absence in `provider_details` is the
@@ -620,7 +620,9 @@ def unsure(response: ModelResponse) -> bool:
     return any(value < 0.8 for value in confidence.values())
 
 
-model = FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol', fallback_on=[ModelAPIError, unsure])
+model = FallbackModel(
+    'typesafe:jev-latest', 'anthropic:claude-opus-5-5', fallback_on=[ModelAPIError, unsure]
+)
 agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
 print(result.output)
@@ -670,7 +672,7 @@ A decision model answers in one piece, so there is nothing to stream, and nothin
 
 Everything above asks a decision model a question and uses the answer. The same question is worth as much *inside* a run as outside one: a decision that sits between the expensive steps — which model answers, whether a call should run, which tools are worth offering — is a classification, and a decision model fast enough for a real-time request path makes it cheap enough to ask every time rather than once at the top.
 
-Each of these is an existing [capability](../capabilities/overview.md) hook. None of them needs new API, and none of them is specific to decision models: they take any model, and a language model will do the same job more slowly and more expensively. What a decision model changes is that the decision stops being something you ration.
+Each of these is a [capability](../capabilities/overview.md) hook, and none of them is specific to decision models: they take any model, and a language model will do the same job more slowly and more expensively. What a decision model changes is that the decision stops being something you ration.
 
 ### Classify, then act
 
@@ -922,7 +924,7 @@ Two things this gets right that are easy to lose. A decision model can only answ
 
 A backend may cap how many options one question can carry, and the two reserved ones count: on Jev, which picks from [at most 255](typesafe.md#limits), a set built at run time needs a ceiling of 253 candidates and a plan for what to do above it — rank and offer the best few, or narrow by some cheaper filter first. An observation that produces hundreds of equally plausible actions is usually a sign the candidates are too fine-grained, not that the limit is too low.
 
-The probabilities over every candidate are in `provider_details['tool']['probabilities']`, which is what to watch: a decision loop that abstains on most steps, or spreads its probability evenly, is telling you the candidates are not distinguishable by their descriptions.
+The route pick in `provider_details` carries the probability of every candidate, which is what to watch: a decision loop that abstains on most steps, or spreads its probability evenly, is telling you the candidates are not distinguishable by their descriptions.
 
 ### The same shape elsewhere
 
@@ -1029,7 +1031,7 @@ A probability of 0.5 lands exactly on the default threshold, so `urgent` comes b
 
 What `decide` receives and owes:
 
-- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history` and the latest prompt under `text`, as [above](#judging-a-conversation). Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts (`field`, `question`, `goal`, `instructions`, and `chosen` on the second request of a [pick, then fill](#tools-pick-then-fill)).
+- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history` and the latest prompt under `text`, as [above](#judging-a-conversation). Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts (`field`, `question`, `goal`, `instructions`, `option` on each yes/no a `list` or `dict` of options fans out to, and `chosen` on the second request of a [pick, then fill](#tools-pick-then-fill)).
 - Every question in `request.questions` needs an answer of the matching kind under the same name: a [`NoulAnswer`][pydantic_ai.models.decision.NoulAnswer] with the probability of yes, a [`ChoiceAnswer`][pydantic_ai.models.decision.ChoiceAnswer] with a probability for every option in `criteria`, or a [`ScoreAnswer`][pydantic_ai.models.decision.ScoreAnswer] with a position along the levels. A missing or mismatched answer is an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 - Probabilities are read as probabilities, and the [thresholds](#confidence-and-thresholds) and reported confidence assume they are calibrated. A backend whose scores are not should calibrate them before returning them, or document that its bars need tuning of their own.
 - Report the tokens a request used on `DecisionResponse.usage`, and the model version that answered on `model_name`.
