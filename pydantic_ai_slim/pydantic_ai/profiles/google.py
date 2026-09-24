@@ -370,12 +370,6 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # one completes the turn alongside the call just as `NON_BLOCKING` does.
         # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live#migrating
         profile['google_tool_calls_non_blocking_by_default'] = True
-    if is_3_8_live or is_extended_thinking:
-        # Google made `NON_BLOCKING` the default for the 3.8 family, so an unset behavior no longer means
-        # blocking there: verified live 2026-09-16 against `gemini-3.8-live`, where a declaration without
-        # one completes the turn alongside the call just as `NON_BLOCKING` does.
-        # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live#migrating
-        profile['google_tool_calls_non_blocking_by_default'] = True
     return profile
 
 
