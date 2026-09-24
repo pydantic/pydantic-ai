@@ -65,7 +65,7 @@ _EXIT_POLL_INTERVAL = 0.005
 def _running_on_asyncio() -> bool:
     try:
         asyncio.get_running_loop()
-    except RuntimeError:
+    except RuntimeError:  # pragma: no cover - only reached on Trio, which CI does not run
         return False
     return True
 
