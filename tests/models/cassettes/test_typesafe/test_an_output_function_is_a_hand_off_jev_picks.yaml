@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '504'
+      - '490'
       content-type:
       - application/json
       host:
@@ -21,7 +21,7 @@ interactions:
           criteria:
             Ticket: Triage a support ticket.
             escalate: Hand the ticket to a person on the support team.
-          instructions: Which of these does the user's request call for?
+          instructions: Which of these does this call for?
           type: choice
         urgent:
           instructions:
@@ -34,14 +34,14 @@ interactions:
   response:
     headers:
       content-length:
-      - '252'
+      - '253'
       content-type:
       - application/json
     parsed_body:
       answers:
         route:
           choice: escalate
-          confidence: 1.0
+          confidence: 0.99
           probabilities:
             Ticket: 0.0
             escalate: 1.0
@@ -51,7 +51,7 @@ interactions:
           type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 391
+        input_tokens: 388
         output_tokens: 51
     status:
       code: 200

@@ -434,7 +434,7 @@ print(result.response.provider_details['probabilities'])
 
 ## Routes: which thing to do
 
-Fields are what the model fills. A *route* is a thing the text could call for: an output type, an [output function](../output.md#output-functions), or a [tool](#tools-pick-then-fill). When there is more than one on offer — tools attached, or a [union](#a-union-of-output-types) of output types and output functions — the model is asked one more question, the route question: which of these does the user's request call for, framed by the agent's `instructions` like every other question. The options are every output type, every output function and every tool on offer, each described by its docstring.
+Fields are what the model fills. A *route* is a thing the text could call for: an output type, an [output function](../output.md#output-functions), or a [tool](#tools-pick-then-fill). When there is more than one on offer — tools attached, or a [union](#a-union-of-output-types) of output types and output functions — the model is asked one more question, the route question: which of these does this call for, framed by the agent's `instructions` like every other question. The options are every output type, every output function and every tool on offer, each described by its docstring.
 
 Each option goes by the name you gave the route:
 
