@@ -15,10 +15,15 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
     return result.stdout
 ```
 
-`LocalWorkspace(working_dir, *, read_only=False)` runs host subprocesses and provides no isolation:
-`working_dir` is only the default directory and the base for relative paths, not a jail. Use it only
-for trusted work. `working_dir` is required and must be absolute (a leading `~` is expanded); the
-caller owns that directory. `read_only=True` wraps it in `ReadOnlyWorkspace`. It has the default id
+`LocalWorkspace(working_dir, *, read_only=False, env=None)` runs host subprocesses and provides no
+isolation: `working_dir` is only the default directory and the base for relative paths, not a jail
+or a security boundary. Use it only for trusted work. `working_dir` is required; a relative path
+such as `'.'` resolves against the current directory at construction, and a leading `~` is
+expanded; the caller owns that directory. Commands inherit nothing from the agent process: they get
+`env` plus the per-call `env`, so pass what they need, e.g.
+`LocalWorkspace('.', env={'PATH': os.environ['PATH'], 'HOME': os.environ['HOME']})` (without
+`PATH`, only the system default path is searched). Never pass `os.environ` wholesale: it hands the
+model's commands every secret in the process, LLM API keys included. `read_only=True` wraps it in `ReadOnlyWorkspace`. It has the default id
 `local_workspace`, so a second one replaces the first unless it gets its own `id`. Its ref is
 `WorkspaceRef(provider='local', id=<working_dir, ~ expanded>)` from construction (the directory
 must exist; the first operation raises `WorkspaceUnavailableError` otherwise), and the capability
@@ -26,7 +31,8 @@ claims only that exact ref: a foreign ref, or a local ref for another directory,
 cannot redirect the agent to another host directory (pass `workspace='new'` to start over in the
 configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('.'))`.
-Without an attached workspace, operations raise `UserError`. `Workspace` offers the same run,
+Without an attached workspace, operations raise `UserError`; a capability that needs one checks
+`ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run,
 file, and bounded-read methods for every backend; wrappers can override primitives and
 `ReadOnlyWorkspace` blocks commands and changes.
 
@@ -34,6 +40,8 @@ file, and bounded-read methods for every backend; wrappers can override primitiv
 (whichever first). Check `window.truncated` before treating the result as complete; `window.text`
 includes a continuation notice when a cap fired. Pass `limit=None` and `max_bytes=None` together
 for an uncapped read, or use `read_text` / `read_bytes` for exact whole-file access.
+`resolve()` is textual; `realpath()` asks the environment to resolve symlinks in the existing
+components (native through `SupportsRealpath`, `readlink -f` in the shell otherwise).
 
 An explicit backend passed through `workspace=` is used directly, and a `Workspace` facade or
 wrapper (`ReadOnlyWorkspace(...)`, `result.workspace`, `ctx.workspace`) is kept as-is. An explicit
@@ -57,7 +65,9 @@ is never a label: no name-, conversation- or uuid-derived ref before the environ
 `get_workspace` is the only path from a ref back to a workspace. The local backend is the one
 exception where the ref precedes any operation (the directory is the environment); `working_dir()`
 raises `WorkspaceUnavailableError` if the directory is missing. When a run ends, `workspace.ref` is
-recorded as `workspace_ref` on its last `ModelResponse` (`None` if no environment was created).
+recorded as `workspace_ref` on its last `ModelResponse` (`None` if no environment was created). A
+run on an agent without that provider's capability records `None`, which hides the older ref, so pass
+`workspace=result.workspace` (or its ref) to continue after it.
 
 A provider backend keeps credentials and its SDK client, exposes a typed awaitable native handle as
 `workspace`, and owns a lock/cache plus private `_create_or_attach(ref)`. The core does not manage

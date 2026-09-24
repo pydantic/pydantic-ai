@@ -8,12 +8,15 @@ is available but native filesystem access is not, [`Workspace`][pydantic_ai.work
 performs file operations through the shell.
 
 ```python {title="workspace_agent.py"}
-from pathlib import Path
+import os
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace(Path.cwd())])
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[LocalWorkspace('.', env={'PATH': os.environ['PATH']})],
+)
 
 
 @agent.tool
@@ -31,11 +34,12 @@ async def main() -> None:
 The [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] capability gives every run of an
 agent a workspace on this machine: commands are host subprocesses and files are the host's files.
 It isolates nothing and is not a jail. Its `working_dir` is only where commands start and what
-relative paths resolve against, so absolute paths and commands reach anywhere on the host that this
-process can. Use it for trusted, local work; run untrusted code in a container or VM through a
-provider workspace. `working_dir` is required and must be absolute, such as `Path.cwd()` or
-`'~/project'` (a leading `~` is expanded), so a run never lands in the host process's working
-directory implicitly. The caller owns that directory's creation and cleanup.
+relative paths resolve against, not a security boundary: absolute paths and commands reach anywhere
+on the host that this process can. Use it for trusted, local work; run untrusted code in a container
+or VM through a provider workspace. `working_dir` is required. A relative path such as `'.'`
+resolves against the current directory when the workspace is constructed, so a later change of
+directory doesn't move it, and a leading `~` is expanded. The caller owns that directory's creation
+and cleanup.
 
 Pass `read_only=True` to let tools read and list files while refusing commands and file changes:
 
@@ -54,7 +58,7 @@ To choose the workspace for a single run instead, pass a backend through `worksp
 precedence over the agent's capabilities:
 
 ```python {requires="workspace_agent.py"}
-from pathlib import Path
+import os
 
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 
@@ -62,12 +66,21 @@ from workspace_agent import agent
 
 
 async def main() -> None:
-    workspace = LocalWorkspaceBackend(Path.cwd())
+    workspace = LocalWorkspaceBackend('.', env={'PATH': os.environ['PATH']})
     await agent.run('Write fizzbuzz to fizzbuzz.py and run it.', workspace=workspace)
 ```
 
-`LocalWorkspaceBackend` passes only `PATH`, `HOME`, `LANG`, and `TMPDIR` through to commands, plus any `env`
-you supply. It caps captured command output at 10 MiB and raises
+Commands inherit nothing from the agent process's environment: they get the workspace's `env`, with
+any `env` passed to `run` layered on top. Pass what they need, as the first example does with
+`PATH`, and add others such as `HOME` the same way. Without `PATH`, programs are only looked up in
+the system's default path, so tools installed elsewhere (Homebrew, `~/.local/bin`, a virtualenv)
+are not found.
+
+!!! warning
+    Don't pass `os.environ` itself: that hands the model's commands every secret in the process,
+    LLM API keys included.
+
+`LocalWorkspaceBackend` caps captured command output at 10 MiB and raises
 [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] above that limit.
 
 You can write a workspace for another environment by implementing a small backend. See
@@ -78,6 +91,10 @@ as separate packages.
 
 Relative paths resolve against the workspace's working directory. Path resolution normalizes
 spelling, including `..`, but does not confine access; isolation comes from the workspace itself.
+[`resolve`][pydantic_ai.workspaces.Workspace.resolve] is textual and never looks at the filesystem.
+To learn where a path actually leads, use [`realpath`][pydantic_ai.workspaces.Workspace.realpath]:
+it asks the environment to resolve symlinks in the components that exist, and keeps the ones that
+don't as written.
 [`read_text`][pydantic_ai.workspaces.Workspace.read_text] and
 [`write_text`][pydantic_ai.workspaces.Workspace.write_text] read and write whole text files.
 [`read_bytes`][pydantic_ai.workspaces.Workspace.read_bytes] returns exact bytes.
@@ -194,6 +211,22 @@ configured from the capability's own settings, carrying `ref` when one was passe
 for a ref you do not recognize. `get_workspace` is the only place a reference is turned back into a
 workspace, so a capability that creates environments must also recognize the references they get.
 
+A capability that needs a workspace can check
+[`Workspace.attached`][pydantic_ai.workspaces.Workspace.attached] in `before_run`, so a run without
+one fails at the start instead of on the first tool call:
+
+```python
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
+
+
+class ProjectNotes(AbstractCapability):
+    async def before_run(self, ctx: RunContext) -> None:
+        if not ctx.workspace.attached:
+            raise UserError("`ProjectNotes` needs a workspace. Attach one, such as `LocalWorkspace('.')`.")
+```
+
 ## Workspace references {#workspace-references}
 
 A [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] names an environment that exists, and it
@@ -217,10 +250,15 @@ the same environment, and what `result.workspace.ref` hands to another process.
 [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] strips it from client-supplied
 history by default.
 
+A run continues in the environment named by the latest response's `workspace_ref`. A run on an agent
+without that provider's capability records no reference, and that latest `None` hides the older one
+from later runs. To continue after such a run, pass the earlier run's `result.workspace` (or its ref)
+as `workspace=`.
+
 A local workspace is the one case where the reference precedes any operation: its directory is the
-environment, so `WorkspaceRef(provider='local', id=...)`, where `id` is the `working_dir` with `~`
-expanded, is known from construction, and responses from a local run record which directory they
-worked in. The first operation still checks the environment: `working_dir()` raises
+environment, so `WorkspaceRef(provider='local', id=...)`, where `id` is the absolute `working_dir`
+with `~` expanded, is known from construction, and responses from a local run record which
+directory they worked in. The first operation still checks the environment: `working_dir()` raises
 `WorkspaceUnavailableError` when the directory does not exist, and nothing creates it.
 [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] claims that reference only when it names
 its own `working_dir`, which is how a run continued from message history lands in the same
