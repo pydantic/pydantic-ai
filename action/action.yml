@@ -1,0 +1,98 @@
+name: Run a Pydantic AI agent
+description: Run a Pydantic AI agent on a GitHub Actions runner.
+
+inputs:
+  prompt:
+    description: The prompt to send to the agent. Set exactly one of prompt and prompt-file.
+    required: false
+    default: ''
+  prompt-file:
+    description: A prompt file, resolved relative to working-directory. Set exactly one of prompt and prompt-file.
+    required: false
+    default: ''
+  agent:
+    description: A module:variable agent target, or an agent spec file ending in .yml, .yaml, or .json.
+    required: false
+    default: pydantic_ai_harness.coder:coder_agent
+  model:
+    description: A model identifier, such as openai:gpt-5.6-sol. Overrides the model the agent carries; required when it carries none.
+    required: false
+    default: ''
+  python-version:
+    description: The Python version used to install dependencies and run the agent.
+    required: false
+    default: '3.12'
+  pip-install:
+    description: Extra space-separated packages to install, such as the project that provides your own agent.
+    required: false
+    default: ''
+  pydantic-ai-version:
+    description: The pydantic-ai-slim version specifier to install. Defaults to the minimum this action needs.
+    required: false
+    default: '>=2.44.0'
+  harness-version:
+    description: The exact pydantic-ai-harness version to install. Setting it installs the Harness whatever the agent is.
+    required: false
+    default: ''
+  working-directory:
+    description: The directory that packages are installed from and the agent runs in.
+    required: false
+    default: .
+
+outputs:
+  result:
+    description: The agent's output.
+    value: ${{ steps.run-agent.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install the agent
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        AGENT: ${{ inputs.agent }}
+        PYDANTIC_AI_VERSION: ${{ inputs.pydantic-ai-version }}
+        HARNESS_VERSION: ${{ inputs.harness-version }}
+        EXTRA_PACKAGES: ${{ inputs.pip-install }}
+      run: |
+        packages=("pydantic-ai-slim[openai,anthropic,spec]$PYDANTIC_AI_VERSION")
+
+        # The Harness is what the default agent comes from, so it is installed when the agent
+        # target names it and left out otherwise: a workflow running its own agent doesn't pay
+        # for it, or have its dependencies resolved against a package it never imports.
+        if [[ -n "$HARNESS_VERSION" ]]; then
+          packages+=("pydantic-ai-harness==$HARNESS_VERSION")
+        elif [[ "$AGENT" == pydantic_ai_harness.* || "$AGENT" == pydantic_ai_harness:* ]]; then
+          packages+=("pydantic-ai-harness")
+        fi
+
+        # The credential the workflow already set is what turns tracing on, so a run that is
+        # meant to be traced doesn't also have to remember to install the package that does it.
+        if [[ -n "${LOGFIRE_TOKEN:-}" || -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]]; then
+          packages+=("logfire>=4.39.0")
+        fi
+
+        if [[ -n "$EXTRA_PACKAGES" ]]; then
+          read -r -a extra_packages <<< "$EXTRA_PACKAGES"
+          packages+=("${extra_packages[@]}")
+        fi
+
+        # -P keeps the checkout off `sys.path` while pip imports its own modules.
+        python3 -P -m pip install --quiet --disable-pip-version-check "${packages[@]}"
+
+    - name: Run the agent
+      id: run-agent
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PAI_AGENT: ${{ inputs.agent }}
+        PAI_MODEL: ${{ inputs.model }}
+        PAI_PROMPT: ${{ inputs.prompt }}
+        PAI_PROMPT_FILE: ${{ inputs.prompt-file }}
+      run: python3 -P "$GITHUB_ACTION_PATH/runner.py"
