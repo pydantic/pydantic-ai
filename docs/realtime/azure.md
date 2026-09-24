@@ -26,16 +26,17 @@ agent = Agent(instructions='You are a helpful voice assistant.')
 
 async def main():
     async with agent.realtime('azure:my-realtime-deployment').session() as session:
+        transcripts = session.stream_transcripts()  # subscribe before prompting
         await session.send('Say hello.')
 
-        async for part in session.stream_transcripts():
+        async for part in transcripts:
             print(f'{part.speaker}: {part.transcript}')
             #> assistant: Hello from the realtime assistant.
             if part.speaker == 'assistant':
                 break  # keep listening in a real call; we stop after one reply
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 For explicit configuration, use
 [`AzureProvider.for_realtime()`][pydantic_ai.providers.azure.AzureProvider.for_realtime]. It accepts
@@ -176,12 +177,18 @@ model = AzureRealtimeModel(
 async def main():
     async with agent.realtime(model).session() as session:
         await session.send('Say hello.')
-        async for event in session:
-            ...
+        await session.wait_for_reply()  # keep listening in a real call; we stop after one reply
 ```
 
 Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.
 [`azure_voice_live_turn_detection`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_turn_detection]).
+Voice Live defaults input transcription to `whisper-1` when the deployment name starts with
+`gpt-realtime`, and to `azure-speech` otherwise. This is a name match, so a custom-named
+`gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
+`input_transcription_model` explicitly when that is not the intended deployment.
+
+Voice Live silently ignores the inherited `openai_*` settings plus `thinking` and
+`parallel_tool_calls`. Use Voice-Live-specific settings where available.
 
 ### Which models use which API
 

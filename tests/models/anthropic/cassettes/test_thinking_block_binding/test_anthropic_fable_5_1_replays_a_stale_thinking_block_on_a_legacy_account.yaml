@@ -1,0 +1,160 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '266'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Think about it, then say what 17*23 is.
+          type: text
+        role: user
+      model: claude-fable-5-1
+      stream: false
+      system:
+      - text: You are a helpful assistant. Answer briefly.
+        type: text
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1337'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-0620f5bd71d42dac47e9adeb69312445-374ac79180e9f627-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: CAQS/wMKEAgRGAI4AUIIdGhpbmtpbmcSDIJALwd6/x86gclRvxoMKzunhbIN9PfMyTi5IjD0rGJ8st9cj71WY/MTqA6EKC3q9R4VssSZwtEtb680G/DaaNX5b07QIa7hbWdankIqnAOh/R7gyIkp39ekTH4jhA4bzHoODqTQvmUULG/Fcy8MBB1y2ZgoWb8yT8TmGmy1/krzs/Zx8rJz8zT8Telf6ZicF4Bp7SvzzrsFkdyMZTuioITeMZbeLcOdCiBntM5te5Z2vFbDYJHSLhj0WiiUyEcVwbZfxhrkltJJ1sCrJlDiogtU8+/2LRCPBT3OERb37xgYGfw0hYmSGa7MNogGmB0P0h2i6yFnptaFF/eF+RL+30rglrDY5RvQ4XDnir0iVBIReMgYPDBd0IjY/leXxrzbIuT3vRC3Wm2Tb/2eHViRLqd4/8mAwogY1FjyYNDF6F8vOAaj3XVScN4bJ9fCbh9+uMyvY23UCx8W6RAnA5/mnE0Z0Srws0J0eWdHxq83eA9NABBrikDBJgNqVl/+8YGsTzbjbgNcPWj7G95UHuVsGEZoKt2FRw+hTtHBqoeGEH7cu1IH2gWk3Sx1LtN/CKHK77I9m+PGkb+CqNWOeVcSUou4jK0cuSwgJZ9Uiey+MsFd624KQgbtAMj3Mub1ALWWeBY453iyQV+4uQDKGAE=
+        thinking: ''
+        type: thinking
+      - text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**.
+        type: text
+      id: msg_011Cedu3ywBS4aXbmoczciTw
+      model: claude-fable-5-1
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 41
+        output_tokens: 67
+        output_tokens_details:
+          thinking_tokens: 30
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1238'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Think about it, then say what 17*23 is.
+          type: text
+        role: user
+      - content:
+        - signature: CAQS/wMKEAgRGAI4AUIIdGhpbmtpbmcSDIJALwd6/x86gclRvxoMKzunhbIN9PfMyTi5IjD0rGJ8st9cj71WY/MTqA6EKC3q9R4VssSZwtEtb680G/DaaNX5b07QIa7hbWdankIqnAOh/R7gyIkp39ekTH4jhA4bzHoODqTQvmUULG/Fcy8MBB1y2ZgoWb8yT8TmGmy1/krzs/Zx8rJz8zT8Telf6ZicF4Bp7SvzzrsFkdyMZTuioITeMZbeLcOdCiBntM5te5Z2vFbDYJHSLhj0WiiUyEcVwbZfxhrkltJJ1sCrJlDiogtU8+/2LRCPBT3OERb37xgYGfw0hYmSGa7MNogGmB0P0h2i6yFnptaFF/eF+RL+30rglrDY5RvQ4XDnir0iVBIReMgYPDBd0IjY/leXxrzbIuT3vRC3Wm2Tb/2eHViRLqd4/8mAwogY1FjyYNDF6F8vOAaj3XVScN4bJ9fCbh9+uMyvY23UCx8W6RAnA5/mnE0Z0Srws0J0eWdHxq83eA9NABBrikDBJgNqVl/+8YGsTzbjbgNcPWj7G95UHuVsGEZoKt2FRw+hTtHBqoeGEH7cu1IH2gWk3Sx1LtN/CKHK77I9m+PGkb+CqNWOeVcSUou4jK0cuSwgJZ9Uiey+MsFd624KQgbtAMj3Mub1ALWWeBY453iyQV+4uQDKGAE=
+          thinking: ''
+          type: thinking
+        - text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**.
+          type: text
+        role: assistant
+      - content:
+        - text: And times two?
+          type: text
+        role: user
+      model: claude-fable-5-1
+      stream: false
+      system:
+      - text: You are a helpful assistant. Answer briefly. Today is 2026-09-01.
+        type: text
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '550'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c54c58259b49780b44bae62148458802-456ed54bb6e0c139-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: 391 × 2 = **782**.
+        type: text
+      id: msg_011Cedu4Ki4XpDFyXmNDfDCm
+      model: claude-fable-5-1
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 127
+        output_tokens: 13
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

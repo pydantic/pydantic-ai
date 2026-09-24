@@ -4,15 +4,26 @@ import copy
 import gc
 import re
 import uuid
-import weakref
-from collections.abc import Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, durable_operation
+from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
+from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Instrumentation,
+    ProcessEventStream,
+    ResolveModelId,
+    WrapperCapability,
+    WrapRunHandler,
+    durable_operation,
+)
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
@@ -29,12 +40,23 @@ from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOp
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, UserPromptPart
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models import (
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    StreamedResponse,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
+
+from ..conftest import try_import
+from ..model_lifecycle_utils import LifecycleTrackingModel
+
+with try_import() as logfire_installed:
+    from logfire.testing import CaptureLogfire
 
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -152,6 +174,298 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
 
 class ReplayingDurability(RecordingDurability):
     replay_capability_operations = True
+
+
+class TransparentDurability(RecordingDurability):
+    @property
+    def in_durable_context(self) -> bool:
+        return False
+
+
+class ModelIdReplacingBeforeModelRequest(AbstractCapability[Any]):
+    id = 'model_id_replacing_before_model'
+
+    @durable_operation('before_model_request')
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        request_context.model_id = 'tracked'
+        return request_context
+
+
+class LifecycleModel(LifecycleTrackingModel):
+    def __init__(self, events: list[str], **kwargs: Any) -> None:
+        super().__init__(events, event_prefix='model-', **kwargs)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        self.events.append('stream-enter')
+        try:
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed:
+                yield streamed
+        finally:
+            self.events.append('stream-exit')
+
+
+class RepeatingLifecycleModel(LifecycleTrackingModel):
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.events.append('request')
+        return ModelResponse(parts=[TextPart('from-tracked')])
+
+
+def _tracked_model_resolver(
+    built: list[LifecycleTrackingModel],
+    *,
+    events: list[str] | None = None,
+    event_prefix: str = '',
+    model_type: type[LifecycleTrackingModel] = LifecycleTrackingModel,
+) -> Callable[[ModelResolutionContext[Any], str], LifecycleTrackingModel]:
+    """Build a fresh model for the one id these tests swap to, recording every instance.
+
+    Shared across the tests below rather than repeated inside each: the outside-a-container test
+    asserts this is never consulted, so a resolver of its own would leave a body nothing executes.
+    Each call gets its own event list unless the caller supplies one to share.
+    """
+
+    def resolve(_ctx: ModelResolutionContext[Any], model_id: str) -> LifecycleTrackingModel:
+        del model_id
+        model = model_type(
+            events if events is not None else [],
+            event_prefix=event_prefix,
+            custom_output_text='from-tracked',
+        )
+        built.append(model)
+        return model
+
+    return resolve
+
+
+async def test_capability_operation_is_direct_outside_durable_context() -> None:
+    events: list[str] = []
+    built_models: list[LifecycleTrackingModel] = []
+    resolve_model = _tracked_model_resolver(built_models, events=events, event_prefix='tracked-')
+
+    durability = TransparentDurability()
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='direct_capability_operation',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), durability],
+    )
+
+    assert (await agent.run('test')).output == 'original'
+    assert events == []
+    assert built_models == []
+    assert not any('__capability__' in name for name, _ in durability.calls)
+
+
+async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
+    events: list[str] = []
+    built_models: list[LifecycleTrackingModel] = []
+    resolve_model = _tracked_model_resolver(built_models, events=events, event_prefix='tracked-')
+
+    durability = RecordingDurability()
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='durable_capability_operation',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), durability],
+    )
+
+    assert (await agent.run('test')).output == 'from-tracked'
+
+    assert events == [
+        'tracked-enter',
+        'tracked-enter',
+        'request',
+        'tracked-exit:none',
+        'tracked-exit:none',
+    ]
+    assert len(built_models) == 2
+    assert any('__capability__' in name for name, _ in durability.calls)
+
+
+async def test_capability_operation_registered_model_id_swap_does_not_manage_model() -> None:
+    events: list[str] = []
+    registered = LifecycleTrackingModel(events, event_prefix='registered-', custom_output_text='from-registered')
+    durability = RecordingDurability(models={'tracked': registered})
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='registered_capability_operation_model',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), durability],
+    )
+
+    assert (await agent.run('test')).output == 'from-registered'
+    assert events == ['request']
+
+
+async def test_resolved_request_model_records_are_released_with_their_models() -> None:
+    built_models: list[LifecycleTrackingModel] = []
+    durability = RecordingDurability()
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='released_capability_operation_model',
+        capabilities=[
+            ModelIdReplacingBeforeModelRequest(),
+            ResolveModelId(_tracked_model_resolver(built_models)),
+            durability,
+        ],
+    )
+
+    await agent.run('test')
+
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    records = bound._resolved_request_models  # pyright: ignore[reportPrivateUsage]
+    assert records
+
+    # The record outlives the request it was made for, so it has to be released with its model
+    # rather than accumulating one entry per swapped request for the life of the agent.
+    built_models.clear()
+    gc.collect()
+
+    assert records == {}
+
+
+async def test_repeated_capability_operation_model_id_swaps_close_each_model() -> None:
+    built_models: list[LifecycleTrackingModel] = []
+    resolve_model = _tracked_model_resolver(built_models, model_type=RepeatingLifecycleModel)
+
+    agent = Agent(
+        TestModel(custom_output_text='original'),
+        name='repeated_capability_operation_model',
+        capabilities=[ModelIdReplacingBeforeModelRequest(), ResolveModelId(resolve_model), RecordingDurability()],
+    )
+
+    attempts = 0
+
+    @agent.output_validator
+    def retry_once(output: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ModelRetry('retry once')
+        return output
+
+    assert (await agent.run('test')).output == 'from-tracked'
+    assert [model.events for model in built_models] == [
+        ['enter', 'exit:none'],
+        ['enter', 'request', 'exit:none'],
+        ['enter', 'exit:none'],
+        ['enter', 'request', 'exit:none'],
+    ]
+
+
+@pytest.mark.parametrize(
+    ('stream', 'fail', 'expected_events'),
+    [
+        (False, False, ['model-enter', 'request', 'model-exit:none']),
+        (True, False, ['model-enter', 'stream-enter', 'stream-exit', 'model-exit:none']),
+        (False, True, ['model-enter', 'request', 'model-exit:RuntimeError']),
+    ],
+)
+async def test_durable_model_scope_manages_rebuilt_model_lifecycle(
+    stream: bool, fail: bool, expected_events: list[str]
+) -> None:
+    """A worker-built model stays entered for its whole operation and exits on failure."""
+    events: list[str] = []
+
+    def resolve_model(_ctx: ModelResolutionContext[Any], _model_id: str) -> LifecycleModel:
+        return LifecycleModel(events, fail=fail)
+
+    agent = Agent(
+        'lifecycle',
+        name=f'rebuilt_model_lifecycle_{stream}_{fail}',
+        capabilities=[ResolveModelId(resolve_model), RecordingDurability()],
+    )
+
+    if fail:
+        with pytest.raises(RuntimeError, match='request failed'):
+            await agent.run('test')
+    elif stream:
+        async with agent.run_stream('test') as result:
+            assert await result.get_output() == 'ok'
+    else:
+        assert (await agent.run('test')).output == 'ok'
+
+    assert events == expected_events
+
+
+async def test_durable_model_scope_does_not_suppress_body_error() -> None:
+    events: list[str] = []
+    model = LifecycleModel(events, fail=True, suppress_exit=True)
+    agent = Agent(
+        'lifecycle',
+        name='rebuilt_model_suppressed_exit',
+        capabilities=[ResolveModelId(lambda ctx, model_id: model), RecordingDurability()],
+    )
+
+    with pytest.raises(RuntimeError, match='request failed'):
+        await agent.run('test')
+
+    assert events == ['model-enter', 'request', 'model-exit:RuntimeError']
+
+
+async def test_durable_model_scope_surfaces_teardown_error() -> None:
+    events: list[str] = []
+    model = LifecycleModel(events, fail=True, fail_exit=True)
+    agent = Agent(
+        'lifecycle',
+        name='rebuilt_model_failed_exit',
+        capabilities=[ResolveModelId(lambda ctx, model_id: model), RecordingDurability()],
+    )
+
+    with pytest.raises(ValueError, match='exit failed'):
+        await agent.run('test')
+
+    assert events == ['model-enter', 'request', 'model-exit:RuntimeError']
+
+
+async def test_durable_model_scope_does_not_manage_registered_models() -> None:
+    """The agent owner remains responsible for default and `models=` instances."""
+    default_events: list[str] = []
+    registered_events: list[str] = []
+    default = LifecycleModel(default_events, model_name='default')
+    registered = LifecycleModel(registered_events, model_name='registered')
+    agent = Agent(
+        default,
+        name='registered_model_lifecycle',
+        capabilities=[RecordingDurability(models={'registered': registered})],
+    )
+
+    assert (await agent.run('test')).output == 'ok'
+    assert (await agent.run('test', model='registered')).output == 'ok'
+
+    async with agent.run_stream('test', model='registered') as result:
+        assert await result.get_output() == 'ok'
+
+    assert default_events == ['request']
+    assert registered_events == ['request', 'stream-enter', 'stream-exit']
+
+
+async def test_durable_model_scope_manages_inferred_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model inferred inside the worker has the same owned lifecycle as a resolver-built model."""
+    events: list[str] = []
+
+    def infer_lifecycle_model(_model_id: str) -> LifecycleModel:
+        return LifecycleModel(events)
+
+    monkeypatch.setattr('pydantic_ai.durable_exec._base.infer_model', infer_lifecycle_model)
+    agent = Agent('test', name='inferred_model_lifecycle', capabilities=[RecordingDurability()])
+
+    assert (await agent.run('test')).output == 'ok'
+    assert events == ['model-enter', 'request', 'model-exit:none']
 
 
 class Operations(AbstractCapability[Any]):
@@ -288,6 +602,164 @@ class PerRunOperation(AbstractCapability[Any]):
         self.calls += 1
 
 
+class PerRequestOperation(AbstractCapability[Any]):
+    """A per-run replacement whose operation takes an explicit `RunContext` and runs per request."""
+
+    id = 'per_request_operation'
+
+    def __init__(self, steps: list[int]) -> None:
+        self.steps = steps
+        self.replacements = 0
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        # A brand-new instance, the way `dataclasses.replace` builds one: none of the dispatchers a
+        # durability engine attached to the agent-bound instance ride along on it.
+        self.replacements += 1
+        replacement = PerRequestOperation(self.steps)
+        replacement.replacements = self.replacements
+        return replacement
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        await self.record_step(ctx)
+        return request_context
+
+    @durable_operation('record_step')
+    async def record_step(self, ctx: RunContext[Any]) -> int:
+        self.steps.append(ctx.run_step)
+        return ctx.run_step
+
+
+class DerivedContextOperation(AbstractCapability[Any]):
+    """Dispatches with a context it derived, rather than the one it was handed."""
+
+    id = 'derived_context_operation'
+
+    def __init__(self) -> None:
+        self.seen: list[dict[str, Any] | None] = []
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.record(replace(ctx, metadata={'operation': 'reserve'}))
+
+    @durable_operation('record')
+    async def record(self, ctx: RunContext[Any]) -> int:
+        self.seen.append(ctx.metadata)
+        return 1
+
+
+class WrapRunOperation(AbstractCapability[Any]):
+    """Calls a durable operation from `wrap_run`, before it awaits the handler."""
+
+    id = 'wrap_run_operation'
+
+    async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        await self.reserve(ctx)
+        return await handler()
+
+    @durable_operation('reserve')
+    async def reserve(self, ctx: RunContext[Any]) -> int:
+        return ctx.run_step
+
+
+class HoldsSetupContext(AbstractCapability[Any]):
+    """Keeps the context `for_run` was handed and dispatches with it from a later hook."""
+
+    id = 'holds_setup_context'
+
+    def __init__(self) -> None:
+        self.setup_ctx: RunContext[Any] | None = None
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        replacement = HoldsSetupContext()
+        replacement.setup_ctx = ctx
+        return replacement
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        assert self.setup_ctx is not None
+        await self.read_deps(self.setup_ctx)
+        return request_context
+
+    @durable_operation('read_deps')
+    async def read_deps(self, ctx: RunContext[Any]) -> str:
+        return str(ctx.deps)
+
+
+class BaseHookTier(AbstractCapability[Any]):
+    @base_hook_durable_operation('provision')
+    async def provision(self, ctx: RunContext[Any]) -> str: ...  # pragma: no branch
+
+
+class BaseHookOverride(BaseHookTier):
+    """An override of a durable base hook, which carries no marker of its own."""
+
+    id = 'base_hook_override'
+
+    def __init__(self, bodies: list[str]) -> None:
+        self.bodies = bodies
+
+    async def provision(self, ctx: RunContext[Any]) -> str:
+        self.bodies.append('base')
+        return 'base'
+
+
+class BaseHookOverrideReplacement(BaseHookOverride):
+    async def provision(self, ctx: RunContext[Any]) -> str:
+        self.bodies.append('replacement')
+        return 'replacement'
+
+
+class SpecializedForRun(AbstractCapability[Any]):
+    """Replaced for the run by a subclass that overrides the operation, unless kept as-is."""
+
+    id = 'specialized_for_run'
+
+    def __init__(self, bodies: list[str], *, specialize: bool = True) -> None:
+        self.bodies = bodies
+        self.specialize = specialize
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return SpecializedForRunReplacement(self.bodies) if self.specialize else self
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        await self.describe(ctx)
+        return request_context
+
+    @durable_operation('describe')
+    async def describe(self, ctx: RunContext[Any]) -> str:
+        self.bodies.append('base')
+        return 'base'
+
+
+class SpecializedForRunReplacement(SpecializedForRun):
+    @durable_operation('describe')
+    async def describe(self, ctx: RunContext[Any]) -> str:
+        self.bodies.append('replacement')
+        return 'replacement'
+
+
+class ResolvesInForRun(AbstractCapability[Any]):
+    """Calls its own durable operation from `for_run`, before the run has any dispatchers."""
+
+    id = 'resolves_in_for_run'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        await self.resolve(ctx)
+        return self
+
+    @durable_operation('resolve')
+    async def resolve(self, ctx: RunContext[Any]) -> int:
+        self.calls += 1
+        return self.calls
+
+
 class TenantScopedOperation(AbstractCapability[str]):
     id = 'tenant_scoped_operation'
 
@@ -365,6 +837,235 @@ async def test_for_run_replacement_dispatches_on_run_instance() -> None:
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(name == 'for_run_operation__capability__per_run_operation.operation' for name, _ in durability.calls)
+
+
+async def test_per_request_hook_dispatches_on_run_instance() -> None:
+    """A per-request hook dispatches durably, even when `for_run` returned a fresh instance.
+
+    The operation takes an explicit `RunContext`, which wins over the ambient one, and a hook is
+    handed a context the graph built for that step rather than the one run setup prepared — so the
+    per-run dispatchers have to travel with it or the operation silently runs inline.
+    """
+    steps: list[int] = []
+    agent = Agent(
+        TestModel(),
+        name='per_request_operation',
+        capabilities=[PerRequestOperation(steps), RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['per_request_operation__capability__per_request_operation.record_step']
+    )
+    # The step's own context, not the one run setup prepared, which is still on step 0.
+    assert steps == snapshot([1])
+
+
+async def test_per_request_hook_dispatches_on_the_run_instance_it_already_built() -> None:
+    """The operation runs as the run's own instance, rather than deriving a second one per call.
+
+    Worker-side recovery falls back to re-deriving the per-run instance when the context that
+    crossed a durable boundary doesn't carry one; in-process it has to reach the instance the run
+    is already using, or per-run state accumulated by earlier hooks is silently discarded.
+    """
+    capability = PerRequestOperation([])
+    agent = Agent(
+        TestModel(),
+        name='per_request_instance',
+        capabilities=[capability, RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    assert capability.replacements == snapshot(1)
+
+
+async def test_operation_receives_the_context_its_caller_passed() -> None:
+    """A derived context reaches the operation, and the identity the engine keys on.
+
+    The dispatcher forwards whatever context the call supplied rather than the one run setup
+    prepared, so a caller that narrows or annotates the context is not silently ignored. Engines
+    whose cache policy hashes the run context therefore key on the derived one -- deliberate, and
+    the reason this is a documented compatibility impact.
+    """
+    capability = DerivedContextOperation()
+    agent = Agent(
+        TestModel(),
+        name='derived_context_operation',
+        capabilities=[capability, RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    assert capability.seen == snapshot([{'operation': 'reserve'}])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    keyed = [
+        next((entry.metadata for entry in key if isinstance(entry, RunContext)), None)
+        for name, key in durability.calls
+        if '__capability__' in name
+    ]
+    assert keyed == snapshot([{'operation': 'reserve'}])
+
+
+async def test_wrap_run_operation_dispatches_before_the_handler_is_awaited() -> None:
+    """`wrap_run` encloses the rest of the run, so dispatch has to exist before the chain is entered.
+
+    A wrapper that journals a reservation before awaiting its handler would otherwise perform that
+    side effect in workflow code, where recovery can repeat it — and a wrapper that short-circuits
+    never awaits the handler at all.
+    """
+    agent = Agent(
+        TestModel(),
+        name='wrap_run_operation',
+        capabilities=[WrapRunOperation(), RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['wrap_run_operation__capability__wrap_run_operation.reserve']
+    )
+
+
+async def test_operation_dispatches_with_the_context_for_run_was_handed() -> None:
+    """The setup context shares the run's mappings, so a capability may keep it and dispatch with it.
+
+    `for_run` receives a context built before the graph exists; it has to be the same mapping the run
+    fills at setup, or an operation called with it later silently runs inline.
+    """
+    agent = Agent(
+        TestModel(),
+        name='holds_setup_context',
+        deps_type=str,
+        capabilities=[HoldsSetupContext(), RecordingDurability()],
+    )
+
+    await agent.run('test', deps='tenant')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['holds_setup_context__capability__holds_setup_context.read_deps']
+    )
+
+
+async def test_dispatch_runs_a_replacement_override_of_a_durable_base_hook() -> None:
+    """An override of a durable base hook is specialized per run like a decorated operation is.
+
+    Driven through the engine entry point rather than a run: an unmarked base-hook override has no
+    decorator to dispatch through, so a run reaches it directly and never consults the declaration.
+    The engine entry point is what a durability integration registers such an operation for, and the
+    body it binds has to be the one the run's capability implements.
+    """
+    bodies: list[str] = []
+    model = TestModel()
+    bound = BaseHookOverride(bodies)
+    agent = Agent(model, name='base_hook_override', capabilities=[bound, TransparentDurability()])
+    durability = TransparentDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext(deps=None, agent=agent, model=model, usage=RunUsage())
+
+    await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
+        BaseHookOverrideReplacement(bodies), 'provision', ctx=ctx, args=(ctx,), kwargs={}
+    )
+    # And the other direction: the capability the engine bound still contributes its own body.
+    await durability._invoke_capability_operation(  # pyright: ignore[reportPrivateUsage]
+        bound, 'provision', ctx=ctx, args=(ctx,), kwargs={}
+    )
+
+    assert bodies == snapshot(['replacement', 'base'])
+
+
+async def test_dispatch_runs_the_replacement_subclass_override() -> None:
+    """A specialized `for_run` replacement contributes the body the run executes.
+
+    The declaration is collected from the class bound at construction, so dispatching it verbatim
+    would run the base implementation on the replacement instance — losing the specialization, and
+    reaching for attributes the replacement may not carry.
+    """
+    bodies: list[str] = []
+    agent = Agent(
+        TestModel(),
+        name='specialized_for_run',
+        capabilities=[SpecializedForRun(bodies), TransparentDurability()],
+    )
+
+    await agent.run('test')
+
+    assert bodies == snapshot(['replacement'])
+
+
+async def test_dispatch_runs_the_declared_body_when_the_run_keeps_the_instance() -> None:
+    """The other direction: with no specialized replacement, the declared body is what runs.
+
+    Without this the test above would pass just as well against an implementation that always ran
+    the capability's own method and never consulted the declaration at all.
+    """
+    bodies: list[str] = []
+    agent = Agent(
+        TestModel(),
+        name='unspecialized_for_run',
+        capabilities=[SpecializedForRun(bodies, specialize=False), TransparentDurability()],
+    )
+
+    await agent.run('test')
+
+    assert bodies == snapshot(['base'])
+
+
+async def test_operation_called_from_for_run_runs_directly() -> None:
+    """`for_run` is what produces the instances dispatch resolves, so it runs before dispatch exists.
+
+    An operation called from there runs directly, as it does outside a durable run — pinned because
+    the capability docs promise it, and because resolving it through the engine instead once meant
+    `for_run` deriving the instance by calling `for_run`, until the recursion limit.
+    """
+    capability = ResolvesInForRun()
+    agent = Agent(TestModel(), name='for_run_operation_call', capabilities=[capability, RecordingDurability()])
+
+    await agent.run('test')
+
+    assert capability.calls == snapshot(1)
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot([])
+
+
+async def test_run_replacement_that_drops_the_bound_id_is_refused() -> None:
+    """A replacement under a different `id` leaves the bound operations unreachable.
+
+    Dispatch resolves a capability by `id`, so the operations would have run inline and
+    non-durably instead — the one outcome a durable operation exists to rule out.
+    """
+
+    class IdChangingOperation(Operations):
+        id = 'id_changing_operation'
+
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            replacement = IdChangingOperation()
+            replacement.id = 'renamed_for_this_run'
+            return replacement
+
+    agent = Agent(
+        TestModel(),
+        name='id_changing',
+        capabilities=[IdChangingOperation(), RecordingDurability()],
+    )
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('test')
+    assert str(exc_info.value) == snapshot(
+        "No capability with id 'id_changing_operation' is present in this run, but one was bound to "
+        'the agent and contributes durable operations. A `for_run` replacement has to keep the '
+        "capability's `id`: it identifies the capability across the run, and persisted operation "
+        'identity and worker-side recovery are built on it.'
+    )
 
 
 async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:
@@ -451,6 +1152,90 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.details['custom_units'],
         ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
+
+
+@pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
+async def test_replayed_usage_delta_of_an_uninstrumented_delegate_is_not_credited_to_its_caller(
+    capfire: CaptureLogfire,
+) -> None:
+    """A delegate without a span doesn't report the usage its replayed operation folds in on the caller's.
+
+    On replay the operation's body doesn't run: its recorded usage delta is folded into the delegate's
+    usage from inside the delegate's run, which must not credit the instrumented run that started it.
+    """
+    capability = UsageOperation()
+    delegate = Agent(TestModel(), name='delegate', capabilities=[capability, ReplayingDurability()])
+    parent = Agent(TestModel(), name='parent', capabilities=[Instrumentation()])
+
+    @parent.tool_plain
+    async def ask_delegate() -> str:
+        return (await delegate.run('x')).output
+
+    results = [await parent.run('go'), await parent.run('go')]
+    assert capability.calls == 1
+
+    reported = [
+        {key: value for key, value in span['attributes'].items() if key.startswith('gen_ai.aggregated_usage.')}
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['name'] == 'invoke_agent parent'
+    ]
+    # What each parent run spent itself, on both the first run and the replayed one.
+    assert reported == [
+        {
+            'gen_ai.aggregated_usage.input_tokens': result.usage.input_tokens,
+            'gen_ai.aggregated_usage.output_tokens': result.usage.output_tokens,
+        }
+        for result in results
+    ]
+
+
+@dataclass(kw_only=True)
+class OperationCheckpointEvent(CapabilityEvent, namespace='durable_operation_test', name='checkpoint'):
+    label: str
+
+
+class EmittingOperation(AbstractCapability[Any]):
+    id = 'emitting_operation'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.checkpoint(ctx)
+
+    @durable_operation('checkpoint')
+    async def checkpoint(self, ctx: RunContext[Any]) -> None:
+        self.calls += 1
+        await ctx.emit(OperationCheckpointEvent(label='one'))
+
+
+async def test_emit_from_capability_durable_operation_is_not_replayed() -> None:
+    """An event emitted inside a `@durable_operation` isn't part of the operation's recorded result.
+
+    The operation's body is what emits, so a replayed run gets the recorded return value without the
+    event. Pinned rather than fixed: the alternative -- rejecting `emit` inside a durable unit the
+    way `ctx.enqueue()` is rejected -- would stop a capability from reporting what its own operations
+    do, and unlike an enqueued message a missed event doesn't change what the model sees.
+    """
+    observed: list[str] = []
+
+    async def observe(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, OperationCheckpointEvent):
+                observed.append(event.label)
+
+    capability = EmittingOperation()
+    agent = Agent(
+        TestModel(),
+        name='replayed_emit',
+        capabilities=[capability, ProcessEventStream(observe), ReplayingDurability()],
+    )
+
+    await agent.run('test')
+    await agent.run('test')
+
+    assert capability.calls == 1
+    assert observed == ['one']
 
 
 def test_decorated_capability_requires_explicit_stable_id() -> None:
@@ -628,23 +1413,6 @@ async def test_custom_model_request_operation_round_trips_projection() -> None:
     assert any(
         name == 'custom_model_request__capability__custom_model_request.rewrite_request' for name, _ in durability.calls
     )
-
-
-def test_durable_operation_bindings_do_not_retain_agents() -> None:
-    capability = Operations()
-    agents = [
-        Agent(TestModel(), name=f'weak_binding_{index}', capabilities=[capability, RecordingDurability()])
-        for index in range(3)
-    ]
-    bindings = capability._get_durable_operation_bindings()  # pyright: ignore[reportPrivateUsage]
-    references = [weakref.ref(agent) for agent in agents]
-    assert len(bindings) == 3
-
-    agents.clear()
-    gc.collect()
-
-    assert not any(reference() is not None for reference in references)
-    assert len(bindings) == 0
 
 
 async def test_decorated_model_request_hook_round_trips_registered_model_replacement() -> None:
@@ -1218,10 +1986,16 @@ def prefect_test_server() -> Generator[None, None, None]:
     so this module-scoped harness enters and exits before that one starts. Renaming either
     module so this one sorts after test_prefect.py would nest two Prefect harnesses.
     """
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
-    with prefect_test_harness(server_startup_timeout=60):
-        yield
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
+        with prefect_test_harness(server_startup_timeout=60):
+            yield
 
 
 @requires_prefect

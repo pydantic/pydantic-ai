@@ -66,6 +66,8 @@ Keyword arguments interact with spec fields as follows:
 * **`model_settings`** — merged additively: keyword argument settings override matching spec settings.
 * **`output_type`** — takes precedence over `output_schema` from the spec.
 
+The spec may omit `model`; it can instead be supplied to `Agent.from_spec` or when running the agent.
+
 When `deps_type` is passed, [template strings](#template-strings) in the spec's `instructions`, `description`, and capability arguments are compiled and validated against the deps type at construction time.
 
 For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agent.AgentSpec.from_file] to load the spec separately before passing it to `Agent.from_spec`.
@@ -124,7 +126,7 @@ The [`AgentSpec`][pydantic_ai.agent.AgentSpec] model represents the full spec st
 
 | Field | Type | Description |
 |---|---|---|
-| `model` | `str` | [Model](models/overview.md) name (required) |
+| `model` | `str \| None` | [Model](models/overview.md) name |
 | `name` | `str \| None` | Agent name |
 | `description` | `str \| None` | Agent description (supports [templates](#template-strings)) |
 | `instructions` | `str \| list[str] \| None` | [Instructions](agent.md#instructions) (supports [templates](#template-strings)) |
@@ -178,10 +180,12 @@ capabilities:
 ```python {title="save_spec_example.py"}
 from pydantic_ai import AgentSpec
 
-spec = AgentSpec(
-    model='anthropic:claude-opus-4-6',
-    instructions='You are a helpful assistant.',
-    capabilities=[{'WebSearch': {'local': 'duckduckgo'}}],
+spec = AgentSpec.model_validate(
+    {
+        'model': 'anthropic:claude-opus-4-6',
+        'instructions': 'You are a helpful assistant.',
+        'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
+    }
 )
 spec.to_file('agent.yaml')
 # Also generates ./agent_schema.json for editor autocompletion

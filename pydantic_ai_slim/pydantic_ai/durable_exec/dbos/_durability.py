@@ -54,11 +54,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     engine_spec = DurabilityEngineSpec(
         engine_name='DBOS',
         durable_unit_noun='step',
+        durable_unit_plural='steps',
         durable_container_noun='workflow',
         codec=IDENTITY_CODEC,
         unsupported_runtime_toolset_kinds=frozenset({'mcp', 'dynamic'}),
         wrapped_toolset_kinds=frozenset({'mcp', 'dynamic'}),
-        toolset_lifecycles={'mcp': 'enter-never', 'dynamic': 'enter-never'},
+        toolset_lifecycles={'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
         tool_call_result_upgrade_lenient=True,
         journal_discovery=True,
         sequential_tools_in_durable_context=False,

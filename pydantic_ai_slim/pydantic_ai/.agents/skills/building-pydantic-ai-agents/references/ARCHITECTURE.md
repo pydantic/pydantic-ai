@@ -67,7 +67,9 @@ Need structured data with Pydantic validation?
         └── Yes → Use output_type=str [default]
 
 Dynamic schema at runtime?
-└── Yes → Use StructuredDict(json_schema)
+├── Pick one of a set of options built at runtime?
+│   └── Yes → Use Choices({key: description}) [Choice(description, value=...) to pick an action]
+└── Otherwise → Use StructuredDict(json_schema)
 ```
 
 ### Choosing a Multi-Agent Pattern
@@ -169,16 +171,19 @@ Need deterministic, fast tests?
 | Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
+| TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |
 | OpenRouter | `openrouter:` | `openrouter:anthropic/claude-sonnet-4-6` |
 | xAI | `xai:` | `xai:grok-4.3` |
-| DeepSeek | `deepseek:` | `deepseek:deepseek-chat` |
+| DeepSeek | `deepseek:` | `deepseek:deepseek-v4-flash` |
 | Fireworks | `fireworks:` | `fireworks:accounts/fireworks/models/llama-v3p3-70b-instruct` |
 | Together | `together:` | `together:meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` |
 | Ollama (local) | `ollama:` | `ollama:llama3.2` |
-| GitHub Models | `github:` | `github:openai/gpt-5.2` |
+| vLLM (local or remote) | `vllm:` | `vllm:Qwen/Qwen3.8-27B` |
+| GitHub Models (retired) | `github:` | `github:openai/gpt-5.2` |
+| GitHub Copilot | `github-copilot:` | `github-copilot:claude-haiku-4.5` |
 | Hugging Face | `huggingface:` | `huggingface:meta-llama/Llama-3.3-70B-Instruct` |
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
@@ -186,6 +191,8 @@ Need deterministic, fast tests?
 | Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
 
 **Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`.
+
+For GitHub Copilot device login, use `GitHubCopilotOAuthFlow(client_id=...)` from `pydantic_ai.providers.github_copilot`. Call `start()`, display the returned `verification_uri` and `user_code`, then await `wait_for_authorization()`. Pass its `access_token` to `GitHubCopilotProvider(api_key=...)`. The application must have device flow enabled; GitHub authorization does not establish Copilot entitlement or acceptance of that application's token. Browser opening, credential storage, and renewal stay application-owned. See the [Copilot provider guide](https://pydantic.dev/docs/ai/models/github-copilot/#device-login).
 
 ### Tool Decorator Comparison
 
@@ -204,7 +211,7 @@ Need deterministic, fast tests?
 | `RaiseContentFilterError` | Raises `ContentFilterError` for model responses with `finish_reason='content_filter'` | Yes |
 | `WebSearch` | Web search — native when supported, local fallback | Yes |
 | `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
-| `ImageGeneration` | Image generation — native when supported, custom fallback | Yes |
+| `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
 | `MCP` | MCP server — native when supported, direct connection | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |

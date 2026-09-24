@@ -10,6 +10,7 @@ Unless you're really sure you know better, you'll probably want to follow roughl
 - If you find yourself typing out long assertions, use [inline-snapshot](https://15r10nk.github.io/inline-snapshot/latest/)
 - Similarly, [dirty-equals](https://dirty-equals.helpmanual.io/latest/) can be useful for comparing large data structures
 - Use [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel] in place of your actual model to avoid the usage, latency and variability of real LLM calls
+- For code that generates images, use [`TestImageGenerationModel`][pydantic_ai.images.TestImageGenerationModel] the same way — see [Image Generation: Testing](image-generation.md#testing)
 - Use [`Agent.override`][pydantic_ai.agent.Agent.override] to replace an agent's model, dependencies, or toolsets inside your application logic
 - Set [`ALLOW_MODEL_REQUESTS=False`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] globally to block any requests from being made to non-test models accidentally
 
@@ -86,7 +87,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
-```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py"}
+```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py" typecheck="skip - dirty-equals matchers stand in for timestamps and IDs"}
 from datetime import timezone
 import pytest
 
@@ -192,7 +193,7 @@ async def test_forecast():
 2. This is a safety measure to make sure we don't accidentally make real requests to the LLM while testing, see [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] for more details.
 3. We're using [`Agent.override`][pydantic_ai.agent.Agent.override] to replace the agent's model with [`TestModel`][pydantic_ai.models.test.TestModel], the nice thing about `override` is that we can replace the model inside agent without needing access to the agent `run*` methods call site.
 4. Now we call the function we want to test inside the `override` context manager.
-5. But default, `TestModel` will return a JSON string summarising the tools calls made, and what was returned. If you wanted to customise the response to something more closely aligned with the domain, you could add [`custom_output_text='Sunny'`][pydantic_ai.models.test.TestModel.custom_output_text] when defining `TestModel`.
+5. By default, `TestModel` will return a JSON string summarising the tool calls made, and what was returned. If you wanted to customise the response to something more closely aligned with the domain, you could add [`custom_output_text='Sunny'`][pydantic_ai.models.test.TestModel.custom_output_text] when defining `TestModel`.
 6. So far we don't actually know which tools were called and with which values, we can use [`capture_run_messages`][pydantic_ai.capture_run_messages] to inspect messages from the most recent run and assert the exchange between the agent and the model occurred as expected.
 7. The [`IsNow`][dirty_equals.IsNow] helper allows us to use declarative asserts even with data which will contain timestamps that change over time.
 8. `TestModel` isn't doing anything clever to extract values from the prompt, so these values are hardcoded.
@@ -216,6 +217,7 @@ from pydantic_ai import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -232,6 +234,8 @@ def call_weather_forecast(  # (1)!
     if len(messages) == 1:
         # first call, call the weather forecast tool
         user_prompt = messages[0].parts[-1]
+        assert isinstance(user_prompt, UserPromptPart)
+        assert isinstance(user_prompt.content, str)
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!

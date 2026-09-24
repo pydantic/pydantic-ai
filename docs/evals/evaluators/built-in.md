@@ -40,6 +40,9 @@ dataset = Dataset(
 **Notes:**
 
 - Skips evaluation if `expected_output` is `None` (returns empty dict `{}`)
+- Because of that skip, a case whose expected output *is* `None` records no assertion at
+  all, so it passes whatever the task returns. To assert that the output is `None`, use
+  [`Equals(value=None)`](#equals), which takes the value explicitly.
 - Uses Python's `==` operator, so works with any comparable types
 - For structured data, considers nested equality
 
@@ -383,6 +386,10 @@ GEval(
 
 **Returns:** `EvaluationReason` with the integer score and the judge's reasoning
 
+When the judge model cannot generate text, like [TypeSafe's Jev](../../models/typesafe.md), the
+score keeps the requested integer scale and the reason is `None`. Scoring becomes one question with
+a level per score, so `score_range` may contain at most 20 levels.
+
 **See Also:** [Standard Quality Metrics](standard-quality-metrics.md)
 
 ---
@@ -391,7 +398,7 @@ GEval(
 
 ### HasMatchingSpan
 
-Check if OpenTelemetry spans match a query (requires Logfire configuration).
+Check if OpenTelemetry spans match a query (requires the `logfire` SDK to be configured; no Pydantic Logfire account is needed).
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan

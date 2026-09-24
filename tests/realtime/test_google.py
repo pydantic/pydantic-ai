@@ -63,6 +63,7 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -807,6 +808,12 @@ def test_profile() -> None:
     # and URL context is accepted but never actually grounds, so neither is advertised and a
     # `local=` fallback is used instead.
     assert profile.get('supported_native_tools') == frozenset({WebSearchTool})
+    # The Vertex half-cascade `gemini-live-2.5-flash` closes the session with `1007 thinking_level is
+    # not supported by this model`, so the shared `thinking` setting is skipped there; its native-audio
+    # sibling and the 3.x models take it.
+    assert GoogleRealtimeModel('gemini-live-2.5-flash').profile.get('supports_thinking') is False
+    assert GoogleRealtimeModel('gemini-live-2.5-flash-native-audio').profile.get('supports_thinking') is True
+    assert GoogleRealtimeModel('gemini-3.1-flash-live-preview').profile.get('supports_thinking') is True
     assert GoogleRealtimeModel('gemini-3.1-flash-live-preview').profile.get('supported_native_tools') == frozenset(
         {WebSearchTool}
     )
@@ -1005,6 +1012,15 @@ async def test_send_text() -> None:
     assert sent['turn_complete'] is True
     assert sent['turns'].role == 'user'
     assert sent['turns'].parts[0].text == 'hello'
+
+
+async def test_send_text_context() -> None:
+    session = _RecordingSession()
+    await _conn(session).send(TextContext('background'))
+    sent = session.client_content[0]
+    assert sent['turn_complete'] is False
+    assert sent['turns'].role == 'user'
+    assert sent['turns'].parts[0].text == 'background'
 
 
 async def test_send_image_as_video_frame() -> None:
@@ -1716,8 +1732,9 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
             {
                 'parts': [
                     {'text': '[Tool call-1: weather returned: ["sunny","See file weather.png."]]'},
-                    {'text': 'This is file weather.png:'},
+                    {'text': '<tool_result tool_name="weather" tool_call_id="call-1" file_id="weather.png">'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
+                    {'text': '</tool_result>'},
                     {'text': '[Tool plain-call: plain returned: ok]'},
                     {'text': '[Tool call-1: weather error: invalid city\n\nFix the errors and try again.]'},
                     {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
@@ -2340,3 +2357,49 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     assert isinstance(events[-1], RealtimeSessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.
     assert closed == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ('settings', 'api_version', 'vertexai'),
+    [
+        # Nothing to check when the setting is off, whatever the client is on.
+        (None, 'v1beta', False),
+        ({'google_proactive_audio': False}, 'v1beta', False),
+        # On, and the client can carry it.
+        ({'google_proactive_audio': True}, 'v1alpha', False),
+        # Vertex is left alone: its version line has no `v1alpha` and hasn't been checked.
+        ({'google_proactive_audio': True}, 'v1beta1', True),
+    ],
+)
+def test_proactive_audio_accepted_where_the_client_can_carry_it(
+    settings: GoogleRealtimeModelSettings | None, api_version: str, vertexai: bool
+) -> None:
+    client = _fake_client(_RecordingSession())
+    client.vertexai = vertexai  # pyright: ignore[reportAttributeAccessIssue]
+    client._api_client._http_options.api_version = api_version  # pyright: ignore[reportPrivateUsage]
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    model._check_proactive_audio_api_version(settings or {})  # pyright: ignore[reportPrivateUsage]
+
+
+def test_proactive_audio_on_the_wrong_api_version_says_how_to_fix_it() -> None:
+    """The SDK default is `v1beta`, where the session would close with an opaque `1007` instead."""
+    client = _fake_client(_RecordingSession())
+    client.vertexai = False  # pyright: ignore[reportAttributeAccessIssue]
+    client._api_client._http_options.api_version = 'v1beta'  # pyright: ignore[reportPrivateUsage]
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    with pytest.raises(UserError) as exc_info:
+        model._check_proactive_audio_api_version({'google_proactive_audio': True})  # pyright: ignore[reportPrivateUsage]
+    message = str(exc_info.value)
+    assert 'needs a client on the `v1alpha` API version, but this one is on `v1beta`' in message
+    assert "types.HttpOptions(api_version='v1alpha')" in message
+
+
+async def test_connect_rejects_proactive_audio_before_dialing() -> None:
+    """The check runs at `connect`, so the session never opens on a client that can't carry the setting."""
+    client = _fake_client(_RecordingSession())
+    client.vertexai = False  # pyright: ignore[reportAttributeAccessIssue]
+    client._api_client._http_options.api_version = 'v1beta'  # pyright: ignore[reportPrivateUsage]
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    with pytest.raises(UserError, match='needs a client on the `v1alpha` API version'):
+        async with _connect(model, 'x', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
+            pass  # pragma: no cover

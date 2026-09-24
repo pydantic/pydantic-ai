@@ -140,7 +140,7 @@ async def main():
         """
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ### Using Messages as Input for Further Agent Runs
 
@@ -374,9 +374,68 @@ _(This example is complete, it can be run "as is")_
     `dump_python` → `validate_python` round-trip preserves them exactly. This is the boundary you
     use to persist and reload history.
 
+    A [multi-modal item][pydantic_ai.messages.MultiModalContent] in a tool return is reconstructed
+    as its own type wherever it sits — on its own, in a list, or nested at any depth inside a
+    mapping, including one whose own keys happen to look like ours. A URL-based item is
+    reconstructed only when its mapping carries `media_type`, which every history Pydantic AI dumps
+    does; without one it stays the plain mapping your tool returned, so a URL Pydantic AI cannot
+    read a media type out of never becomes a file that then fails to dump. A
+    [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
+    requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
+    dumping it back never raises. Spelling one of our items out in full does reconstruct it, and the
+    keys that type doesn't declare are dropped along the way, so keep `kind` off any dictionary you
+    want handed back verbatim.
+
+    A tool return keyed by something other than a string is the one place that reconstruction
+    doesn't reach. Such a mapping's keys have no JSON form, so only a `dump_python` round-trip
+    preserves them — and because the mapping is carried through as-is, a multi-modal item nested
+    underneath one comes back as a plain dict there, while the JSON round-trip stringifies the key
+    and restores the item. Use string keys in a tool return if you need both.
+
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
     those fields are dropped entirely. That loss is by design, not a state-loss bug.
+
+### Storing complete run results
+
+An [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] can be stored directly as a field on a Pydantic model:
+
+```python {title="serialize a run result to json"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, AgentRunResult
+
+
+class StoredRun(BaseModel):
+    result: AgentRunResult[str]
+
+
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+result = agent.run_sync('Tell me a joke.')
+
+stored_json = StoredRun(result=result).model_dump_json()
+loaded = StoredRun.model_validate_json(stored_json)
+
+assert loaded.result.output == result.output
+assert loaded.result.all_messages() == result.all_messages()
+```
+
+The round-trip preserves the output, messages and new-message boundary, output tool name, usage, run and
+conversation IDs, metadata, and trace context. Run-local state used only while the agent is executing is not stored.
+
+A [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] reads its values off the stream that is
+producing them, so it lasts only as long as that stream. Once the stream has finished, take
+[`StreamedRunResult.result`][pydantic_ai.result.StreamedRunResult.result] to get the same run in settled
+form and store that:
+
+```python {title="store a streamed run" test="skip" lint="skip"}
+async with agent.run_stream('Tell me a joke.') as streamed:
+    async for text in streamed.stream_text():
+        print(text)
+
+    stored_json = StoredRun(result=streamed.result).model_dump_json()
+```
 
 ### Loading untrusted history
 
@@ -403,7 +462,7 @@ Each sanitization can be turned off individually when the corresponding parts we
 
 ## Persisting sessions
 
-[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
+[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Storage](storage.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
 
 For a chat application that is usually the whole design: load a thread's history, pass it as `message_history`, and write back [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] once the run finishes. Appending each run's new messages rather than rewriting the full list keeps each write proportional to the turn instead of to the conversation, and leaves the stored order intact.
 
@@ -430,6 +489,7 @@ Possession of the endpoint is therefore the authorization boundary, so design ar
 - **Authenticate and authorize at the transport layer.** Run the agent inside your own authenticated route handler, and treat every caller that gets through as able to submit any history it likes.
 - **Scope the toolset to the caller.** Expose only the tools the authenticated caller is entitled to use, by [building the toolset per run](toolsets.md#dynamically-building-a-toolset) or [filtering](toolsets.md#filtering-tools) it against the user carried in your [dependencies](dependencies.md).
 - **Re-validate high-stakes effects server-side.** [Approval](deferred-tools.md#human-in-the-loop-tool-approval) guards against the *model* acting without human sign-off, not against the client. Where the stakes demand it, check the caller's authority against server-side state inside the tool function itself, or persist paused runs server-side and resume them with your own `deferred_tool_results` instead of the client's.
+- **Don't read prompt-level framing as proof.** Where a model API can't carry a tool's file in its tool result, Pydantic AI frames it as coming from that call ([Where a returned file is sent](tools-advanced.md#tool-return-file-provenance)), and a mid-conversation system prompt a provider can't send natively is framed as `<system>...</system>`. Both are ordinary prompt text: a tool can emit a closing tag and a client can type an opening one. They tell the model where content came from; they don't attest it.
 
 !!! note "This is a documented design boundary, not a vulnerability"
     A report that a client can forge an approval, submit a tool call the model never made, or otherwise rewrite the conversation describes this boundary behaving as designed, and is not a vulnerability in Pydantic AI. What *would* be one is a bypass of a check Pydantic AI actually performs — for instance a sanitization default that fails to strip what it documents as stripped.
@@ -590,13 +650,19 @@ To change the conversation mid-run, build *new* message objects rather than modi
 
 ## Injecting messages mid-run
 
-Tools, capability hooks, and external code driving an agent run can inject extra content
+Tools, capability hooks, external code driving an agent run, and code driving a realtime session can inject extra content
 into the conversation mid-run with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]
 (when a `RunContext` is in scope, e.g. inside a tool or capability hook) or
 [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] (from external code driving
-[`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter]). Use this when something happens during a
+[`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter]), or
+[`RealtimeSession.enqueue`][pydantic_ai.realtime.RealtimeSession.enqueue] (from external code driving
+a realtime session). Use this when something happens during a
 run that the agent should know about — a tool wants to add follow-up context, an external event
 needs to *steer* the agent's plan, or background work needs to reach the agent when it completes.
+You can call any of these directly from synchronous or asynchronous code, including a tool or
+callback running in another thread. Calls after the run or session has ended raise
+[`UserError`][pydantic_ai.exceptions.UserError]. For standard runs, submission is synchronized with
+the final drain, so a concurrent call is either accepted for delivery or rejected as the run ends.
 
 A `priority` controls when the enqueued content is delivered:
 
@@ -611,7 +677,7 @@ A `priority` controls when the enqueued content is delivered:
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
-Both `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of a delivered message will be visible through it.
+The standard-run `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of a delivered message will be visible through it. `RealtimeSession.enqueue` also returns an `enqueue_id` or `None`; realtime delivery is documented under [enqueuing prompts](realtime/tools.md#enqueuing-prompts).
 
 ### From inside a tool or hook
 
@@ -626,13 +692,13 @@ agent = Agent('anthropic:claude-opus-4-7')
 
 
 @agent.tool
-def trigger_alert(ctx: RunContext[None]) -> str:
+def trigger_alert(ctx: RunContext) -> str:
     ctx.enqueue('Alert: production is degraded, prioritize triage.')
     return 'alert raised'
 
 
 @agent.tool
-def enter_incident_mode(ctx: RunContext[None]) -> str:
+def enter_incident_mode(ctx: RunContext) -> str:
     # Enqueue a `SystemPromptPart` to adjust the agent's standing instructions mid-run.
     ctx.enqueue(SystemPromptPart(content='You are now in incident mode: be terse and action-oriented.'))
     return 'incident mode enabled'
@@ -673,9 +739,10 @@ async def main():
             node = await agent_run.next(node)
 ```
 
-`'when_idle'` messages are only drained when the agent would otherwise reach an `End` — that
-drain happens in `after_node_run`. `'asap'` messages are drained in `before_model_request`, and
-also at the same end-of-run point if anything arrived during the final step. Both fire however
+`'when_idle'` messages are only drained when the agent would otherwise reach an `End`. That
+drain runs after every capability's `after_node_run` hook, so a capability that redirects the run
+can still enqueue there. `'asap'` messages are drained in `before_model_request`, and also at the
+same end-of-run point if anything arrived during the final step. Both fire however
 you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
 [`AgentRun.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
 loop all deliver enqueued messages.
@@ -690,14 +757,6 @@ loop all deliver enqueued messages.
       system-prompt callback that re-enqueues on each reinjection), the run will
       loop indefinitely. Set [`UsageLimits`][pydantic_ai.usage.UsageLimits] on the
       run as a safety net.
-    - `enqueue` is designed to be called from the same event loop that drives the
-      agent run. Inside the run that's automatic: async tools, sync tools (which
-      Pydantic AI auto-wraps in a thread executor), and capability hooks all
-      enqueue safely because the drain only iterates between graph nodes, never
-      concurrently with a tool body. If you're forwarding events from a *different*
-      thread or loop (e.g. a webhook handler), marshal the call onto the agent's
-      loop first — e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`. The
-      drain isn't atomic against concurrent cross-thread appends.
 
 ## Processing Message History
 
@@ -861,6 +920,56 @@ agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(summarize_old_messa
 
 !!! warning "Be careful when summarizing the message history"
     When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
+
+#### Compact when the context window fills {#compact-when-the-context-window-fills}
+
+The processors above rewrite history on every run. To wait until the conversation approaches the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window], check [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]. It returns the fraction of the window occupied after the latest response, or `None` when Pydantic AI cannot calculate it reliably.
+
+```python {title="compact_when_window_fills.py"}
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    RetryPromptPart,
+    RunContext,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+
+
+def compact_when_window_fills(
+    ctx: RunContext,
+    messages: list[ModelMessage],
+) -> list[ModelMessage]:
+    used = ctx.context_window_used
+    if used is None or used <= 0.8:
+        return messages
+
+    # Keep the most recent complete user turn, including any later tool calls and returns.
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, ModelRequest):
+            continue
+        has_user_prompt = any(isinstance(part, UserPromptPart) for part in message.parts)
+        has_tool_result = any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts)
+        if has_user_prompt and not has_tool_result:
+            return messages[index:]
+    return messages
+
+
+agent = Agent(
+    'openai:gpt-5.2',
+    system_prompt='You are a helpful assistant.',
+    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+)
+```
+
+Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers.
+
+Keep [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor, as shown, so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
+
+Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
 
 ### Testing History Processors
 

@@ -3,16 +3,19 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import inspect
+import re
 import threading
 import time
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
+from traceback import extract_tb
 from typing import Any, cast
 
 import anyio
 import pytest
 from pydantic import BaseModel
 
+from pydantic_ai import _agent_graph
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -32,7 +35,13 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
 )
 from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    AgentNode,
+    NodeResult,
+    WrapModelRequestHandler,
+    WrapNodeRunHandler,
+)
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import (
@@ -42,6 +51,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CapabilityEvent,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -519,6 +529,174 @@ class _FailIfDispatchedDeferredCap(AbstractCapability):
 @dataclass
 class _NoopCap(AbstractCapability):
     pass
+
+
+@dataclass
+class _NodeModelHookCap(AbstractCapability[Any]):
+    log: list[str] = field(default_factory=lambda: [])
+
+    async def wrap_node_run(
+        self, ctx: RunContext[Any], *, node: AgentNode[Any], handler: WrapNodeRunHandler[Any]
+    ) -> NodeResult[Any]:
+        self.log.append('wrap_node_run')
+        return await handler(node)
+
+    async def on_node_run_error(
+        self, ctx: RunContext[Any], *, node: AgentNode[Any], error: Exception
+    ) -> NodeResult[Any]:
+        self.log.append('on_node_run_error')
+        raise error
+
+    async def wrap_model_request(
+        self,
+        ctx: RunContext[Any],
+        *,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
+        self.log.append('wrap_model_request')
+        return await handler(request_context)
+
+    async def on_model_request_error(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        self.log.append('on_model_request_error')
+        raise error
+
+
+async def test_default_node_and_model_hooks_remain_directly_callable() -> None:
+    ctx = _build_run_context()
+    node = _agent_graph.UserPromptNode[Any, Any](user_prompt='test')
+    request_context = ModelRequestContext(
+        model=TestModel(),
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    response = ModelResponse(parts=[])
+
+    async def node_handler(node: AgentNode[Any]) -> NodeResult[Any]:
+        return node
+
+    async def model_handler(_request_context: ModelRequestContext) -> ModelResponse:
+        return response
+
+    for capability in (_NoopCap(), Hooks()):
+        assert await capability.wrap_node_run(ctx, node=node, handler=node_handler) is node
+        assert (
+            await capability.wrap_model_request(ctx, request_context=request_context, handler=model_handler) is response
+        )
+
+    error = RuntimeError('provider failure')
+    with pytest.raises(RuntimeError, match='provider failure') as node_exc_info:
+        await _NoopCap().on_node_run_error(ctx, node=node, error=error)
+    assert node_exc_info.value is error
+
+    with pytest.raises(RuntimeError, match='provider failure') as model_exc_info:
+        await _NoopCap().on_model_request_error(ctx, request_context=request_context, error=error)
+    assert model_exc_info.value is error
+
+
+async def test_inherited_noop_capability_hooks_are_absent_from_traceback() -> None:
+    before_run_called = False
+
+    async def before_run(_ctx: RunContext[Any]) -> None:
+        nonlocal before_run_called
+        before_run_called = True
+
+    async def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('provider failure')
+
+    agent = Agent(
+        FunctionModel(fail),
+        capabilities=[_NoopCap(), WrapperCapability(wrapped=_NoopCap()), Hooks(before_run=before_run)],
+    )
+
+    with pytest.raises(RuntimeError, match='provider failure') as exc_info:
+        await agent.run('test')
+
+    frames = extract_tb(exc_info.value.__traceback__)
+    noop_hook_names = {'wrap_node_run', 'on_node_run_error', 'wrap_model_request', 'on_model_request_error'}
+    assert before_run_called
+    assert not any(
+        frame.filename.endswith(
+            (
+                'pydantic_ai/capabilities/abstract.py',
+                'pydantic_ai/capabilities/combined.py',
+                'pydantic_ai/capabilities/hooks.py',
+                'pydantic_ai/capabilities/wrapper.py',
+            )
+        )
+        and frame.name in noop_hook_names
+        for frame in frames
+    )
+
+
+async def test_implemented_nested_capability_hooks_are_preserved() -> None:
+    async def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('provider failure')
+
+    capability = _NodeModelHookCap()
+    wrapped = WrapperCapability(wrapped=CombinedCapability([capability]))
+
+    with pytest.raises(RuntimeError, match='provider failure'):
+        await Agent(FunctionModel(fail), capabilities=[wrapped]).run('test')
+
+    assert capability.log == [
+        'wrap_node_run',
+        'wrap_node_run',
+        'wrap_model_request',
+        'on_model_request_error',
+        'on_node_run_error',
+    ]
+
+
+async def test_unloaded_deferred_error_hooks_are_skipped() -> None:
+    async def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('provider failure')
+
+    capability = _NodeModelHookCap(id='deferred', defer_loading=True)
+
+    with pytest.raises(RuntimeError, match='provider failure'):
+        await Agent(FunctionModel(fail), capabilities=[capability]).run('test')
+
+    assert capability.log == []
+
+
+async def test_hooks_subclass_overrides_are_not_skipped() -> None:
+    """A Hooks subclass that overrides wrap/error methods still runs them.
+
+    Registry-only `_has_*` checks would skip the override and call the model handler
+    directly.
+    """
+
+    class RecoveringHooks(Hooks):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            try:
+                return await handler(request_context)
+            except RuntimeError:
+                return ModelResponse(parts=[TextPart(content='hooks-wrapped-recovery')])
+
+    class RecoveringErrorHooks(Hooks):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='hooks-error-recovery')])
+
+    async def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('provider failure')
+
+    wrapped = await Agent(FunctionModel(fail), capabilities=[RecoveringHooks()]).run('test')
+    assert wrapped.output == 'hooks-wrapped-recovery'
+
+    recovered = await Agent(FunctionModel(fail), capabilities=[RecoveringErrorHooks()]).run('test')
+    assert recovered.output == 'hooks-error-recovery'
 
 
 def _output_context() -> OutputContext:
@@ -1446,14 +1624,13 @@ class TestHooksCapability:
         assert any('error:RuntimeError' in e for e in error_log)
 
     async def test_on_event_hook(self):
-        """on.event fires for each stream event and can modify events."""
+        """on.event fires for each stream event as an observer."""
         hooks = Hooks()
         events_seen: list[str] = []
 
         @hooks.on.event
-        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
             events_seen.append(type(event).__name__)
-            return event
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
@@ -1469,9 +1646,8 @@ class TestHooksCapability:
         events_seen: list[str] = []
 
         @hooks.on.event
-        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+        async def observe(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
             events_seen.append(type(event).__name__)
-            return event
 
         agent = Agent(
             FunctionModel(simple_model_function, stream_function=simple_stream_function),
@@ -1509,9 +1685,8 @@ class TestHooksCapability:
         stream_log: list[str] = []
 
         @hooks.on.event
-        async def per_event(ctx: RunContext[Any], event: AgentStreamEvent) -> AgentStreamEvent:
+        async def per_event(ctx: RunContext[Any], event: AgentStreamEvent) -> None:
             event_log.append(type(event).__name__)
-            return event
 
         @hooks.on.run_event_stream
         async def wrap_stream(
@@ -1530,6 +1705,56 @@ class TestHooksCapability:
             await stream.get_output()
         assert len(event_log) > 0
         assert stream_log == ['started', 'finished']
+
+    async def test_on_event_typed_filter(self):
+        hooks = Hooks()
+        seen: list[str] = []
+
+        @dataclass(kw_only=True)
+        class FilteredEvent(CapabilityEvent, namespace='hooks_typed_filter'):
+            value: str
+
+        @hooks.on.event(FilteredEvent)
+        def observe(ctx: RunContext[Any], event: FilteredEvent) -> None:
+            seen.append(event.value)
+
+        @dataclass
+        class Emitter(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                await ctx.emit(FilteredEvent(value='matched'))
+
+        await Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[Emitter(), hooks],
+        ).run('hello')
+        assert seen == ['matched']
+
+    async def test_on_event_participates_in_immediate_decision(self):
+        hooks = Hooks()
+        observed: list[bool] = []
+
+        @dataclass(kw_only=True)
+        class DecisionEvent(CapabilityEvent, namespace='hooks_immediate_decision', dispatch='immediate'):
+            cancelled: bool = False
+
+            def cancel(self) -> None:
+                self.cancelled = True
+
+        @hooks.on.event(DecisionEvent)
+        async def cancel(ctx: RunContext[Any], event: DecisionEvent) -> None:
+            event.cancel()
+
+        @dataclass
+        class Emitter(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                event = await ctx.emit(DecisionEvent())
+                observed.append(event.cancelled)
+
+        await Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[Emitter(), hooks],
+        ).run('hello')
+        assert observed == [True]
 
     async def test_prepare_tools_hook(self):
         """on.prepare_tools filters tool definitions."""
@@ -4444,3 +4669,77 @@ async def test_tool_return_can_reveal_capability_owned_tools_once_loaded() -> No
 
     result = await agent.run('Load, then reveal by name.')
     assert result.output == 'done'
+
+
+# --- synthetic ids for capabilities the user never named ---
+
+
+async def _registry_keys(capabilities: list[AbstractCapability[Any]]) -> dict[str, str]:
+    """The run registry, as `{key: label}`, so a key can be traced back to what it names."""
+    agent = Agent(TestModel(), capabilities=capabilities)
+    async with agent.iter('hello') as run:
+        return {key: getattr(cap, 'label', type(cap).__name__) for key, cap in run.ctx.deps.capabilities.items()}
+
+
+@dataclass
+class _Unnamed(AbstractCapability[Any]):
+    label: str = 'x'
+
+
+async def test_a_capability_without_an_id_gets_a_synthetic_key() -> None:
+    """It has to be keyed by something, and that something must not read as a name.
+
+    Angle brackets are what the framework already uses to say it did the naming (`'<agent>'`,
+    `'<output>'` for toolsets); the class name keeps the registry readable.
+    """
+    keys = await _registry_keys([_Unnamed(label='a')])
+
+    synthetic = [key for key, label in keys.items() if label == 'a']
+    assert len(synthetic) == 1
+    assert re.fullmatch(r'<_unnamed:[0-9a-f]{6}>', synthetic[0]), synthetic[0]
+
+
+async def test_a_synthetic_key_differs_between_runs() -> None:
+    """The random part is the point: relying on one fails at once rather than silently later.
+
+    The key it replaced counted from attachment order, so it looked stable and was not -- two
+    anonymous capabilities of one class swapped keys when listed the other way round.
+    """
+    first = await _registry_keys([_Unnamed(label='a')])
+    second = await _registry_keys([_Unnamed(label='a')])
+
+    assert set(first) != set(second)
+
+
+async def test_two_unnamed_capabilities_of_one_class_get_distinct_keys() -> None:
+    """Distinct keys without an ordinal, so neither is `_unnamed_2` for whoever sorted the list."""
+    keys = await _registry_keys([_Unnamed(label='a'), _Unnamed(label='b')])
+
+    assert sorted(label for label in keys.values() if label in {'a', 'b'}) == ['a', 'b']
+    assert len({key for key, label in keys.items() if label in {'a', 'b'}}) == 2
+
+
+async def test_an_explicit_id_is_used_as_written() -> None:
+    """A capability the user named keeps that name; only the unnamed ones get a handle."""
+    keys = await _registry_keys([_Unnamed(label='a', id='chosen')])
+
+    assert keys['chosen'] == 'a'
+
+
+def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two capabilities must never share a registry key, however unlikely a collision is.
+
+    Six hex characters make one vanishingly rare, which is exactly why the retry needs pinning
+    here: nothing would exercise it, and a key that silently replaced another capability's entry
+    would drop that capability out of `ctx.capabilities` entirely.
+    """
+    from pydantic_ai.agent import _synthetic_capability_id  # pyright: ignore[reportPrivateUsage]
+
+    class _Fixed:
+        def __init__(self, hex_value: str) -> None:
+            self.hex = hex_value
+
+    minted = iter([_Fixed('aaaaaa' + '0' * 26), _Fixed('bbbbbb' + '0' * 26)])
+    monkeypatch.setattr('pydantic_ai.agent.uuid4', lambda: next(minted))
+
+    assert _synthetic_capability_id(_Unnamed, taken={'<_unnamed:aaaaaa>'}) == '<_unnamed:bbbbbb>'

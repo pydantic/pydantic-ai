@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -25,10 +25,13 @@ if sys.version_info < (3, 11):
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
+from opentelemetry.trace import StatusCode
+
 from pydantic_ai.embeddings import (
     Embedder,
     EmbeddingResult,
     EmbeddingSettings,
+    EmbedInputType,
     InstrumentedEmbeddingModel,
     KnownEmbeddingModelName,
     TestEmbeddingModel,
@@ -193,6 +196,20 @@ async def test_test_embedding_model_is_exempt_from_request_guard():
     assert result.embeddings == snapshot([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
 
 
+async def test_test_embedding_model_counts_blank_input_as_zero_tokens():
+    """Blank input reports no tokens on both methods.
+
+    The estimator behind them is shared with the other test models, and it counts blank text as one
+    token; `TestEmbeddingModel` guards that, so a blank input contributes nothing to the reported
+    usage instead of one phantom token per empty string in the batch.
+    """
+    model = TestEmbeddingModel()
+
+    assert await model.count_tokens('') == snapshot(0)
+    result = await model.embed(['', 'hi there'], input_type='document')
+    assert result.usage.input_tokens == snapshot(2)
+
+
 STSB_BERT_TINY_MODEL = 'sentence-transformers-testing/stsb-bert-tiny-safetensors'
 # Pinned so a warm HF cache is served without revalidating files against the Hub.
 # Keep in sync with the HF cache keys and warmup commands in .github/workflows/ci.yml;
@@ -331,6 +348,14 @@ class TestOpenAI:
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'openai'
         assert urlparse(model.base_url).hostname == 'gateway.pydantic.dev'
+
+    async def test_infer_model_vllm(self):
+        with patch.dict(os.environ, {'VLLM_BASE_URL': 'http://localhost:8000/v1'}):
+            model = infer_embedding_model('vllm:intfloat/e5-mistral-7b-instruct')
+        assert isinstance(model, OpenAIEmbeddingModel)
+        assert model.model_name == 'intfloat/e5-mistral-7b-instruct'
+        assert model.system == 'vllm'
+        assert model.base_url == 'http://localhost:8000/v1/'
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
@@ -2306,3 +2331,37 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
             }
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_instrumentation_exception_honors_include_content(capfire: CaptureLogfire, include_content: bool):
+    """A failing embedding request follows `include_content` like the agent's spans do.
+
+    A provider error carries its response body in the exception message, so the exception event and
+    the ERROR status description on the embedding span are withheld when content capture is off.
+    """
+
+    class FailingEmbeddingModel(TestEmbeddingModel):
+        async def embed(
+            self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        ) -> EmbeddingResult:
+            raise ModelHTTPError(status_code=400, model_name='failing', body='invalid input: embed-secret')
+
+    embedder = Embedder(FailingEmbeddingModel(), instrument=InstrumentationSettings(include_content=include_content))
+    with pytest.raises(ModelHTTPError):
+        await embedder.embed('hello', input_type='document')
+
+    [span] = [span for span in capfire.exporter.exported_spans if span.status.status_code is StatusCode.ERROR]
+    [event] = [event for event in span.events if event.name == 'exception']
+    attributes = dict(event.attributes or {})
+    assert attributes['exception.type'] == 'pydantic_ai.exceptions.ModelHTTPError'
+    assert attributes['exception.escaped'] == 'False'
+    if include_content:
+        assert {'exception.message', 'exception.stacktrace'} <= set(attributes)
+        assert 'embed-secret' in str(attributes['exception.message'])
+        assert span.status.description is not None
+    else:
+        assert set(attributes) == {'exception.type', 'exception.escaped'}
+        assert span.status.description is None
+        assert 'embed-secret' not in str(capfire.exporter.exported_spans)

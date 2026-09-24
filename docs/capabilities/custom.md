@@ -4,6 +4,39 @@ To build your own [capability](overview.md), subclass [`AbstractCapability`][pyd
 
 Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object for always-on capabilities. If `id` is omitted there, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run. Deferred capabilities require an explicit stable `id`.
 
+Capabilities that cover a single fixed concern instead declare a stable default `id` — the built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch] uses `'web_search'`, [`Thinking`][pydantic_ai.capabilities.Thinking] uses `'thinking'`, and so on — so [durable execution](../durable_execution/overview.md) can identify what they contribute without you naming something you never constructed. Give your own capability a default `id` when it is one-off in the same way.
+
+Because the id is fixed, two of them can meet under one id, and what that means depends on where they came from.
+
+**Two on the same agent** are one configuration stated twice, so they merge field by field: a value only one of them states is kept, and a value both state takes the later one. That is what lets two packaged capabilities each bring a `WebSearch` and the agent reach both sets of domains. There is nothing to declare beyond the default `id` itself — writing one *is* the statement that an agent has one of these:
+
+```python {title="combine_capability.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai.capabilities import AbstractCapability
+
+
+@dataclass
+class Retries(AbstractCapability[Any]):
+    limit: int = 3
+    id: str | None = 'retries'
+```
+
+When two instances are two *identities* rather than two statements of one configuration — two accounts, two credentials — a fixed default `id` is the wrong shape, because merging them would silently drop one. Derive the `id` from whatever distinguishes them instead: two identities then carry two ids and stay two capabilities, and two under one id are a genuine mistake that is reported. [`MCP`][pydantic_ai.capabilities.MCP] derives one from its server's host and last path segment, so servers that differ only in their port or in an earlier path segment still need distinct explicit `id`s.
+
+Override [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] only when composing takes more than merging fields — a budget that should take the *smaller* of two values, say.
+The default merge sees dataclass fields only, so a plain class with a fixed default `id` and instance configuration must override `combine`; otherwise repeated instances raise rather than silently dropping that configuration. A leading underscore does not change that: what matters is whether the merge can enumerate the attribute, not whether it is private.
+
+State you *derive* from those fields is the exception, and `cached_property` is how you say so. Merging discards the cached value, so the next read recomputes it against the merged fields — which is the answer `__post_init__` cannot give, since merging deliberately does not re-run it. State that has to be a field instead is recomputed in your own `combine`.
+
+**A capability supplied for a run** overrides its agent-level namesake outright — `agent.run(capabilities=[Thinking(effort='high')])` replaces the agent's `Thinking` rather than merging with it. A run states what *this* run does, so merging would let an agent-level setting the run meant to replace survive, and let an agent-level allow-list widen a restriction the run was passed to impose. `combine` is not consulted across layers.
+Unrelated capability classes cannot share an `id` across layers. A transparent wrapper that retains its wrapped capability's `id`, such as `prefix_tools()`, can replace that capability across layers; this does not allow different wrapper classes to merge within one layer.
+
+To keep two rather than resolving them, pass a distinct `id` to each, or `id=None` to opt back into the derived-and-disambiguated ids. An `id` you pass to a capability that declares no default is a name you chose, so passing the same one twice is reported as a collision rather than merged.
+
+One limit: for a capability that contributes a [native tool](../native-tools.md), these escapes do not dissolve the native tool's own `id`. Two differently-configured duplicates of a `WebSearch` still raise the native-tool-id conflict whether you give the capabilities distinct `id`s or `id=None` — only identical configurations avoid it.
+
 ```python {title="custom_capability_plain.py"}
 from typing import Any
 
@@ -23,7 +56,7 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     label: str
 ```
 
@@ -33,7 +66,7 @@ If you define a custom `__init__`, set only the metadata you want to expose. The
 from pydantic_ai.capabilities import AbstractCapability
 
 
-class MyCapability(AbstractCapability[None]):
+class MyCapability(AbstractCapability):
     def __init__(
         self,
         label: str,
@@ -701,6 +734,7 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 | Hook | Signature | Purpose |
 |---|---|---|
 | [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, stream: AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]) -> AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]` | Observe, filter, or transform streamed events |
+| [`on_event`][pydantic_ai.capabilities.on_event] | `@on_event(*event_types)` on an async `(self, ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, event: EventT) -> None` method | React to selected events without touching the rest of the stream |
 
 The hook wraps the stream where it's produced, so it fires for every drive mode: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] (which enables streaming automatically when this hook is registered), [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] — whether you advance it with `async for node in agent_run:`, with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], or by [streaming a node yourself](../agent.md#streaming-all-events). Events a capability drops or adds are reflected in what a manual `node.stream()` consumer sees, the same as for any other consumer. It also wraps a [realtime session's](../realtime/capabilities.md) event iterator, where the stream additionally contains realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
 
@@ -762,6 +796,10 @@ class StreamAuditor(AbstractCapability[Any]):
 ```
 
 Matching against [`ToolCallEvent`][pydantic_ai.messages.ToolCallEvent] and [`ToolResultEvent`][pydantic_ai.messages.ToolResultEvent] handles both function tool calls ([`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] / [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]) and output tool calls ([`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] / [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent]). Match against the specific subclass when you need to treat them differently. [Deferred tool calls](../deferred-tools.md#observing-deferred-tool-calls-in-a-stream) additionally emit batch-level [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] / [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent].
+
+To react to a few event types rather than shape the whole stream, mark an async method with [`@on_event`][pydantic_ai.capabilities.on_event] instead. It receives events at the same point in the stream, filters by `isinstance` against the classes you pass it, and cannot change what other consumers see. Naming the classes also keeps your capability out of dispatch for everything else — see [Reacting to events](overview.md#reacting-to-events).
+
+Your capability can also publish its own events for other capabilities and the host application to react to, by defining namespaced [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] subclasses and awaiting [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from a hook or a tool it contributes. See [Capability events](overview.md#capability-events) for both sides of that, and [Which event type do I use?](../agent.md#which-event-type) for why a capability publishes these rather than application [`CustomEvent`][pydantic_ai.messages.CustomEvent]s.
 
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](../ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
@@ -850,15 +888,15 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.models.test import TestModel
 
 
-class Summaries(AbstractCapability[None]):
+class Summaries(AbstractCapability):
     id = 'summaries'
 
-    async def before_run(self, ctx: RunContext[None]) -> None:
+    async def before_run(self, ctx: RunContext) -> None:
         summary = await self.summarize(ctx, ['one', 'two'])
         assert summary == '2 messages'
 
     @durable_operation(name='summarize')
-    async def summarize(self, ctx: RunContext[None], messages: list[str]) -> str:
+    async def summarize(self, ctx: RunContext, messages: list[str]) -> str:
         return f'{len(messages)} messages'
 
 
@@ -866,6 +904,8 @@ agent = Agent(TestModel(), capabilities=[Summaries()])
 ```
 
 Mark each operation method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names and must remain stable, while the Python method can be freely renamed. When a durability capability is bound, calling the method during a run dispatches it through that engine. Without durability, the same call awaits the original method directly.
+
+A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may return a fresh instance — the operation dispatches on whichever instance the run is using, from `before_run` and from per-request hooks alike. The replacement has to keep the capability's `id`, since that is what dispatch and worker-side recovery resolve it by; Pydantic AI raises a `UserError` at the start of the run if a bound capability's ID is no longer present. Dispatch is established once `for_run()` has returned, so an operation called from inside `for_run()` itself runs directly rather than durably.
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 
@@ -948,7 +988,7 @@ To register a dynamic capability, pass a function that takes [`RunContext`][pyda
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRequest, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 
@@ -978,7 +1018,9 @@ def user_skill(ctx: RunContext[str]) -> AbstractCapability[str] | None:
 agent = Agent(TestModel(), deps_type=str, capabilities=[user_skill])
 
 result = agent.run_sync('hi', deps='alice')
-print(result.all_messages()[0].instructions)
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
 #> You can use the refunds skill (role: admin).
 ```
 
@@ -1063,7 +1105,9 @@ assert combined.capabilities[1] is rate_limit_hooks
 
 ### Sharing state between capabilities
 
-Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`][contextvars.ContextVar] set from an async function: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first. A sync [`Hooks`](../hooks.md) function can't be the writer: it runs on a separate thread, so values it sets are not visible to the rest of the run.
+Capabilities don't have direct access to each other. To tell other capabilities that something happened, publish a [capability event](overview.md#capability-events): the publisher awaits [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] and any interested capability reacts with [`@on_event`][pydantic_ai.capabilities.on_event], with no shared object between them and no ordering requirement on the `capabilities` list.
+
+To share a value rather than announce an occurrence, use a [`contextvars.ContextVar`][contextvars.ContextVar] set from an async function: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. The order of capabilities in the `capabilities` list matters — the writer must come before the reader so its `before_*` hook runs first. A sync [`Hooks`](../hooks.md) function can't be the writer: it runs on a separate thread, so values it sets are not visible to the rest of the run.
 
 ### Testing custom capabilities
 
@@ -1185,6 +1229,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, AgentSpec
+from pydantic_ai.agent.spec import CapabilitySpec
 from pydantic_ai.capabilities import AbstractCapability
 
 
@@ -1198,7 +1243,10 @@ class RateLimit(AbstractCapability[Any]):
 # In YAML: `- RateLimit: {rpm: 30}`
 # In Python:
 agent = Agent.from_spec(
-    AgentSpec(model='test', capabilities=[{'RateLimit': {'rpm': 30}}]),
+    AgentSpec(
+        model='test',
+        capabilities=[CapabilitySpec(name='RateLimit', arguments={'rpm': 30})],
+    ),
     custom_capability_types=[RateLimit],
 )
 ```

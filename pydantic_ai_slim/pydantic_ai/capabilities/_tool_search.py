@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
 from .._run_context import AgentDepsT, RunContext
@@ -132,6 +132,15 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     parameter_description: str | None = None
     """Custom description for the `queries` parameter when search runs on our side."""
+
+    _: KW_ONLY
+
+    id: str | None = 'tool_search'
+    """One-off: an agent has a single tool-discovery configuration, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine].
+    Pass a distinct `id` to keep both, or `id=None` for derived ids.
+    """
 
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 

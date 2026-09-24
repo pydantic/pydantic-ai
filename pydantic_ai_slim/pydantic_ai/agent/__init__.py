@@ -6,7 +6,16 @@ import dataclasses
 import functools
 import inspect
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Collection,
+    Generator,
+    Sequence,
+)
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -17,13 +26,14 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, cast, overload
+from uuid import uuid4
 
 import anyio
 from opentelemetry.trace import NoOpTracer
 from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Self, TypeIs, TypeVar
+from typing_extensions import Self, TypeForm, TypeIs, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
@@ -31,9 +41,12 @@ from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabil
 
 from .. import (
     _agent_graph,
+    _display,
+    _enqueue,
     _instructions,
     _output,
     _system_prompt,
+    _usage_attribution,
     _utils,
     concurrency as _concurrency,
     exceptions,
@@ -49,11 +62,11 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
-from .._cancel import CancellationToken, RunCancellation, take_run_binding
+from .._cancel import CancellationToken, RunBinding, RunCancellation, take_run_binding
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import set_current_run_context
+from .._run_context import dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -66,11 +79,19 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import find_capability, has_capability_type
+from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import leaf_capabilities
+from ..capabilities.abstract import (
+    _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
+    _declares_default_id,  # pyright: ignore[reportPrivateUsage]
+    _reject_class_crossing_id,  # pyright: ignore[reportPrivateUsage]
+    _repeated_id_message,  # pyright: ignore[reportPrivateUsage]
+    leaf_capabilities,
+)
 from ..capabilities.combined import bind_capabilities_tier
+from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
+from ..capabilities.wrapper import WrapperCapability
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -129,8 +150,9 @@ from .wrapper import WrapperAgent
 if TYPE_CHECKING:
     from starlette.applications import Starlette
 
-    from pydantic_graph import GraphRunContext
+    from pydantic_graph import Graph, GraphRunContext
 
+    from .. import result as _result
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
@@ -219,10 +241,6 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
-        run_ctx._run_capabilities_by_id = {  # pyright: ignore[reportPrivateUsage]
-            capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
-        }
-        run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
         with set_current_run_context(run_ctx):
             await run_capability.before_run(run_ctx)
             current_ctx = contextvars.copy_context()
@@ -244,6 +262,22 @@ async def _run_lifecycle_hooks(  # noqa: C901
             # it's only reached if a `wrap_run` implementation absorbed the cancellation.
             await asyncio.Future[AgentRunResult[Any]]()
         return build_result()
+
+    # Before `wrap_run`, not inside the handler it wraps: a `wrap_run` implementation may call a
+    # durable operation before it awaits the handler, and one that short-circuits never awaits it at
+    # all, so dispatch has to be installed by the time the chain is entered.
+    run_capabilities_by_id = {
+        capability.id: capability for capability in leaf_capabilities(run_capability) if capability.id is not None
+    }
+    # Mutated in place where the run already shares one mapping by reference with every `RunContext`
+    # it builds (see `GraphAgentDeps.run_capabilities_by_id`); a realtime session has no graph to
+    # share one, so it gets this mapping directly.
+    if (existing := run_ctx._run_capabilities_by_id) is None:  # pyright: ignore[reportPrivateUsage]
+        run_ctx._run_capabilities_by_id = run_capabilities_by_id  # pyright: ignore[reportPrivateUsage]
+    else:
+        existing.clear()
+        existing.update(run_capabilities_by_id)
+    run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
     _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
@@ -391,6 +425,8 @@ def _normalize_agent_retry_overrides(retries: int | AgentRetries | None) -> Agen
 
 T = TypeVar('T')
 S = TypeVar('S')
+_PreparedDepsT = TypeVar('_PreparedDepsT')
+_PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
 
 
@@ -500,7 +536,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     # `__init__` keeps an overload pair purely so Pyright resolves a class-union `output_type`
     # (`Foo | Bar`) as `type[Foo | Bar]` rather than a bare `UnionType`; on a non-overloaded
     # signature Pyright rejects the union argument. The two overloads are intentionally
-    # identical, so the second one overlaps the first.
+    # identical, so the second one overlaps the first. Pyright 1.1.412 and later matches the
+    # union as a `TypeForm` instead, so this is for older Pyright versions.
     @overload
     def __init__(
         self,
@@ -509,7 +546,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
+        deps_type: type[AgentDepsT] | TypeForm[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -533,7 +570,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
+        deps_type: type[AgentDepsT] | TypeForm[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -556,7 +593,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[OutputDataT] = str,
         instructions: AgentInstructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = object,
+        deps_type: type[AgentDepsT] | TypeForm[AgentDepsT] = object,
         name: str | None = None,
         description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
@@ -602,7 +639,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 overridable via [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
                 Both budgets can be overridden per run via `agent.run(retries=...)` (and friends), passing
                 an `AgentRetries` dict (e.g. `retries={'tools': 3}`) for per-category control.
-                For model request retries, see the [HTTP Request Retries](../models/http-request-retries.md) documentation.
+                For model request retries, see the [transport retries](../retries.md#transport-retries) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
@@ -647,8 +684,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         _inject_auto_capabilities(capabilities)
 
+        # Listeners registered with `@agent.on_event` live here rather than in the root capability,
+        # so they survive an overridden root capability the way `@agent.tool` tools survive
+        # `override(toolsets=...)`. `on_event` is the only way to reach it, so it never contributes
+        # instructions, tools or model settings, and while it holds no listeners `listens_to()` is
+        # False and the dispatch gate skips it entirely.
+        self._event_hooks: Hooks[AgentDepsT] = Hooks()
+
         self._root_capability = CombinedCapability(capabilities)
         _validate_capability_ids(self._root_capability.capabilities)
+        # Two capabilities the agent itself was given meet under their shared id here, before
+        # anything reads what they contribute: `for_agent`, toolset extraction and native-tool
+        # validation all run below, and each would otherwise see a pair that is really one --
+        # native tools most visibly, since two differently configured `WebSearch` instances carry
+        # the same native tool id and reading them as two makes that a conflict. Duplicates
+        # *across* layers stay with run setup, where the run-level list first exists.
+        combined = _combine_duplicate_capabilities(self._root_capability, [capabilities])
+        # `visit_and_replace` on a container rebuilds a container, and combining keeps one
+        # occurrence of every id, so it can neither change shape nor empty the tree.
+        assert isinstance(combined, CombinedCapability), 'combining the agent capabilities kept a container'
+        self._root_capability = combined
         _validate_instruction_source_ids([self._root_capability])
 
         # Keep the constructor value untouched while capabilities bind. A capability may interpret
@@ -663,7 +718,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_type = output_type
         self._instrument = None
         self._metadata = metadata
-        self._deps_type = deps_type
+        # A type form such as `Literal['a', 'b']` is kept as is, the way an `output_type` is.
+        self._deps_type = cast(type[AgentDepsT], deps_type)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
         self._output_validators = []
@@ -711,6 +767,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             for toolset in agent_toolsets
             if not isinstance(toolset, AbstractToolset)
         ]
+        self._constructor_dynamic_toolset_count = len(self._dynamic_toolsets)
         self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
 
         # Populated by durable-execution subclasses; base agents use the run-level kwarg.
@@ -930,10 +987,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             all_capabilities.extend(capabilities)
 
         effective_model = model or validated_spec.model
-        if effective_model is None:
-            raise exceptions.UserError(
-                '`model` must be provided either in the spec or as a keyword argument to `from_spec()`.'
-            )
 
         agent = Agent(
             model=effective_model,
@@ -1222,7 +1275,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(  # noqa: C901
+    async def iter(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -1306,6 +1359,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 End(data=FinalResult(output='The capital of France is Paris.')),
             ]
             '''
+            assert agent_run.result is not None
             print(agent_run.result.output)
             #> The capital of France is Paris.
         ```
@@ -1345,6 +1399,51 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
+        prepared = await self._prepare_run(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            cancellation_token=cancellation_token,
+            usage=usage,
+            metadata=metadata,
+            retries=retries,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            spec=spec,
+        )
+        async with prepared.open() as agent_run:
+            yield agent_run
+
+    async def _prepare_run(  # noqa: C901
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[Any] | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        retries: int | AgentRetries | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
         # toolset `for_run()` hooks below) runs in this context: a hook that starts a nested agent
         # run would otherwise consume it and attach the outer handle to the wrong run.
@@ -1444,7 +1543,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
 
         # The string the run's model was selected from, if any — carried through to
         # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
@@ -1569,12 +1668,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instrumentation_settings = self._resolve_instrumentation_settings()
 
-        if instrumentation_settings is not None:
-            tracer = instrumentation_settings.tracer
-            instrumentation_cap: InstrumentationCap | None = InstrumentationCap(settings=instrumentation_settings)
-        else:
-            tracer = NoOpTracer()
-            instrumentation_cap = None
+        instrumentation_cap = (
+            InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
+        )
+
+        # Allocated here rather than with the graph deps below, so the context `for_run` receives
+        # shares the very mappings the run fills at setup. A capability that holds on to that
+        # context and later passes it to a durable operation then dispatches like any other caller,
+        # instead of silently running the operation inline.
+        durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] = {}
+        run_capabilities_by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
 
         # Build initial RunContext for for_run lifecycle hooks. Includes every
         # field that's already known here — `tool_manager` and `validation_context`
@@ -1582,22 +1685,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         initial_ctx = RunContext[AgentDepsT](
             deps=deps,
             agent=self,
+            _durable_operations=durable_operations,
+            _run_capabilities_by_id=run_capabilities_by_id,
             model=model_used,
             _model_id=model_id,
             usage=usage,
             usage_limits=usage_limits,
             prompt=user_prompt,
             messages=state.message_history,
-            tracer=tracer,
-            trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
-            instrumentation_version=instrumentation_settings.version
-            if instrumentation_settings
-            else DEFAULT_INSTRUMENTATION_VERSION,
             run_step=0,
             pending_messages=state.pending_messages,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
             _cancellation=cancellation,
+        )
+
+        # An explicit `Instrumentation` capability (agent- or call-level) replaces the one injected from
+        # `instrumentation_settings` (see `_resolve_run_capabilities`), so `for_run` hooks and metadata
+        # factories are shown the settings of the one that will actually instrument the run.
+        _set_run_context_instrumentation(
+            initial_ctx,
+            _run_instrumentation_settings([base_capability, *extra_capabilities], default=instrumentation_settings),
         )
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1625,6 +1733,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
+        # Read back off the resolved tree, which also sees an `Instrumentation` that only a `for_run`
+        # contributed, so every later step's `RunContext` describes what the run's spans use.
+        instrumentation_settings = _run_instrumentation_settings([run_capability])
+        _set_run_context_instrumentation(initial_ctx, instrumentation_settings)
         capabilities_dict = resolved_caps.capabilities
         cap_instructions = resolved_caps.instructions
         cap_native_tools = resolved_caps.native_tools
@@ -1742,17 +1854,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
-        model_stack: AsyncExitStack | None = None
-        entered_model_ids = self._entered_model_ids.copy()
+        def display_banner(*, model: str, tools: int) -> None:
+            # Called by the graph once the run's first step has resolved the model it will actually
+            # use and the tools it will actually offer, and only when there is a banner to show;
+            # everything else is settled here and now.
+            _display.display_agent_banner(
+                name=self.name,
+                model=model,
+                # A run-level `output_type=` overrides what the agent was built with.
+                output_type=output_type_,
+                tools=tools,
+                capabilities=_registered_capability_count(bootstrap_capability),
+            )
 
-        async def enter_model(selected_model: models.Model) -> None:
-            model_identity = id(selected_model)
-            if model_identity in entered_model_ids:
-                return
-            assert model_stack is not None
-            await model_stack.enter_async_context(selected_model)
-            entered_model_ids.add(model_identity)
-
+        model_resources = _RunModelResources(self._entered_model_ids.copy())
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1765,7 +1880,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_selector=model_selector,
             model_selected_for_step=model_selected_for_step,
             evaluate_model_selector=evaluate_model_selector,
-            enter_model=enter_model,
+            enter_model=model_resources.enter_model,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
@@ -1777,9 +1892,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
+            durable_operations=durable_operations,
+            run_capabilities_by_id=run_capabilities_by_id,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
-            tracer=tracer,
+            display_banner=display_banner,
+            tracer=initial_ctx.tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
@@ -1795,119 +1913,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
-        agent_name = self.name or 'agent'
-
-        @asynccontextmanager
-        async def _translate_cancellation() -> AsyncGenerator[None]:
-            def _run_cancelled(message: str) -> exceptions.RunCancelled:
-                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps)
-
-            try:
-                yield
-            except exceptions.RunCancelled as exc:
-                # A `RunCancelled` reaching this run's outer edge from below — e.g. a delegate tool
-                # awaited a sub-agent run that cancelled itself via `cancel()` — carries the
-                # *nested* run's history, not this run's. Presenting it to this run's caller
-                # unchanged would make `RunCancelled.all_messages()` (and a resume from it) silently
-                # use the wrong conversation. Re-stamp it with this run's state, keeping the nested
-                # cancellation as the cause. Whether a nested cancellation should terminate this run
-                # at all, or be isolated as a tool failure, is a separate semantics question tracked
-                # in https://github.com/pydantic/pydantic-ai/issues/7199.
-                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
-            except asyncio.CancelledError as exc:
-                first_party = graph_deps.cancellation.resolve()
-                if first_party:
-                    raise _run_cancelled('The agent run was cancelled.') from exc
-                # An external cancellation must keep propagating as `CancelledError`, but the run
-                # state rides along on the exception instance for `RunCancelled.from_cancellation()`.
-                # Nested runs attach to the same propagating exception; the outermost run attaches
-                # last and wins, giving its awaiter the outer run's history.
-                _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
-                raise
-            finally:
-                # On every exit path — translation above, a clean exit after user code swallowed a
-                # requested cancellation, a superseded driving task, or a non-cancellation error
-                # overtaking a requested cancel — an issued-but-unresolved cancellation must not
-                # leak an elevated `Task.cancelling()` count past the run: it would spuriously
-                # cancel unrelated later work on the task that drove the run.
-                graph_deps.cancellation.release_issued()
-
-        async with AsyncExitStack() as stack:
-            # Enter first so cancellation is classified only after every other context has torn down.
-            await stack.enter_async_context(_translate_cancellation())
-
-            # Bind the run's cancellation controller to this task and register the token BEFORE any
-            # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
-            # the concurrency limiter must still be cancellable via its token or `cancel()`, and a
-            # pre-cancelled token must prevent it from starting. `finish` neutralizes `cancel()` once
-            # the run is over so it can never cancel unrelated later work on this task.
-            graph_deps.cancellation.bind()
-            stack.callback(graph_deps.cancellation.finish)
-            if cancellation_token is not None:
-                graph_deps.cancellation.attach_token(cancellation_token)
-
-            model_stack = stack
-            await stack.enter_async_context(
-                _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
-            )
-            if capability_owns_current_model:
-                await enter_model(model_used)
-            graph_run = await stack.enter_async_context(
-                graph.iter(
-                    inputs=user_prompt_node,
-                    state=state,
-                    deps=graph_deps,
-                    span=None,
-                    infer_name=False,
-                )
-            )
-            agent_run = AgentRun(graph_run)
-            if binding is not None:
-                # Hand the live `AgentRun` to the `AgentRunEvents` handle that started this run, so
-                # its `cancel()`/run-state accessors reach the run. The controller was already bound
-                # to this task above, before `wrap_run`/`before_run`.
-                binding.agent_run = agent_run
-            self._resolve_and_store_metadata(agent_run.ctx, metadata)
-
-            # Build RunContext for run lifecycle hooks
-            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-
-            async def _finalize_result(result: AgentRunResult[Any]) -> None:
-                usage_limits.check_cost(result.usage)
-                # A first-party cancellation request remains terminal even if a hook consumed the
-                # task's cancellation counter (past the helper's `raise_if_cancelling` backstop).
-                if graph_deps.cancellation.cancel_requested:
-                    raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
-                agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
-
-            def _extract_error(error: BaseException) -> BaseException:
-                # Use the original node error if available, since context manager __aexit__ chains
-                # (GraphRun → anyio TaskGroup) may transform it into CancelledError or ExceptionGroup.
-                return agent_run._node_error or error  # pyright: ignore[reportPrivateUsage]
-
-            def _build_result() -> AgentRunResult[Any]:
-                result = agent_run.result
-                assert result is not None
-                return result
-
-            async with _run_lifecycle_hooks(
-                run_capability,
-                run_ctx,
-                build_result=_build_result,
-                finalize=_finalize_result,
-                extract_error=_extract_error,
-                result_ready=lambda: agent_run.result is not None,
-                # Restore on `stack` in LIFO order (after toolset exit, before graph run exit).
-                restore_context_on=stack,
-            ):
-                # Enter toolset AFTER context vars are propagated so that toolset
-                # __aenter__/__aexit__ run inside the run span context.
-                await stack.enter_async_context(toolset)
-                try:
-                    yield agent_run
-                finally:
-                    if agent_run.result is not None:
-                        self._resolve_and_store_metadata(agent_run.ctx, metadata)
+        return _PreparedAgentRun[AgentDepsT, Any](
+            graph=graph,
+            state=state,
+            graph_deps=graph_deps,
+            user_prompt_node=user_prompt_node,
+            agent_name=self.name or 'agent',
+            binding=binding,
+            cancellation_token=cancellation_token,
+            model=model_used,
+            capability_owns_current_model=capability_owns_current_model,
+            model_resources=model_resources,
+            run_capability=run_capability,
+            toolset=toolset,
+            usage_limits=usage_limits,
+            concurrency_limiter=self._concurrency_limiter,
+            resolve_metadata=functools.partial(self._resolve_and_store_metadata, metadata=metadata),
+        )
 
     def _get_metadata(
         self,
@@ -2268,7 +2290,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage = usage or _usage.RunUsage()
         messages = list(message_history or [])
         capability = self._effective_root_capability()
-        has_default_model = self._override_model.get() is not None or model is not None or self.model is not None
+        has_default_model = self._has_model(model)
         default_model = (
             await self._resolve_model_selection(self._pick_raw_model(model), capability=capability, deps=deps)
             if has_default_model
@@ -2443,6 +2465,88 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return func
 
     @overload
+    def on_event(
+        self, func: OnEventHookFunc[_messages.AgentStreamEvent], /
+    ) -> OnEventHookFunc[_messages.AgentStreamEvent]: ...
+
+    @overload
+    def on_event(
+        self, *event_types: type[EventT], timeout: float | None = None
+    ) -> Callable[[OnEventHookFunc[EventT]], OnEventHookFunc[EventT]]: ...
+
+    def on_event(
+        self,
+        func_or_event_type: OnEventHookFunc[_messages.AgentStreamEvent] | type[EventT] | None = None,
+        *event_types: type[EventT],
+        timeout: float | None = None,
+    ) -> Any:
+        """Decorator to register a listener for events on this agent's run event stream.
+
+        Every event on the stream can be listened for: the framework's own model and tool events,
+        the application's [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and the
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s published by the agent's
+        capabilities. Naming event classes narrows the `event` argument to their union and lets
+        dispatch skip the agent's listeners for anything else; a bare `@agent.on_event` sees every
+        [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent].
+
+        This is the application-level counterpart to
+        [`@on_event`][pydantic_ai.capabilities.on_event] on a capability, and it dispatches at the
+        same point. These listeners join after the agent's own capabilities, so they see the events
+        those emitted, and they survive an overridden root capability. Capability ordering still
+        applies: one asking for `position='innermost'` keeps that position and its listeners run
+        after these.
+
+        Dispatch happens *upstream* of
+        [`wrap_run_event_stream()`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream],
+        so a listener sees each event as it was emitted, not as it is finally delivered. A
+        capability that rewrites, replaces or drops events in its stream wrapper does so after
+        every listener has already run, which means a listener can see an event that no stream
+        consumer ever receives. To act on the delivered stream instead, wrap it yourself with
+        `wrap_run_event_stream` on a [`Hooks`][pydantic_ai.capabilities.Hooks] capability, or
+        consume [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+
+        Being application code, a listener may emit a `CustomEvent` of its own. That is how a
+        capability's internal event reaches a frontend: capability events are deliberately not
+        forwarded by the [AG-UI](../ui/ag-ui.md) and [Vercel AI](../ui/vercel-ai.md) adapters, so
+        you republish the part of one that is public.
+
+        For hook families other than events, pass a [`Hooks`][pydantic_ai.capabilities.Hooks]
+        capability to `capabilities=`, where its position among the other capabilities — which
+        decides where it sits in each wrap chain — is yours to choose.
+
+        Example:
+        ```python
+        from dataclasses import dataclass
+
+        from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
+
+        agent = Agent('test')
+
+
+        @dataclass(kw_only=True)
+        class IndexRebuiltEvent(CapabilityEvent, namespace='indexer'):
+            documents: int
+
+
+        @dataclass(kw_only=True)
+        class SearchReadyEvent(CustomEvent):
+            documents: int
+
+
+        @agent.on_event(IndexRebuiltEvent)
+        async def republish(ctx: RunContext, event: IndexRebuiltEvent) -> None:
+            await ctx.emit(SearchReadyEvent(documents=event.documents))
+        ```
+        """
+        # `Hooks.on.event` already sorts the bare form from the filtered one; forward verbatim so
+        # there is one implementation of that split. Typed `Any` because the overloads above carry
+        # the signature, as they do for the registrar itself.
+        registrar: Any = self._event_hooks.on
+        if func_or_event_type is None:
+            return registrar.event(*event_types, timeout=timeout)
+        return registrar.event(func_or_event_type, *event_types, timeout=timeout)
+
+    @overload
     def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
 
     @overload
@@ -2509,7 +2613,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return ctx.deps + x
 
         @agent.tool(retries=2)
-        async def spam(ctx: RunContext[str], y: float) -> float:
+        async def spam(ctx: RunContext[int], y: float) -> float:
             return ctx.deps + y
 
         result = agent.run_sync('foobar', deps=1)
@@ -2638,19 +2742,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent, RunContext
+        from pydantic_ai import Agent
 
         agent = Agent('test')
 
-        @agent.tool
-        def foobar(ctx: RunContext[int]) -> int:
+        @agent.tool_plain
+        def foobar() -> int:
             return 123
 
-        @agent.tool(retries=2)
-        async def spam(ctx: RunContext[str]) -> float:
+        @agent.tool_plain(retries=2)
+        async def spam() -> float:
             return 3.14
 
-        result = agent.run_sync('foobar', deps=1)
+        result = agent.run_sync('foobar')
         print(result.output)
         #> {"foobar":123,"spam":3.14}
         ```
@@ -2757,8 +2861,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The toolset function to register.
             per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
-            id: An optional unique ID for the dynamic toolset. Required for use with durable execution
-                environments like Temporal, where the ID identifies the toolset's activities within the workflow.
+            id: An optional unique ID for the dynamic toolset. Under durable execution, construct a
+                [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] with this ID and pass it to
+                `Agent(toolsets=[...])` instead; decorator registrations cannot be used inside a
+                workflow or flow because they happen after durable units are created.
         """
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
@@ -2766,6 +2872,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
+
+    def _has_model(self, model: models.Model | models.KnownModelName | str | None) -> bool:
+        """Whether a run given `model` would have one to use, counting an `override(model=...)`.
+
+        What `_pick_raw_model` answers for, asked ahead of it by callers that would rather not have
+        it raise. A capability can still contribute a model when this is False.
+        """
+        return model is not None or self._override_model.get() is not None or self.model is not None
 
     def _pick_raw_model(
         self, model: models.Model | models.KnownModelName | str | None
@@ -2783,6 +2897,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override = self._override_root_capability.get()
         return override.value if override is not None else self._root_capability
 
+    def _startup_banner_details(
+        self,
+        model: models.Model | models.KnownModelName | str | None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    ) -> _StartupBannerDetails:
+        """Describe the session `_cli` is about to open, before any run has resolved anything.
+
+        Resolved the way a run resolves it rather than read off the agent as configured: an
+        `override()` in force, or instrumentation switched on globally by `Agent.instrument_all()`,
+        would otherwise have the banner describe a different session than the one about to start.
+
+        Args:
+            model: Model the session was asked to use, if not the agent's own.
+            toolsets: Toolsets the session will pass to each run, which aren't on the agent.
+        """
+        chat_model = self._pick_raw_model(model)
+        # `self.toolsets` is override-aware, so an `override(toolsets=...)` is reflected.
+        session_toolsets = [*self.toolsets, *(toolsets or [])]
+        # Only a `FunctionToolset` holds its tools synchronously; every other toolset answers
+        # `get_tools()` given a `RunContext`, and an MCP server would have to be connected to first.
+        countable = [toolset for toolset in session_toolsets if isinstance(toolset, FunctionToolset)]
+        return _StartupBannerDetails(
+            model=chat_model.model_id if isinstance(chat_model, models.Model) else chat_model,
+            # Rather than report a number that's wrong — `clai --mcp-config` would have said
+            # `tools: 0` next to a session full of MCP tools — the banner leaves the count out
+            # entirely. A run's own banner counts what the model is really offered.
+            tools=sum(len(toolset.tools) for toolset in countable) if len(countable) == len(session_toolsets) else None,
+            capabilities=_registered_capability_count(self._effective_root_capability()),
+            instrumented=(
+                isinstance(chat_model, InstrumentedModel) or self._resolve_instrumentation_settings() is not None
+            ),
+        )
+
     def _resolve_tool_retries(self, retries: int | None = None) -> int:
         """Resolve the effective tool-retry default: override > run/spec > agent default."""
         override = self._override_tool_retries.get()
@@ -2798,7 +2945,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         silently drop a `with agent.override(root_capability=...):` block).
         """
         override_cap = self._override_root_capability.get()
-        return self._effective_root_capability(), override_cap is not None
+        base = self._effective_root_capability()
+        if self._event_hooks.has_on_event:
+            # Wrapped here rather than in `_root_capability` so an override of it cannot drop the
+            # listeners; `Hooks` binds to itself, so it needs no `for_agent` pass. `CombinedCapability`
+            # re-sorts, so this joins after the agent's own capabilities but still yields to one that
+            # asks for `position='innermost'` — see `on_event`'s docstring.
+            base = CombinedCapability([base, self._event_hooks])
+        return base, override_cap is not None
 
     def _bind_run_capabilities(
         self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
@@ -2961,12 +3115,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ctx,
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
         )
-        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+        # Two capabilities under one `id` name the same thing, so the tree is resolved down to one
+        # each before anything reads it. Duplicates *within* a layer are one configuration stated
+        # twice and `combine` settles them; they are combined here, exactly once, and the merged
+        # survivor is the only form anyone reads -- the per-layer native-tool validation below and
+        # the contributions above draw on the same trees, so validation and advertisement cannot
+        # see different merged instances. The agent's capabilities and the run's are then settled
+        # against each other as separate layers: a run-level capability overrides its agent-level
+        # namesake outright -- `run(capabilities=[WebSearch(allowed_domains=[...])])` states what
+        # this run may reach, and merging it into the agent's list would widen the restriction it
+        # was passed to impose.
+        combined_layers = [
+            _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
+            for layer in (resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras)
+            if layer
+        ]
+        run_capability = (
+            _combine_duplicate_capabilities(
+                CombinedCapability(combined_layers) if len(combined_layers) > 1 else combined_layers[0],
+                [[layer] for layer in combined_layers],
+            )
+            if len(combined_layers) > 1
+            else combined_layers[0]
+        )
         # Not covered by the construction-time check: a run's capabilities compose with a retained
         # overriding container exactly as a registered sibling does, and `for_run` may hand back a
         # capability whose `id` differs from the one that was validated, so the resolved tree is
-        # checked even when no additional layer was composed.
-        _validate_instruction_source_ids(resolved_layers)
+        # checked even when no additional layer was composed. Reads the *combined* tree, so a
+        # duplicate `combine` has already resolved is not reported twice over.
+        _validate_instruction_source_ids([run_capability])
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -3003,22 +3180,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings = self._cap_model_settings
             toolsets = None
 
-        # Native tool ids are validated per layer, from each layer's *resolved* form (contributions
-        # from e.g. capability functions only materialize in `for_run`). Conflicting definitions
-        # sharing a `unique_id` *within* a layer are ambiguous; last-wins *across* layers is the
-        # intentional override mechanism. Instrumentation contributes no native tools.
-        base_native_tools = [
-            tool
-            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
-            for tool in cap.get_native_tools()
-        ]
+        # Native tool ids are validated per layer, off each layer's *combined* form above -- the
+        # same merged trees the run tree is built from, so validation and advertisement read one
+        # instance. Conflicting definitions sharing a `unique_id` *within* a layer are ambiguous;
+        # last-wins *across* layers is the intentional override mechanism. Instrumentation
+        # contributes no native tools.
+        base_native_tools = list(combined_layers[0].get_native_tools())
         _validate_native_tool_ids(
             base_native_tools,
             source='override spec capabilities' if base_is_override else 'agent capabilities',
         )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            tool for cap in resolved_extras for tool in cap.get_native_tools()
-        ]
+        extra_native_tools = list(combined_layers[1].get_native_tools()) if len(combined_layers) > 1 else []
         _validate_native_tool_ids(extra_native_tools, source='run capabilities')
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
@@ -3156,14 +3328,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         return self._build_toolset_list()
 
+    @property
+    def _construction_toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """The toolsets this agent was built with, ignoring anything added afterwards.
+
+        Read by `pydantic_ai.durable_exec` through `construction_toolsets`, which is where the
+        reason it exists is written down.
+        """
+        return self._build_toolset_list(ignore_overrides=True)
+
     def _build_toolset_list(
         self,
         cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
+        *,
+        ignore_overrides: bool = False,
     ) -> list[AbstractToolset[AgentDepsT]]:
-        """Build the list of toolsets, optionally with per-run capability toolsets."""
+        """Build the list of toolsets, optionally with per-run capability toolsets.
+
+        With `ignore_overrides`, active `override(tools=...)`/`override(toolsets=...)` values and
+        dynamic toolsets added with `@agent.toolset` after construction are skipped, so the result
+        is what the agent was built with. See
+        `Agent._construction_toolsets`.
+        """
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
-        if some_tools := self._override_tools.get():
+        if not ignore_overrides and (some_tools := self._override_tools.get()):
             # `max_retries=None` for the same reason as the agent's own function toolset: the
             # tool-retry default rides `ToolManager.default_max_retries` rather than being baked here.
             function_toolset = _AgentFunctionToolset(
@@ -3176,11 +3365,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             function_toolset = self._function_toolset
         toolsets.append(function_toolset)
 
-        if some_user_toolsets := self._override_toolsets.get():
+        if not ignore_overrides and (some_user_toolsets := self._override_toolsets.get()):
             toolsets.extend(some_user_toolsets.value)
         else:
             toolsets.extend(self._user_toolsets)
-            toolsets.extend(self._dynamic_toolsets)
+            dynamic_toolsets = (
+                self._dynamic_toolsets[: self._constructor_dynamic_toolset_count]
+                if ignore_overrides
+                else self._dynamic_toolsets
+            )
+            toolsets.extend(dynamic_toolsets)
             for cap_ts in cap_toolsets if cap_toolsets is not None else self._cap_toolsets:
                 if isinstance(cap_ts, AbstractToolset):
                     toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
@@ -3285,27 +3479,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # The session-level `realtime` span and per-response `chat` spans are hand-managed by
         # `RealtimeSession`; run-lifecycle hooks have no per-exchange boundary on which to build them.
-        # Drive them from the settings that
-        # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
+        # Drive them, and the `RunContext` (as `iter` does), from the settings that will actually win:
+        # an explicit `Instrumentation` capability's (agent- or call-level) over the
         # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
-        # tool spans.
-        explicit_instrumentation = find_capability(
-            [self._effective_root_capability(), *extra_capabilities], InstrumentationCap
+        # tool spans. Resolve metadata after, and before `for_run`, so capability/toolset hooks see it
+        # (same ordering as the graph run).
+        base_capability, base_is_override = self._base_run_capability()
+        _set_run_context_instrumentation(
+            run_context,
+            _run_instrumentation_settings([base_capability, *extra_capabilities], default=instrumentation_settings),
         )
-        session_instrumentation_settings = (
-            explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
-        )
-        # Mirror `iter`'s `RunContext`: expose the resolved tracer (a `NoOpTracer` when uninstrumented)
-        # and content-tracing flag, and resolve metadata before `for_run` so capability/toolset hooks see
-        # it (same ordering as the graph run).
-        run_context.tracer = (
-            session_instrumentation_settings.tracer if session_instrumentation_settings is not None else NoOpTracer()
-        )
-        run_context.trace_include_content = (
-            session_instrumentation_settings is not None and session_instrumentation_settings.include_content
-        )
-        if session_instrumentation_settings is not None:
-            run_context.instrumentation_version = session_instrumentation_settings.version
         run_context.metadata = self._get_metadata(run_context, metadata)
 
         # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
@@ -3313,7 +3496,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
         # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
         # this in sync with the `iter` call site.
-        base_capability, base_is_override = self._base_run_capability()
         resolved_caps = await self._resolve_run_capabilities(
             run_context,
             base_capability=base_capability,
@@ -3323,6 +3505,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base_is_override=base_is_override,
         )
         run_capability = resolved_caps.run_capability
+        # Read back off the resolved tree, as `iter` does, so an `Instrumentation` only a `for_run`
+        # contributed drives the session's spans and context too.
+        session_instrumentation_settings = _run_instrumentation_settings([run_capability])
+        _set_run_context_instrumentation(run_context, session_instrumentation_settings)
         # Deferred capabilities load in a session the same way they do in a graph run: the catalog
         # renders into the connect-time instructions and the loaded instructions come back as the
         # `load_capability` tool's own result, which every provider supports. What no provider
@@ -3451,6 +3637,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         yielded = False
         async with AsyncExitStack() as session_stack:
             if lifecycle_state is not None:
+                # As for a classic run: nothing the session records is credited to an enclosing run's span.
+                session_stack.enter_context(_usage_attribution.accumulate(None))
                 assert cancellation is not None
                 # Setup-time `for_run` callbacks have the same context contract as a classic run:
                 # cancellation becomes available only once the run lifecycle has an owning task.
@@ -3567,8 +3755,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 ]
                 | None
             ) = (
-                (lambda stream: run_capability.wrap_run_event_stream(run_context, stream=stream))
-                if run_capability.has_wrap_run_event_stream
+                (
+                    lambda stream: run_capability.wrap_run_event_stream(
+                        run_context, stream=dispatch_event_stream(run_context, stream)
+                    )
+                )
+                if run_capability.has_wrap_run_event_stream or run_capability.has_on_event
                 else None
             )
 
@@ -3636,6 +3828,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
         provider_session: RealtimeProviderSession | None = None,
@@ -3766,6 +3959,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     usage=resolved.run_context.usage,
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
+                    handle_barge_in=handle_barge_in,
                     retain_images_every_n=retain_images_every_n,
                     retain_images_max=retain_images_max,
                     message_history=message_history,
@@ -3961,6 +4155,181 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
 
+@dataclasses.dataclass
+class _RunModelResources:
+    """Enter every model selected by a run on its shared resource stack."""
+
+    entered_model_ids: set[int]
+    _stack: AsyncExitStack | None = dataclasses.field(default=None, init=False, repr=False)
+
+    def bind_stack(self, stack: AsyncExitStack) -> None:
+        assert self._stack is None
+        self._stack = stack
+
+    async def enter_model(self, selected_model: models.Model) -> None:
+        model_identity = id(selected_model)
+        if model_identity in self.entered_model_ids:
+            return
+        assert self._stack is not None
+        await self._stack.enter_async_context(selected_model)
+        self.entered_model_ids.add(model_identity)
+
+
+@dataclasses.dataclass
+class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
+    """The fully assembled inputs and resources for one graph-based agent run."""
+
+    graph: Graph[
+        _agent_graph.GraphAgentState,
+        _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT],
+        _agent_graph.UserPromptNode[_PreparedDepsT, _PreparedOutputT],
+        _result.FinalResult[_PreparedOutputT],
+    ]
+    state: _agent_graph.GraphAgentState
+    graph_deps: _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT]
+    user_prompt_node: _agent_graph.UserPromptNode[_PreparedDepsT, _PreparedOutputT]
+    agent_name: str
+    binding: RunBinding | None
+    cancellation_token: CancellationToken | None
+    model: models.Model
+    capability_owns_current_model: bool
+    model_resources: _RunModelResources
+    run_capability: AbstractCapability[_PreparedDepsT]
+    toolset: AbstractToolset[_PreparedDepsT]
+    usage_limits: _usage.UsageLimits
+    concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None
+    resolve_metadata: Callable[
+        [GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[_PreparedDepsT, _PreparedOutputT]]],
+        dict[str, Any] | None,
+    ]
+
+    @asynccontextmanager
+    async def open(self) -> AsyncGenerator[AgentRun[_PreparedDepsT, _PreparedOutputT]]:
+        graph_deps = self.graph_deps
+        state = self.state
+        pending_message_queue = state.pending_messages
+        assert isinstance(pending_message_queue, _enqueue.PendingMessageQueue)
+
+        @asynccontextmanager
+        async def _translate_cancellation() -> AsyncGenerator[None]:
+            def _run_cancelled(message: str) -> exceptions.RunCancelled:
+                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps)
+
+            try:
+                yield
+            except exceptions.RunCancelled as exc:
+                # A `RunCancelled` reaching this run's outer edge from below — e.g. a delegate tool
+                # awaited a sub-agent run that cancelled itself via `cancel()` — carries the
+                # *nested* run's history, not this run's. Presenting it to this run's caller
+                # unchanged would make `RunCancelled.all_messages()` (and a resume from it) silently
+                # use the wrong conversation. Re-stamp it with this run's state, keeping the nested
+                # cancellation as the cause. Whether a nested cancellation should terminate this run
+                # at all, or be isolated as a tool failure, is a separate semantics question tracked
+                # in https://github.com/pydantic/pydantic-ai/issues/7199.
+                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
+            except asyncio.CancelledError as exc:
+                first_party = graph_deps.cancellation.resolve()
+                if first_party:
+                    raise _run_cancelled('The agent run was cancelled.') from exc
+                # An external cancellation must keep propagating as `CancelledError`, but the run
+                # state rides along on the exception instance for `RunCancelled.from_cancellation()`.
+                # Nested runs attach to the same propagating exception; the outermost run attaches
+                # last and wins, giving its awaiter the outer run's history.
+                _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                raise
+            finally:
+                # On every exit path — translation above, a clean exit after user code swallowed a
+                # requested cancellation, a superseded driving task, or a non-cancellation error
+                # overtaking a requested cancel — an issued-but-unresolved cancellation must not
+                # leak an elevated `Task.cancelling()` count past the run: it would spuriously
+                # cancel unrelated later work on the task that drove the run.
+                graph_deps.cancellation.release_issued()
+
+        async with AsyncExitStack() as stack:
+            # Enter first so cancellation is classified only after every other context has torn down.
+            await stack.enter_async_context(_translate_cancellation())
+            # This run's usage is credited to no span until one of its own is opened (by
+            # `Instrumentation.wrap_run`), so an uninstrumented run started from inside an
+            # instrumented one doesn't report its usage on the caller's span.
+            stack.enter_context(_usage_attribution.accumulate(None))
+
+            # Bind the run's cancellation controller to this task and register the token BEFORE any
+            # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
+            # the concurrency limiter must still be cancellable via its token or `cancel()`, and a
+            # pre-cancelled token must prevent it from starting. `finish` neutralizes `cancel()` once
+            # the run is over so it can never cancel unrelated later work on this task.
+            graph_deps.cancellation.bind()
+            stack.callback(graph_deps.cancellation.finish)
+            # Nothing drains the queue once the graph stops, so reject later enqueues instead of
+            # stranding them. A normal finish already closed it inside `drain_at_end`.
+            stack.callback(pending_message_queue.close)
+            if self.cancellation_token is not None:
+                graph_deps.cancellation.attach_token(self.cancellation_token)
+
+            self.model_resources.bind_stack(stack)
+            await stack.enter_async_context(
+                _concurrency.get_concurrency_context(self.concurrency_limiter, f'agent:{self.agent_name}')
+            )
+            if self.capability_owns_current_model:
+                await self.model_resources.enter_model(self.model)
+            graph_run = await stack.enter_async_context(
+                self.graph.iter(
+                    inputs=self.user_prompt_node,
+                    state=state,
+                    deps=graph_deps,
+                    span=None,
+                    infer_name=False,
+                )
+            )
+            agent_run = AgentRun(graph_run)
+            if self.binding is not None:
+                # Hand the live `AgentRun` to the `AgentRunEvents` handle that started this run, so
+                # its `cancel()`/run-state accessors reach the run. The controller was already bound
+                # to this task above, before `wrap_run`/`before_run`.
+                self.binding.agent_run = agent_run
+            self.resolve_metadata(agent_run.ctx)
+
+            # Build RunContext for run lifecycle hooks
+            run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+
+            async def _finalize_result(result: AgentRunResult[Any]) -> None:
+                self.usage_limits.check_cost(result.usage)
+                # A first-party cancellation request remains terminal even if a hook consumed the
+                # task's cancellation counter (past the helper's `raise_if_cancelling` backstop).
+                if graph_deps.cancellation.cancel_requested:
+                    raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
+                agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
+
+            def _extract_error(error: BaseException) -> BaseException:
+                # Use the original node error if available, since context manager __aexit__ chains
+                # (GraphRun → anyio TaskGroup) may transform it into CancelledError or ExceptionGroup.
+                return agent_run._node_error or error  # pyright: ignore[reportPrivateUsage]
+
+            def _build_result() -> AgentRunResult[Any]:
+                result = agent_run.result
+                assert result is not None
+                return result
+
+            async with _run_lifecycle_hooks(
+                self.run_capability,
+                run_ctx,
+                build_result=_build_result,
+                finalize=_finalize_result,
+                extract_error=_extract_error,
+                result_ready=lambda: agent_run.result is not None,
+                # Restore on `stack` in LIFO order (after toolset exit, before graph run exit).
+                restore_context_on=stack,
+            ):
+                # Enter toolset AFTER context vars are propagated so that toolset
+                # __aenter__/__aexit__ run inside the run span context.
+                await stack.enter_async_context(self.toolset)
+                try:
+                    yield agent_run
+                finally:
+                    if agent_run.result is not None:
+                        self.resolve_metadata(agent_run.ctx)
+
+
 def _merge_retries_with_spec(
     explicit: int | AgentRetries | None,
     spec: AgentSpec,
@@ -3997,6 +4366,58 @@ _AUTO_INJECT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
 """Infrastructure capabilities auto-injected when not already present."""
 
 
+def _run_instrumentation_settings(
+    capabilities: Sequence[AbstractCapability[Any]], *, default: InstrumentationSettings | None = None
+) -> InstrumentationSettings | None:
+    """The settings of the `Instrumentation` capability that instruments a run with these capabilities.
+
+    That's the last one in application order, or `default` when there is none. `_resolve_run_capabilities`
+    selects rather than combines across the agent-to-run boundary (`combine` only settles duplicates
+    *within* a layer), so a call-level one supersedes the agent-level one, and within a layer the guarded
+    combine keeps the last instance's values. Taking the first match would describe settings the effective
+    configuration had already turned off.
+
+    Before resolution, `default` is the `instrument=`-derived settings the run injects only when no explicit
+    capability is present. After resolution, the injected capability is part of the tree, so no default applies.
+    A wrapper around a single capability is itself a leaf, so it's unwrapped: that's the shape a capability
+    function's `Instrumentation` takes once resolved, and the wrapper delegates its hooks to it.
+    """
+    instrumentations: list[InstrumentationCap] = []
+    for capability in capabilities:
+        for leaf in leaf_capabilities(capability):
+            while isinstance(leaf, WrapperCapability):
+                leaf = leaf.wrapped
+            if isinstance(leaf, InstrumentationCap):
+                instrumentations.append(leaf)
+    return instrumentations[-1].settings if instrumentations else default
+
+
+def _set_run_context_instrumentation(ctx: RunContext[Any], settings: InstrumentationSettings | None) -> None:
+    """Point `ctx`'s tracer, content flag and instrumentation version at `settings`; uninstrumented if `None`."""
+    ctx.tracer = settings.tracer if settings is not None else NoOpTracer()
+    ctx.trace_include_content = settings is not None and settings.include_content
+    ctx.instrumentation_version = settings.version if settings is not None else DEFAULT_INSTRUMENTATION_VERSION
+
+
+def _registered_capability_count(capability: AbstractCapability[Any]) -> int:
+    """Count the capabilities the user registered, for a `pydantic_ai._display` banner.
+
+    Infrastructure capabilities are injected for every agent, so counting those would say nothing
+    about the agent the user actually wrote.
+    """
+    return sum(not isinstance(leaf, _AUTO_INJECT_CAPABILITY_TYPES) for leaf in leaf_capabilities(capability))
+
+
+class _StartupBannerDetails(NamedTuple):
+    """What a chat session can say about itself before any run has resolved anything."""
+
+    model: str
+    tools: int | None
+    """`None` when the session holds a toolset whose tools can't be counted without connecting."""
+    capabilities: int
+    instrumented: bool
+
+
 def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> None:
     """Ensure all auto-injected infrastructure capabilities are present.
 
@@ -4011,13 +4432,19 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
 def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:
     """Validate capability `id`s and return the set of explicit ones.
 
-    Rejects deferred capabilities that lack an explicit `id` and explicit ids used by more than
-    one capability. Shared by two call sites: construction-time validation over the
-    statically-provided capabilities (so misconfiguration fails fast in `Agent(...)` rather than
-    on the first run), and run-time assembly in `_build_run_capabilities`, which also covers
-    capabilities supplied per-run or returned by `for_run` and so can't be checked at construction.
+    Rejects deferred capabilities that lack an explicit `id`, and ids shared by capabilities that
+    have not said how they compose. Capabilities whose class declares a default `id` (what
+    `_declares_default_id` reads off the class body -- `Thinking` declares one and overrides
+    nothing) are allowed to repeat: their duplication is resolved over the whole composed tree at
+    run setup by `_combine_duplicate_capabilities`, the only place `combine` is called. Rejecting
+    the rest here means the common mistake still surfaces in `Agent(...)` rather than on the first
+    run.
+
+    Shared by construction-time validation over the statically-provided capabilities and run-time
+    assembly, which also covers capabilities supplied per-run or returned by `for_run` and so can't
+    be checked at construction.
     """
-    explicit_ids: set[str] = set()
+    owners: dict[str, type[AbstractCapability[Any]]] = {}
     for cap in capabilities:
         if cap.defer_loading is True and cap.id is None:
             raise exceptions.UserError(
@@ -4027,13 +4454,16 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
         if cap.id is None:
             continue
         _instructions.validate_instruction_id_segment(cap.id, kind='Capability id')
-        if cap.id in explicit_ids:
-            raise exceptions.UserError(
-                f'Capability id {cap.id!r} is used by multiple capabilities. '
-                'Capability ids must be unique within a run.'
-            )
-        explicit_ids.add(cap.id)
-    return explicit_ids
+        # Both classes decide, not just the one that happens to come second: whether an id can
+        # repeat is a property of the pair, so reading it off the later capability alone would let
+        # one order through and reject the other.
+        owner = owners.get(cap.id)
+        if owner is not None:
+            _reject_class_crossing_id(cap.id, {owner, type(cap)})
+            if not _declares_default_id(type(cap)):
+                raise exceptions.UserError(_repeated_id_message(cap.id))
+        owners.setdefault(cap.id, type(cap))
+    return set(owners)
 
 
 def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[Any]]) -> None:
@@ -4049,6 +4479,11 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
     The last of those is not redundant: a capability passed to `run()` joins the retained container
     the same way a registered sibling does, and `for_run` may hand back a capability carrying a
     different `id` than the one construction saw.
+
+    Sources whose class declares a default `id` are exempt at construction for the same reason they
+    are in `_validate_capability_ids`: the run resolves them to one source before any instructions
+    are collected, so the `capability:<id>` key is unambiguous by the time it is used. The run-setup
+    call sees the already-combined tree, where a surviving duplicate is a genuine conflict.
     """
     sources_by_id: dict[str, AbstractCapability[Any]] = {}
     for capability in capabilities:
@@ -4060,7 +4495,9 @@ def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[A
         for source in sources:
             if source.id is None:
                 continue
-            if (existing := sources_by_id.setdefault(source.id, source)) is not source:
+            if (existing := sources_by_id.setdefault(source.id, source)) is not source and not _declares_default_id(
+                type(source)
+            ):
                 raise exceptions.UserError(
                     f'Capability id {existing.id!r} is used by multiple capabilities that contribute '
                     'instructions. Capability ids must be unique within a run.'
@@ -4141,22 +4578,47 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
+    # Runs on the tree `_combine_duplicate_capabilities` has already resolved, so a shared id that
+    # survives to here is one no `combine` accepted. Still needed at run time, not just at
+    # construction: `defer_loading` and `id` can be set after the agent was built, and `for_run` may
+    # hand back a capability carrying neither of the values construction saw.
     explicit_ids = _validate_capability_ids(capabilities)
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
     for cap in capabilities:
         capability_id = cap.id
         if capability_id is None:
-            base_id = to_snake(type(cap).__name__)
-            capability_id = base_id
-            suffix = 2
-            while capability_id in by_id or capability_id in explicit_ids:
-                capability_id = f'{base_id}_{suffix}'
-                suffix += 1
-
+            capability_id = _synthetic_capability_id(type(cap), taken=by_id.keys() | explicit_ids)
         by_id[capability_id] = cap
 
     return by_id
+
+
+def _synthetic_capability_id(cls: type[AbstractCapability[Any]], *, taken: Collection[str]) -> str:
+    """A key for a capability the user never named, shaped so nobody mistakes it for a name.
+
+    Every capability in a run needs a key, including the ones with no `id`, or `ctx.capabilities`
+    could not list them. Nothing carries such a key out of the run: the paths that persist one --
+    the load records progressive disclosure reads back out of message history -- all require
+    `defer_loading=True`, which in turn requires an explicit `id`. So this is a run-local handle,
+    and the only thing wrong with the `thinking` / `thinking_2` it used to be was that it looked
+    exactly like an `id` somebody chose.
+
+    It looked stable, too, and wasn't: the ordinal counted from attachment order, so listing two
+    anonymous capabilities of one class the other way round swapped which of them owned
+    `thinking_2`. Nothing depended on that, because nothing may -- but a reader who copied the key
+    out of `ctx.capabilities` had no way to tell.
+
+    Angle brackets say "the framework named this", the way `'<agent>'` and `'<output>'` already do
+    for toolsets. The class name keeps the registry and a traceback readable. The random suffix is
+    the part that matters: it differs every run, so relying on it fails immediately and visibly
+    rather than the next time someone reorders a list.
+    """
+    base_id = to_snake(cls.__name__)
+    while True:
+        candidate = f'<{base_id}:{uuid4().hex[:6]}>'
+        if candidate not in taken:
+            return candidate
 
 
 def _validate_spec(

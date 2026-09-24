@@ -238,7 +238,7 @@ Case(
 )
 ```
 
-If no `expected_output` is provided, evaluators that require it (like `EqualsExpected`) will skip that case.
+If no `expected_output` is provided, evaluators that require it (like `EqualsExpected`) will skip that case. `None` is how "not provided" is spelled, so a case written as `expected_output=None` is skipped too: to assert that the task returns `None`, use [`Equals(value=None)`][pydantic_evals.evaluators.Equals] instead.
 
 #### Metadata
 Arbitrary data that evaluators can access via [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext]:
@@ -424,7 +424,7 @@ The [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] contains:
 
 ### ReportCase
 
-Each successfulcase result contains:
+Each successful case result contains:
 
 **Case data:**
 

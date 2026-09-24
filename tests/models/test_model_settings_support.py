@@ -67,16 +67,20 @@ with try_import() as openai_available:
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
     from pydantic_ai.models.cerebras import CerebrasModel
     from pydantic_ai.models.crusoe import CrusoeModel
+    from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.snowflake import SnowflakeModel
     from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
+    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.zai import ZaiProvider
@@ -125,6 +129,10 @@ with try_import() as mcp_available:
     from mcp import ServerSession
 
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+
+with try_import() as typesafe_available:
+    from pydantic_ai.models.typesafe import TypeSafeModel
+    from pydantic_ai.providers.typesafe import TypeSafeProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -427,6 +435,40 @@ async def mcp_sampling_probe(settings: ModelSettings) -> str | None:
     return recorder.first
 
 
+async def typesafe_probe(settings: ModelSettings) -> str | None:
+    """Probe TypeSafe with the one request shape it accepts.
+
+    Jev answers an output tool and refuses function tools before any request is sent, so the shared
+    `run_probe_request`, which carries `PROBE_TOOL` and no output tool, would never reach the wire.
+    """
+    recorder = Recorder()
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        request.read()
+        recorder.record(_request_payload(request.content, request.headers.items(), request.extensions.get('timeout')))
+        return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+    model = TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
+    output_tool = ToolDefinition(
+        name='final_result', parameters_json_schema={'type': 'object', 'properties': {'ok': {'type': 'boolean'}}}
+    )
+    try:
+        await model_request(
+            model,
+            [ModelRequest.user_text_prompt('probe')],
+            model_settings=settings,
+            model_request_parameters=ModelRequestParameters(
+                output_mode='tool', output_tools=[output_tool], allow_text_output=False
+            ),
+        )
+    except Exception:
+        pass
+    finally:
+        await client.aclose()
+    return recorder.first
+
+
 def _needs(available: Callable[[], bool], package: str) -> tuple[pytest.MarkDecorator, ...]:
     """Skip a case when its optional SDK isn't installed.
 
@@ -455,12 +497,27 @@ def _openai_responses(client: httpx2.AsyncClient) -> Model:
     return OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _openai_codex(client: httpx2.AsyncClient) -> Model:
+    return OpenAICodexModel(
+        'gpt-5.6-luna',
+        provider=OpenAICodexProvider(
+            credentials=OpenAICodexCredentials(access_token=PROBE_KEY, refresh_token=PROBE_KEY, account_id='probe'),
+            http_client=client,
+        ),
+    )
+
+
 def _cerebras(client: httpx2.AsyncClient) -> Model:
     return CerebrasModel('llama3.1-8b', provider=CerebrasProvider(api_key=PROBE_KEY, http_client=client))
 
 
 def _crusoe(client: httpx2.AsyncClient) -> Model:
     return CrusoeModel('openai/gpt-oss-120b', provider=CrusoeProvider(api_key=PROBE_KEY, http_client=client))
+
+
+def _github_copilot(client: httpx2.AsyncClient) -> Model:
+    # A GPT id: the Anthropic ids that reject sampling settings drop `temperature`/`top_p` before the wire.
+    return GitHubCopilotModel('gpt-5.4', provider=GitHubCopilotProvider(api_key=PROBE_KEY, http_client=client))
 
 
 def _ollama(client: httpx2.AsyncClient) -> Model:
@@ -527,8 +584,17 @@ CASES = [
         _needs(openai_available, 'openai'),
     ),
     Case('OpenAIResponsesModel', ('OpenAI',), http_probe(_openai_responses), _needs(openai_available, 'openai')),
+    # `temperature`/`top_p` provoke the reasoning-model sampling warning, which the suite's
+    # `filterwarnings = error` would otherwise turn into a request that never sends.
+    Case(
+        'OpenAICodexModel',
+        ('OpenAI Codex',),
+        http_probe(_openai_codex),
+        _needs(openai_available, 'openai') + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
+    ),
     Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
     Case('CrusoeModel', ('Crusoe',), http_probe(_crusoe), _needs(openai_available, 'openai')),
+    Case('GitHubCopilotModel', ('GitHub Copilot',), http_probe(_github_copilot), _needs(openai_available, 'openai')),
     Case('OllamaModel', ('Ollama',), http_probe(_ollama), _needs(openai_available, 'openai')),
     Case('OpenRouterModel', ('OpenRouter',), http_probe(_openrouter), _needs(openai_available, 'openai')),
     Case('SnowflakeModel', ('Snowflake',), http_probe(_snowflake), _needs(openai_available, 'openai')),
@@ -554,6 +620,7 @@ CASES = [
     Case('HuggingFaceModel', ('HuggingFace',), huggingface_probe, _needs(huggingface_available, 'huggingface')),
     Case('XaiModel', ('xAI',), xai_probe, _needs(xai_available, 'xai')),
     Case('MCPSamplingModel', ('MCP Sampling',), mcp_sampling_probe, _needs(mcp_available, 'mcp')),
+    Case('TypeSafeModel', ('TypeSafe',), typesafe_probe, _needs(typesafe_available, 'typesafe-sdk')),
 ]
 
 

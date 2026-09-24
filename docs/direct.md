@@ -25,7 +25,7 @@ model_response = model_request_sync(
     [ModelRequest.user_text_prompt('What is the capital of France?')]
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 print(model_response.usage)
 #> RequestUsage(input_tokens=56, output_tokens=7)
@@ -93,7 +93,7 @@ async def main():
     """
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## When to Use the direct API vs Agent
 
@@ -124,7 +124,7 @@ model_response = model_request_sync(
     [ModelRequest.user_text_prompt('What is the capital of France?')],
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 ```
 
@@ -147,7 +147,7 @@ model_response = model_request_sync(
     instrument=True
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 ```
 

@@ -12,7 +12,11 @@ and follow-up text runs share one usage budget and trace.
 Read cumulative usage from
 [`RealtimeSession.usage`][pydantic_ai.realtime.RealtimeSession.usage]. It includes input/output
 tokens, provider audio and cache breakdowns where available, and tool-call counts. Usage updates are
-not emitted as session events. As with a standard run's
+not emitted as session events. When [genai-prices](https://github.com/pydantic/genai-prices) has
+pricing for the model, `session.usage.cost` contains the accumulated USD cost and `cost_limit`
+applies. Where it doesn't — an unpriced model, or a provider that bills by call duration rather than
+tokens — the cost stays `None` and a `cost_limit` never trips, warning once per response that it
+cannot be enforced. As with a standard run's
 [usage limits](../agent.md#usage-limits), pass `usage=` to accumulate into a shared object — for
 example one carried across a voice call and its follow-up text runs — and `usage_limits=` to cap a
 session:
@@ -44,10 +48,15 @@ Input-transcription usage is reported separately in `RunUsage.details` under
 `input_transcription_*` keys. It is not included in response token totals or attributed to a
 `ModelResponse`, because transcription can use a separate model and billing meter.
 
-Token and tool-call limits are checked as usage accrues. Request limits are checked before sending
-text, explicitly creating a response, or returning a tool result. With server-side VAD, the provider
-can begin a response without a client request; that limit is checked at the first response event.
-Breaches raise [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from iteration.
+Each recorded `ModelResponse` in `session.new_messages()` carries that response's usage. One
+tool-calling turn can span several responses, so use `session.usage` for the cumulative total.
+
+Token, cost, and tool-call limits are checked as usage accrues. Request limits are checked before
+sending text, sending an image with `respond=True`, explicitly creating a response, or returning a
+tool result. With server-side VAD, the provider can begin a response without a client request; that
+limit is checked at the first response event. Breaches raise
+[`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from iteration, or when the
+session context exits if only an audio or transcript view is consumed.
 
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
@@ -67,8 +76,9 @@ logfire.instrument_pydantic_ai()
 ```
 
 The session creates an `invoke_agent` span with cumulative usage and conversation content, subject
-to the normal content-redaction setting. Nested `chat {model}` spans represent provider responses,
-and `execute_tool` spans represent tools and delegated agent runs. `model turn complete` and `interrupt`
+to the normal content-redaction setting. Nested provider-response spans have the OpenTelemetry name
+`chat {model}` but display as `response {model}` in Logfire. `execute_tool` spans represent tools;
+a delegated run adds its own `invoke_agent` span inside `execute_tool`. `model turn complete` and `interrupt`
 spans mark those boundaries. A tool round can produce several response spans within one turn.
 
 You may see runs of `model turn complete (interrupted)` spans with no `chat` span between them.
@@ -79,7 +89,7 @@ interrupted response still draws a boundary, displayed as `model turn complete (
 | Attribute | Set on | Meaning |
 | --- | --- | --- |
 | `pydantic_ai.realtime` | Spans the session emits itself (session, response, boundary, and `user speech` spans) | Always `True`; marks spans that belong to a realtime session. `execute_tool` spans come from the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability and don't carry it. |
-| `gen_ai.output.type` | Response spans | `speech` or `text`. |
+| `gen_ai.output.type` | Session and response spans | `speech` or `text`. |
 | `pydantic_ai.response.state` | Interrupted response spans | `'interrupted'`. |
 | Response-level usage | OpenAI, Azure OpenAI, and xAI response spans | Tokens attributed to that response. |
 
@@ -97,7 +107,9 @@ response.
 The session span also reports `pydantic_ai.audio_chunks_dropped` and
 `pydantic_ai.transcript_items_dropped`, summed across bounded
 [audio and transcript consumers](audio.md#consuming-audio-and-transcripts). These totals are written
-when the session closes.
+when the session closes. `pydantic_ai.queue_dropped_deltas` and `pydantic_ai.queue_dropped_structural`
+count the older part delta events and structural events discarded from the session event queue while
+nothing was iterating it.
 
 See [Debugging and monitoring](../logfire.md) for Logfire setup and privacy controls.
 

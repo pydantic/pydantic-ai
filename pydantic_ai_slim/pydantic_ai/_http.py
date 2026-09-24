@@ -15,6 +15,8 @@ from ._warnings import PydanticAIDeprecationWarning
 __all__ = (
     'DEFAULT_HTTP_TIMEOUT',
     'AsyncHTTPClient',
+    'HTTPAuth',
+    'HTTPTimeout',
     'create_async_httpx2_client',
     'legacy_httpx',
     'to_httpx2_timeout',
@@ -37,12 +39,18 @@ if TYPE_CHECKING:
     import httpx
 
     AsyncHTTPClient: TypeAlias = httpx.AsyncClient | httpx2.AsyncClient
+    HTTPAuth: TypeAlias = httpx.Auth | httpx2.Auth
+    HTTPTimeout: TypeAlias = httpx.Timeout | httpx2.Timeout
     LegacyTimeout: TypeAlias = httpx.Timeout
 elif legacy_httpx is not None:
     AsyncHTTPClient = legacy_httpx.AsyncClient | httpx2.AsyncClient
+    HTTPAuth = legacy_httpx.Auth | httpx2.Auth
+    HTTPTimeout = legacy_httpx.Timeout | httpx2.Timeout
     LegacyTimeout = legacy_httpx.Timeout
 else:
     AsyncHTTPClient = httpx2.AsyncClient
+    HTTPAuth = httpx2.Auth
+    HTTPTimeout = httpx2.Timeout
     # Without legacy HTTPX no `ModelSettings.timeout` can hold one of its `Timeout` objects, so the
     # `isinstance` check in `to_httpx2_timeout` falls back to the type the SDKs already accept and
     # the conversion just rebuilds an equivalent value.

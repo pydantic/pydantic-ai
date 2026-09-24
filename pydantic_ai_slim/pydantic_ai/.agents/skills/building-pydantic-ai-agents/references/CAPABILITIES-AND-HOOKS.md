@@ -76,7 +76,7 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
 
 @hooks.on.before_tool_execute(tools=['send_email'])
 async def audit_tool(
-    ctx: RunContext[None],
+    ctx: RunContext,
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,
@@ -105,6 +105,42 @@ At wrap boundaries, `ModelRetry` is control flow and bypasses `on_model_request_
 For deferrals (`ApprovalRequired`, `CallDeferred`), the rule is that a tool call can only be deferred once its arguments have been validated, since whoever resolves it is shown those arguments. So they are allowed from `after_tool_validate`, from `wrap_tool_validate` after `handler()` returns, and from every tool-execution hook — prefer `before_tool_execute`, since deferring after the tool body ran means its side effects happened and its result is discarded. Raising one from `before_tool_validate`, from `wrap_tool_validate` before `handler()`, or from `on_tool_validate_error` is a `UserError`. For a per-tool decision, use the tool's `args_validator` instead of a hook.
 
 Use hooks when the user wants observability, auditing, or light interception without adding a new abstraction.
+
+## Publish and React to Capability Events
+
+A capability announces things to other capabilities and to the host application with `CapabilityEvent`, not with the application-owned `CustomEvent` covered in AGENTS-CORE.md. The split is enforced: emitting a `CustomEvent` from a capability raises `UserError`, and so does emitting a `CapabilityEvent` from application code.
+
+Define each event as a dataclass subclass carrying a namespace, and await `ctx.emit(event)` from an async capability hook or a tool the capability contributes. The namespace plus the event name form the serialized `kind` (`workspace.file_read`), which is the wire identifier, so a published capability should pin `name=` on each event. The payload can't reuse the envelope's field names: `data`, `capability_id`, `tool_call_id`, `tool_name`, and `event_kind` are rejected at class definition.
+
+React with `@on_event(SomeEvent, OtherEvent)` on an async capability method; a bare `@on_event` sees every `AgentStreamEvent`. Listeners run in capability order, then definition order, and the emitting capability receives its own events. This is the way to coordinate two capabilities without a shared object between them.
+
+Always name the classes when you can. They are what lets dispatch skip a capability without descending into it — a bare `@on_event`, or an overridden `on_event()`, opts that capability into every event in the run. Override `listens_to(event)` alongside a custom `on_event()` if you can report something narrower.
+
+Capability events reach the agent run event stream but UI adapters do not forward them, since they are internal signals. To surface one to a frontend, react to it from application code and emit your own `CustomEvent` with the public payload.
+
+For application-level listening, prefer `@agent.on_event(SomeEvent)` — it takes the same event classes, filtering and `timeout=` as `Hooks.on.event` without a separate capability, runs after the capabilities' own listeners, and survives an overridden root capability. Reach for a `Hooks` capability when you also want hook families other than events, or when you need to choose where it sits among the other capabilities.
+
+An event class can declare `dispatch='immediate'` when listeners must act before the emitter continues — a decision event, where a listener mutates a field the emitter then reads. Default dispatch delivers the event at its stream position instead, keeping listener work off the emitter's latency path.
+
+```python
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import CapabilityEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, on_event
+
+
+@dataclass(kw_only=True)
+class FileReadEvent(CapabilityEvent, namespace='workspace', name='file_read'):
+    path: str
+
+
+class Watcher(AbstractCapability[Any]):
+    @on_event(FileReadEvent)
+    async def _on_read(self, ctx: RunContext[Any], event: FileReadEvent) -> None:
+        if event.path.endswith('AGENTS.md'):
+            ctx.enqueue('Follow the instructions in the discovered AGENTS.md file.')
+```
 
 ## Build a Custom Capability
 

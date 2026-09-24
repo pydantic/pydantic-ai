@@ -130,10 +130,11 @@ async def main():
         ...
 ```
 
-Images sent through [`send()`][pydantic_ai.realtime.RealtimeSession.send] are recorded by default.
-`retain_images_every_n=N` keeps the first image and then one of every `N`; the provider still receives
-every frame. `retain_images_max` defaults to `100` and evicts the oldest retained image when the cap
-is reached. Set it to `0` to retain none or `None` to remove the bound.
+These settings bound local history, not provider context: the provider still receives every frame.
+Images sent through [`send()`][pydantic_ai.realtime.RealtimeSession.send] are recorded by default;
+`retain_images_every_n=N` keeps the first image and then one of every `N`. `retain_images_max`
+defaults to `100` and evicts the oldest retained image when the cap is reached. Set it to `0` to
+retain none or `None` to remove the bound.
 
 Sampling controls history growth rate; the maximum provides the actual memory bound. Streaming
 images continuously approximates live video — the [camera example](../examples/realtime-camera.md)
@@ -142,7 +143,12 @@ sends one frame per second — so for camera and screen streams, use both delibe
 ## Transcription and history edge cases
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
-and each provider page for configuration. With transcription disabled:
+and each provider page for configuration. Transcripts are recorded with the user turn they describe,
+even when they arrive after that turn's response or overlap the following turn. If a reported speech
+segment never receives a transcript, the session still records its retained audio or a content-less
+`SpeechPart` when the session closes.
+
+With transcription disabled:
 
 - retained input audio creates an audio-only user `SpeechPart`;
 - without input retention, the session records a content-less user `SpeechPart`;

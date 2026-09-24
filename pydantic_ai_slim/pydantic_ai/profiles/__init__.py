@@ -55,6 +55,9 @@ class ModelProfile(TypedDict, total=False):
     supports_tools: bool
     """Whether the model supports tools. Default: `True`."""
 
+    supports_text_output: bool
+    """Whether the model supports text output. Default: `True`."""
+
     supports_tool_return_schema: bool
     """Whether the model natively supports tool return schemas. Default: `False`.
 
@@ -154,6 +157,14 @@ class ModelProfile(TypedDict, total=False):
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
 
+    context_window: int | None
+    """The maximum number of tokens the model can handle in a single request, input and output combined. Default: `None` (unknown).
+
+    When no profile layer sets this, `Model.profile` fills it in from
+    [genai-prices](https://github.com/pydantic/genai-prices) data if the model is known there.
+    Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
+    """
+
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 
@@ -216,6 +227,7 @@ def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
 
 DEFAULT_PROFILE: ModelProfile = {
     'supports_tools': True,
+    'supports_text_output': True,
     'supports_tool_return_schema': False,
     'supports_json_schema_output': False,
     'supports_json_object_output': False,
@@ -230,6 +242,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'thinking_tags': DEFAULT_THINKING_TAGS,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
+    'context_window': None,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }

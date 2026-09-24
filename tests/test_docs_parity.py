@@ -17,8 +17,7 @@ MIRRORED_EXAMPLE_MARKERS = [
     'ClearToolResults(), WarnNearLimits(), ToolOutputLimits()',
     'class Sentiment(BaseModel):',
     'class ResearchWorkflow(PydanticAIWorkflow):',
-    'output_type=BinaryImage',
-    "Embedder('openai:text-embedding-3-small')",
+    "ImageGenerator('openai:gpt-image-2')",
     "agent.realtime('openai:gpt-realtime-2.1')",
     'class SupportDependencies:',
 ]

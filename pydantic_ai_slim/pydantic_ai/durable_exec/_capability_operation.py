@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, replace
 from functools import update_wrapper, wraps
 from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints
 
@@ -207,11 +207,11 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     from pydantic_ai.tools import RunContext
 
 
-    class Audit(AbstractCapability[None]):
+    class Audit(AbstractCapability):
         id = 'audit'
 
         @durable_operation(name='record')
-        async def record(self, ctx: RunContext[None], message: str) -> bool:
+        async def record(self, ctx: RunContext, message: str) -> bool:
             return bool(message)
     ```
 
@@ -262,42 +262,25 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
                 # deliberately pass through to the undecorated method.
                 return await cast(Callable[..., Awaitable[Any]], target)(self, *args, **kwargs)
 
-            # Project live model-request context before it crosses a durable boundary.
             request_context = next(
                 (value for value in bound.arguments.values() if isinstance(value, ModelRequestContext)), None
             )
-            if isinstance(request_context, ModelRequestContext):
-                projection = ModelRequestContextProjection.from_context(request_context)
-                dispatch_args = tuple(projection if value is request_context else value for value in args)
-                dispatch_kwargs = {
-                    key: projection if value is request_context else value for key, value in kwargs.items()
-                }
-            else:
-                dispatch_args = args
-                dispatch_kwargs = kwargs
 
-            # Resolve the per-run operation first, then the agent-bound fallback.
-            handler = target.__get__(self, type(self))
+            # The run installs one dispatcher per bound operation on every context it builds. A
+            # context without them was never prepared by a run (or was rebuilt worker-side, past
+            # the boundary already), so the call belongs inline.
             operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
-            operation = (
+            dispatcher = (
                 operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
             )
-            if operation is not None:
-                result = await operation(*dispatch_args, **dispatch_kwargs)
+            if dispatcher is None:
+                result = await target.__get__(self, type(self))(*args, **kwargs)
             else:
-                dispatcher = (
-                    self._get_durable_operation_bindings().get(ctx.agent, {}).get(marker.name)  # pyright: ignore[reportPrivateUsage]
-                    if ctx.agent is not None
-                    else None
+                result = await dispatcher(
+                    ctx,
+                    cast(tuple[object, ...], args),
+                    cast(dict[str, object], kwargs),
                 )
-                if dispatcher is None:
-                    result = await handler(*dispatch_args, **dispatch_kwargs)
-                else:
-                    result = await dispatcher(
-                        ctx,
-                        cast(tuple[object, ...], dispatch_args),
-                        cast(dict[str, object], dispatch_kwargs),
-                    )
 
             # Apply worker-side model-request mutations back to the live context.
             if request_context is not None and isinstance(result, _ResolvedModelRequestContext):
@@ -465,6 +448,24 @@ def bind_arguments(
     return cast(dict[str, Any], declaration.schema.validator.validate_python(arguments))
 
 
+def bind_declaration_body(
+    declaration: CapabilityMethodDeclaration, capability: AbstractCapability[Any]
+) -> Callable[..., Awaitable[Any]]:
+    """Bind the operation body the run's capability actually implements.
+
+    The declaration was collected from the class the engine bound at construction, but a `for_run`
+    replacement may be a specialized subclass, and its override is the implementation the run asked
+    for. A decorated override is reached through its marker, which carries the undecorated target so
+    binding it doesn't re-enter dispatch; an override of a `base_hook_durable_operation` hook carries
+    no marker of its own and is bound as it stands. A replacement that doesn't carry the method at
+    all falls back to the declared one, which is also what the lookup's default resolves to.
+    """
+    member = getattr(type(capability), declaration.function.__name__, declaration.function)
+    marker = get_durable_operation_marker(member)
+    function = marker.function if marker is not None else member
+    return function.__get__(capability, type(capability))
+
+
 async def call_declaration(
     declaration: CapabilityMethodDeclaration,
     capability: AbstractCapability[Any],
@@ -472,16 +473,20 @@ async def call_declaration(
     params: CapabilityOperationParams,
     model_request_context: ModelRequestContext | None = None,
 ) -> Any:
-    bound = declaration.function.__get__(capability, type(capability))
+    bound = bind_declaration_body(declaration, capability)
+    # The operation body runs as the capability, so name it on the context the way the hook chain
+    # does: a context that crossed a durable boundary was rebuilt without the emitting capability,
+    # and `RunContext.emit` resolves a `CapabilityEvent`'s owner through it.
+    run_context = replace(params.run_context, _capability=capability)
     arguments = dict(params.arguments)
     args: list[Any] = []
     kwargs: dict[str, Any] = {}
     for name, parameter in declaration.signature.parameters.items():
         if name == declaration.ctx_parameter:
             if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
-                kwargs[name] = params.run_context
+                kwargs[name] = run_context
             else:
-                args.append(params.run_context)
+                args.append(run_context)
             continue
         if parameter.kind is inspect.Parameter.VAR_KEYWORD:
             kwargs.update(arguments)

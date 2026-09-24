@@ -1,6 +1,6 @@
 # Common Tools
 
-Pydantic AI ships with native tools that can be used to enhance your agent's capabilities.
+Pydantic AI ships with common tools that extend your agent's capabilities.
 
 ## DuckDuckGo Search Tool
 
@@ -233,7 +233,7 @@ Here are some recent papers about transformer architectures from arxiv.org:
     pip/uv-add "pydantic-ai-harness[exa]"
     ```
 
-    ```py {title="exa_search.py" test="skip"}
+    ```py {title="exa_search.py" test="skip" typecheck="skip - pydantic_ai_harness.exa is not in the pydantic-ai-harness version CI pins"}
     from pydantic_ai_harness.exa import ExaSearch
 
     from pydantic_ai import Agent
