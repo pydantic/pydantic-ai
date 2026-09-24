@@ -1,0 +1,52 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '346'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        tool:
+          criteria:
+            final_result_Escalation: Hand the ticket to a specialist team.
+            final_result_Reply: Write back to the customer.
+          instructions: Which of these does this call for?
+          type: choice
+      state: Please just write back to the customer and apologise that we are running late.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '246'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d552422b7f139dc7dc30bb37c3c7
+    parsed_body:
+      answers:
+        tool:
+          choice: final_result_Reply
+          confidence: 1.0
+          probabilities:
+            final_result_Escalation: 0.0
+            final_result_Reply: 1.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 343
+        output_tokens: 42
+    status:
+      code: 200
+      message: OK
+version: 1

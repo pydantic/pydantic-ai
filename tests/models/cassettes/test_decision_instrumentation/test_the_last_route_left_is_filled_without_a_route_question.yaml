@@ -1,0 +1,66 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '558'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        reason:
+          criteria:
+            cancelled_order: null
+            duplicate_charge: null
+            service_outage: null
+          instructions:
+            chosen: issue_refund
+            field: reason
+            goal: Refund the customer for the order.
+            question: Why is the refund due?
+          type: choice
+      state:
+        history:
+        - user: I was charged twice for order 1042. Please refund the second charge.
+        - tool_call:
+            args: {}
+            name: lookup_order
+        - tool_return:
+            content: 'Order 1042: charged twice on March 3.'
+            name: lookup_order
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '259'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d552434c77ceb6711d6cb7b7a16f
+    parsed_body:
+      answers:
+        reason:
+          choice: duplicate_charge
+          confidence: 1.0
+          probabilities:
+            cancelled_order: 0.0
+            duplicate_charge: 1.0
+            service_outage: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 436
+        output_tokens: 46
+    status:
+      code: 200
+      message: OK
+version: 1

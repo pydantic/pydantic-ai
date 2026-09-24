@@ -444,16 +444,36 @@ A `decide` span is only emitted inside an instrumented model request, and only f
 | `gen_ai.provider.name`, `gen_ai.request.model`, `server.address`, ... | The same model attributes as the model request span |
 | `gen_ai.response.model` | The model that answered |
 | `gen_ai.response.id` | The provider's ID for the request, when it returns one |
-| `pydantic_ai.decision.route` | On a request that fills in a picked route, the name of the tool or output tool being filled |
 | `pydantic_ai.decision.thresholds` | The `decision_boolean_threshold` and `decision_tool_call_threshold` applied, as `{"boolean": ..., "tool_call": ...}` |
 | `pydantic_ai.decision.usage.input_tokens`, `pydantic_ai.decision.usage.output_tokens` | This request's usage |
 | `pydantic_ai.decision.questions` | The questions as sent: `{name: {"type": ..., "instructions": ..., "criteria": ...}}`, where `type` is `noul` (yes/no), `choice` or `score` |
 | `pydantic_ai.decision.state` | The state as sent: the text being judged, or a JSON object that adds the conversation's `history` |
 | `pydantic_ai.decision.answers` | The answers as received: `{"type": "noul", "noul": ...}` for a yes/no, whose `noul` is the probability of yes, `{"type": "choice", "choice": ..., "confidence": ..., "probabilities": {...}}` for a pick, and `{"type": "score", "score": ..., "confidence": ..., "probabilities": {...}, "legend": {...}}` for a rubric |
+| `pydantic_ai.decision.route` | When the request asks a route's field questions, the name of that output tool or tool |
+| `pydantic_ai.decision.confidence` | When the request asks a route's field questions, each field's confidence as Pydantic AI derived it, keyed by field name: the same values as `provider_details['confidence']` on the response |
+| `pydantic_ai.decision.route_question` | When the request asks which route to take, the key of that question: `tool`, with underscores appended if a field already has that name |
+| `pydantic_ai.decision.route_options` | When the request asks which route to take, the routes offered, in order, as a JSON array of output tool and tool names |
+| `pydantic_ai.decision.route_taken` | When the request asks which route to take, the route the run took, after applying `decision_tool_call_threshold` |
+| `pydantic_ai.decision.route_reason` | Why that route was taken: `selected`, `below_threshold`, `handed_off`, or `forced` (see below) |
 
-Questions and answers share their keys, so an answer can be matched to the question it answers. A field's question is keyed by the field's name, a nested model's fields as `outer.inner`, and each option of a `list` or of a mapping from options to `bool` as `field.option`, since the model is asked about each option separately. The question that picks between routes is keyed `tool` (with underscores appended if a field already has that name), and its options are the tool names.
+Questions and answers share their keys, so an answer can be matched to the question it answers. A field's question is keyed by the field's name, a nested model's fields as `outer.inner`, and each option of a `list` or of a mapping from options to `bool` as `field.option`, since the model is asked about each option separately. The question that picks between routes is keyed by `pydantic_ai.decision.route_question`, and its options are the names in `pydantic_ai.decision.route_options`.
 
-With [`include_content=False`](#excluding-prompts-and-completions), `pydantic_ai.decision.state` and `pydantic_ai.decision.answers` are left out, and `pydantic_ai.decision.questions` keeps only each question's `type`: the instructions and criteria are your own words, and an answer can quote the text being judged, such as an option picked from it.
+The answers are what the model said, and the route attributes are what the run did with them, which can differ. `pydantic_ai.decision.route_reason` says how:
+
+- `selected`: the model's pick was taken as it was, including a tool picked below `decision_tool_call_threshold` when there was no other route to fall back to.
+- `below_threshold`: the model picked a tool below `decision_tool_call_threshold`, so the run took another route instead.
+- `handed_off`: the model can't fill the taken route's fields, so it raised [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] for a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand the step to the model behind it. No request was sent to fill it.
+- `forced`: only one route was left, so it was taken without asking which. This is set on the request that fills that route's fields, which carries no `route_question`, `route_options` or `route_taken`.
+
+With one output type and tools, the output type's field questions are asked in the same request as the route question, before it's known whether the output will be the route taken. That request carries both `route` and `route_taken`: when they're equal, the output was filled from its answers, and when they differ, those answers were discarded. A route picked in one request and filled in the next gets a second `decide` span beside the first, whose `route` is the first span's `route_taken`.
+
+With [`include_content=False`](#excluding-prompts-and-completions), strings are left out and numbers are kept:
+
+- `pydantic_ai.decision.state` is left out.
+- `pydantic_ai.decision.questions` keeps only each question's `type`, since the instructions and criteria are your own words.
+- `pydantic_ai.decision.answers` keeps only each answer's `type` and its numbers: `noul`, `score` and `confidence`. The picked `choice`, the `probabilities` keyed by option, and a rubric's `legend` are left out, since options can quote the text being judged. The answer to the route question is kept whole, since its options are tool names.
+
+The route attributes and `pydantic_ai.decision.confidence` hold only names and numbers, so they're recorded either way.
 
 Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage.*`, and no metrics are recorded for `decide` spans: the model request span above them already reports the total of its `decide` spans' usage, and a backend that adds up usage across spans would count it twice.
 

@@ -24,6 +24,7 @@ from pydantic_ai.models.decision import (
     ScoreAnswer,
     ScoreQuestion,
 )
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -167,6 +168,7 @@ async def test_decide_span(allow_model_requests: None, capfire: CaptureLogfire):
                 }
             },
             'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+            'pydantic_ai.decision.route': 'final_result',
             'pydantic_ai.decision.state': {
                 'history': [{'user': 'The migration is reviewed.'}, {'assistant': 'Noted.'}],
                 'text': 'And the tests pass.',
@@ -178,6 +180,78 @@ async def test_decide_span(allow_model_requests: None, capfire: CaptureLogfire):
             'pydantic_ai.decision.usage.input_tokens': 4,
             'pydantic_ai.decision.usage.output_tokens': 2,
             'pydantic_ai.decision.answers': {'ship': {'type': 'noul', 'noul': 0.8}},
+            'pydantic_ai.decision.confidence': {'ship': 0.6000000000000001},
+        }
+    )
+
+
+class LeaningDecisionModel(InMemoryDecisionModel):
+    """Picks the tool on the route question, but less surely than a tool call needs."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['tool'] = ChoiceAnswer(
+            choice='escalate', confidence=0.1, probabilities={'final_result': 0.45, 'escalate': 0.55}
+        )
+        return response
+
+
+def escalate(team: Literal['billing', 'security']) -> str:
+    """Hand the ticket to a specialist team."""
+    return f'Escalated to {team}.'  # pragma: no cover - picked below the threshold, so never called
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_below_the_threshold_without_content(allow_model_requests: None, capfire: CaptureLogfire):
+    """A tool picked below the threshold leans to the output, whose fields were asked beside the route question.
+
+    `route_taken` is the span's own `route`, so the speculative answers were used, and `route_reason` says why the
+    pick was not taken. Without content the field answers keep only their numbers, while the route question's
+    answer is kept whole: its labels are route names.
+    """
+    agent = Agent(
+        LeaningDecisionModel(),
+        output_type=Triage,
+        tools=[escalate],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    result = await agent.run('The customer cannot sign in.')
+
+    assert result.output == Triage(urgent=True, action='review')
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert {
+        key: value for key, value in span['attributes'].items() if key.startswith('pydantic_ai.decision.')
+    } == snapshot(
+        {
+            'pydantic_ai.decision.questions': {
+                'urgent': {'type': 'noul'},
+                'action': {'type': 'choice'},
+                'tool': {'type': 'choice'},
+            },
+            'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'tool_call': 0.6},
+            'pydantic_ai.decision.route': 'final_result',
+            'pydantic_ai.decision.route_question': 'tool',
+            'pydantic_ai.decision.route_options': ['final_result', 'escalate'],
+            'pydantic_ai.decision.usage.input_tokens': 4,
+            'pydantic_ai.decision.usage.output_tokens': 2,
+            'pydantic_ai.decision.answers': {
+                'urgent': {'type': 'noul', 'noul': 0.8},
+                'action': {'type': 'choice', 'confidence': 0.9},
+                'tool': {
+                    'type': 'choice',
+                    'choice': 'escalate',
+                    'confidence': 0.1,
+                    'probabilities': {'final_result': 0.45, 'escalate': 0.55},
+                },
+            },
+            'pydantic_ai.decision.confidence': {'urgent': 0.6000000000000001, 'action': 0.9},
+            'pydantic_ai.decision.route_taken': 'final_result',
+            'pydantic_ai.decision.route_reason': 'below_threshold',
         }
     )
 

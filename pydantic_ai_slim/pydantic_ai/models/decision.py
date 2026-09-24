@@ -8,7 +8,7 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, ClassVar, Literal, TypeAlias, cast
 
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import INVALID_SPAN, Span, SpanKind
 from opentelemetry.util.types import AttributeValue
 from pydantic import JsonValue
 from typing_extensions import assert_never
@@ -371,21 +371,42 @@ class DecisionModel(Model[InterfaceClient]):
         """
         raise NotImplementedError()
 
+    @asynccontextmanager
     async def _decide(
-        self, request: DecisionRequest, model_settings: DecisionModelSettings, *, route: str | None = None
-    ) -> DecisionResponse:
+        self,
+        request: DecisionRequest,
+        model_settings: DecisionModelSettings,
+        *,
+        route: str | None = None,
+        route_question: str | None = None,
+        forced: bool = False,
+    ) -> AsyncGenerator[tuple[DecisionResponse, Span]]:
         """Send one request through `decide()`, in a `decide` span when an instrumented request is open.
 
-        `route` is the tool or output route whose fields this request fills, when a previous request picked it.
+        Yields the response and the span, which stays open for the caller to record what the run made of the
+        answers before it closes. Nothing more is sent inside it: a request that fills a picked route is a sibling
+        of the one that picked it, not its child. Outside an instrumented request the span is a non-recording one.
+
+        `route` is the tool or output route whose fields this request asks, `route_question` the key of the
+        question that picks between routes, and `forced` says the route was taken without one.
         """
         policy = open_request_policy()
         if policy is None:
-            return await self.decide(request, model_settings)
+            yield await self.decide(request, model_settings), INVALID_SPAN
+            return
         include_content = policy.include_content
         with (
             policy.tracer.start_as_current_span(
                 f'decide {self.model_name}',
-                attributes=_decide_span_attributes(self, request, model_settings, route, include_content),
+                attributes=_decide_span_attributes(
+                    self,
+                    request,
+                    model_settings,
+                    route=route,
+                    route_question=route_question,
+                    forced=forced,
+                    include_content=include_content,
+                ),
                 kind=SpanKind.CLIENT,
                 record_exception=False,
                 set_status_on_exception=False,
@@ -393,8 +414,8 @@ class DecisionModel(Model[InterfaceClient]):
             record_uncaught_errors(span, include_content=include_content),
         ):
             response = await self.decide(request, model_settings)
-            span.set_attributes(_decide_response_attributes(response, include_content))
-        return response
+            span.set_attributes(_decide_response_attributes(response, route_question, include_content))
+            yield response, span
 
     async def request(
         self,
@@ -437,7 +458,7 @@ class DecisionModel(Model[InterfaceClient]):
             return await self._forced_with_arguments(
                 forced_tool, state, instructions, settings, boolean_threshold, limits
             )
-        if len(output_tools) > 1 and not any(_expressible(tool, instructions, limits) for tool in output_tools):
+        if len(output_tools) > 1 and all(_Ask.to_fill(tool, instructions, limits) is None for tool in output_tools):
             # A member the model cannot fill is a hand-off, but only while some other member is a real alternative.
             # With none of them fillable the choice is decided before it is asked: every answer hands off, so the
             # request that asks it buys nothing, and every run pays for the decision model on top of the model
@@ -450,37 +471,62 @@ class DecisionModel(Model[InterfaceClient]):
         ask = _Ask.about(output_tool, instructions, limits) if output_tool else _Ask.nothing()
         tool_key = _tool_question(ask.questions, output_tools, tools, instructions, limits)
 
-        response = await self._decide(DecisionRequest(state=state, questions=ask.questions), settings)
-        response_usage = response.usage
-        args, provider_details = ask.answers(response, boolean_threshold)
-        parts: list[ModelResponsePart] = []
-        if output_tool:
-            parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
-        if tool_key is not None:
-            picked = _tool_call(
-                response.answers.get(tool_key),
-                output_tools,
-                tools,
-                {tool.name for tool in hand_offs},
-                threshold,
-                provider_details,
-            )
-            if isinstance(picked, ToolCallPart):
-                parts = [picked]
-            elif picked is not None and picked is not output_tool:
-                # `_tool_call` tolerates an offered route missing from `probabilities` when it falls back to
-                # the likeliest one, so the route it returns is not necessarily one the model priced.
-                probability = provider_details['tool']['probabilities'].get(picked.name, 0.0)
-                response, args, argument_details = await self._fill(
-                    picked, probability, state, instructions, settings, boolean_threshold, limits
+        # The route to fill in a second request, and its questions, or `None` when it has to be handed off.
+        to_fill: ToolDefinition | None = None
+        fill: _Ask | None = None
+        async with self._decide(
+            DecisionRequest(state=state, questions=ask.questions),
+            settings,
+            route=output_tool.name if output_tool else None,
+            route_question=tool_key,
+        ) as (response, span):
+            args, provider_details = ask.answers(response, boolean_threshold)
+            parts: list[ModelResponsePart] = []
+            if output_tool:
+                parts.append(ToolCallPart(output_tool.name, args, _utils.generate_tool_call_id()))
+            taken: tuple[str, _RouteReason] | None = None
+            if tool_key is not None:
+                picked = _tool_call(
+                    response.answers.get(tool_key),
+                    output_tools,
+                    tools,
+                    {tool.name for tool in hand_offs},
+                    threshold,
+                    provider_details,
                 )
-                response_usage += response.usage
-                provider_details.update(argument_details)
-                # `RequestUsage.requests` is fixed at 1, so usage cannot say that this turn asked twice: the
-                # choice and the fill are two requests inside one step. The count is reported here, and only
-                # here, so it appears exactly when it differs from what usage reports. See #8498.
-                provider_details['requests'] = 2
-                parts = [ToolCallPart(picked.name, args, _utils.generate_tool_call_id())]
+                if isinstance(picked, ToolCallPart):
+                    parts = [picked]
+                elif picked is not output_tool:
+                    to_fill = picked
+                    fill = _Ask.to_fill(picked, instructions, limits)
+                name = picked.tool_name if isinstance(picked, ToolCallPart) else picked.name
+                if to_fill is not None and fill is None:
+                    taken = name, 'handed_off'
+                elif name != provider_details['tool']['choice']:
+                    taken = name, 'below_threshold'
+                else:
+                    taken = name, 'selected'
+            _record_outcome(span, provider_details, fields=output_tool is not None, taken=taken)
+
+        if to_fill is not None:
+            # `_tool_call` tolerates an offered route missing from `probabilities` when it falls back to the
+            # likeliest one, so the route it returns is not necessarily one the model priced.
+            probability = provider_details['tool']['probabilities'].get(to_fill.name, 0.0)
+            if fill is None:
+                # A route whose fields the model cannot express is handed off. `ToolCallProposed` is a
+                # `ModelAPIError`, so a `FallbackModel` gives a language model the whole step.
+                raise ToolCallProposed(self.model_name, to_fill.name, probability)
+            fill_response, args, argument_details = await self._fill(to_fill, fill, state, settings, boolean_threshold)
+            response_usage = response.usage + fill_response.usage
+            response = fill_response
+            provider_details.update(argument_details)
+            # `RequestUsage.requests` is fixed at 1, so usage cannot say that this turn asked twice: the
+            # choice and the fill are two requests inside one step. The count is reported here, and only
+            # here, so it appears exactly when it differs from what usage reports. See #8498.
+            provider_details['requests'] = 2
+            parts = [ToolCallPart(to_fill.name, args, _utils.generate_tool_call_id())]
+        else:
+            response_usage = response.usage
 
         return ModelResponse(
             parts=parts,
@@ -495,34 +541,25 @@ class DecisionModel(Model[InterfaceClient]):
     async def _fill(
         self,
         tool: ToolDefinition,
-        probability: float,
+        ask: _Ask,
         state: JsonValue,
-        instructions: str | None,
         settings: DecisionModelSettings,
         boolean_threshold: float,
-        limits: _Limits,
+        *,
+        forced: bool = False,
     ) -> tuple[DecisionResponse, dict[str, Any], dict[str, Any]]:
-        """Ask a selected route's fields in a second request, or hand it off when the model cannot express them.
+        """Ask a selected route's fields in a second request.
 
         One helper for both routes the model picks and then fills: a tool's arguments, and a union member's fields.
         They are the same two steps, and a route whose fields the model cannot express is the same hand-off either
-        way — [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] is a `ModelAPIError`, so a
-        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] gives a language model the whole step.
-
-        This is why a union may hold a member the model cannot express while a lone `output_type` may not: with one
-        output type there is no other route the run could have taken, so an unfillable one can only ever fail,
-        and it is refused before any request. Offered beside others, it is a route like any other.
+        way, decided by the caller before this is reached, with `_Ask.to_fill`.
         """
         try:
-            ask = _Ask.about(tool, instructions, limits, picked=True)
-        except UserError:
-            raise ToolCallProposed(self.model_name, tool.name, probability) from None
-
-        try:
-            response = await self._decide(
-                DecisionRequest(state=state, questions=ask.questions), settings, route=tool.name
-            )
-            args, provider_details = ask.answers(response, boolean_threshold)
+            async with self._decide(
+                DecisionRequest(state=state, questions=ask.questions), settings, route=tool.name, forced=forced
+            ) as (response, span):
+                args, provider_details = ask.answers(response, boolean_threshold)
+                _record_outcome(span, provider_details, fields=True)
         except (ModelAPIError, UnexpectedModelBehavior) as e:
             # The first request committed to this route. Letting a fallback model rerun the whole original step
             # could silently choose another route, so a failure while filling is terminal and names that route.
@@ -541,10 +578,11 @@ class DecisionModel(Model[InterfaceClient]):
         limits: _Limits,
     ) -> ModelResponse:
         """Fill the arguments of the one route left, without a choice request."""
+        fill = _Ask.to_fill(tool, instructions, limits)
+        if fill is None:
+            raise ToolCallProposed(self.model_name, tool.name, 1.0)
         details = {'tool': {'choice': tool.name, 'probabilities': {tool.name: 1.0}, 'offered': [tool.name]}}
-        response, args, argument_details = await self._fill(
-            tool, 1.0, state, instructions, settings, boolean_threshold, limits
-        )
+        response, args, argument_details = await self._fill(tool, fill, state, settings, boolean_threshold, forced=True)
         details.update(argument_details)
         return ModelResponse(
             parts=[ToolCallPart(tool.name, args, _utils.generate_tool_call_id())],
@@ -628,17 +666,28 @@ _DEFAULT_TOOL_CALL_THRESHOLD = 0.6
 _DEFAULT_BOOLEAN_THRESHOLD = 0.5
 
 
+_RouteReason: TypeAlias = Literal['selected', 'below_threshold', 'handed_off', 'forced']
+"""Why a `decide` span's route was taken: see `pydantic_ai.decision.route_reason` in the Logfire docs."""
+
+# What an answer says in numbers alone. The rest of it is labels, which can quote the text being judged.
+_NUMERIC_ANSWER_FIELDS = ('noul', 'score', 'confidence')
+
+
 def _decide_span_attributes(
     model: DecisionModel[Any],
     request: DecisionRequest,
     settings: DecisionModelSettings,
+    *,
     route: str | None,
+    route_question: str | None,
+    forced: bool,
     include_content: bool,
 ) -> dict[str, AttributeValue]:
     """A `decide` span's attributes from the request, before it is sent.
 
     The questions are always recorded by type, keyed like the answers, so a trace shows what kind of decision was
     asked even without content; their instructions and criteria are the user's words, and need `include_content`.
+    The routes are tool and output names, which are not content, so they are recorded either way.
     """
     questions = {
         name: _wire(question) if include_content else {'type': question.type}
@@ -657,6 +706,16 @@ def _decide_span_attributes(
     json_attributes = ['pydantic_ai.decision.questions', 'pydantic_ai.decision.thresholds']
     if route is not None:
         attributes['pydantic_ai.decision.route'] = route
+        # Set once the response is in, and declared here with the rest.
+        json_attributes.append('pydantic_ai.decision.confidence')
+    if forced:
+        attributes['pydantic_ai.decision.route_reason'] = 'forced'
+    if route_question is not None:
+        question = request.questions[route_question]
+        assert isinstance(question, ChoiceQuestion)  # `_tool_question` asks nothing else
+        attributes['pydantic_ai.decision.route_question'] = route_question
+        attributes['pydantic_ai.decision.route_options'] = safe_to_json(list(question.criteria)).decode()
+        json_attributes.append('pydantic_ai.decision.route_options')
     if include_content:
         # The state is text or JSON, as it is on the wire, and only JSON is declared as such.
         if isinstance(request.state, str):
@@ -664,20 +723,30 @@ def _decide_span_attributes(
         else:
             attributes['pydantic_ai.decision.state'] = safe_to_json(request.state).decode()
             json_attributes.append('pydantic_ai.decision.state')
-        # Set once the response is in, and declared here with the rest.
-        json_attributes.append('pydantic_ai.decision.answers')
+    json_attributes.append('pydantic_ai.decision.answers')
     attributes['logfire.json_schema'] = safe_to_json(
-        {'type': 'object', 'properties': {name: {'type': 'object'} for name in json_attributes}}
+        {
+            'type': 'object',
+            'properties': {
+                name: {'type': 'array' if name == 'pydantic_ai.decision.route_options' else 'object'}
+                for name in json_attributes
+            },
+        }
     ).decode()
     return attributes
 
 
-def _decide_response_attributes(response: DecisionResponse, include_content: bool) -> dict[str, AttributeValue]:
+def _decide_response_attributes(
+    response: DecisionResponse, route_question: str | None, include_content: bool
+) -> dict[str, AttributeValue]:
     """A `decide` span's attributes from the response.
 
     Usage is this request's alone, and deliberately not `gen_ai.usage.*`: the `chat` span above reports the sum of its
-    requests there, and a backend that adds up usage across spans would count it twice. The answers can quote the
-    state, a picked option being the user's own text, so they are content.
+    requests there, and a backend that adds up usage across spans would count it twice.
+
+    Without content, an answer keeps its numbers and its type: its labels -- a picked option, the options a
+    distribution is keyed by, a rubric's levels -- can quote the state. The route question's answer is kept whole,
+    since its labels are tool and output names.
     """
     attributes: dict[str, AttributeValue] = {
         'gen_ai.response.model': response.model_name,
@@ -686,11 +755,36 @@ def _decide_response_attributes(response: DecisionResponse, include_content: boo
     }
     if response.provider_response_id is not None:
         attributes['gen_ai.response.id'] = response.provider_response_id
-    if include_content:
-        attributes['pydantic_ai.decision.answers'] = safe_to_json(
-            {name: _wire(answer) for name, answer in response.answers.items()}
-        ).decode()
+    answers: dict[str, dict[str, Any]] = {}
+    for name, answer in response.answers.items():
+        wire = _wire(answer)
+        if not include_content and name != route_question:
+            wire = {key: value for key, value in wire.items() if key == 'type' or key in _NUMERIC_ANSWER_FIELDS}
+        answers[name] = wire
+    attributes['pydantic_ai.decision.answers'] = safe_to_json(answers).decode()
     return attributes
+
+
+def _record_outcome(
+    span: Span,
+    provider_details: dict[str, Any],
+    *,
+    fields: bool,
+    taken: tuple[str, _RouteReason] | None = None,
+) -> None:
+    """Record on a `decide` span what the run made of its answers, none of which is content.
+
+    `fields` says the span asked a route's field questions, whose thresholded confidence is recorded; `taken` is
+    the route taken on the span that asked the route question, and why.
+    """
+    if not span.is_recording():
+        return
+    attributes: dict[str, AttributeValue] = {}
+    if fields:
+        attributes['pydantic_ai.decision.confidence'] = safe_to_json(provider_details['confidence']).decode()
+    if taken is not None:
+        attributes['pydantic_ai.decision.route_taken'], attributes['pydantic_ai.decision.route_reason'] = taken
+    span.set_attributes(attributes)
 
 
 def _threshold(settings: DecisionModelSettings, name: str, default: float) -> float:
@@ -812,7 +906,7 @@ def _tool_call(
     hand_offs: set[str],
     threshold: float,
     provider_details: dict[str, Any],
-) -> ToolDefinition | ToolCallPart | None:
+) -> ToolDefinition | ToolCallPart:
     """The output or tool call to take from the model's answer to the route question.
 
     A tool picked below the threshold is a lean: the likeliest output type is filled, or with none to fill, the
@@ -867,15 +961,6 @@ def _tool_call(
         return tool
     # Nothing to write, so the call is made on the pick alone.
     return ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())
-
-
-def _expressible(tool: ToolDefinition, instructions: str | None, limits: _Limits) -> bool:
-    """Whether the model could fill this route's fields, decided without sending anything."""
-    try:
-        _Ask.about(tool, instructions, limits)
-    except UserError:
-        return False
-    return True
 
 
 _NONE_OF_THESE = 'None of these.'
@@ -1275,6 +1360,21 @@ class _Ask:
         """
         properties, defaulted = _fields(tool)
         return cls(properties, _questions(properties, tool, instructions, limits, picked=picked), defaulted)
+
+    @classmethod
+    def to_fill(cls, tool: ToolDefinition, instructions: str | None, limits: _Limits) -> _Ask | None:
+        """The questions a picked route's fields become in the request that fills them, or `None` to hand it off.
+
+        `None` means the model cannot express one of the fields, so the route is raised as
+        [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] before anything is sent to fill it.
+        This is why a union may hold a member the model cannot express while a lone `output_type` may not: with
+        one output type there is no other route the run could have taken, so an unfillable one can only ever
+        fail, and it is refused before any request. Offered beside others, it is a route like any other.
+        """
+        try:
+            return cls.about(tool, instructions, limits, picked=True)
+        except UserError:
+            return None
 
     @classmethod
     def nothing(cls) -> _Ask:

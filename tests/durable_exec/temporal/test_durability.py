@@ -4733,4 +4733,6 @@ async def test_durability_decide_span_in_activity(
         f'invoke_agent {agent_name}',
     ]
     assert ('pydantic_ai.decision.state' in attributes) is include_content
-    assert ('pydantic_ai.decision.answers' in attributes) is include_content
+    # Without content an answer keeps its numbers, which a yes/no's answer is all of.
+    assert attributes['pydantic_ai.decision.answers'] == '{"ship":{"type":"noul","noul":0.9}}'
+    assert ('instructions' in attributes['pydantic_ai.decision.questions']) is include_content
