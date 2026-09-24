@@ -220,14 +220,19 @@ class DecisionModelSettings(ModelSettings, total=False):
     """
 
     decision_tool_call_threshold: float
-    """How likely a tool call has to be before it is taken, from 0 to 1. Default: 0.6.
+    """How likely it has to be that the text calls for a function tool at all, rather than an output, before the
+    likeliest tool is called, from 0 to 1. Default: 0.6.
 
-    With tools attached, one more question asks which route the text calls for, the output type among them. When
-    the model picks a function tool, this is compared with the probability of all function tools together, not of
-    the one picked: probability split between two tools still says a tool is wanted. At or above it, the picked
-    tool is called, after the model fills any supported arguments, or raised as
+    The threshold decides a tool versus no tool, not whether one particular tool is likely enough: which tool runs
+    is simply the likeliest one. With tools attached, one more question asks which route the text calls for, the
+    output type among them. When the model picks a function tool, this is compared with the probability of all
+    function tools together, so probability split between two tools still says a tool is wanted. At or above it,
+    the picked tool is called, after the model fills any supported arguments, or raised as
     [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] when its arguments are unsupported. Below it,
     the pick is a lean, and the output is filled as usual.
+
+    This is not a guard for a tool with side effects, such as a refund or an account change: require approval
+    for that tool instead.
     """
 
 
