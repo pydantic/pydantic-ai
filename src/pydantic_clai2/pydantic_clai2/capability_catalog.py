@@ -28,6 +28,7 @@ _FACTORIES = (
     ('input_guardrail', 'guardrails:InputGuardrail'),
     ('output_guardrail', 'guardrails:OutputGuardrail'),
     ('tool_guardrail', 'guardrails:ToolGuardrail'),
+    ('linear', 'linear:Linear'),
     ('localstack', 'localstack:LocalStack'),
     ('managed_prompt', 'logfire:ManagedPrompt'),
     ('logfire_mcp', 'logfire_mcp:LogfireMCP'),

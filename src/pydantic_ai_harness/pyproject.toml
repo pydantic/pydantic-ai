@@ -118,6 +118,9 @@ coder = [
 logfire-mcp = [
     "pydantic-ai-slim[mcp]>=2.44.0",
 ]
+linear = [
+    "pydantic-ai-slim[mcp]>=2.44.0",
+]
 
 [project.urls]
 Homepage = 'https://github.com/pydantic/pydantic-ai-harness'
