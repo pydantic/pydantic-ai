@@ -198,11 +198,6 @@ class WorkspaceFileEntry(Protocol):
         ...
 
     @property
-    def is_symlink(self) -> bool | None:
-        """Whether the entry itself is a symlink, or `None` when the backend can't tell."""
-        ...
-
-    @property
     def size(self) -> int | None:
         """Size in bytes, or `None` when the backend doesn't report one (e.g. for directories)."""
         ...
@@ -219,7 +214,6 @@ class FileEntry:
     path: str
     is_dir: bool
     size: int | None
-    is_symlink: bool | None = None
 
 
 @runtime_checkable

@@ -288,7 +288,7 @@ async def test_run_only_backend_has_a_complete_binary_safe_shell_filesystem(tmp_
 
 
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
-async def test_entries_follow_symlinks_for_is_dir_and_mark_the_link(tmp_path: Path, native: bool) -> None:
+async def test_entries_follow_symlinks_for_is_dir(tmp_path: Path, native: bool) -> None:
     target = tmp_path / 'target'
     child = target / 'child'
     child.mkdir(parents=True)
@@ -303,15 +303,15 @@ async def test_entries_follow_symlinks_for_is_dir_and_mark_the_link(tmp_path: Pa
     # Listed through a symlinked directory, which is followed.
     entries = await workspace.list_dir('root-link')
 
-    assert {entry.name: (entry.is_dir, entry.is_symlink) for entry in entries} == {
-        'child': (True, False),
-        'child-link': (True, True),
-        'dangling-link': (False, True),
-        'file-link': (False, True),
+    assert {entry.name: entry.is_dir for entry in entries} == {
+        'child': True,
+        'child-link': True,
+        'dangling-link': False,
+        'file-link': False,
     }
     link = await workspace.stat('root-link/file-link')
-    assert (link.is_dir, link.is_symlink, link.size) == (False, True, len('content'))
-    assert (await workspace.stat('root-link/child')).is_symlink is False
+    assert (link.is_dir, link.size) == (False, len('content'))
+    assert (await workspace.stat('root-link/child-link')).is_dir is True
 
 
 async def test_run_only_filesystem_raises_builtin_path_errors_in_one_command(tmp_path: Path) -> None:

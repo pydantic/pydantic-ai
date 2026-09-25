@@ -37,7 +37,6 @@ class FakeEntry:
     path: str
     is_dir: bool = False
     size: int | None = None
-    is_symlink: bool | None = None
 
 
 _SHELL_RESULT = re.compile(r'^printf ([0-9a-f]+); printf \1 >&2; exit 7$')

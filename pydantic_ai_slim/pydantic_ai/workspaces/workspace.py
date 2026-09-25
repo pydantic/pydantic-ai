@@ -3,7 +3,7 @@
 Workspace backends implement the small
 [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] protocol and typically also
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem]. The `Workspace` object owns
-model-facing semantics such as decoding and windowed file reads. Capabilities and user tools
+model-facing semantics such as path resolution and text decoding. Capabilities and user tools
 consume it through [`RunContext.workspace`][pydantic_ai.tools.RunContext.workspace].
 """
 
@@ -134,24 +134,21 @@ class _ShellFilesystem(SupportsFilesystem):
 
     async def stat(self, path: str) -> FileEntry:
         quoted_path = shlex.quote(path)
-        # A leading `l` marks a symlink; the rest follows it, like the other operations.
+        # Follows a symlink to its target, like the other operations.
         result = await self._backend.run(
-            f'if test -L {quoted_path}; then printf l; fi; '
             f"if test -d {quoted_path}; then printf 'directory\\n'; else wc -c < {quoted_path}; fi",
             shell=True,
         )
         await self._raise_for_error(result, path, missing=True)
         output = result.stdout.strip()
-        is_symlink = output.startswith('l')
-        output = output.removeprefix('l')
         name = posixpath.basename(posixpath.normpath(path))
         if output == 'directory':
-            return FileEntry(name=name, path=path, is_dir=True, size=None, is_symlink=is_symlink)
+            return FileEntry(name=name, path=path, is_dir=True, size=None)
         try:
             size = int(output)
         except ValueError as error:
             raise WorkspaceError(f'shell filesystem returned an invalid size for {path!r}: {output!r}') from error
-        return FileEntry(name=name, path=path, is_dir=False, size=size, is_symlink=is_symlink)
+        return FileEntry(name=name, path=path, is_dir=False, size=size)
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
         quoted_path = shlex.quote(path)
@@ -161,26 +158,17 @@ class _ShellFilesystem(SupportsFilesystem):
             entries = base64.b64decode(result.stdout).decode().split('\0')
         except (UnicodeDecodeError, ValueError) as error:
             raise WorkspaceError(f'shell filesystem returned an invalid directory listing for {path!r}') from error
-        # Each entry is `<d|-><l|-><path>`: whether it is a directory (following a symlink), and a symlink.
+        # Each entry is `<d|-><path>`: whether it is a directory, following a symlink to its target.
         return tuple(
-            FileEntry(
-                name=posixpath.basename(entry[2:]),
-                path=entry[2:],
-                is_dir=entry[0] == 'd',
-                size=None,
-                is_symlink=entry[1] == 'l',
-            )
-            for entry in sorted((entry for entry in entries if entry), key=lambda entry: entry[2:])
+            FileEntry(name=posixpath.basename(entry[1:]), path=entry[1:], is_dir=entry[0] == 'd', size=None)
+            for entry in sorted((entry for entry in entries if entry), key=lambda entry: entry[1:])
         )
 
     async def _list_paths(self, quoted_path: str) -> WorkspaceResult:
         temporary_path = f'/tmp/.pydantic-ai-{uuid.uuid4().hex}.list'
         quoted_temporary = shlex.quote(temporary_path)
         # `test` and `printf` rather than `find -printf`, which BusyBox and macOS lack.
-        mark = (
-            ' -exec sh -c \'for f do test -d "$f" && d=d || d=-; test -L "$f" && l=l || l=-; '
-            'printf "%s%s%s\\000" "$d" "$l" "$f"; done\' sh {} +'
-        )
+        mark = ' -exec sh -c \'for f do test -d "$f" && d=d || d=-; printf "%s%s\\000" "$d" "$f"; done\' sh {} +'
         # Do not pipe `find` into `base64`: a POSIX shell reports only `base64`'s exit status and
         # could turn a failed traversal into a successful partial listing. The temporary file keeps
         # `find`'s status authoritative, and the trap removes it on every shell exit path.
@@ -252,7 +240,7 @@ class Workspace(WorkspaceBackend):
     """Rich workspace interface exposed to tools and capabilities.
 
     `Workspace` forwards the backend's supported command and filesystem operations and adds path
-    resolution plus uniform text and windowed-file helpers. Use
+    resolution plus text helpers. Use
     [`backend`][pydantic_ai.workspaces.Workspace.backend] to reach provider-specific
     functionality.
     """

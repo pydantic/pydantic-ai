@@ -263,9 +263,7 @@ class WriteTextArguments:
 
 
 def _file_entry(entry: WorkspaceFileEntry) -> FileEntry:
-    return FileEntry(
-        name=entry.name, path=entry.path, is_dir=entry.is_dir, size=entry.size, is_symlink=entry.is_symlink
-    )
+    return FileEntry(name=entry.name, path=entry.path, is_dir=entry.is_dir, size=entry.size)
 
 
 @dataclass(frozen=True)

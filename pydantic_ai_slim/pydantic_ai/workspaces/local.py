@@ -197,13 +197,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             target = self._path(path)
             size = target.stat().st_size
             is_dir = target.is_dir()
-            return FileEntry(
-                name=target.name,
-                path=path,
-                is_dir=is_dir,
-                size=None if is_dir else size,
-                is_symlink=target.is_symlink(),
-            )
+            return FileEntry(name=target.name, path=path, is_dir=is_dir, size=None if is_dir else size)
 
         return await run_in_executor(stat)
 
@@ -223,9 +217,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 except OSError:
                     # A broken symlink in the directory must not fail the whole listing.
                     size = None
-                entries.append(
-                    FileEntry(name=child.name, path=child.path, is_dir=is_dir, size=size, is_symlink=child.is_symlink())
-                )
+                entries.append(FileEntry(name=child.name, path=child.path, is_dir=is_dir, size=size))
             return entries
 
         return await run_in_executor(list_entries)

@@ -390,10 +390,7 @@ class WorkspaceBackendSuite:
             )
 
     async def test_symlink_entries_follow_the_link(self, backend: WorkspaceBackend) -> None:
-        rule = (
-            "An entry's `is_dir` follows a symlink to its target, and `is_symlink` says whether the entry itself "
-            'is one, or is `None` when the backend cannot tell.'
-        )
+        rule = "An entry's `is_dir` follows a symlink to its target."
         commands = _commands(backend)
         workspace = Workspace(backend)
         async with _probe(backend, workspace, rule) as root:
@@ -403,13 +400,10 @@ class WorkspaceBackendSuite:
             if result.exit_code != 0 or not await _checked(rule, lambda: workspace.exists(link)):
                 pytest.skip('the environment cannot create symlinks with `ln -s`')
             entries = await _checked(rule, lambda: workspace.list_dir(root))
-            listed = {entry.name: (entry.is_dir, entry.is_symlink) for entry in entries}
-            assert listed in (
-                {'link': (True, True), 'target': (True, False)},
-                {'link': (True, None), 'target': (True, None)},
-            ), _failure(rule, f'directory listing was {entries!r}')
+            listed = {entry.name: entry.is_dir for entry in entries}
+            assert listed == {'link': True, 'target': True}, _failure(rule, f'directory listing was {entries!r}')
             entry = await _checked(rule, lambda: workspace.stat(link))
-            assert entry.is_dir and entry.is_symlink in (True, None), _failure(rule, f'symlink stat was {entry!r}')
+            assert entry.is_dir, _failure(rule, f'symlink stat was {entry!r}')
 
     async def test_ref_is_none_until_the_environment_exists_then_stable(self, backend: WorkspaceBackend) -> None:
         rule = (
