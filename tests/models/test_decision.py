@@ -1231,6 +1231,19 @@ async def test_an_output_type_the_model_cannot_fill_is_left_to_the_model_behind_
     ] == snapshot([('in-memory-decisions', ['look_up_order']), ('test', ['final_result'])])
 
 
+@pytest.mark.anyio
+async def test_unfillable_output_types_left_after_the_tools_return_are_still_asked_about(allow_model_requests: None):
+    """Once the tool has returned, every route left hands off, but with several of them the model is still asked
+    which: the answer names the route the hand-off reports, and there is no one route to name without it."""
+    decision_model = RoutingDecisionModel({'PartReply': 0.3, 'Reply': 0.6, 'look_up_order': 0.9})
+    with pytest.raises(UnfillableRoute) as exc_info:
+        await Agent(decision_model, output_type=[PartReply, Reply], tools=[look_up_order]).run('Where is my order?')
+
+    assert (exc_info.value.route, exc_info.value.probability) == ('Reply', 0.6)
+    assert [list(request.questions) for request in decision_model.requests] == [['route'], ['route']]
+    assert list(route_question(decision_model).criteria) == ['PartReply', 'Reply', 'look_up_order']
+
+
 class UnavailableDecisionModel(InMemoryDecisionModel):
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         raise ModelAPIError(self.model_name, 'The backend is down.')
