@@ -9456,6 +9456,33 @@ async def test_refused_image_frees_its_place_under_the_retention_cap() -> None:
         ]
 
 
+async def test_image_refused_while_still_sending_is_not_retained() -> None:
+    """A refusal read before the image's send returns must not leave the refused image counted under the cap."""
+    refused = BinaryImage(data=b'refused', media_type='image/png')
+
+    class _RefusesMidSend(_AnswersEachInput):
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            if content == refused:
+                for _ in range(20):  # the pump reads the refusal before this send returns
+                    await asyncio.sleep(0)
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        return [InputRejected(index, refused='content'), _REFUSAL] if content == refused else []
+
+    images = [BinaryImage(data=f'image-{index}'.encode(), media_type='image/png') for index in range(3)]
+    session = RealtimeSession(_RefusesMidSend(answer), _noop_runner, retain_images_max=2)
+    async with session:
+        await session.send(images[0])
+        await session.send(images[1])
+        await session.send(refused)
+        await session.send(images[2])
+        assert session.all_messages() == [
+            ModelRequest(parts=[UserPromptPart(content=[image], timestamp=IsDatetime())], timestamp=IsDatetime())
+            for image in images[1:]
+        ]
+
+
 async def test_refused_content_without_a_recorded_request_changes_nothing() -> None:
     """Refused content the session recorded nothing for (a bare response request) has nothing to take back."""
     conn = _AnswersEachInput(lambda index, _: [InputRejected(index, refused='content'), _REFUSAL])

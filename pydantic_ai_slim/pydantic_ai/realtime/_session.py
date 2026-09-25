@@ -1558,7 +1558,10 @@ class RealtimeSession:
                 self._remove_sent_request(request)
             raise
         self._sent_image_count += 1
-        if request is not None:
+        # The provider can refuse the image while the send is still in progress, and the refusal then
+        # took the request out of history before it got here: retaining it anyway would let a request
+        # that isn't in history count against the cap and evict one that is.
+        if request is not None and self._is_recorded(request):
             self._retained_image_requests.append(request)
             # `retain_images_every_n` only slows history growth; the cap bounds it, so a long-running
             # frame stream can't grow the host's memory without limit. Providers hold their own
@@ -1583,6 +1586,12 @@ class RealtimeSession:
             or self._pending_finish_reason is not None
             or self._pending_response_usage != RequestUsage()
             or self._session_instrumentation.chat_span is not None
+        )
+
+    def _is_recorded(self, request: ModelRequest) -> bool:
+        """Whether a sent request is still in history or waiting to join it. Searched newest first."""
+        return any(message is request for message in self._pending_sent_requests) or any(
+            message is request for message in reversed(self._history)
         )
 
     def _remove_sent_request(self, request: ModelRequest) -> None:
