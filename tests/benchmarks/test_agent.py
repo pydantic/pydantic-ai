@@ -52,11 +52,13 @@ async def test_agent_run_with_synthetic_history(agent: Agent[None, str], synthet
     assert len(result.all_messages()[1].parts) == len(synthetic_history) - 1
 
 
-@pytest.fixture(params=[1000, 5000], ids=['1000-chunks', '5000-chunks'])
+@pytest.fixture(params=[1024, 4096], ids=['1024-chunks', '4096-chunks'])
 async def captured_text_stream(request: pytest.FixtureRequest) -> tuple[ModelResponse, list[ModelResponseStreamEvent]]:
+    chunk = 'x' * (256 * 1024 // request.param)
+
     async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         for _ in range(request.param):
-            yield 'x' * 256
+            yield chunk
 
     model = FunctionModel(stream_function=stream_text)
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
@@ -65,7 +67,6 @@ async def captured_text_stream(request: pytest.FixtureRequest) -> tuple[ModelRes
         return stream.get(), events
 
 
-@pytest.mark.benchmark(max_time=15)
 async def test_replay_text_stream(captured_text_stream: tuple[ModelResponse, list[ModelResponseStreamEvent]]) -> None:
     response, events = captured_text_stream
     stream = CompletedStreamedResponse(
