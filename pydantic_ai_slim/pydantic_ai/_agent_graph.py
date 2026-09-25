@@ -3178,7 +3178,10 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
     separates a result from the call it answers.
     """
     clean_messages: list[_messages.ModelMessage] = []
-    for message in messages:
+    message_iter = iter(messages)
+    message = next(message_iter, None)
+    while message is not None:
+        next_message = next(message_iter, None)
         last_message = clean_messages[-1] if len(clean_messages) > 0 else None
 
         if isinstance(message, _messages.ModelRequest):
@@ -3230,11 +3233,28 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                 and message.provider_name is None
                 and message.model_name is None
             ):
-                merged_message = replace(last_message, parts=[*last_message.parts, *message.parts])
+                parts = [*last_message.parts, *message.parts]
+                if _is_plain_synthetic_response(last_message) and _is_plain_synthetic_response(message):
+                    while _is_plain_synthetic_response(next_message):
+                        parts.extend(next_message.parts)
+                        next_message = next(message_iter, None)
+                merged_message = replace(last_message, parts=parts)
                 clean_messages[-1] = merged_message
             else:
                 clean_messages.append(message)
+        message = next_message
     return clean_messages
+
+
+def _is_plain_synthetic_response(message: _messages.ModelMessage | None) -> TypeGuard[_messages.ModelResponse]:
+    # Keep custom constructor/iterator side effects on the pairwise path.
+    return (
+        type(message) is _messages.ModelResponse
+        and type(message.parts) in (list, tuple)
+        and message.provider_response_id is None
+        and message.provider_name is None
+        and message.model_name is None
+    )
 
 
 def _clean_message_history(
