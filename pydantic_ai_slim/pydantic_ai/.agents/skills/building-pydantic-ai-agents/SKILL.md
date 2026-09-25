@@ -308,7 +308,8 @@ Key facts for building realtime agents:
 - **Context window**: `session.context_window_used` (and `ctx.context_window_used` in a session's tools)
   is the fraction in use: reported by OpenAI GPT-Live, computed from the latest response's tokens on
   OpenAI/Azure/Gemini, and `None` on xAI. It can drop after server-side compaction or truncation, which
-  no provider announces; tune it with `openai_truncation` or `google_context_compression`.
+  no provider announces; tune it with `openai_truncation` (OpenAI Realtime and Azure, not GPT-Live) or
+  `google_context_compression` (Gemini).
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
   agent behind a tool, or hand off history afterwards.
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a
