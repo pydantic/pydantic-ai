@@ -123,7 +123,6 @@ vocabulary yielded by a connection:
 [`ConversationCreated`][pydantic_ai.realtime.codec.ConversationCreated],
 [`ConversationItemCreated`][pydantic_ai.realtime.codec.ConversationItemCreated],
 [`InputRejected`][pydantic_ai.realtime.codec.InputRejected],
-[`ResponseRequestsMerged`][pydantic_ai.realtime.codec.ResponseRequestsMerged],
 [`PartStartEvent`][pydantic_ai.messages.PartStartEvent],
 [`PartEndEvent`][pydantic_ai.messages.PartEndEvent],
 [`SessionUsage`][pydantic_ai.realtime.codec.SessionUsage],

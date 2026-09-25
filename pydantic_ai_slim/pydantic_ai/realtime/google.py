@@ -1243,6 +1243,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._turn_open = False
 
     @property
+    def batches_tool_results(self) -> bool:
+        # Gemini answers a tool-call frame once every call in it has a result, whatever `respond` says.
+        return True
+
+    @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
 

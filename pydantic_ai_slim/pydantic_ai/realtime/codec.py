@@ -67,9 +67,9 @@ class ToolResult:
     respond: bool = True
     """Whether the model should respond once this result is delivered.
 
-    The session sends the results of every tool call a model response made together, and only the last
-    of them asks for a response, so the model answers once with all the results in hand. A provider that
-    answers a batch of results on its own (Gemini Live) can ignore it."""
+    On a connection that [`batches_tool_results`][pydantic_ai.realtime.codec.RealtimeConnection.batches_tool_results],
+    only the last result of a model response's tool calls asks for a response, so the model answers
+    once with all the results in hand."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -336,32 +336,6 @@ class ConversationCreated:
 
 
 @dataclass(repr=False)
-class ResponseRequestsMerged:
-    """Several requests for a response were merged, so fewer responses will come than were requested.
-
-    A connection that can't start a response while one is in progress holds a request made in the
-    meantime until that response is done, and requests made while one is already being held join it:
-    the response they get answers all of them. The session counts one response per request (a text
-    turn, [`CreateResponse`][pydantic_ai.realtime.codec.CreateResponse], or a
-    [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] with `respond=True`), so without this event
-    [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would keep waiting for the
-    responses that were merged away.
-
-    Reported once the response answering them has started, so requests the provider refused instead
-    (see [`InputRejected`][pydantic_ai.realtime.codec.InputRejected]) are not counted twice.
-    """
-
-    count: int
-    """How many requests joined one already being held, and so will get no response of their own."""
-    _: KW_ONLY
-
-    event_kind: Literal['response_requests_merged'] = 'response_requests_merged'
-    """Event type identifier, used as a discriminator."""
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-@dataclass(repr=False)
 class ConversationItemCreated:
     """An OpenAI-protocol server reported a conversation item.
 
@@ -422,7 +396,6 @@ RealtimeCodecEvent = TypeAliasType(
     | ConversationCreated
     | ConversationItemCreated
     | InputRejected
-    | ResponseRequestsMerged
     | PartStartEvent
     | PartEndEvent
     | RealtimeSessionErrorEvent,
@@ -527,6 +500,28 @@ class RealtimeConnection(ABC):
         return False
 
     @property
+    def batches_tool_results(self) -> bool:
+        """Whether the connection answers a model response's tool results once, not once per result.
+
+        When `True`, the [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends the results
+        of the tool calls one response made as a batch, and only the last asks for a response
+        ([`ToolResult.respond`][pydantic_ai.realtime.codec.ToolResult.respond]), so the model answers
+        once with every result in hand. The connection must then honor `respond`, or answer a batch
+        by itself the way Gemini Live does. Defaults to `False`: every result asks for a response of
+        its own.
+        """
+        return False
+
+    def _take_merged_response_requests(self) -> int:
+        """How many requests for a response sent since the last call were answered by another one's response.
+
+        For the session's reply accounting only: a connection that holds a request made during an
+        active response, and answers any further ones with the same response, reports them here so
+        the session stops waiting for a response of their own.
+        """
+        return 0
+
+    @property
     def reconnect_restores_in_flight_state(self) -> bool:
         """Whether a reconnect continues the response and tool calls that were in flight when the socket dropped.
 
@@ -557,7 +552,6 @@ __all__ = (
     'ConversationCreated',
     'ConversationItemCreated',
     'InputRejected',
-    'ResponseRequestsMerged',
     'SessionUsage',
     # Turn-control verbs a connection accepts.
     'CommitAudio',

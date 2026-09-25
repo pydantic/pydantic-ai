@@ -88,7 +88,6 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
-    ResponseRequestsMerged,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -4280,8 +4279,8 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     """Requests joining one already deferred get no `response.create` of their own, and the session is told.
 
     The connection keeps a single deferred `response.create`, which answers everything added before it
-    goes out. The session reserves one response per request, so each merged request is reported ahead
-    of the next frame's events for it to release.
+    goes out. The session reserves one response per request, so each merged request is reported for
+    it to release.
     """
     done = json.dumps({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': []}})
     created = json.dumps(
@@ -4298,8 +4297,9 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     events = await collect_codec_events(conn)
     # Reported once the shared response has started, not when the requests joined: a refused
     # `response.create` takes back every request it carried instead.
-    assert [type(event).__name__ for event in events] == ['ResponseDone', 'ResponseRequestsMerged']
-    assert events[-1] == ResponseRequestsMerged(count=2)
+    assert [type(event).__name__ for event in events] == ['ResponseDone']
+    assert conn._take_merged_response_requests() == 2  # pyright: ignore[reportPrivateUsage]
+    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
     assert [json.loads(frame)['type'] for frame in ws.sent].count('response.create') == 2
 
 
@@ -4316,7 +4316,8 @@ async def test_response_started_by_the_server_reports_no_merged_requests() -> No
     await conn.send('third')  # joins the deferred request
     # A second `response.created` while the first response is still active (a server-started response)
     # is not the deferred request starting.
-    assert not any(isinstance(event, ResponseRequestsMerged) for event in await collect_codec_events(conn))
+    await collect_codec_events(conn)
+    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 class _QueuedWebSocket(FakeWebSocket):
