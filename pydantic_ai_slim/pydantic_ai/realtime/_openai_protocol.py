@@ -18,6 +18,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import hashlib
+import re
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
@@ -47,6 +48,7 @@ from openai.types.realtime import (
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
 )
+from openai.types.realtime.realtime_response_status import Error as RealtimeResponseStatusError
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 from pydantic_core import to_json
 from typing_extensions import Required, TypedDict, assert_never
@@ -86,6 +88,7 @@ from ..tools import ToolDefinition
 from ._utils import seed_pcm_audio, seed_speech_content, seed_user_content
 from .codec import (
     AudioDelta,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -681,11 +684,44 @@ def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
     return None
 
 
+def _response_status_error(response: ProtocolResponse) -> RealtimeResponseStatusError | None:
+    """Return the `status_details.error` of a failed response, when present."""
+    status_details = response.status_details
+    return status_details.error if isinstance(status_details, RealtimeResponseStatus) else None
+
+
+def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEvent | None:
+    """Surface a `failed` response as a recoverable session error.
+
+    The server reports a response it could not generate (e.g. one whose conversation holds an image its
+    safety system rejected) only through `response.done`'s `status_details.error`, never as a separate
+    `error` event, so without this the failure would reach the consumer as a silent, empty turn.
+    """
+    if response.status != 'failed':
+        return None
+    error = _response_status_error(response)
+    if error is None:
+        return RealtimeSessionErrorEvent(message='The realtime response failed.', recoverable=True)
+    # The SDK models only `type` and `code`; the server's human-readable `message` is kept as an extra
+    # field, which `getattr` reads now and still reads if the SDK promotes it to a real field.
+    message = getattr(error, 'message', None)
+    return RealtimeSessionErrorEvent(
+        message=message
+        if isinstance(message, str) and message
+        else to_json(error.model_dump(exclude_none=True)).decode(),
+        type=error.type or None,
+        code=error.code or None,
+        recoverable=True,
+    )
+
+
 def _response_provider_details(response: ProtocolResponse) -> dict[str, Any]:
-    """Retain the raw response status and incomplete reason for provider fidelity."""
+    """Retain the raw response status, incomplete reason, and failure error for provider fidelity."""
     details: dict[str, Any] = {'status': response.status}
     if (reason := _response_status_reason(response)) is not None:
         details['finish_reason'] = reason
+    if (error := _response_status_error(response)) is not None:
+        details['error'] = error.model_dump(exclude_none=True)
     return details
 
 
@@ -820,6 +856,32 @@ def _map_input_transcription_event(
         item_id=event.item_id or None,
         content_index=event.content_index,
     )
+
+
+_CLIENT_EVENT_ID_RE = re.compile(r'pydantic_ai\.(content|response)\.(\d+(?:-\d+)*)')
+
+
+def client_event_id(refused: Literal['content', 'response'], input_indexes: Sequence[int]) -> str:
+    """The `event_id` for a client frame the server may refuse, naming the inputs a refusal takes back.
+
+    The server echoes a client event's `event_id` in the `error` frame refusing it, so encoding the
+    inputs in the id itself leaves nothing to remember between the send and the refusal, and nothing to
+    prune when the frame is accepted, which the protocol never confirms by id.
+    """
+    return f'pydantic_ai.{refused}.{"-".join(map(str, input_indexes))}'
+
+
+def rejected_inputs(error: RealtimeErrorPayload) -> list[InputRejected]:
+    """The inputs an `error` frame refused, when it echoes an id from `client_event_id`.
+
+    OpenAI echoes the refused client event's `event_id`, but not for every error (an unknown tool call
+    id comes back without one), and xAI reports its own id there instead, so an error naming no id of
+    ours refuses nothing we can take back.
+    """
+    if error.event_id is None or (match := _CLIENT_EVENT_ID_RE.fullmatch(error.event_id)) is None:
+        return []
+    refused: Literal['content', 'response'] = 'content' if match[1] == 'content' else 'response'
+    return [InputRejected(int(index), refused=refused) for index in match[2].split('-')]
 
 
 def _error_message(error: RealtimeErrorPayload | object) -> str:

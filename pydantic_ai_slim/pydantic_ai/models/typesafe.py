@@ -20,6 +20,7 @@ from .decision import (
     ChoiceAnswer,
     ChoiceQuestion,
     DecisionAnswer,
+    DecisionHandOff,
     DecisionModel,
     DecisionModelSettings,
     DecisionQuestion,
@@ -30,7 +31,7 @@ from .decision import (
     NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
-    ToolCallProposed,
+    UnfillableRoute,
     UnsureRoute,
 )
 
@@ -57,12 +58,13 @@ except ImportError as _import_error:
     ) from _import_error
 
 __all__ = (
+    'DecisionHandOff',
     'LatestTypeSafeModelNames',
-    'ToolCallProposed',
     'TypeSafeModel',
     'TypeSafeModelName',
     'TypeSafeModelSettings',
     'TypeSafeStreamedResponse',
+    'UnfillableRoute',
     'UnsureRoute',
 )
 
@@ -239,6 +241,11 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
             raise UserError(f'TypeSafe could not send this request: {e}') from e
 
         answers = {name: _from_typesafe_answer(answer) for name, answer in response.answers.items()}
+        try:
+            request_id = response.request_id
+        except TypeSafeError:
+            # The SDK raises rather than returning `None` when the response carries no request ID header.
+            request_id = None
         return DecisionResponse(
             answers=answers,
             model_name=response.model,
@@ -246,6 +253,7 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
                 input_tokens=response.usage.input_tokens or 0,
                 output_tokens=response.usage.output_tokens or 0,
             ),
+            provider_response_id=request_id,
         )
 
 
@@ -295,3 +303,17 @@ def _from_typesafe_answer(answer: object) -> DecisionAnswer:
             legend=dict(answer.legend),
         )
     raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe: {answer!r}')
+
+
+# TODO(v3): remove the `ToolCallProposed` alias and this `__getattr__`.
+def __getattr__(name: str) -> object:
+    if name == 'ToolCallProposed':
+        warnings.warn(
+            '`ToolCallProposed` has been renamed to `UnfillableRoute`, which `pydantic_ai.models.decision` defines, '
+            'and its `tool_name` to `route`. Update your imports; this deprecated alias will be removed in a future '
+            'release.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return UnfillableRoute
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

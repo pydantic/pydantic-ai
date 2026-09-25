@@ -20,10 +20,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import pytest
+from opentelemetry.context import Context
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, span_include_content, span_tracer
+from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, open_request_policy, span_include_content
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.fallback import FallbackModel
@@ -363,22 +364,49 @@ def test_a_content_policy_from_another_span_is_not_trusted() -> None:
     checked here where it is expressed.
     """
     settings, _ = redacted_setup(include_content=False)
-    with settings.tracer.start_as_current_span('chat') as span:
-        own_span_id = span.get_span_context().span_id
+    tracer = settings.tracer
+    with tracer.start_as_current_span('chat') as span:
+        with tracer.start_as_current_span('finished chat') as other_span:
+            pass
 
         # What a cross-context finalization leaves behind: capture enabled, but for another span.
-        include_content_ctx.set(ContentPolicy(span_id=own_span_id ^ 1, include_content=True, tracer=settings.tracer))
+        include_content_ctx.set(ContentPolicy(other_span, include_content=True, tracer=tracer))
         assert span_include_content(span) is False
-        assert span_tracer(span) is None
 
         # This span's own policy is honoured, in both directions.
-        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=True, tracer=settings.tracer))
+        include_content_ctx.set(ContentPolicy(span, include_content=True, tracer=tracer))
         assert span_include_content(span) is True
-        assert span_tracer(span) is settings.tracer
-        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=False, tracer=settings.tracer))
+        include_content_ctx.set(ContentPolicy(span, include_content=False, tracer=tracer))
         assert span_include_content(span) is False
 
         # No request open at all.
         include_content_ctx.set(None)
         assert span_include_content(span) is False
-        assert span_tracer(span) is None
+
+
+def test_a_span_inside_a_request_needs_the_request_still_open() -> None:
+    """A span opened inside a request honours its policy while that request's span is open, in its trace.
+
+    A decision model's `decide` span reads the policy of the `chat` span above it, with any number of spans in
+    between (a durable engine's step, say), so it cannot ask for the policy's own span the way a `chat` span's
+    refresh does. What it can ask still fails closed on a stale value: a finished request's span has ended, and a
+    span in another trace is not inside the request at all.
+    """
+    settings, _ = redacted_setup(include_content=True)
+    tracer = settings.tracer
+    with tracer.start_as_current_span('chat') as chat_span:
+        policy = ContentPolicy(chat_span, include_content=True, tracer=tracer)
+        include_content_ctx.set(policy)
+        with tracer.start_as_current_span('durable step'):
+            assert open_request_policy() is policy
+
+        # The current span is in another trace, so this is not inside the request.
+        with tracer.start_as_current_span('elsewhere', context=Context()):
+            assert open_request_policy() is None
+
+    # What a cross-context finalization leaves behind: the policy of a request whose span has ended.
+    with tracer.start_as_current_span('next request'):
+        assert open_request_policy() is None
+
+    include_content_ctx.set(None)
+    assert open_request_policy() is None

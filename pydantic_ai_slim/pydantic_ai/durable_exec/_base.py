@@ -17,16 +17,18 @@ from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
 from weakref import ReferenceType, ref
 
+from opentelemetry.trace import get_current_span
 from pydantic_core import PydanticSerializationError
 from typing_extensions import Self
 
 from pydantic_ai import FunctionToolset, ToolsetTool
+from pydantic_ai._instrumentation import ContentPolicy, open_request_policy, request_policy_scope
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import ProcessEventStream
+from pydantic_ai.capabilities import Instrumentation, ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -45,6 +47,7 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     infer_model,
 )
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -777,7 +780,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         engine remembering to install it per unit (Temporal has its own chokepoint in
         `deserialize_run_context`, so it doesn't use this).
         """
-        with self._durable_run_context_scope(run_context) as ctx:
+        with self._durable_run_context_scope(run_context) as ctx, self._request_policy_scope(ctx):
             model = await self._resolve_model_for_request(model_id, ctx)
             registered, _ = self._registered_model_id(model)
             async with managed_model_scope(model, owned=not registered) as active_model:
@@ -785,6 +788,47 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 if isinstance(ctx, _RestrictedRunContext):
                     ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
                 yield active_model, ctx
+
+    @contextmanager
+    def _request_policy_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[None]:
+        """Give a model unit the instrumented request's policy when it runs outside the context that opened it.
+
+        The `chat` span's policy is a context variable, so it reaches a unit that runs in the same process and
+        context (DBOS, Prefect) by itself. A unit that doesn't (a Temporal activity) starts without one, and
+        spans opened inside the model's request -- a decision model's `decide` -- would be dropped. There it is
+        rebuilt from the agent's own instrumentation, the same resolution the run opened `chat` with, and tagged
+        with the unit's current span, the engine's span for the unit in the request's trace. With no recording span
+        to tag, nothing ties the unit to the request's trace, so none is installed and nothing is emitted.
+
+        Content is exported only when the run that opened `chat` asked for it too: `ctx.trace_include_content`
+        crossed the boundary with the run, while the agent's settings here are the worker's own resolution, which
+        can differ, for example when the worker process instruments differently from the one that started the run.
+        """
+        if open_request_policy() is not None:
+            yield
+            return
+        settings = self._instrumentation_settings()
+        span = get_current_span()
+        policy = (
+            ContentPolicy(span, settings.include_content and ctx.trace_include_content, settings.tracer)
+            if settings is not None and span.is_recording()
+            else None
+        )
+        with request_policy_scope(policy):
+            yield
+
+    def _instrumentation_settings(self) -> InstrumentationSettings | None:
+        """The instrumentation the bound agent's runs open `chat` with, as the run resolves it.
+
+        An `Instrumentation` capability on the agent wins, as it does in the run, over `Agent.instrument_all()` and
+        `agent.instrument`. What a single run adds, such as an `Instrumentation` passed to `run()`, isn't visible here.
+        """
+        agent = self._agent
+        assert agent is not None, 'a model unit only runs for a bound agent'
+        explicit = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Instrumentation)]
+        if explicit:
+            return explicit[-1].settings
+        return agent._resolve_instrumentation_settings() if isinstance(agent, Agent) else None  # pyright: ignore[reportPrivateUsage]
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
         """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""

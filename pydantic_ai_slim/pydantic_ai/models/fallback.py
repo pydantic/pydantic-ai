@@ -18,10 +18,10 @@ from typing_extensions import assert_never
 from pydantic_ai._instrumentation import (
     model_attributes,
     model_request_parameters_attributes,
+    open_request_policy,
     record_exception,
     set_error_status,
     span_include_content,
-    span_tracer,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import await_maybe, get_first_param_type
@@ -545,19 +545,21 @@ class FallbackModel(Model):
         The `chat` span keeps its own outcome, that of the model that answered, the way a failed
         tool call gets its own ERROR span under an agent run that goes on to succeed. The span is
         only opened once the attempt has failed, back-dated to when it started, so the winning
-        attempt, which `chat` already describes, gets none. It is deliberately not named `chat`,
+        attempt, which `chat` already describes, gets none. Spans the tried model opened itself, like a
+        decision model's `decide`, were opened under `chat` while the attempt ran, so they sit beside
+        this span rather than inside it. It is deliberately not named `chat`,
         so model-call views don't count it as a model call. An error's message and stack trace
         follow the span's `include_content`, since a provider's error response can echo the request.
         """
         with suppress(Exception):
-            if (span := self._fallback_span()) and (tracer := span_tracer(span)):
+            if (span := self._fallback_span()) and (policy := open_request_policy()):
                 attributes: dict[str, AttributeValue] = {
                     **model_attributes(model),
                     'pydantic_ai.fallback.attempt': attempt,
                 }
                 if isinstance(failure, ModelResponse) and failure.finish_reason is not None:
                     attributes['gen_ai.response.finish_reasons'] = [failure.finish_reason]
-                attempt_span = tracer.start_span(
+                attempt_span = policy.tracer.start_span(
                     f'fallback attempt {model.model_name}',
                     context=set_span_in_context(span),
                     attributes=attributes,
