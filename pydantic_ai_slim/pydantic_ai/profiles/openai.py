@@ -518,6 +518,10 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'synthesizes_turn_boundary': True,
         # The spoken replies are inferred turns; the requests that spend tokens are the backend's.
         'responses_are_requests': False,
+        # Live reports its own context usage as a fraction; the tokens it reports are the backend's.
+        'response_usage_covers_context': False,
+        # Not documented, but every `usage_ratio` Live reports is a whole number of tokens over 128,000.
+        'context_window': 128_000,
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,
     }

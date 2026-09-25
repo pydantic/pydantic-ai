@@ -130,6 +130,21 @@ class AnchoredEvidence:
     """Capabilities loaded inside the anchored window but not in `loaded_capability_ids`."""
 
 
+def context_window_fraction(messages: Sequence[_messages.ModelMessage], context_window: int | None) -> float | None:
+    """The latest response's `total_tokens` over `context_window`, or `None` when it can't be calculated.
+
+    Shared by [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] and
+    [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
+    """
+    if context_window is None or context_window <= 0:
+        return None
+    for message in reversed(messages):
+        if isinstance(message, _messages.ModelResponse):
+            tokens = message.usage.total_tokens
+            return tokens / context_window if tokens else None
+    return None
+
+
 @dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
@@ -479,20 +494,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         context window, usage, or message history is unavailable, or before the first model response.
         A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest
         of its candidates' windows.
+
+        Inside a [realtime session](https://pydantic.dev/docs/ai/realtime/history#context-window), this is
+        the session's [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
         """
+        if self.realtime_session is not None:
+            return self.realtime_session.context_window_used
         try:
             model, messages = self.model, self.messages
         except UserError:
             # A durable run context can omit live model state and message history at an activity boundary.
             return None
-        context_window = model.context_window
-        if context_window is None or context_window <= 0:
-            return None
-        for message in reversed(messages):
-            if isinstance(message, _messages.ModelResponse):
-                tokens = message.usage.total_tokens
-                return tokens / context_window if tokens else None
-        return None
+        return context_window_fraction(messages, model.context_window)
 
     def _emit_event(self, event: _messages.AgentStreamEvent) -> None:
         """Append an event to the run's event buffer for the agent graph to drain into the event stream.

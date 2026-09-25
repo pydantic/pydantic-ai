@@ -961,6 +961,24 @@ def test_profile() -> None:
     assert profile.get('audio_output_sample_rate') == 24000
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'sees_video_frames'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', False),
+        ('gemini-2.5-flash-native-audio-preview-09-2025', False),
+        ('gemini-3.1-flash-live-preview', False),
+        ('gemini-3.8-live', False),
+        ('models/gemini-3.8-live-extended-thinking', False),
+        ('gemini-live-2.5-flash', False),
+        ('gemini-live-2.5-flash-native-audio', False),
+        ('gemini-robotics-er-2-streaming-preview', True),  # not probed: no extra send
+    ],
+)
+def test_profile_text_turns_see_video_frames(model_name: str, sees_video_frames: bool) -> None:
+    # Verified live: a typed question right after `send(image)` doesn't see the image on these models.
+    assert GoogleRealtimeModel(model_name).profile.get('google_text_turns_see_video_frames') is sees_video_frames
+
+
 # --- config ------------------------------------------------------------------
 
 
@@ -1160,10 +1178,116 @@ async def test_send_text_context() -> None:
 
 async def test_send_image_as_video_frame() -> None:
     session = _RecordingSession()
-    await _conn(session).send(BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'))
+    conn = _conn(session)
+    await conn.send(BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'))
     blob = session.realtime[0]['video']
     assert blob.data == b'\xff\xd8'
     assert blob.mime_type == 'image/jpeg'
+    # By default a typed turn sees video frames, so nothing is sent again.
+    await conn.send('What is on it?')
+    assert session.client_content[0]['turns'].parts == [genai_types.Part(text='What is on it?')]
+
+
+_IMAGE = BinaryImage(data=b'\xff\xd8', media_type='image/jpeg')
+
+
+def _image_part() -> genai_types.Part:
+    return genai_types.Part(inline_data=genai_types.Blob(data=b'\xff\xd8', mime_type='image/jpeg'))
+
+
+def _conn_missing_video_in_text_turns(session: _RecordingSession) -> GoogleRealtimeConnection:
+    return GoogleRealtimeConnection(
+        cast('AsyncSession', session), profile=GoogleRealtimeModelProfile(google_text_turns_see_video_frames=False)
+    )
+
+
+async def test_typed_turn_carries_recent_image_again() -> None:
+    # A model whose typed turns miss video frames gets the latest image again in the typed turn's content.
+    # The image still goes out as a video frame right away, for spoken turns and camera streams.
+    session = _RecordingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    await conn.send(BinaryImage(data=b'\x00', media_type='image/png'))
+    await conn.send(_IMAGE)
+    assert [frame['video'].data for frame in session.realtime] == [b'\x00', b'\xff\xd8']
+    await conn.send('What is on it?')
+    await conn.send('And now?')  # carried once only
+    assert [sent['turns'].parts for sent in session.client_content] == [
+        [_image_part(), genai_types.Part(text='What is on it?')],
+        [genai_types.Part(text='And now?')],
+    ]
+
+
+async def test_context_text_and_audio_do_not_carry_recent_image() -> None:
+    session = _RecordingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    await conn.send(_IMAGE)
+    await conn.send(TextContext('It is my fridge.'))
+    await conn.send(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    await conn.send('What is in it?')  # the image is still recent, so the typed turn carries it
+    assert [sent['turns'].parts for sent in session.client_content] == [
+        [genai_types.Part(text='It is my fridge.')],
+        [_image_part(), genai_types.Part(text='What is in it?')],
+    ]
+    assert [list(frame) for frame in session.realtime] == [['video'], ['audio']]
+
+
+async def test_typed_turn_skips_stale_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 1000.0
+    monkeypatch.setattr(rt_google.time, 'monotonic', lambda: now)
+    session = _RecordingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    await conn.send(_IMAGE)
+    now += rt_google._RECENT_IMAGE_SECONDS  # pyright: ignore[reportPrivateUsage]
+    await conn.send('Still there?')
+    now += 0.001
+    await conn.send(_IMAGE)
+    now += rt_google._RECENT_IMAGE_SECONDS + 0.001  # pyright: ignore[reportPrivateUsage]
+    await conn.send('What was that?')
+    assert [sent['turns'].parts for sent in session.client_content] == [
+        [_image_part(), genai_types.Part(text='Still there?')],
+        [genai_types.Part(text='What was that?')],
+    ]
+
+
+async def test_image_sent_during_typed_turn_is_kept_for_the_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An image sent while a typed turn is in flight is newer than the one it carried: keep it.
+    session = _RecordingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    newer = BinaryImage(data=b'\x01', media_type='image/png')
+    send_client_content = session.send_client_content
+
+    async def send_during(**kwargs: Any) -> None:
+        await send_client_content(**kwargs)
+        if len(session.client_content) == 1:
+            await conn.send(newer)
+
+    monkeypatch.setattr(session, 'send_client_content', send_during)
+    await conn.send(_IMAGE)
+    await conn.send('First?')
+    await conn.send('Second?')
+    assert [sent['turns'].parts[0] for sent in session.client_content] == [
+        _image_part(),
+        genai_types.Part(inline_data=genai_types.Blob(data=b'\x01', mime_type='image/png')),
+    ]
+
+
+async def test_failed_typed_turn_keeps_recent_image() -> None:
+    class _FailingSession(_RecordingSession):
+        fail = True
+
+        async def send_client_content(self, *, turns: Any = None, turn_complete: bool = True) -> None:
+            if self.fail:
+                self.fail = False
+                raise ConnectionClosed(None, None)
+            await super().send_client_content(turns=turns, turn_complete=turn_complete)
+
+    session = _FailingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    await conn.send(_IMAGE)
+    with pytest.raises(ConnectionClosed):
+        await conn.send('What is on it?')
+    await conn.send('What is on it?')
+    assert session.client_content[0]['turns'].parts == [_image_part(), genai_types.Part(text='What is on it?')]
 
 
 async def test_send_tool_result_echoes_name() -> None:

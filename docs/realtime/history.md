@@ -38,8 +38,9 @@ message:
   talking in the turn that called the tool. The calling `ModelResponse` stays open, so that speech is
   recorded in it after the `ToolCallPart` and before the result, where it happened. It still hands
   off to every provider. The response is recorded, and never changed afterwards, as soon as the
-  result or a user turn must follow it. Speech still in progress at that point is split: what came
-  after is recorded as the next response. With several asynchronous calls in one response, their
+  result must follow it or the model's turn ends. Speech still in progress when the result goes out
+  is split: what came after is recorded as the next response. A user turn that starts while the model
+  is still talking follows the response, as it does any response in progress. With several asynchronous calls in one response, their
   results are recorded together after it, so speech between two of them follows both.
 - A user turn during the tool run can't keep its real position. Neither can the reply to it or any
   later response. The result is recorded directly after its call, ahead of all of them.
@@ -118,6 +119,30 @@ request.
 For structured work that must finish while the call remains open, expose a delegated text agent as
 a [realtime function tool](tools.md#delegating-work-during-a-call).
 
+## Context window
+
+[`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used]
+reports the fraction of the model's context window in use, and
+[`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] returns the same
+value inside a session's tools and hooks. Where the provider reports the fraction itself, the session
+keeps the latest value; otherwise it is computed as in a standard run, from the latest response's
+token usage over the model's
+[`context_window`][pydantic_ai.realtime.RealtimeModelProfile.context_window]:
+
+| Provider | Source |
+| --- | --- |
+| OpenAI GPT-Live | Reported by Live |
+| OpenAI and Azure OpenAI Realtime, Gemini Live | Latest response's `total_tokens` over the context window, when the window is known |
+| xAI Grok Voice | `None`: a response's usage counts only the input it added, not the whole conversation |
+
+The value is `None` until it can be calculated, and it can go down during a session: providers
+compact or truncate the conversation server-side as it grows, and none of them report when that
+happens. To control how the provider manages a long conversation, use
+[`openai_truncation`](openai.md#settings) on OpenAI Realtime and Azure OpenAI or
+[`google_context_compression`](gemini.md#settings) on Gemini. To carry a long conversation on
+elsewhere, [hand it off to a text agent](#handing-off-to-a-text-agent) or seed a new session with a
+summary.
+
 ## Retaining audio
 
 By default, only transcripts are retained and `SpeechPart.audio` is `None`. Pass `audio_retention=`
@@ -172,7 +197,12 @@ sends one frame per second — so for camera and screen streams, use both delibe
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
 and each provider page for configuration. Transcripts are recorded with the user turn they describe,
-even when they arrive after that turn's response or overlap the following turn. If a reported speech
+even when they arrive after that turn's response or overlap the following turn. A turn the user
+starts while the model is still answering, whether they [barge in](turns.md#barge-in) or push to talk
+over it, is recorded after that answer. Such a turn joins history once the provider ends the answer it
+cut off, or after a few seconds if the provider never does. In that fallback the turn is recorded where
+history stands, so it lands before the answer it interrupted, and ahead of anything sent with
+[`send()`][pydantic_ai.realtime.RealtimeSession.send] while that answer was still in flight. If a reported speech
 segment never receives a transcript, the session still records its retained audio or a content-less
 `SpeechPart` when the session closes.
 
@@ -180,6 +210,12 @@ With transcription disabled:
 
 - retained input audio creates an audio-only user `SpeechPart`;
 - without input retention, the session records a content-less user `SpeechPart`;
+- on providers that report speech boundaries (OpenAI, Azure, and xAI with server VAD), each turn is
+  the speech between them: the silence an always-on microphone streams between utterances is no turn.
+  Gemini Live reports none, so a turn there runs to the response that answers it, and audio sent after
+  the last response is recorded as one more turn when the session closes;
+- with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn; a
+  commit with no audio since the last one records nothing;
 - content-less parts preserve the local turn boundary but contribute no words to a text handoff and
   are skipped when seeding another realtime session;
 - transcript-less assistant audio cannot be handed off or seeded on any provider.

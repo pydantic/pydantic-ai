@@ -296,7 +296,8 @@ Key facts for building realtime agents:
   `gemini-live-2.5-flash` half-cascade can opt in with `profile={'supports_text_output': True}`.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
-  stay attached to the user turn they describe even when they arrive after its response. A reported
+  stay attached to the user turn they describe even when they arrive after its response, and a turn
+  started while the model is still answering (barge-in) is recorded after that answer. A reported
   speech segment whose transcript never arrives remains represented by retained audio or a content-less
   `SpeechPart` when the session closes. Transcripts are what carry over; OpenAI and Azure can also
   replay retained transcript-less *user* audio, Gemini,
@@ -305,6 +306,11 @@ Key facts for building realtime agents:
   oldest evicted first) record.
 - **Usage and cost**: each recorded `ModelResponse` carries its response usage, while `session.usage`
   is cumulative; priced models get a `genai-prices` cost and enforce `UsageLimits.cost_limit`.
+- **Context window**: `session.context_window_used` (and `ctx.context_window_used` in a session's tools)
+  is the fraction in use: reported by OpenAI GPT-Live, computed from the latest response's tokens on
+  OpenAI/Azure/Gemini, and `None` on xAI. It can drop after server-side compaction or truncation, which
+  no provider announces; tune it with `openai_truncation` (OpenAI Realtime and Azure, not GPT-Live) or
+  `google_context_compression` (Gemini).
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
   agent behind a tool, or hand off history afterwards.
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a

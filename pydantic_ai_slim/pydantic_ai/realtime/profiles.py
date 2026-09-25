@@ -132,6 +132,16 @@ class RealtimeModelProfile(TypedDict, total=False):
     session infers, while the requests that spend tokens go to the backend it delegates to. There, each
     response-scoped usage report counts as one request, and the limit is checked as each arrives, so the
     report that would go past it ends the session."""
+    response_usage_covers_context: bool
+    """Whether a response's reported token usage covers everything the model holds in context.
+
+    [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used]
+    divides the latest response's [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] by
+    [`context_window`][pydantic_ai.realtime.RealtimeModelProfile.context_window] when the provider
+    doesn't report the fraction itself, which is only meaningful when those tokens are the whole
+    context. Defaults to `True`. `False` makes it `None` instead of a misleading ratio: xAI Grok Voice
+    reports only the input a response added, and OpenAI GPT-Live's token usage belongs to the
+    backend it delegates to rather than to the voice model's own context."""
     audio_input_sample_rate: int
     """The sample rate, in Hz, expected for raw PCM audio input.
 
@@ -173,6 +183,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'emits_input_speech_events': False,
     'synthesizes_turn_boundary': False,
     'responses_are_requests': True,
+    'response_usage_covers_context': True,
     'audio_input_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'audio_output_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'context_window': None,
