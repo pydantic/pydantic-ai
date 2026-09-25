@@ -76,8 +76,9 @@ from ._openai_protocol import (
     map_connect_errors,
     openai_websocket_auth_headers,
     realtime_websocket_url,
+    tool_choice_config,
 )
-from ._utils import inject_trace_context
+from ._utils import inject_trace_context, resolve_advertised_tools
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -1208,8 +1209,22 @@ class OpenAILiveModel(RealtimeModel):
         responses: dict[str, Any] = {'model': self._resolve_backend_model(settings)}
         if backend_instructions:
             responses['instructions'] = backend_instructions
-        if tools:
-            responses['tools'] = [tool_def_to_live(tool) for tool in tools]
+        advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
+        if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
+            # The backend applies the choice to every response of a delegation, including the one meant
+            # to answer after the tools have run, so a forced call never lets a delegation finish: it
+            # looped on tool calls (seven in ten seconds, live) until a limit ended the session.
+            raise UserError(
+                f'OpenAI GPT-Live cannot force a tool call, so `tool_choice={settings.get("tool_choice")!r}` cannot '
+                'be set: the backend would apply it to every response, including the one after the tool '
+                "results, and never answer. Use `'auto'`, `'none'`, or `ToolOrOutput` to limit the tools instead."
+            )
+        if advertised_tools:
+            responses['tools'] = [tool_def_to_live(tool) for tool in advertised_tools]
+        if tool_choice is not None:
+            # The backend takes the same forms as the Realtime API. A restriction is applied by trimming
+            # the advertised tools above, leaving its mode to send.
+            responses['tool_choice'] = tool_choice_config(tool_choice)
         for setting, key in (
             ('max_output_tokens', 'max_output_tokens'),
             ('parallel_tool_calls', 'parallel_tool_calls'),
@@ -1259,12 +1274,6 @@ class OpenAILiveModel(RealtimeModel):
             ('turn_detection', 'turn detection: Live owns turn-taking and exposes no VAD configuration'),
             ('max_tokens', 'a token limit on the spoken conversation'),
             ('input_transcription_model', 'choosing a transcription model'),
-            (
-                'tool_choice',
-                # The backend would apply it to every response of a delegation, including the one after
-                # the tool results, so `'required'` never lets a delegation finish.
-                'tool choice: the Live model decides when to delegate, and the backend which tools to call',
-            ),
         ):
             if settings.get(setting) is not None:
                 raise UserError(f'OpenAI GPT-Live does not support {feature}, so `{setting}` cannot be set.')

@@ -167,10 +167,12 @@ Voice, audio format, and the starting instructions are fixed for the life of the
 why these are session-start settings rather than things to change mid-call. (The Live API can append
 to the instructions and reconfigure the delegation backend mid-session; Pydantic AI does not expose
 either yet.) Live exposes no turn-detection, truncation, or token-limit controls, and the shared
-settings that name them [raise rather than being ignored](#what-raises). So does `tool_choice`: the
-Live model decides when to delegate and the backend decides which tools to call, and a forced choice
-would apply to every backend response of a delegation, including the one meant to answer after the
-tools have run. It has no temperature or other sampling control at all, on either the spoken model or
+settings that name them [raise rather than being ignored](#what-raises). `tool_choice` reaches the
+backend when it can't loop: `'auto'`, `'none'`, and [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]
+to limit the tools, applied by trimming the tools the backend is given. `'required'` and lists of
+tool names raise, because the backend applies the choice to every response of a delegation,
+including the one meant to answer after the tools have run, so it would call tools until a limit
+ended the session. It has no temperature or other sampling control at all, on either the spoken model or
 the delegated backend.
 
 ## The turn boundary is inferred
@@ -332,8 +334,8 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
 Live refuses a stated requirement it cannot meet rather than accepting and ignoring it. These raise
 [`UserError`][pydantic_ai.exceptions.UserError]:
 
-- `turn_detection`, `max_tokens`, `input_transcription_model`, and `tool_choice`, before the session
-  connects.
+- `turn_detection`, `max_tokens`, `input_transcription_model`, and a `tool_choice` of `'required'`
+  or a list of tool names, before the session connects.
 - `output_modality='text'`, because the profile reports `supports_text_output=False`
   (see [Shared settings](overview.md#shared-settings)).
 - [`commit_audio()`][pydantic_ai.realtime.RealtimeSession.commit_audio],

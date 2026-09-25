@@ -64,6 +64,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     TruncateOutput,
 )
+from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
@@ -240,11 +241,6 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
         ('turn_detection', False),
         ('max_tokens', 100),
         ('input_transcription_model', 'gpt-transcribe'),
-        # The backend applied it to every response of a delegation, including the one after the tool
-        # results, so `'required'` looped on tool calls (seven in ten seconds, live) and never answered.
-        ('tool_choice', 'required'),
-        ('tool_choice', ['lookup']),
-        ('tool_choice', 'auto'),
     ],
 )
 async def test_unsupported_settings_raise_before_connecting(model: OpenAILiveModel, setting: str, value: Any) -> None:
@@ -1020,6 +1016,42 @@ def test_reconnect_does_not_restore_state() -> None:
     """A redialed Live session starts empty, so the session replays local history instead."""
     assert _connection().reconnect_restores_in_flight_state is False
     assert _connection().input_transcription_enabled is True
+
+
+@pytest.mark.parametrize('tool_choice', ['required', ['kept'], ['kept', 'also_kept']])
+def test_a_forced_tool_choice_raises(model: OpenAILiveModel, tool_choice: Any) -> None:
+    """The backend applies the choice to every response, including the one after the tool results.
+
+    So a forced call never lets a delegation answer: `'required'` looped on tool calls (seven in ten
+    seconds, live) until a limit ended the session.
+    """
+    tools = [
+        ToolDefinition(name='kept', parameters_json_schema={'type': 'object'}),
+        ToolDefinition(name='also_kept', parameters_json_schema={'type': 'object'}),
+    ]
+    with pytest.raises(UserError, match='GPT-Live cannot force a tool call'):
+        _config(model, tools=tools, settings=OpenAILiveModelSettings(tool_choice=tool_choice))
+
+
+def test_a_tool_choice_that_lets_the_backend_answer_is_forwarded(model: OpenAILiveModel) -> None:
+    """`'auto'`, `'none'`, and limiting the tools can't loop, so they reach the backend as before."""
+    tools = [
+        ToolDefinition(name='kept', parameters_json_schema={'type': 'object'}),
+        ToolDefinition(name='dropped', parameters_json_schema={'type': 'object'}),
+    ]
+
+    def responses(tool_choice: Any) -> dict[str, Any]:
+        config = _config(model, tools=tools, settings=OpenAILiveModelSettings(tool_choice=tool_choice))
+        TypeAdapter(SessionConfig).validate_python(config)
+        return config['delegation']['responses']
+
+    auto = responses('auto')
+    assert (auto['tool_choice'], [tool['name'] for tool in auto['tools']]) == ('auto', ['kept', 'dropped'])
+    assert 'tools' not in responses('none')
+    limited = responses(ToolOrOutput(function_tools=['kept']))
+    assert (limited['tool_choice'], [tool['name'] for tool in limited['tools']]) == ('auto', ['kept'])
+    # `None` asks for nothing, as if it were unset.
+    assert 'tool_choice' not in responses(None)
 
 
 def test_strict_tools_reach_the_backend(model: OpenAILiveModel) -> None:
