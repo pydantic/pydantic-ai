@@ -156,22 +156,16 @@ def test_callback_replacement_events_serialize() -> None:
         ReminderFiredEvent(text='focus'),
         PlanCreatedEvent(item=PlanItem(id='step-1', content='ship')),
     ]
-    assert [
-        pydantic.TypeAdapter(type(event)).dump_python(event, exclude_none=True, mode='json') for event in events
-    ] == snapshot(
+    dumped = [pydantic.TypeAdapter(type(event)).dump_python(event, exclude_none=True, mode='json') for event in events]
+    # The usage payload's shape belongs to pydantic-ai, which adds usage meters over time: compare it with
+    # how the installed version serializes the same usage, rather than pinning today's field list.
+    assert dumped[0].pop('usage') == pydantic.TypeAdapter(RequestUsage).dump_python(
+        RequestUsage(input_tokens=2, output_tokens=1), exclude_none=True, mode='json'
+    )
+    assert dumped == snapshot(
         [
             {
                 'model': 'test',
-                'usage': {
-                    'input_tokens': 2,
-                    'cache_write_tokens': 0,
-                    'cache_read_tokens': 0,
-                    'output_tokens': 1,
-                    'input_audio_tokens': 0,
-                    'cache_audio_read_tokens': 0,
-                    'output_audio_tokens': 0,
-                    'details': {},
-                },
                 'usd': '0.50',
                 'priced': True,
                 'budgets': [],
