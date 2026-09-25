@@ -3,6 +3,7 @@
 These run without `pydantic-monty`; `test_speculative_mode.py` covers the sandbox wiring.
 """
 
+import importlib.metadata
 import io
 import sys
 from collections.abc import Callable, Generator, Mapping
@@ -83,6 +84,13 @@ class TestSwitch:
         monkeypatch.setitem(sys.modules, 'pydantic_clai2.speculative_mode', None)
         assert switch.capabilities([]) == []
         assert 'Speculative execution is unavailable' in output.getvalue()
+
+    def test_sandbox_dependency_ships_with_clai(self) -> None:
+        """A plain `pydantic-clai2` install must bring Monty, not leave it behind a harness extra."""
+        requires = importlib.metadata.metadata('pydantic-clai2').get_all('Requires-Dist') or []
+        monty = [req for req in requires if req.startswith('pydantic-monty')]
+        assert monty, 'pydantic-monty must be a pydantic-clai2 dependency'
+        assert all('extra ==' not in req for req in monty)
 
 
 class TestRow:

@@ -1238,9 +1238,9 @@ Speculative Execution  29 hits · 0 misses · 0 wasted    saved ≥ 7.0s
 
 Counts are coloured only when non-zero, using `/theme` colours. Switching off
 hides the row; switching back on shows the same session totals. Headless runs
-and redirected output use the same tools but show no row. Speculative execution
-needs `pydantic-monty` (`pip install "pydantic-ai-harness[code-mode]"`); without
-it, CLAI prints a warning and runs tools natively.
+and redirected output use the same tools but show no row. The `pydantic-monty`
+sandbox behind speculative execution is a `pydantic-clai2` dependency; if it
+cannot be imported, CLAI prints a warning and runs tools natively.
 
 ## Status line
 
