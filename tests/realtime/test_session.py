@@ -2038,6 +2038,101 @@ async def test_interrupt_played_bytes_cut_lands_when_the_response_finishes_durin
     assert _speech_cuts(session) == [('interrupted', [100])]
 
 
+async def test_a_part_cut_twice_is_recorded_at_the_earliest_position() -> None:
+    """The provider's audio was truncated at the first position, so nothing past it can be heard."""
+    conn = _GatedRealtimeConnection([*_speech('item-a', 10)], [ResponseDone(interrupted=True)])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        events = aiter(session)
+        await _consume_until(events, _is_delta_of(0))
+        await session.interrupt(played_ms=300)
+        await session.interrupt(played_ms=600)
+        conn.release.set()
+        _ = [event async for event in events]
+
+    assert _speech_cuts(session) == [('interrupted', [300])]
+
+
+class _FailingTruncateConnection(_GatedRealtimeConnection):
+    """Fails the first truncation after `fail_gate` is set, once another barge-in is waiting to send."""
+
+    transport_errors = (ConnectionResetError,)
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.fail_gate = asyncio.Event()
+        self.failed = False
+
+    async def send(self, content: RealtimeInput) -> None:
+        if isinstance(content, TruncateOutput) and not self.failed:
+            self.failed = True
+            await self.fail_gate.wait()
+            raise ConnectionResetError('connection reset by peer')
+        await super().send(content)
+
+
+async def test_a_failed_barge_in_withdraws_only_its_own_cut() -> None:
+    conn = _FailingTruncateConnection([*_speech('item-a', 10)], [ResponseDone(interrupted=True)])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        events = aiter(session)
+        await _consume_until(events, _is_delta_of(0))
+        first = asyncio.ensure_future(session.interrupt(played_ms=100))
+        await asyncio.sleep(0)
+        second = asyncio.ensure_future(session.interrupt(played_ms=200))  # registered, waiting to send
+        await asyncio.sleep(0)
+        conn.fail_gate.set()
+        with pytest.raises(RealtimeError):
+            await first
+        await second
+        conn.release.set()
+        _ = [event async for event in events]
+
+    assert _speech_cuts(session) == [('interrupted', [200])]
+
+
+async def test_a_failed_barge_in_records_no_cut() -> None:
+    conn = _FailingTruncateConnection([*_speech('item-a')], [ResponseDone(interrupted=True)])
+    conn.fail_gate.set()
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        events = aiter(session)
+        await _consume_until(events, _is_delta_of(0))
+        with pytest.raises(RealtimeError):
+            await session.interrupt(played_ms=100)
+        conn.release.set()
+        _ = [event async for event in events]
+
+    assert _speech_cuts(session) == [('interrupted', [None])]
+
+
+async def test_a_barge_in_that_fails_after_the_response_finished_keeps_its_recorded_cut() -> None:
+    """The response took the cut when it was finalized mid-send, and history is append-only."""
+
+    class _DoneThenFail(_FailingTruncateConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, TruncateOutput):
+                self.release.set()
+                await asyncio.sleep(0.01)  # the response is finalized, taking its cuts, meanwhile
+                raise ConnectionResetError('connection reset by peer')
+            await super().send(content)  # pragma: no cover
+
+    conn = _DoneThenFail([*_speech('item-a')], [ResponseDone()])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        events = aiter(session)
+        await _consume_until(events, _is_delta_of(0))
+        with pytest.raises(RealtimeError):
+            await session.interrupt(played_ms=100)
+        await _consume_until(events, _is_turn_complete)
+
+    assert _speech_cuts(session) == [('interrupted', [100])]
+
+
 async def test_a_later_interrupt_without_a_position_keeps_the_pending_cut() -> None:
     conn = _GatedRealtimeConnection([*_speech('item-a')], [ResponseDone(interrupted=True)])
     session = RealtimeSession(conn, _noop_runner)
@@ -2661,6 +2756,44 @@ async def test_handle_barge_in_provider_interruption_cuts_the_reply_still_playin
         _ = await drain_events(session)
 
     assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [0])]
+
+
+async def test_a_provider_interruption_records_no_position_without_handle_barge_in() -> None:
+    """The session only acts on the provider's interruption, playback position included, when asked to."""
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)],
+        [RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)],
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        await anext(stream)
+        await anext(stream)
+        conn.release.set()
+        _ = await drain_events(session)
+
+    assert _speech_cuts(session) == [('interrupted', [None])]
+
+
+async def test_interrupt_played_bytes_without_output_truncation_records_the_position() -> None:
+    """A model without output truncation (xAI) keeps its whole reply, but history still records where
+    the listener stopped hearing the reply being generated, as it does on a truncating model."""
+    conn = _GatedRealtimeConnection(
+        [AudioDelta(b'a' * _CHUNK), AudioDelta(b'b' * _CHUNK)], [ResponseDone(interrupted=True)]
+    )
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
+
+    async with session:
+        stream = session.stream_audio()
+        await anext(stream)
+        await anext(stream)
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [CancelResponse()]
+        conn.release.set()
+        _ = await drain_events(session)
+
+    assert _speech_cuts(session) == [('interrupted', [100])]
 
 
 async def test_handle_barge_in_provider_interruption_leaves_a_fully_heard_reply_alone() -> None:

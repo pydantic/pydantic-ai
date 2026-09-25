@@ -805,8 +805,8 @@ class RealtimeSession:
         self._pending_finish_reason: FinishReason | None = None
         self._pending_provider_details: dict[str, Any] | None = None
         # Barge-in cut positions (ms into each part) for speech parts of the response being assembled, by
-        # streamed part index; applied when it is finalized.
-        self._pending_cuts: dict[int, int] = {}
+        # streamed part index and then by the barge-in that reported them; applied when it is finalized.
+        self._pending_cuts: dict[int, dict[object, int]] = {}
         # Speech parts that may still be playing, by streamed index, and the positions among
         # `_response_parts` of the speech parts of the response being assembled.
         self._spoken: dict[int, _SpokenPart] = {}
@@ -1982,14 +1982,23 @@ class RealtimeSession:
         """Hand cut positions to the response in flight, applied when it is finalized; return an undo.
 
         A reply already in history keeps what it recorded — history is append-only — so its cut only
-        reaches the provider. A later barge-in adds to the cuts still pending (replacing a part's
-        earlier position) and never erases them: one that finds nothing left to cut says nothing new.
+        reaches the provider. Each barge-in's positions are kept apart, so a later one never erases an
+        earlier one (a part cut twice is recorded at the earliest position), and the undo, for a send
+        that failed, withdraws only this barge-in's own.
         """
-        previous = dict(self._pending_cuts)
-        self._pending_cuts.update({part.index: played_ms for part, played_ms in cuts if not part.recorded})
+        registration = object()
+        indexes = [part.index for part, _ in cuts if not part.recorded]
+        for part, played_ms in cuts:
+            if not part.recorded:
+                self._pending_cuts.setdefault(part.index, {})[registration] = played_ms
 
         def undo() -> None:
-            self._pending_cuts = previous
+            for index in indexes:
+                # Finalizing the response already consumed every cut if the part's entry is gone.
+                if (positions := self._pending_cuts.get(index)) is not None:
+                    positions.pop(registration, None)
+                    if not positions:
+                        del self._pending_cuts[index]
 
         return undo
 
@@ -2308,7 +2317,9 @@ class RealtimeSession:
         # which is this one: consumed here so they can never land on a later response. A reply cut at a
         # playback position was interrupted even when it finished generating before the provider
         # processed the cancel, and so reports itself as complete.
-        cuts, self._pending_cuts = self._pending_cuts, {}
+        pending_cuts, self._pending_cuts = self._pending_cuts, {}
+        # Audio truncated at one position can't be heard past it: a part cut twice was cut at the earliest.
+        cuts = {index: min(positions.values()) for index, positions in pending_cuts.items()}
         speech_positions = {
             index: len(self._native_tool_parts) + position
             for index, position in self._response_speech_positions.items()

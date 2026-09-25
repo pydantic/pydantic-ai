@@ -110,7 +110,9 @@ on ordinary user turns. A reply that has not reached its first audio chunk is st
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
 (xAI) the response is cancelled without a truncation point, and when the provider interrupts
-itself without reporting speech onset (Gemini) only the local flush is performed. The events still
+itself without reporting speech onset (Gemini) only the local flush is performed. On both, the
+reply still being generated records where playback stopped in `interrupted_at_ms`, since the session
+knows the playback position even when the provider can't truncate. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
 chunk boundary the device reached, so it attributes at most one chunk less than was really heard,
