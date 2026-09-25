@@ -1055,7 +1055,10 @@ async def test_send_image_as_video_frame() -> None:
 
 
 _IMAGE = BinaryImage(data=b'\xff\xd8', media_type='image/jpeg')
-_IMAGE_PART = genai_types.Part(inline_data=genai_types.Blob(data=b'\xff\xd8', mime_type='image/jpeg'))
+
+
+def _image_part() -> genai_types.Part:
+    return genai_types.Part(inline_data=genai_types.Blob(data=b'\xff\xd8', mime_type='image/jpeg'))
 
 
 def _conn_missing_video_in_text_turns(session: _RecordingSession) -> GoogleRealtimeConnection:
@@ -1075,7 +1078,7 @@ async def test_typed_turn_carries_recent_image_again() -> None:
     await conn.send('What is on it?')
     await conn.send('And now?')  # carried once only
     assert [sent['turns'].parts for sent in session.client_content] == [
-        [_IMAGE_PART, genai_types.Part(text='What is on it?')],
+        [_image_part(), genai_types.Part(text='What is on it?')],
         [genai_types.Part(text='And now?')],
     ]
 
@@ -1089,7 +1092,7 @@ async def test_context_text_and_audio_do_not_carry_recent_image() -> None:
     await conn.send('What is in it?')  # the image is still recent, so the typed turn carries it
     assert [sent['turns'].parts for sent in session.client_content] == [
         [genai_types.Part(text='It is my fridge.')],
-        [_IMAGE_PART, genai_types.Part(text='What is in it?')],
+        [_image_part(), genai_types.Part(text='What is in it?')],
     ]
     assert [list(frame) for frame in session.realtime] == [['video'], ['audio']]
 
@@ -1107,7 +1110,7 @@ async def test_typed_turn_skips_stale_image(monkeypatch: pytest.MonkeyPatch) -> 
     now += rt_google._RECENT_IMAGE_SECONDS + 0.001  # pyright: ignore[reportPrivateUsage]
     await conn.send('What was that?')
     assert [sent['turns'].parts for sent in session.client_content] == [
-        [_IMAGE_PART, genai_types.Part(text='Still there?')],
+        [_image_part(), genai_types.Part(text='Still there?')],
         [genai_types.Part(text='What was that?')],
     ]
 
@@ -1129,7 +1132,7 @@ async def test_image_sent_during_typed_turn_is_kept_for_the_next(monkeypatch: py
     await conn.send('First?')
     await conn.send('Second?')
     assert [sent['turns'].parts[0] for sent in session.client_content] == [
-        _IMAGE_PART,
+        _image_part(),
         genai_types.Part(inline_data=genai_types.Blob(data=b'\x01', mime_type='image/png')),
     ]
 
@@ -1150,7 +1153,7 @@ async def test_failed_typed_turn_keeps_recent_image() -> None:
     with pytest.raises(ConnectionClosed):
         await conn.send('What is on it?')
     await conn.send('What is on it?')
-    assert session.client_content[0]['turns'].parts == [_IMAGE_PART, genai_types.Part(text='What is on it?')]
+    assert session.client_content[0]['turns'].parts == [_image_part(), genai_types.Part(text='What is on it?')]
 
 
 async def test_send_tool_result_echoes_name() -> None:
