@@ -20,6 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RequestUsage, RunContext
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -36,7 +37,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.realtime import RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeError, RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -44,7 +45,7 @@ from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
-    from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelProfile
+    from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelProfile, GoogleRealtimeModelSettings
 
 pytestmark = [
     pytest.mark.anyio,
@@ -161,6 +162,24 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     # Reasoning (`thoughtsTokenCount`) is billed but left out of Gemini's response/total counts, so the
     # session captures it in `details` rather than dropping it.
     assert response.usage.details.get('thoughts_tokens') == snapshot(24)
+
+
+async def test_rejected_config_raises_realtime_error(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A config Gemini rejects closes the socket during setup, and that close raises `RealtimeError`.
+
+    The close carries a WebSocket close code (`1007`), not an HTTP status, so it isn't a `ModelHTTPError`.
+    """
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    with pytest.raises(RealtimeError) as exc_info:
+        async with Agent().realtime(model, model_settings=GoogleRealtimeModelSettings(google_voice='alloy')).session():
+            pass  # pragma: no cover
+    assert not isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.message == snapshot(
+        "Gemini Live connection closed: 1007 None. Requested voice api_name 'alloy' is not available for model models/gemini-2.5-flash-native-audio-preview-09-2025"
+    )
 
 
 async def test_text_context_waits_for_next_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
@@ -505,6 +524,7 @@ def test_profile_allow_seeding() -> None:
         google_async_tool_calls_by_default=False,
         google_requires_async_tool_calls=False,
         google_supports_async_tool_call_scheduling=True,
+        google_supports_affective_dialog=True,
     )
 
 

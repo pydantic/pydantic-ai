@@ -75,7 +75,8 @@ Live models it defaults to asynchronous tool calls, so Pydantic AI declares tool
 
 Both 3.8 models keep proactive audio permanently on, so there's nothing for `google_proactive_audio`
 to turn on and it can be left unset. Gemini rejects an explicit `False`, which Pydantic AI never sends,
-and `True` still needs a `v1alpha` client like on any model. Neither supports affective dialog.
+and `True` still needs a `v1alpha` client like on any model. Neither supports affective dialog, and neither does
+`gemini-3.1-flash-live-preview`: `google_affective_dialog=True` raises `UserError` when the session connects.
 
 ## Settings
 
@@ -103,7 +104,7 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | Setting | Purpose |
 | --- | --- |
 | `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
-| `google_affective_dialog` | Emotion-aware delivery, on native-audio models (not the 3.8 models) |
+| `google_affective_dialog` | Emotion-aware delivery, on the 2.5 models (not the 3.x models) |
 | `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below). Always on for the 3.8 models |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
 | `google_activity_handling`, `google_turn_coverage` | [Interruption](turns.md#barge-in) behavior and which input belongs to a turn |
