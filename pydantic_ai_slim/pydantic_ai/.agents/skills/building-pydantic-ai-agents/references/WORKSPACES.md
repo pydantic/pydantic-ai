@@ -38,7 +38,8 @@ Without an attached workspace, operations raise `UserError`; a capability that n
 and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override
 operations, delegate the rest to `self.wrapped`), `ReadOnlyWorkspace` blocks commands and changes,
 and `workspace.read_only` lets a tool provider leave write tools out. To disable workspace access
-for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`.
+for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its operations raise
+`WorkspaceUnavailableError` with that reason, which a tool can catch as a `WorkspaceError`.
 
 `resolve()` is textual; `realpath()` asks the environment to resolve symlinks in the existing
 components (native through `SupportsRealpath`, `readlink` in the shell otherwise).

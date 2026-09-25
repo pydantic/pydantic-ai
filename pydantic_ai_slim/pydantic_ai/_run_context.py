@@ -112,9 +112,10 @@ async def dispatch_event_stream(
 def unattached_workspace() -> Workspace:
     # Imported lazily to keep the run-context module independent of the workspace facade during
     # package initialization. This factory runs only when a `RunContext` is constructed.
-    from .workspaces import UnavailableWorkspace, Workspace
+    from .workspaces import Workspace
+    from .workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
 
-    return Workspace(UnavailableWorkspace(_NO_WORKSPACE_REASON))
+    return Workspace(_UnattachedWorkspace(_NO_WORKSPACE_REASON))
 
 
 def recorded_workspace_ref(workspace: Workspace, carried: WorkspaceRef | None) -> WorkspaceRef | None:

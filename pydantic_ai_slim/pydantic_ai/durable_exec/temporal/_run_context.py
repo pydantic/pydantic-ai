@@ -12,7 +12,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai.workspaces import UnavailableWorkspace, Workspace, WorkspaceRef
+from pydantic_ai.workspaces import Workspace, WorkspaceRef
+from pydantic_ai.workspaces.unavailable import _UnattachedWorkspace  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -21,7 +22,7 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
 
-class _UnrestoredWorkspace(UnavailableWorkspace):
+class _UnrestoredWorkspace(_UnattachedWorkspace):
     """The placeholder `TemporalRunContext.__init__` installs until the activity's workspace is restored.
 
     A distinct type, so `deserialize_run_context` can tell it from a workspace a custom subclass
@@ -317,7 +318,7 @@ def _restore_workspace(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> 
     restored = select_workspace(agent.root_capability, ctx, ref)
     if restored is None:
         restored = Workspace(
-            UnavailableWorkspace(
+            _UnattachedWorkspace(
                 f'No capability on agent {agent.name!r} can supply workspace {ref.id!r} from provider '
                 f'{ref.provider!r} inside this Temporal activity: every `get_workspace` returned `None`. The '
                 'worker must be constructed with the same workspace capabilities as the workflow.'
