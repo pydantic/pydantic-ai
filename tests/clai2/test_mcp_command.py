@@ -1,7 +1,9 @@
 """The `/mcp` command surface: the add/edit server form, trust, help, and completion."""
 
+import hashlib
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMiss
 
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.mcp import (
+    CLAUDE_MCP_FILE,
     EXAMPLES,
     HELP,
     PROJECT_MCP_FILE,
@@ -279,7 +282,7 @@ async def test_project_file_trust(tmp_path: Path) -> None:
     assert 'changed since you trusted it' in await command([])
     assert (await command(['trust', 'status'])).endswith('changed')
     assert 'Revoked trust' in await command(['trust', 'revoke'])
-    assert 'was not trusted' in await command(['trust', 'revoke'])
+    assert 'Not trusted:' in await command(['trust', 'revoke'])
     with pytest.raises(ValueError, match='Usage: /mcp trust'):
         await command(['trust', 'maybe'])
 
@@ -291,6 +294,123 @@ async def test_project_file_trust(tmp_path: Path) -> None:
     project.mkdir()
     assert store.trust_state(project) == 'changed', 'an unreadable file fails closed'
     assert store.project_servers() == {}
+
+
+CLAUDE_CONFIG = {
+    'mcpServers': {
+        'claude-local': {'command': 'npx', 'args': ['-y', 'some-server'], 'env': {'TOKEN': '${TOKEN}'}},
+        'claude-remote': {'type': 'http', 'url': 'https://example.com/mcp', 'headers': {'X-Key': '$KEY'}},
+        'claude-sse': {'type': 'sse', 'url': 'https://example.com/sse'},
+    }
+}
+
+
+async def test_claude_code_mcp_json(tmp_path: Path) -> None:
+    make(tmp_path)
+    claude = tmp_path / 'repo' / CLAUDE_MCP_FILE
+    claude.write_text(json.dumps(CLAUDE_CONFIG))
+    nested = tmp_path / 'repo' / 'src' / 'pkg'
+    nested.mkdir(parents=True)
+    store = MCPStore(tmp_path / 'config', workspace=nested)
+    command = MCPCommand(servers=MCPServers(store))
+    assert store.project_files() == [claude.resolve()], 'found from a subdirectory, up to the git root'
+
+    assert f'{claude.resolve()} is not trusted' in await command([])
+    assert store.project_servers() == {}
+    assert 'Servers loaded: claude-local, claude-remote, claude-sse' in await command(['trust', 'accept'])
+    local, remote, sse = command.servers.entries()
+    assert isinstance(local.server, StdioServer) and local.server.args == ['-y', 'some-server']
+    assert isinstance(remote.server, HTTPServer) and isinstance(sse.server, SSEServer)
+    assert local.source == 'project' and local.path == claude.resolve()
+    assert f'project ({claude.resolve()})' in await command(['status', 'claude-local'])
+    assert 'TOKEN' in await command(['status', 'claude-local'])
+    with pytest.raises(ValueError, match=r'\.mcp\.json; change that file instead'):
+        await command(['edit', 'claude-remote'])
+
+    claude.write_text(json.dumps({'servers': CLAUDE_CONFIG['mcpServers']}))
+    store.trust(claude.resolve())
+    with pytest.raises(ValueError, match=r'(?s)\.mcp\.json: .*servers\s+Extra inputs'):
+        store.project_servers()
+
+
+async def test_both_project_files_load_with_clai_first(tmp_path: Path) -> None:
+    command, store = make(tmp_path)
+    clai = tmp_path / 'repo' / PROJECT_MCP_FILE
+    clai.parent.mkdir()
+    clai.write_text('{"servers": {"shared": {"type": "stdio", "command": "from-clai"}}}')
+    claude = tmp_path / 'repo' / CLAUDE_MCP_FILE
+    claude.write_text('{"mcpServers": {"shared": {"command": "from-claude"}, "extra": {"command": "x"}}}')
+    clai, claude = clai.resolve(), claude.resolve()
+
+    dashboard = await command([])
+    assert f'{clai} is not trusted' in dashboard and f'{claude} is not trusted' in dashboard
+    assert (await command(['trust'])).splitlines() == [f'{clai}: untrusted', f'{claude}: untrusted']
+    assert f'Trusted {clai}, {claude}. Servers loaded: shared, shared, extra' in await command(['trust', 'accept'])
+    shared, extra = command.servers.entries()
+    assert isinstance(shared.server, StdioServer) and shared.server.command == 'from-clai'
+    assert shared.path == clai and extra.path == claude
+
+    assert 'Stopped shared' in await command(['stop', 'shared'])
+    clai.write_text('{"servers": {}}')
+    store.trust(clai)
+    [fallback, _] = command.servers.entries()
+    assert fallback.path == claude and command.servers.state(fallback) == 'ready', (
+        "a session stop belongs to the definition, not to another file's server of the same name"
+    )
+
+    clai.write_text('{"servers": {"mine": {"type": "stdio", "command": "from-clai"}}}')
+    store.trust(clai)
+    claude.write_text('{"mcpServers": {}}')
+    assert f'{claude} is changed since you trusted it' in await command([])
+    assert [entry.name for entry in command.servers.entries()] == ['mine'], 'the unchanged file stays loaded'
+    assert await command(['trust', 'revoke']) == f'Revoked trust in {clai}, {claude}.'
+    assert store.project_servers() == {}
+
+
+def test_trust_is_all_or_nothing_when_one_file_is_a_symlink(tmp_path: Path) -> None:
+    _, store = make(tmp_path)
+    clai = tmp_path / 'repo' / PROJECT_MCP_FILE
+    clai.parent.mkdir()
+    clai.write_text('{"servers": {}}')
+    elsewhere = tmp_path / 'elsewhere.json'
+    elsewhere.write_text('{"mcpServers": {}}')
+    claude = tmp_path / 'repo' / CLAUDE_MCP_FILE
+    claude.symlink_to(elsewhere)
+    with pytest.raises(ValueError, match=r'\.mcp\.json: a symlink'):
+        store.trust(*store.project_files())
+    assert store.load().trusted_projects == {}
+
+
+def test_a_symlink_swapped_in_after_the_check_is_not_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, store = make(tmp_path)
+    elsewhere = tmp_path / 'elsewhere.json'
+    elsewhere.write_text('{"mcpServers": {"evil": {"command": "evil"}}}')
+    claude = tmp_path / 'repo' / CLAUDE_MCP_FILE
+    claude.symlink_to(elsewhere)
+    data = store.load()
+    digest = hashlib.sha256(elsewhere.read_bytes()).hexdigest()
+    store.save(data.model_copy(update={'trusted_projects': {str(claude.absolute()): digest}}))
+
+    def checked_before_the_swap(self: Path) -> bool:
+        return False
+
+    monkeypatch.setattr(Path, 'is_symlink', checked_before_the_swap)
+    with pytest.raises(ValueError, match='Cannot trust a project MCP file'):
+        store.trust(claude)
+    assert store.trust_state(claude) == 'changed'
+    assert store.project_servers() == {}
+
+
+@pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason='FIFOs are POSIX-only')
+async def test_a_fifo_project_file_does_not_block(tmp_path: Path) -> None:
+    command, store = make(tmp_path)
+    fifo = tmp_path / 'repo' / CLAUDE_MCP_FILE
+    os.mkfifo(fifo)
+    with pytest.raises(ValueError, match='not a regular file'):
+        await command(['trust', 'accept'])
+    data = store.load()
+    store.save(data.model_copy(update={'trusted_projects': {str(fifo.resolve()): 'x'}}))
+    assert store.trust_state(fifo.resolve()) == 'changed' and store.project_servers() == {}
 
 
 def test_user_servers_shadow_project_servers(tmp_path: Path) -> None:

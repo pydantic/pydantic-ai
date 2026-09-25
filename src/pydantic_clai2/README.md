@@ -22,7 +22,9 @@ configuration in your editor, and switch on OAuth sign-in for remote servers.
 lists them all. Saved servers are available to the agent from the next prompt,
 with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
-connect is marked `error` and left out rather than failing the prompt. See
+connect is marked `error` and left out rather than failing the prompt. A
+repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
+once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
 and project trust. `/plugins disable mcp` removes the command and tools.
 

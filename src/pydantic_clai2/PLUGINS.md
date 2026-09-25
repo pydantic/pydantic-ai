@@ -36,7 +36,7 @@ separately.
 /mcp auth NAME [logout]               sign in to an OAuth server again, or sign out
 /mcp edit NAME                        the same form, prefilled
 /mcp remove NAME
-/mcp trust [status|accept|revoke]     load this repository's .clai/mcp_servers.json
+/mcp trust [status|accept|revoke]     load this repository's .clai/mcp_servers.json and .mcp.json
 /mcp help
 ```
 
@@ -112,16 +112,40 @@ cannot produce the same name.
 
 ### Project servers and trust
 
-A repository can commit `.clai/mcp_servers.json` (same `servers` shape, found
-between the working directory and the git root). Because a stdio server runs a
-program, its servers do not load until you run `/mcp trust accept`. Trust is
-stored in your `mcp.json`, keyed by the file's path and a SHA-256 of its
-contents: any change to the file unloads its servers until you accept again, and
+A repository can commit either or both of these project files. Each is found by
+looking in the working directory, then each parent up to the git root:
+
+| Path | Shape |
+| --- | --- |
+| `.clai/mcp_servers.json` | `{"servers": {...}}`, the same shape as your `mcp.json` |
+| `.mcp.json` | Claude Code's project scope: `{"mcpServers": {...}}` |
+
+A `.mcp.json` written for Claude Code loads as is in the common case:
+
+```json
+{"mcpServers": {"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
+                            "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}},
+                "docs": {"type": "http", "url": "https://example.com/mcp"}}}
+```
+
+As in Claude Code, `type` can be left out for a stdio server (an entry with a
+`command`); `http` and `sse` servers name their `type`. Each server otherwise takes
+the keys described above. Differences from Claude Code: `$VAR` and `${VAR}` are
+expanded only in `env` and `headers` values (not in `command`, `args`, or `url`),
+`${VAR:-default}` is not supported, server names cannot contain underscores, and
+keys CLAI does not know fail loudly with the file's path. Claude Code's user and
+local scopes (`~/.claude.json`) are not read.
+
+Because a stdio server runs a program, project servers do not load until you run
+`/mcp trust accept`, which accepts every project file found. Trust is
+stored in your `mcp.json`, keyed by each file's path and a SHA-256 of its
+contents: any change to a file unloads its servers until you accept again, and
 a repository cannot trust itself. A symlinked project file or `.clai` folder is
 never trusted, so a repository cannot point at a file you trusted elsewhere.
 `/mcp stop` on a project server lasts for the
 session; edit the project file to change it permanently. When a name exists in
-both places, your own server wins.
+more than one place, your own server wins, then plugin settings, then
+`.clai/mcp_servers.json`, then `.mcp.json`.
 
 ### Plugin settings and gaps
 

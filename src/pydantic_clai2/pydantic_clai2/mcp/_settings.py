@@ -79,19 +79,21 @@ class SSEServer(RemoteServer):
     type: Literal['sse']
 
 
-def _legacy_key(value: object) -> object:
-    """Plugin settings written before `/mcp install` named the discriminator `transport`."""
+def _infer_type(value: object) -> object:
+    """Fill in a missing `type`: older plugin settings named it `transport`; Claude Code omits it for stdio."""
     if isinstance(value, dict):
         raw = _RAW.validate_python(value)
         if 'transport' in raw and 'type' not in raw:
             raw['type'] = raw.pop('transport')
+        if 'command' in raw and 'type' not in raw:
+            raw['type'] = 'stdio'
         return raw
     return value
 
 
 _RAW: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 
-Server = Annotated[StdioServer | HTTPServer | SSEServer, Field(discriminator='type'), BeforeValidator(_legacy_key)]
+Server = Annotated[StdioServer | HTTPServer | SSEServer, Field(discriminator='type'), BeforeValidator(_infer_type)]
 Servers = dict[ServerName, Server]
 
 

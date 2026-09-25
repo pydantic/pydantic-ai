@@ -1,7 +1,7 @@
 """The built-in `mcp` plugin: `/mcp` manages MCP servers the way Code Puppy's `/mcp` does.
 
 Servers live in `mcp.json` in the CLAI config folder, written by the `/mcp install` and `/mcp edit` form.
-A repository's `.clai/mcp_servers.json` loads after `/mcp trust accept`. Servers given as plugin
+A repository's `.clai/mcp_servers.json` and Claude Code-style `.mcp.json` load after `/mcp trust accept`. Servers given as plugin
 settings (`/plugins add mcp pydantic_clai2.mcp JSON`) still load, read-only.
 """
 
@@ -23,13 +23,15 @@ from ._settings import (
     StdioServer,
     http_client,
 )
-from ._store import PROJECT_MCP_FILE, MCPStore, UserFile
+from ._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
 from ._tokens import TokenStore, oauth
 
 __all__ = [
+    'CLAUDE_MCP_FILE',
     'EXAMPLES',
     'HELP',
     'PROJECT_MCP_FILE',
+    'PROJECT_MCP_FILES',
     'HTTPServer',
     'MCPCommand',
     'MCPServers',

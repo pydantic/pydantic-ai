@@ -34,7 +34,7 @@ Servers
   /mcp edit NAME                 Edit a saved server in the same form
   /mcp remove NAME               Stop and forget a saved server
   /mcp trust [status|accept|revoke]
-                                 Load this repository's .clai/mcp_servers.json
+                                 Load this repository's .clai/mcp_servers.json and .mcp.json
 
 States:  + running (connected)  o ready (connects on your next prompt)  - stopped  ! error
 
@@ -138,9 +138,7 @@ class MCPCommand:
     def details(self, entry: ServerEntry) -> str:
         """`/mcp status NAME`."""
         state = self.servers.state(entry)
-        source = {'user': str(self.servers.store.path), 'project': str(self.servers.store.project_file())}.get(
-            entry.source, '/plugins settings for mcp'
-        )
+        source = str(entry.path) if entry.path else '/plugins settings for mcp'
         variables = references(entry.server)
         tools = self.servers.tools(entry)
         return '\n'.join(
@@ -179,14 +177,17 @@ class MCPCommand:
         return f'/mcp start {entry.name}'
 
     def _trust_notice(self) -> str | None:
-        path = self.servers.store.project_file()
-        if path is None:
+        store = self.servers.store
+        states = ((path, store.trust_state(path)) for path in store.project_files())
+        notices = [
+            f'{path} is {"changed since you trusted it" if state == "changed" else "not trusted"}, '
+            'so its servers are not loaded.'
+            for path, state in states
+            if state != 'trusted'
+        ]
+        if not notices:
             return None
-        state = self.servers.store.trust_state(path)
-        if state == 'trusted':
-            return None
-        reason = 'changed since you trusted it' if state == 'changed' else 'not trusted'
-        return f'\n{path} is {reason}, so its servers are not loaded. Review it, then /mcp trust accept.'
+        return '\n' + '\n'.join([*notices, 'Review the project MCP files, then /mcp trust accept.'])
 
     async def _server_action(self, action: str, name: str, extra: list[str]) -> str:
         entry = self.servers.get(name)
@@ -204,7 +205,7 @@ class MCPCommand:
             await self.servers.remove(name)
             return f'Removed {name}.'
         if action == 'edit':
-            reason = not_owned(entry, self.servers.store)
+            reason = not_owned(entry)
             if reason:
                 raise ValueError(reason)
             running = self.servers.state(entry) == 'running'
@@ -256,18 +257,19 @@ class MCPCommand:
 
     async def _trust(self, args: list[str]) -> str:
         store = self.servers.store
-        path = store.project_file()
+        paths = store.project_files()
         action = args[0] if args else 'status'
         if len(args) > 1 or action not in ('status', 'accept', 'revoke'):
             raise ValueError('Usage: /mcp trust [status|accept|revoke]')
-        if path is None:
-            return 'No .clai/mcp_servers.json between here and the repository root.'
+        if not paths:
+            return 'No .clai/mcp_servers.json or .mcp.json between here and the repository root.'
+        listed = ', '.join(map(str, paths))
         if action == 'accept':
-            store.trust(path)
-            names = ', '.join(store.project_servers()) or 'none'
-            return f'Trusted {path}. Servers loaded: {names}. Any edit to the file requires trusting it again.'
+            store.trust(*paths)
+            names = ', '.join(name for servers in store.project_servers().values() for name in servers) or 'none'
+            return f'Trusted {listed}. Servers loaded: {names}. Any edit to a file requires trusting it again.'
         if action == 'revoke':
-            revoked = store.revoke(path)
+            revoked = store.revoke(*paths)
             await self.servers.sync()
-            return f'Revoked trust in {path}.' if revoked else f'{path} was not trusted.'
-        return f'{path}: {store.trust_state(path)}'
+            return f'Revoked trust in {", ".join(map(str, revoked))}.' if revoked else f'Not trusted: {listed}.'
+        return '\n'.join(f'{path}: {store.trust_state(path)}' for path in paths)
