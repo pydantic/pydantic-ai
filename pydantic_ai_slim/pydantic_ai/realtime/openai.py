@@ -1026,12 +1026,11 @@ class OpenAIRealtimeModel(RealtimeModel):
         if (truncation := model_settings.get('openai_truncation')) is not None:
             # Already the OpenAI `truncation` wire shape (`'auto'`/`'disabled'`/retention-ratio dict).
             config['truncation'] = truncation
-        if (thinking := model_settings.get('thinking')) is not None:
-            if self.profile.get('supports_thinking', False):
-                # `False` maps to `'none'`, which the realtime `reasoning.effort` doesn't accept — omit
-                # it so a reasoning model falls back to its default rather than erroring.
-                if (effort := OPENAI_REASONING_EFFORT_MAP[thinking]) != 'none':
-                    config['reasoning'] = {'effort': effort}
+        if (thinking := model_settings.get('thinking')) is not None and self.profile.get('supports_thinking', False):
+            # `False` maps to `'none'`: the SDK's `RealtimeReasoningEffort` doesn't list it, but every
+            # `gpt-realtime-2*` model accepts it and then reasons with zero tokens, whereas omitting
+            # `reasoning` leaves the model reasoning at its default effort.
+            config['reasoning'] = {'effort': OPENAI_REASONING_EFFORT_MAP[thinking]}
         return config
 
     def _realtime_ws_base(self) -> str:

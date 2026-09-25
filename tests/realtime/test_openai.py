@@ -1150,9 +1150,9 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
     assert reasoning('low') == {'effort': 'low'}
     assert reasoning('high') == {'effort': 'high'}
     assert reasoning(True) == {'effort': 'medium'}
-    # `thinking=False` maps to effort `'none'`, which the realtime `reasoning.effort` doesn't accept,
-    # so it's omitted (a reasoning model falls back to its default rather than erroring).
-    assert reasoning(False) is None
+    # `thinking=False` sends effort `'none'`, which the SDK type omits but the reasoning models accept
+    # and honor with zero reasoning tokens; omitting `reasoning` would leave them at their default effort.
+    assert reasoning(False) == {'effort': 'none'}
 
 
 def test_session_config_thinking_on_non_reasoning_model_is_ignored() -> None:
