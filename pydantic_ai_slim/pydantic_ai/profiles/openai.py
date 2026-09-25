@@ -482,8 +482,51 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
 
 
+def is_openai_live_model(model_name: str) -> bool:
+    """Whether a model name belongs to OpenAI's GPT-Live API rather than its Realtime API.
+
+    The two are different protocols on the same provider, so the model name is what picks between
+    them — see [`OpenAILiveModel`][pydantic_ai.realtime.openai_live.OpenAILiveModel].
+    """
+    return model_name.startswith('gpt-live')
+
+
+def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
+    """Get the realtime model profile for an OpenAI GPT-Live model.
+
+    Live is far more constrained than the Realtime API: it owns turn-taking entirely (no manual
+    turns, no server-side interruption or truncation), speaks rather than writes, takes an image only
+    for its delegated backend to respond to, and seeds from text alone. It also has no end-of-turn frame, so Pydantic AI infers the boundary.
+    """
+    return {
+        # Images go to the delegated backend, which only sees one when it runs on it.
+        'supports_image_input': True,
+        'image_input_requires_response': True,
+        'supports_manual_turn_control': False,
+        'supports_interruption': False,
+        'supports_output_truncation': False,
+        'supports_text_output': False,
+        'supports_session_seeding': True,
+        'supports_seeding_images': False,
+        'supports_seeding_audio': False,
+        'supports_webrtc': False,
+        # Speech and delegated work run independently: the Live model can keep the conversation going
+        # while the backend works, so a tool call doesn't hold up speech.
+        'supports_async_tool_calls': True,
+        'supports_thinking': False,
+        'emits_input_speech_events': False,
+        'synthesizes_turn_boundary': True,
+        # The spoken replies are inferred turns; the requests that spend tokens are the backend's.
+        'responses_are_requests': False,
+        'audio_input_sample_rate': 24000,
+        'audio_output_sample_rate': 24000,
+    }
+
+
 def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for an OpenAI realtime model."""
+    if is_openai_live_model(model_name):
+        return openai_live_model_profile(model_name)
     return {
         'supports_image_input': True,
         'supports_manual_turn_control': True,

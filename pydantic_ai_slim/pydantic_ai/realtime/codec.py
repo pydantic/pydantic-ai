@@ -306,6 +306,10 @@ class SessionUsage:
     finish_reason: FinishReason | None = None
     """Normalized completion reason for the response this usage belongs to, when available."""
 
+    provider_details: dict[str, Any] | None = None
+    """Provider-specific details about how this usage was incurred, merged into the response's
+    `ModelResponse.provider_details`. Only applies to response-scoped usage."""
+
     response_scoped: bool = True
     """Whether this usage belongs to a specific model response.
 
