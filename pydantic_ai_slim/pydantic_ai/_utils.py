@@ -1,11 +1,13 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import copy
 import functools
 import inspect
 import re
 import sys
+import textwrap
 import time
 import uuid
 from collections.abc import (
@@ -23,6 +25,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -210,7 +213,7 @@ def is_model_like(type_: Any) -> bool:
     These should all generate a JSON Schema with `{"type": "object"}` and therefore be usable directly as
     function parameters.
     """
-    return (
+    return bool(
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
         and (
@@ -1055,7 +1058,7 @@ def strip_markdown_fences(text: str) -> str:
     return text
 
 
-def _unwrap_annotated(tp: Any) -> Any:
+def unwrap_annotated(tp: Any) -> Any:
     origin = get_origin(tp)
     while typing_objects.is_annotated(origin):
         tp = tp.__origin__
@@ -1063,15 +1066,21 @@ def _unwrap_annotated(tp: Any) -> Any:
     return tp
 
 
-def get_union_args(tp: Any) -> tuple[Any, ...]:
-    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple."""
+def get_union_args(tp: Any, *, unwrap_members: bool = True) -> tuple[Any, ...]:
+    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple.
+
+    Each `Annotated[X, ...]` member is returned as `X`, which is what an `isinstance` check or a type's name needs.
+    With `unwrap_members=False` it is returned as written instead, keeping the validators and `Field(...)` a schema
+    built from that member has to carry.
+    """
     if typing_objects.is_typealiastype(tp):
         tp = tp.__value__
 
-    tp = _unwrap_annotated(tp)
+    tp = unwrap_annotated(tp)
     origin = get_origin(tp)
     if is_union_origin(origin):
-        return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
+        args = get_args(tp)
+        return tuple(unwrap_annotated(arg) for arg in args) if unwrap_members else args
     else:
         return ()
 
@@ -1129,3 +1138,36 @@ def estimate_string_tokens(text: str) -> int:
     Blank text counts as one token, so a caller that wants zero for it guards the call itself.
     """
     return len(_TOKEN_SPLIT_PATTERN.split(text.strip()))
+
+
+def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
+    """The docstring under each member of an `Enum`, by member name.
+
+    Pydantic reads a docstring under a model field with `use_attribute_docstrings`, but not one under an enum
+    member; this does the same for enums, so each option can be described where it is declared. Empty when the
+    source is not available, such as for a class defined in the REPL.
+    """
+    try:
+        source = inspect.getsource(cls)
+    except (OSError, TypeError):
+        return {}
+    class_def = ast.parse(textwrap.dedent(source)).body[0]
+    if not isinstance(class_def, ast.ClassDef):  # pragma: no cover
+        return {}
+    docstrings: dict[str, str] = {}
+    for previous, node in zip(class_def.body, class_def.body[1:]):
+        if not (
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        ):
+            continue
+        # A member is a plain or an annotated assignment; a string after anything else describes no option,
+        # and neither does one after a name that is not a member, such as `_ignore_`.
+        if isinstance(previous, ast.Assign):
+            targets = previous.targets
+        elif isinstance(previous, ast.AnnAssign):
+            targets = [previous.target]
+        else:
+            continue
+        for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
+            docstrings[name] = inspect.cleandoc(node.value.value)
+    return docstrings

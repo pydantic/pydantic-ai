@@ -2,13 +2,15 @@
 
 Deterministic, span-based evaluators that grade an agent's *trajectory* — the sequence and arguments of tool calls — rather than just its final output.
 
-!!! note "Requires Logfire"
-    These evaluators read from the OpenTelemetry span tree captured during
-    task execution, so [`logfire`](../how-to/logfire-integration.md) must be
-    installed and configured:
+!!! note "Requires the logfire SDK"
+    These evaluators read the OpenTelemetry span tree captured during the run, so the
+    [`logfire`](../how-to/logfire-integration.md) SDK must be installed and configured. No Pydantic Logfire
+    account is needed: the SDK captures spans locally.
+
     ```bash
     pip install 'pydantic-evals[logfire]'
     ```
+
     If spans aren't available, each evaluator returns a failing result
     (`False` for the boolean evaluators, `0.0` for `TrajectoryMatch`) with
     a reason pointing at logfire configuration, rather than raising.

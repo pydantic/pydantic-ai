@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import date, timezone
 from decimal import Decimal
+from enum import Enum
 from typing import Any, cast
 
 import pytest
@@ -56,6 +57,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     VideoUrl,
     capture_run_messages,
@@ -88,7 +90,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -815,7 +817,12 @@ async def test_google_model_mobile_youtube_video_url_input(
                 {
                     'parts': [
                         {'text': 'Explain me this video in a few sentences'},
-                        {'fileData': {'fileUri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU', 'mimeType': 'video/mp4'}},
+                        {
+                            'fileData': {
+                                'file_uri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU',
+                                'mime_type': 'video/mp4',
+                            }
+                        },
                     ],
                     'role': 'user',
                 }
@@ -825,19 +832,10 @@ async def test_google_model_mobile_youtube_video_url_input(
         }
     )
     assert result.output == snapshot(
-        'This video demonstrates an AI assistant within a code editor analyzing recent 404 HTTP responses from a logfile database. The AI queries the database, identifies common patterns related to specific endpoints, request types, timeline issues, and authentication problems. Finally, it provides a detailed analysis of these patterns along with actionable recommendations to resolve the identified issues.'
+        'This video showcases an AI assistant diagnosing recent HTTP 404 errors. The assistant queries a logging database (LogLine) to identify patterns in the error responses, such as common problematic endpoints, request patterns, and issues related to timeline queries or authentication. Finally, the AI provides a detailed analysis of the identified problems and offers specific recommendations for resolution, interactively highlighting relevant sections in the code editor.'
     )
     assert result.usage.details == snapshot(
-        {
-            'cached_content_tokens': 17379,
-            'thoughts_tokens': 821,
-            'text_prompt_tokens': 16,
-            'video_prompt_tokens': 15780,
-            'audio_prompt_tokens': 1917,
-            'audio_cache_tokens': 1881,
-            'text_cache_tokens': 15,
-            'video_cache_tokens': 15483,
-        }
+        {'thoughts_tokens': 1091, 'text_prompt_tokens': 16, 'video_prompt_tokens': 15780, 'audio_prompt_tokens': 1917}
     )
 
 
@@ -2049,6 +2047,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5477,6 +5476,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5520,6 +5520,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -7406,3 +7407,66 @@ async def test_google_model_armor_config_is_sent_in_request(
 
     _, kwargs = mock_generate.call_args
     assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
+
+
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@pytest.mark.vcr()
+async def test_google_enum_member_docstrings_reach_the_wire(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A documented enum renders as `anyOf` of `const`s; Gemini's transformer folds each into a one-value `enum`.
+
+    Asserted on the wire, since the shape a transformer produces is what the API has to accept, and the model
+    then has to call the tool with one of the options.
+    """
+
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider), instructions='Set the priority of the ticket.')
+
+    @agent.tool_plain
+    def set_priority(priority: TicketPriority) -> str:
+        return f'Priority set to {priority.value}.'
+
+    result = await agent.run('Production is down for every customer.')
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert calls[0].args_as_dict() == {'priority': 'high'}
+    body = request_capture.body(':generateContent')
+    assert cast(list[dict[str, Any]], body['tools'])[0]['functionDeclarations'][0] == snapshot(
+        {
+            'description': '',
+            'name': 'set_priority',
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
+                'required': ['priority'],
+                'type': 'object',
+                '$defs': {
+                    'TicketPriority': {
+                        'description': """\
+How urgent the ticket is.
+low: Can wait a week.
+high: Needs attention today.\
+""",
+                        'type': 'string',
+                        'enum': ['low', 'high'],
+                    }
+                },
+            },
+        }
+    )

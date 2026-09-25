@@ -36,15 +36,17 @@ This works with 30+ agents via the [agentskills.io](https://agentskills.io) stan
 
 ### Library Skills
 
-Pydantic AI also ships its skill bundled with the package, so you can install it directly from your project's dependencies via [library-skills.io](https://library-skills.io):
+Pydantic AI also ships its skills bundled with the package, so you can install them directly from your project's dependencies via [library-skills.io](https://library-skills.io):
 
 ```bash
 uvx library-skills --all
 ```
 
-The `--all` flag is required because the skill is bundled in `pydantic-ai-slim`, which is a transitive dependency of the `pydantic-ai` meta-package. Without it, `library-skills` only scans direct dependencies and won't discover the skill.
+The `--all` flag is required because the skills are bundled in `pydantic-ai-slim`, which is a transitive dependency of the `pydantic-ai` meta-package. Without it, `library-skills` only scans direct dependencies and won't discover them.
 
 Add `--claude` to also install into `.claude/skills/` alongside the default `.agents/skills/` directory, since Claude Code doesn't read from `.agents/`.
+
+This installation also includes [migration skills](framework-migration.md) for moving applications from other agent frameworks to Pydantic AI.
 
 ## See Also
 

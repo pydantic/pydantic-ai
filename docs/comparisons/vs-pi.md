@@ -2,7 +2,9 @@
 
 Pi is a TypeScript coding agent from Earendil Works: a terminal agent you extend with hooks, skills and packages, or embed through `createAgentSession`. In Pydantic AI, a [coding agent](https://pydantic.dev/docs/ai/harness/coder/) is one [configuration](../capabilities/overview.md) of a general [`Agent`][pydantic_ai.Agent], and the [skills](https://pydantic.dev/docs/ai/harness/skills/), [sandbox](https://pydantic.dev/docs/ai/harness/#execution-environments) and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) are each a capability you can swap.
 
-Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md), [Pydantic Graph](../graph.md), [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
+Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md) for evaluation, [Pydantic Graph](../graph.md) for graph-based workflows, [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
+
+**Already built on Pi?** The [`migrating-pi-to-pydantic-ai`](../framework-migration.md) skill ports an existing application to Pydantic AI one working path at a time, preserving behavior rather than translating API names.
 
 ## Framework
 
@@ -14,8 +16,8 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Extensibility | Extensions, skills, `pi install` | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Pi itself; extend it or embed it | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | Telemetry contract, no exporter | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
-| Durable execution | No | [5+ integrations](../durable_execution/overview.md) |
-| Interfaces | CLI | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
+| Durable execution | No | [Seven integrations](../durable_execution/overview.md) |
+| Interfaces | CLI | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Evals | No | [Pydantic Evals](../evals.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |

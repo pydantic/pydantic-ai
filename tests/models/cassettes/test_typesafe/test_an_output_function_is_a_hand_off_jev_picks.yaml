@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '515'
+      - '490'
       content-type:
       - application/json
       host:
@@ -17,10 +17,10 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        tool:
+        route:
           criteria:
-            final_result_Ticket: Triage a support ticket.
-            final_result_escalate: Hand the ticket to a person on the support team.
+            Ticket: Triage a support ticket.
+            escalate: Hand the ticket to a person on the support team.
           instructions: Which of these does this call for?
           type: choice
         urgent:
@@ -34,25 +34,25 @@ interactions:
   response:
     headers:
       content-length:
-      - '291'
+      - '253'
       content-type:
       - application/json
     parsed_body:
       answers:
-        tool:
-          choice: final_result_escalate
+        route:
+          choice: escalate
           confidence: 0.99
           probabilities:
-            final_result_Ticket: 0.0
-            final_result_escalate: 1.0
+            Ticket: 0.0
+            escalate: 1.0
           type: choice
         urgent:
-          noul: 0.73
+          noul: 0.74
           type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 393
-        output_tokens: 58
+        input_tokens: 388
+        output_tokens: 51
     status:
       code: 200
       message: OK

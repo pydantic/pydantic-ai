@@ -17,6 +17,7 @@ from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import (
     AbstractCapability,
+    Instrumentation,
     ProcessEventStream,
     ResolveModelId,
     WrapperCapability,
@@ -51,7 +52,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
+from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
+
+with try_import() as logfire_installed:
+    from logfire.testing import CaptureLogfire
 
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -1147,6 +1152,41 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.details['custom_units'],
         ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
+
+
+@pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
+async def test_replayed_usage_delta_of_an_uninstrumented_delegate_is_not_credited_to_its_caller(
+    capfire: CaptureLogfire,
+) -> None:
+    """A delegate without a span doesn't report the usage its replayed operation folds in on the caller's.
+
+    On replay the operation's body doesn't run: its recorded usage delta is folded into the delegate's
+    usage from inside the delegate's run, which must not credit the instrumented run that started it.
+    """
+    capability = UsageOperation()
+    delegate = Agent(TestModel(), name='delegate', capabilities=[capability, ReplayingDurability()])
+    parent = Agent(TestModel(), name='parent', capabilities=[Instrumentation()])
+
+    @parent.tool_plain
+    async def ask_delegate() -> str:
+        return (await delegate.run('x')).output
+
+    results = [await parent.run('go'), await parent.run('go')]
+    assert capability.calls == 1
+
+    reported = [
+        {key: value for key, value in span['attributes'].items() if key.startswith('gen_ai.aggregated_usage.')}
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['name'] == 'invoke_agent parent'
+    ]
+    # What each parent run spent itself, on both the first run and the replayed one.
+    assert reported == [
+        {
+            'gen_ai.aggregated_usage.input_tokens': result.usage.input_tokens,
+            'gen_ai.aggregated_usage.output_tokens': result.usage.output_tokens,
+        }
+        for result in results
+    ]
 
 
 @dataclass(kw_only=True)

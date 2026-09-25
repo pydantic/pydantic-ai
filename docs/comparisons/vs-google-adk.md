@@ -2,7 +2,9 @@
 
 Google's Agent Development Kit is an agent platform built around Gemini and Vertex AI: workflow graphs, evaluation, a dev UI, and deploy commands for Cloud Run, GKE, Docker and Agent Engine. Pydantic AI is a provider-agnostic library you run on your own infrastructure, with [`pydantic-graph`](../graph.md) for workflows, [Pydantic Evals](../evals.md), a [web chat UI](../web.md), and [Pydantic Logfire](https://pydantic.dev/logfire) to watch it all run.
 
-Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md), [Pydantic Graph](../graph.md), [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
+Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md) for evaluation, [Pydantic Graph](../graph.md) for graph-based workflows, [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
+
+**Already built on Google ADK?** The [`migrating-google-adk-to-pydantic-ai`](../framework-migration.md) skill ports an existing application to Pydantic AI one working path at a time, preserving behavior rather than translating API names.
 
 ## Framework
 
@@ -14,8 +16,8 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Extensibility | Tools, plugins | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own; shell, file tools, sandboxes and compaction ship | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
-| Durable execution | Yes | [5+ integrations](../durable_execution/overview.md) |
-| Interfaces | CLI, web, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental) |
+| Durable execution | Yes | [Seven integrations](../durable_execution/overview.md) |
+| Interfaces | CLI, web, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | No | [Image Generation](../image-generation.md) |

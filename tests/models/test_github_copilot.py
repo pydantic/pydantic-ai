@@ -21,6 +21,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 import httpx2
 import pytest
@@ -85,12 +86,13 @@ async def test_github_copilot_model_simple(allow_model_requests: None, github_co
                     details={'accepted_prediction_tokens': 0, 'rejected_prediction_tokens': 0},
                     input_tokens=20,
                     output_tokens=5,
+                    cost=Decimal('0.000125'),
                 ),
                 model_name='gpt-5.4',
                 timestamp=IsDatetime(),
                 provider_name='github-copilot',
                 provider_url='https://api.githubcopilot.com',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -140,7 +142,7 @@ async def test_github_copilot_claude_model(allow_model_requests: None, github_co
             ),
             ModelResponse(
                 parts=[TextPart(content='Paris is the capital of France.')],
-                usage=RequestUsage(input_tokens=18, output_tokens=10),
+                usage=RequestUsage(input_tokens=18, output_tokens=10, cost=Decimal('0.000068')),
                 model_name='claude-haiku-4.5',
                 timestamp=IsDatetime(),
                 provider_name='github-copilot',
@@ -361,17 +363,10 @@ async def test_github_copilot_rejects_max_tokens(
     assert exc_info.value.body == snapshot('Bad Request')
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason='Blocked on a genai-prices release carrying the `github-copilot` provider added in '
-    'https://github.com/pydantic/genai-prices/pull/683; the bundled snapshot has none, so no Copilot '
-    'model resolves a context window or a price. An XPASS means the release landed: drop this marker '
-    'and pin the window in the profile snapshot.',
-)
 def test_github_copilot_context_window_is_known(github_copilot_api_key: str):
     """Not a VCR test: the window is filled from the bundled genai-prices snapshot, not the network."""
     model = GitHubCopilotModel('gpt-5.4', provider=GitHubCopilotProvider(api_key=github_copilot_api_key))
-    assert model.profile.get('context_window') is not None
+    assert model.profile.get('context_window') == 400_000
 
 
 async def test_github_copilot_claude_thinking(
@@ -415,7 +410,7 @@ async def test_github_copilot_claude_thinking(
                 ),
                 TextPart(content='3599 = 59 × 61'),
             ],
-            usage=RequestUsage(input_tokens=31, output_tokens=24),
+            usage=RequestUsage(input_tokens=31, output_tokens=24, cost=Decimal('0.000302')),
             model_name='claude-sonnet-5',
             timestamp=IsDatetime(),
             provider_name='github-copilot',
@@ -457,7 +452,7 @@ async def test_github_copilot_claude_thinking_stream(allow_model_requests: None,
                 ),
                 TextPart(content='**3599 = 59 × 61**'),
             ],
-            usage=RequestUsage(output_tokens=41, input_tokens=31),
+            usage=RequestUsage(output_tokens=41, input_tokens=31, cost=Decimal('0.000472')),
             model_name='claude-sonnet-5',
             timestamp=IsDatetime(),
             provider_name='github-copilot',
@@ -543,7 +538,9 @@ async def test_github_copilot_gemini_thinking(
                 ),
                 TextPart(content='59 × 61'),
             ],
-            usage=RequestUsage(details={'reasoning_tokens': 122}, input_tokens=18, output_tokens=6),
+            usage=RequestUsage(
+                details={'reasoning_tokens': 122}, input_tokens=18, output_tokens=6, cost=Decimal('0.0000360')
+            ),
             model_name='gemini-3.8-flash',
             timestamp=IsDatetime(),
             provider_name='github-copilot',
@@ -591,7 +588,9 @@ async def test_github_copilot_gemini_thinking_stream(allow_model_requests: None,
                 ),
                 TextPart(content='120'),
             ],
-            usage=RequestUsage(details={'reasoning_tokens': 199}, input_tokens=19, output_tokens=3),
+            usage=RequestUsage(
+                details={'reasoning_tokens': 199}, input_tokens=19, output_tokens=3, cost=Decimal('0.00002550')
+            ),
             model_name='gemini-3.8-flash',
             timestamp=IsDatetime(),
             provider_name='github-copilot',

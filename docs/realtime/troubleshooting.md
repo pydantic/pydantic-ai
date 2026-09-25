@@ -1,4 +1,4 @@
-# Troubleshooting
+# Realtime troubleshooting
 
 Below are suggestions on how to fix some common problems with realtime sessions, each linking to
 the page that covers the underlying behavior. For issues not listed here or addressed in the

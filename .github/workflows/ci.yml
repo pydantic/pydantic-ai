@@ -23,6 +23,10 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
   GIT_CONFIG_VALUE_0: https://github.com/
+  # `pydantic-ai-harness` stays out of `uv.lock` (see the `quality` job), so the jobs that need it
+  # install this version out-of-band. Keep it in sync with the gh-aw runner's pin
+  # (.github/scripts/pydantic-ai-runner) and `make install`.
+  PYDANTIC_AI_HARNESS_VERSION: "0.34.0"
 
 permissions:
   contents: read
@@ -94,7 +98,7 @@ jobs:
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
             case "$1" in
-              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
+              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
               *) return 1 ;;
             esac
           }
@@ -143,14 +147,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
-      # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim),
-      # which imports pydantic-ai-harness. The harness depends on pydantic-ai-slim,
-      # whose name is shadowed by the workspace member, so keeping it in the
-      # universal lock breaks the lowest-direct re-resolution. Install it into the
-      # synced venv out-of-band instead (--no-deps: pydantic-ai-slim is already
-      # present from the workspace). Keep the pin in sync with the runner's
-      # (.github/scripts/pydantic-ai-runner).
-      - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0"
+      # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim, via
+      # .github/scripts/pyrightconfig.json), which imports pydantic-ai-harness. The
+      # harness depends on pydantic-ai-slim, whose name is shadowed by the workspace
+      # member, so keeping it in the universal lock breaks the lowest-direct
+      # re-resolution. Install it into the synced venv out-of-band instead (--no-deps:
+      # pydantic-ai-slim is already present from the workspace).
+      - run: uv pip install --no-deps "pydantic-ai-harness==${PYDANTIC_AI_HARNESS_VERSION}"
 
       - name: Test GitHub agentic workflow policy
         env:
@@ -178,6 +181,14 @@ jobs:
         env:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_typecheck_changed.py
+
+      # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
+      # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
+      # included, must refresh it.
+      - name: Check the gh-aw runner's script lock is up to date
+        run: >-
+          uv lock --script .github/scripts/pydantic-ai-runner --check
+          || { echo "::error file=.github/scripts/pydantic-ai-runner.lock::Stale gh-aw runner lock; run: uv lock --script .github/scripts/pydantic-ai-runner"; exit 1; }
 
       # The tests above import the shim inside this job's workspace venv, which is not
       # the environment it runs in: gh-aw executes it via `uv run --script` against the
@@ -256,10 +267,14 @@ jobs:
           # Fail a passing pyright run that outlasts this many seconds, so a change that makes
           # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
           # nothing caught it (see #8177): the hook ran 328 to 490 s over the five `main` runs
-          # between those two. 110 is 1.1x the p99 (98.4 s) of the hook's own duration over the 60
-          # successful `main` push runs before that regression (mean 83.8 s, max 99.2 s), rounded up;
-          # derived in https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259.
-          PYRIGHT_TIME_BUDGET: "110"
+          # between those two. The budget was 110 (1.1x the p99 of 60 main runs, derived in
+          # https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259), but by
+          # 2026-09-23 the hook ran 66 to 111 s on the same day's main runs (runner variance alone
+          # spans about 30 s); the pyright 1.1.414 bump (#8690) and type-checking docs examples (#8646)
+          # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
+          # 150 leaves room for that variance while still failing a regression like #8077's 328 to
+          # 490 s.
+          PYRIGHT_TIME_BUDGET: "150"
           # pre-commit hooks shell out via `uv run`; without this they would
           # re-sync the venv and drop the out-of-band harness install above.
           UV_NO_SYNC: "1"
@@ -361,6 +376,10 @@ jobs:
 
       - name: Install documentation test dependencies
         run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+
+      # For the type check of the docs examples that import it; see the `quality` job for why
+      # it's installed out-of-band.
+      - run: uv pip install --no-deps "pydantic-ai-harness==${PYDANTIC_AI_HARNESS_VERSION}"
 
       - name: Check Markdown files
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
@@ -483,6 +502,8 @@ jobs:
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
       # compatible version; re-enable if a shard then stays comfortably within its timeout.
       BLOCKBUSTER_ENABLED: false
+      # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
+      TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -546,6 +567,11 @@ jobs:
         with:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
+
+      # For the type check of the docs examples that import it; see the `quality` job for why
+      # it's installed out-of-band. `uv run` below syncs inexactly, so it keeps this install.
+      - if: env.TYPECHECK_EXAMPLES == 'true'
+        run: uv pip install --no-deps "pydantic-ai-harness==${PYDANTIC_AI_HARNESS_VERSION}"
 
       # `-n logical` (see note on the `test` job). Split into 2 shards with `pytest-split` so
       # this, the slowest install shape, keeps pace with the rest of the matrix. The split is
@@ -711,6 +737,8 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
       # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
       BLOCKBUSTER_ENABLED: false
+      # The docs examples are type-checked in the Python 3.14 all-extras jobs.
+      TYPECHECK_EXAMPLES: false
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

@@ -8,9 +8,9 @@ backend. Use it when you are integrating a durable execution system that is not 
 The complete implementations for [Temporal][pydantic_ai.durable_exec.temporal.TemporalDurability],
 [DBOS][pydantic_ai.durable_exec.dbos.DBOSDurability], and
 [Prefect][pydantic_ai.durable_exec.prefect.PrefectDurability] are useful references. The external
-[Restate](https://github.com/restatedev/sdk-python/tree/main/packages/integrations/pydantic-ai),
+[Restate](https://github.com/restatedev/sdk-python/tree/main/python/restate/ext/pydantic),
 [AWS Lambda](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/aws_lambda),
-and [Absurd](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/absurd)
+and Absurd
 integrations show the same public builder with JSON journals.
 
 ## Choose a backend tier
@@ -58,7 +58,7 @@ class TerminalError(Exception):
     pass
 
 
-class ImmediateBackend(JournalCallableOperationBackend[None]):
+class ImmediateBackend(JournalCallableOperationBackend):
     def __init__(self, agent_name: str, default_model_id: str | None) -> None:
         super().__init__(
             agent_name=agent_name,
@@ -78,7 +78,7 @@ class ImmediateBackend(JournalCallableOperationBackend[None]):
         return await body()
 
 
-class ImmediateDurability(BaseDurabilityCapability[None]):
+class ImmediateDurability(BaseDurabilityCapability):
     engine_spec = DurabilityEngineSpec(
         engine_name='Immediate',
         durable_unit_noun='operation',
