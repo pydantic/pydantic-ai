@@ -570,6 +570,7 @@ def test_profile_allow_seeding() -> None:
     profile = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest').profile
     assert profile == GoogleRealtimeModelProfile(
         supports_image_input=True,
+        image_input_requires_response=False,
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_output_truncation=False,
@@ -587,6 +588,8 @@ def test_profile_allow_seeding() -> None:
         supported_native_tools=frozenset({WebSearchTool}),
         # Gemini Live never reports user speech start/end; a UI must key off interruption events.
         emits_input_speech_events=False,
+        synthesizes_turn_boundary=False,
+        responses_are_requests=True,
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,
         context_window=None,

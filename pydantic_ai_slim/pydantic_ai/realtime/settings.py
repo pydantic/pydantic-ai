@@ -95,7 +95,10 @@ class RealtimeModelSettings(TypedDict, total=False):
     Gemini has no declarative tool-choice configuration, so `'required'` is ignored and allow-lists
     restrict availability without requiring a tool call.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI, and
+    OpenAI GPT-Live, which raises for `'required'` and lists of tool names: a session applies the
+    choice to every response, including the one after a tool result, so a forced call never lets the
+    model answer.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
