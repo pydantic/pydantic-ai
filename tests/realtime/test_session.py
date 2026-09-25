@@ -3454,6 +3454,38 @@ async def test_speech_while_async_tool_runs_is_within_the_same_request() -> None
     assert session.usage.requests == 1
 
 
+async def test_held_async_tool_call_response_is_recorded_when_the_session_closes() -> None:
+    """Nothing leaves the held response out of history: with no result and no end of turn, closing records it."""
+    conn = BlockingRealtimeConnection(
+        [
+            ToolCall(tool_call_id='bg_1', tool_name='hang', args='{}', runs_asynchronously=True),
+            OutputTranscript(text='This might take', is_final=False),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    async with session:
+        consumer = asyncio.create_task(drain_events(session))
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            while 'bg_1' not in session._pending_tool_calls:  # pyright: ignore[reportPrivateUsage]
+                await asyncio.sleep(0.01)
+        # Held while the model is still talking and the tool still running.
+        assert session.all_messages() == []
+        await session.close()
+        await consumer
+
+    assert _history_shape(session.all_messages()) == snapshot(
+        [('ModelResponse', ['ToolCallPart', 'This might take']), ('ModelRequest', ['ToolReturnPart'])]
+    )
+    response = session.all_messages()[0]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'interrupted'
+
+
 async def test_async_tool_result_mid_speech_splits_the_response() -> None:
     """A result that arrives while the model is still talking ends the held response right there.
 
