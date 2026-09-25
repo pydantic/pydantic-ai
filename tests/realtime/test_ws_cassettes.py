@@ -285,20 +285,28 @@ async def test_recording_truncates_inbound_audio() -> None:
     """Unit test: inbound audio is truncated so cassettes stay small — both provider shapes."""
     long_audio = 'A' * 400  # far longer than the retained byte budget
     openai_frame = {'type': 'response.output_audio.delta', 'delta': long_audio}
+    # GPT-Live names the same thing differently, and streams a continuous track, so an untruncated
+    # Live cassette is the largest of the three.
+    live_frame = {'type': 'session.output_audio.delta', 'delta': long_audio}
     gemini_frame = {'serverContent': {'modelTurn': {'parts': [{'inlineData': {'data': long_audio}}]}}}
     # `inlineData` present but without string `data` (e.g. metadata-only) is walked through untouched.
     gemini_no_data = {'serverContent': {'modelTurn': {'parts': [{'inlineData': {'mimeType': 'audio/pcm'}}]}}}
-    fake_ws = _FakeWebSocket([json.dumps(openai_frame), json.dumps(gemini_frame), json.dumps(gemini_no_data)])
+    fake_ws = _FakeWebSocket(
+        [json.dumps(openai_frame), json.dumps(live_frame), json.dumps(gemini_frame), json.dumps(gemini_no_data)]
+    )
     cassette = RealtimeCassette()
     recording = RecordingWebSocket(fake_ws, cassette)
 
     await recording.recv()
     await recording.recv()
     await recording.recv()
+    await recording.recv()
 
-    openai_stored, gemini_stored, no_data_stored = cassette.interactions
+    openai_stored, live_stored, gemini_stored, no_data_stored = cassette.interactions
     assert isinstance(openai_stored, CassetteMessage) and isinstance(gemini_stored, CassetteMessage)
+    assert isinstance(live_stored, CassetteMessage)
     assert 0 < len(openai_stored.data['delta']) < len(long_audio)
+    assert 0 < len(live_stored.data['delta']) < len(long_audio)
     stored_gemini = gemini_stored.data['serverContent']['modelTurn']['parts'][0]['inlineData']['data']
     assert 0 < len(stored_gemini) < len(long_audio)
     assert isinstance(no_data_stored, CassetteMessage)
@@ -429,8 +437,9 @@ def test_load_round_trips_close_frame(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_replay_rejects_unexpected_outbound_frame() -> None:
+async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unit test: replay asserts outbound frames match the recording, catching silent wire drift."""
+    monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
     # No recorded send at this position (the next interaction is inbound) → the send is unexpected.
     no_send = RealtimeCassette(interactions=[CassetteMessage(direction='received', data={'type': 'server.event'})])
     with pytest.raises(AssertionError, match='no matching recorded send'):
@@ -439,6 +448,43 @@ async def test_replay_rejects_unexpected_outbound_frame() -> None:
     wrong_content = RealtimeCassette(interactions=[CassetteMessage(direction='sent', data={'type': 'client.expected'})])
     with pytest.raises(AssertionError, match='did not match cassette'):
         await ReplayWebSocket(wrong_content).send(json.dumps({'type': 'client.unexpected'}))
+
+
+_LIVE_MIC_FRAME = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
+
+
+@pytest.mark.anyio
+async def test_replay_waits_for_a_direct_recv_reader() -> None:
+    """A send behind recorded inbound frames waits for a reader that calls `recv()` itself.
+
+    GPT-Live keeps one read in flight as its own task rather than iterating the socket, so it never
+    counts as an iterating reader; its progress is the only sign the frames are being consumed.
+    """
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data={'type': 'client.event'}),
+        ]
+    )
+    replay = ReplayWebSocket(cassette)
+    send = asyncio.ensure_future(replay.send(json.dumps({'type': 'client.event'})))
+    await asyncio.sleep(0)
+    assert json.loads(await replay.recv()) == {'type': 'server.event'}
+    await send
+
+
+@pytest.mark.parametrize(
+    ('frame', 'is_audio'),
+    [
+        (_LIVE_MIC_FRAME, True),
+        ({'type': 'input_audio_buffer.append', 'audio': 'AAAA'}, True),
+        ({'realtime_input': {'audio': {'data': 'AAAA'}}}, True),
+        ({'realtime_input': {'text': 'hi'}}, False),
+        ({'type': 'response.create'}, False),
+    ],
+)
+def test_is_audio_send(frame: dict[str, object], is_audio: bool) -> None:
+    assert ws_cassettes._is_audio_send(frame) is is_audio  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
