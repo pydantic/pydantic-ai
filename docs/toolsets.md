@@ -925,6 +925,12 @@ Toolsets for file operations help agents read, write, and edit files:
 * [`pydantic-ai-filesystem-sandbox`](https://github.com/zby/pydantic-ai-filesystem-sandbox) - `FileSystemToolset` with a sandbox and LLM-friendly errors
 * [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) — Deep agent framework that includes a `FilesystemToolset` with multiple backends (in-memory, real filesystem, Docker sandbox).
 
+### Email
+
+Toolsets that give an agent its own mailbox:
+
+* [`pydantic-ai-atomicmail`](https://pypi.org/project/pydantic-ai-atomicmail/) - `AtomicMailToolset` registers `register`, `jmap_request` and `help` against an [Atomic Mail](https://atomicmail.ai) inbox the agent provisions for itself by proof of work, sending and receiving over JMAP. Also available as a capability bundling the same tools with instructions, via `AtomicMailCapability`.
+
 ### Code Execution
 
 Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
