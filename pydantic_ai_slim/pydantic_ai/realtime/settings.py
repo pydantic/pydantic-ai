@@ -80,23 +80,20 @@ class RealtimeModelSettings(TypedDict, total=False):
     tool_choice: ToolChoice
     """Control which function tools the model can use.
 
-    Deprecated: setting it for [`agent.realtime()`][pydantic_ai.agent.AbstractAgent.realtime] emits a
-    [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning], and the
-    next major version will raise an error instead. A session applies it to every response, including
-    the one after a tool result, so `'required'` or a list of tool names never lets the model answer.
-    To limit which tools the model can use, filter the agent's tools instead, with a
-    [filtered toolset](../toolsets.md#filtering-tools) or [`prepare_tools`](../tools-advanced.md#prepare-tools).
-
     See the [Tool Choice guide](../tools-advanced.md#tool-choice) for detailed documentation. Every
     form is resolved exactly as it is for a standard run, including the error a name that matches no
     tool raises; a session has no output tools, so
     [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] restricts the function tools while leaving the
     model free to just speak.
 
-    `'none'` and function-tool allow-lists are enforced on every provider by restricting the tools
-    advertised when the session is created. OpenAI, Azure OpenAI, and xAI additionally support
-    declarative `'auto'` and `'required'` choices. Gemini has no declarative tool-choice configuration,
-    so `'required'` is ignored and allow-lists restrict availability without requiring a tool call.
+    It is applied once, when the session is created, and holds for every response. `'none'` and
+    function-tool allow-lists are enforced on every provider by restricting the tools advertised to the
+    model. OpenAI, Azure OpenAI, and xAI send the mode too, so they raise
+    [`UserError`][pydantic_ai.exceptions.UserError] before connecting for a choice that forces a tool
+    call (`'required'` or a list of tool names): applied to every response, including the one after a
+    tool result, it would never let the model answer. Use `ToolOrOutput` to restrict the tools instead.
+    Gemini has no declarative tool-choice configuration, so `'required'` is ignored and allow-lists
+    restrict availability without requiring a tool call.
 
     Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), and xAI.
     """

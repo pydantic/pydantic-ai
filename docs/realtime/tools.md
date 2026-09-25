@@ -41,19 +41,30 @@ If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
 
-### Limiting the available tools
+### Restricting the available tools
 
-To limit which tools the model can use, filter the agent's tools as you would for a standard run,
+The [`tool_choice`](../tools-advanced.md#tool-choice) setting in
+[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] is resolved as it is for a
+standard run, but applied once, when the session is created, and it then holds for every response.
+`'auto'` and `'none'` work as usual, and
+[`ToolOrOutput(function_tools=[...])`][pydantic_ai.settings.ToolOrOutput] limits the model to the
+named tools while leaving it free to answer:
+
+```python
+from pydantic_ai.realtime import RealtimeModelSettings
+from pydantic_ai.settings import ToolOrOutput
+
+settings = RealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['get_weather']))
+```
+
+A choice that forces a tool call — `'required'` or a list of tool names — raises a
+[`UserError`][pydantic_ai.exceptions.UserError] before connecting on OpenAI, Azure OpenAI, and xAI.
+Applied to every response, including the one after a tool result, it would never let the model
+answer: it would keep calling tools until a [usage limit](../agent.md#usage-limits) ended the session.
+Gemini Live has no tool-choice configuration, so it ignores `'required'` and treats a list of tool
+names as a restriction, like `ToolOrOutput`. To choose the tools from the run context, filter them
 with a [filtered toolset](../toolsets.md#filtering-tools) or
-[`prepare_tools`](../tools-advanced.md#prepare-tools). A session's tools are fixed when it connects.
-
-Don't use the [`tool_choice`](../tools-advanced.md#tool-choice) setting for this: it is deprecated
-for realtime sessions, so [`agent.realtime()`][pydantic_ai.agent.AbstractAgent.realtime] emits a
-[`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning] when it is set,
-and the next major version will raise an error instead. A session applies it to every response,
-including the one after a tool result, so `'required'` or a list of tool names never lets the model
-answer: it keeps calling tools until the [request limit](../agent.md#usage-limits) ends the session.
-Gemini Live has no tool-choice configuration at all.
+[`prepare_tools`](../tools-advanced.md#prepare-tools) instead.
 
 ### Concurrent tool execution
 
