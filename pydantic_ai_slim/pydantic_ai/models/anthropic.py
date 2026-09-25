@@ -2970,23 +2970,29 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _validate_effort_vs_disabled_thinking(
         self, effort: AnthropicEffort, model_settings: AnthropicModelSettings
     ) -> None:
-        """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
+        """Reject `xhigh`/`max` effort combined with explicitly disabled or budget-based thinking.
 
         Claude Opus 5 caps effort at `high` once thinking is disabled, while Claude Opus 4.8 accepts
         every effort level in that combination. Fail fast with a helpful message rather than letting
-        the API return an opaque 400.
+        the API return an opaque 400. Thinking is resolved from typed settings and
+        `extra_body['thinking']` with `extra_body` winning, matching how the request is built, so the
+        extra_body channel cannot bypass the rejection.
         """
         if effort not in ('xhigh', 'max'):
             return
         if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
             return
-        thinking = model_settings.get('anthropic_thinking')
-        if thinking is None or thinking.get('type') != 'disabled':
+        typed_thinking = model_settings.get('anthropic_thinking')
+        thinking = _effective_thinking(model_settings, typed_thinking or OMIT)
+        if isinstance(thinking, Omit):
             return
-        raise UserError(
-            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while '
-            "`anthropic_thinking={'type': 'disabled'}`. Use an effort of 'high' or below, or enable thinking."
-        )
+        thinking_type = thinking.get('type')
+        if thinking_type == 'disabled' or thinking_type == 'enabled':
+            raise UserError(
+                f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while '
+                f'thinking is explicitly configured as {thinking!r}. Use an effort of '
+                "'high' or below, or leave thinking unset so the model uses adaptive thinking."
+            )
 
     def _get_task_budget(self, model_settings: AnthropicModelSettings) -> AnthropicTaskBudget | None:
         task_budget = model_settings.get('anthropic_task_budget')
