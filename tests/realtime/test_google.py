@@ -3307,3 +3307,139 @@ def test_declared_tool_behavior_per_model(
     assert isinstance(genai_tool, genai_types.Tool) and genai_tool.function_declarations
     behavior = genai_tool.function_declarations[0].behavior
     assert (behavior.value if behavior else None) == expected_behavior
+
+
+async def test_answer_for_a_lost_call_is_owed_again_after_resuming_from_the_same_handle() -> None:
+    # The answer for a lost call went out on the resumed session, which dropped before issuing a newer
+    # handle. Resuming from the same old handle again lands on a session still stuck on the call, so it
+    # is answered again; only a handle issued after the answer settles it.
+    tool_call = genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(
+            function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+        )
+    )
+    s1 = _RecordingSession([[_handle_update('h1'), tool_call]])
+    s2 = _RecordingSession([])
+    s3 = _RecordingSession([[_handle_update('h3')], [_turn('back')]])
+    s4 = _RecordingSession([[_turn('again')]])
+    dial, handles = _dialer(s2, s3, s4)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+
+    [e async for e in conn]
+
+    assert handles[:3] == ['h1', 'h1', 'h3']
+    answered = [[[response.id for response in responses] for responses in s.tool_responses] for s in (s2, s3, s4)]
+    # s3 issued a handle after its answer, so the session resumed from it (s4) is owed nothing.
+    assert answered == [[['c1']], [['c1']], []]
+
+
+async def test_typed_turn_still_on_the_wire_at_a_drop_fails_its_send_and_is_not_reported() -> None:
+    # A typed send still in flight when the drop is noticed fails with the transport error (not a
+    # bookkeeping error), and the reconnect doesn't also report it lost: the failed send already takes it
+    # back.
+    gate = asyncio.Event()
+
+    class _Slow(_DroppableSession):
+        async def send_client_content(self, *, turns: Any = None, turn_complete: bool = True) -> None:
+            await gate.wait()
+            await super().send_client_content(turns=turns, turn_complete=turn_complete)
+
+    s1 = _Slow()
+    dial, dialing, release = _gated_dialer(_DroppableSession())
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                return
+
+    consumer = asyncio.create_task(consume())
+    # A server that withholds handles mid-turn, so an unanswered turn would otherwise be reported lost.
+    gate.set()
+    await conn.send('warm up')
+    s1.push(genai_types.LiveServerMessage(session_resumption_update=genai_types.LiveServerSessionResumptionUpdate()))
+    s1.push(_turn('ok'))
+    s1.push(_handle_update('h1'))
+    await _settle()
+    gate.clear()
+    sender = asyncio.create_task(conn.send('in flight'))
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    gate.set()
+    with pytest.raises(ConnectionClosed):
+        await sender
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+    assert not any(isinstance(event, InputRejected) for event in events)
+
+
+async def test_tool_result_landing_while_re_dialing_does_not_break_the_reconnect() -> None:
+    # A result whose write completes while the connection re-dials forgets its call; the reconnect,
+    # which already counted the call as lost, still cancels it and answers the resumed session for it.
+    gate = asyncio.Event()
+
+    class _SlowTool(_DroppableSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            await gate.wait()
+            self.sent.append(('tool_response', function_responses))
+
+    s1 = _SlowTool()
+    s2 = _DroppableSession()
+    dial, dialing, release = _gated_dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                return
+
+    consumer = asyncio.create_task(consume())
+    s1.push(_handle_update('h1'))
+    s1.push(
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+            )
+        )
+    )
+    await _settle()
+    sender = asyncio.create_task(conn.send(ToolResult(tool_call_id='c1', output='sunny')))
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    gate.set()
+    await sender
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+    await conn.send('are you there?')
+    assert ToolCallCancelled(tool_call_ids=['c1']) in events
+    assert [kind for kind, _ in s2.sent] == ['tool_response', 'client_content']
+
+
+async def test_tool_result_refused_for_its_content_is_forgotten() -> None:
+    # A result refused for binary content never goes out; its call is forgotten like one that did, so a
+    # later drop doesn't count it as lost.
+    conn = _conn(_RecordingSession())
+    conn._tool_calls['c1'] = ('get_weather', 'c1')  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='JSON-only'):
+        await conn.send(
+            ToolResult(tool_call_id='c1', output='chart', content=[BinaryContent(data=b'x', media_type='image/png')])
+        )
+    assert conn._tool_calls == {}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_typed_turns_are_not_tracked_without_a_reconnect_policy() -> None:
+    conn = _conn(_RecordingSession())
+    await conn.send('hello')
+    assert conn._uncovered_typed_turns == []  # pyright: ignore[reportPrivateUsage]

@@ -1235,6 +1235,8 @@ class _TypedTurn:
 
     input_index: int
     answered: bool = False
+    # Still on the wire: if the send then fails, the session takes the turn back itself.
+    sending: bool = True
 
 
 class GoogleRealtimeConnection(RealtimeConnection):
@@ -1279,9 +1281,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # Gemini requires. Calls Gemini sends without an id get a synthetic one so parallel id-less
         # calls don't collide.
         self._tool_calls: dict[str, tuple[str, str | None]] = {}
-        # (tool name, Gemini call id) of calls a resumed session lost but still waits on; see
-        # `_answer_lost_tool_calls`.
+        # (tool name, Gemini call id) of calls a resumed session lost but still waits on, and whether they
+        # have been answered on the current session; see `_answer_lost_tool_calls`.
         self._unanswered_lost_tool_calls: list[tuple[str, str | None]] = []
+        self._lost_tool_calls_answered = False
         # Every `send()` call is numbered (see `InputRejected.input_index`). These are the typed turns a
         # resumed session may not have, oldest first: each stays until a handle arrives after the exchange
         # that answered it ended. A handle's arrival time says nothing about which inputs it covers, but a
@@ -1294,8 +1297,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # live) resumes with the turn known. Learned once rather than from the latest update, which a
         # drop right after a send can beat.
         self._withholds_handles_mid_turn = False
-        # Serializes this connection's own sends with the answers for lost calls, which the receive loop
-        # sends too, so a user input never overtakes them.
+        # Orders the answers for lost calls, which both the receive loop and `send()` may send, so an
+        # input waiting on them never overtakes them.
         self._send_lock = Lock()
         self._native_part_index = 0
         # The `tool_call_id` generated for the most recent `executable_code` part, reused to pair the
@@ -1335,20 +1338,26 @@ class GoogleRealtimeConnection(RealtimeConnection):
         """
         input_index = self._inputs_received
         self._inputs_received += 1
-        async with self._send_lock:
+        if self._unanswered_lost_tool_calls and not self._lost_tool_calls_answered:
             # Whatever reaches a resumed session first is consumed by an exchange stuck on calls it lost,
-            # so those are answered ahead of any input (see `_answer_lost_tool_calls`).
-            await self._answer_lost_tool_calls()
-            # Tracked from before the send, so a handle or answer arriving while it is on the wire counts.
-            turn = _TypedTurn(input_index) if isinstance(content, str) else None
-            if turn is not None:
-                self._uncovered_typed_turns.append(turn)
-            try:
-                await self._send(content)
-            except BaseException:
-                if turn is not None:
-                    self._uncovered_typed_turns.remove(turn)
-                raise
+            # so those are answered ahead of any input (see `_answer_lost_tool_calls`). The lock orders
+            # this with the receive loop's own answer, so the input can't overtake it.
+            async with self._send_lock:
+                await self._answer_lost_tool_calls()
+        # Tracked from before the send, so a handle or answer arriving while it is on the wire counts.
+        # Only needed to tell a reconnect what it lost, so not tracked without a reconnect policy.
+        turn = _TypedTurn(input_index) if isinstance(content, str) and self._reconnect is not None else None
+        if turn is not None:
+            self._uncovered_typed_turns.append(turn)
+        try:
+            await self._send(content)
+        except BaseException:
+            # A reconnect noticed meanwhile has already let go of the list it was in.
+            if turn is not None and turn in self._uncovered_typed_turns:
+                self._uncovered_typed_turns.remove(turn)
+            raise
+        if turn is not None:
+            turn.sending = False
 
     async def _send(self, content: RealtimeInput) -> None:
         # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
@@ -1385,7 +1394,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
             if not self._text_turns_see_video_frames:
                 self._recent_image = (content, time.monotonic())
         elif isinstance(content, ToolResult):
-            # Forgotten only once sent: a send that hits a dropped connection is retried on the next one.
+            # Forgotten once sent, or once refused below. A send that fails on a dropped connection leaves
+            # the call for the reconnect, which cancels it and answers the resumed session for it.
             name, gemini_id = self._tool_calls.get(content.tool_call_id, ('', None))
             # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
             # output and binary attachments raise — loudly, with the tool result unsent, never a
@@ -1407,6 +1417,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     elif isinstance(item, CachePoint):
                         continue
                     elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
+                        self._tool_calls.pop(content.tool_call_id, None)
                         raise UserError(
                             f'{self._provider_label} tool results are JSON-only, so `{type(item).__name__}` '
                             'content attached to a tool return cannot be delivered. Return text instead, or '
@@ -1460,18 +1471,25 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # Gemini issues no resumption handle while a call is executing, so the re-dialed session
                 # never has a call still running at the drop, and won't answer its result (verified live:
                 # 2.5 ignores it, 3.8 closes the turn without speaking).
-                lost_tool_calls = list(self._tool_calls)
+                lost_tool_calls = dict(self._tool_calls)
                 state_resumed = self._resumption_handle is not None
                 # Likewise the typed turns no handle has covered yet, on a server that withholds handles
                 # mid-turn (or without any handle). Those still awaiting their reply are released, unless
                 # the reply had already started (it took the response, and is closed as interrupted below).
-                uncovered = self._uncovered_typed_turns if not state_resumed or self._withholds_handles_mid_turn else []
+                # A turn still on the wire is left out: its send fails, and the session takes it back.
+                uncovered = [
+                    turn
+                    for turn in self._uncovered_typed_turns
+                    if not turn.sending and (not state_resumed or self._withholds_handles_mid_turn)
+                ]
                 unanswered = [turn.input_index for turn in uncovered if not turn.answered]
                 lost_typed_turns = unanswered[1:] if self._turn_open else unanswered
                 self._uncovered_typed_turns = []
                 # Losing a call or a turn loses the exchange it belongs to, so that isn't a restored state.
                 state_restored = state_resumed and not lost_tool_calls and not uncovered
                 if await self._try_reconnect():
+                    # The new session hasn't been answered for anything yet.
+                    self._lost_tool_calls_answered = False
                     if not state_resumed:
                         # A fresh session has no stale exchange left to answer.
                         self._unanswered_lost_tool_calls.clear()
@@ -1479,12 +1497,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         # Abandon them the way Gemini's own `tool_call_cancellation` does: the tasks are
                         # cancelled and each call still gets a matching return in history. Nothing
                         # awaits between the re-dial and this event, so no tool task can send a result
-                        # for one of these calls onto the new socket before the session cancels it.
-                        for call_id in lost_tool_calls:
-                            call = self._tool_calls.pop(call_id)
+                        # for one of these calls onto the new socket before the session cancels it. A
+                        # result sent while re-dialing went to the dead socket, so the call is still owed.
+                        for call_id, call in lost_tool_calls.items():
+                            self._tool_calls.pop(call_id, None)
                             if state_resumed:
                                 self._unanswered_lost_tool_calls.append(call)
-                        yield ToolCallCancelled(tool_call_ids=lost_tool_calls)
+                        yield ToolCallCancelled(tool_call_ids=list(lost_tool_calls))
                     if self._turn_open:
                         # The dropped connection was mid-turn. Gemini never continues an in-flight
                         # generation on the re-dialed connection (resumption restores conversation
@@ -1521,10 +1540,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         The session resumes still waiting on the exchange the calls belong to, but no longer accepts
         their results. Verified live: on `gemini-3.8-live` the next input only closes that stale
         exchange, so the user's next turn goes unanswered. Answering the calls closes it instead, with
-        an empty `turn_complete`. Gemini 2.5 ignores the response. They stay owed until the answer is
-        sent, through any further reconnects that resume the same exchange. Called under `_send_lock`.
+        an empty `turn_complete`. Gemini 2.5 ignores the response. They stay owed until a handle issued
+        after the answer covers it: a session resumed from an older handle is stuck on them again and is
+        answered again. Called under `_send_lock`.
         """
-        if not self._unanswered_lost_tool_calls:
+        if not self._unanswered_lost_tool_calls or self._lost_tool_calls_answered:
             return
         await self._session.send_tool_response(
             function_responses=[
@@ -1534,7 +1554,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 for name, gemini_id in self._unanswered_lost_tool_calls
             ]
         )
-        self._unanswered_lost_tool_calls.clear()
+        self._lost_tool_calls_answered = True
 
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff, resuming from the latest handle; return whether it worked."""
@@ -1702,6 +1722,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         if update is not None:
             if update.new_handle:
                 self._resumption_handle = update.new_handle
+                if self._lost_tool_calls_answered:
+                    # Issued after the answer, so a session resumed from it is no longer stuck on the calls.
+                    self._unanswered_lost_tool_calls.clear()
                 self._uncovered_typed_turns = [turn for turn in self._uncovered_typed_turns if not turn.answered]
             elif any(not turn.answered for turn in self._uncovered_typed_turns):
                 self._withholds_handles_mid_turn = True

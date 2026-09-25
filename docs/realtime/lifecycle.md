@@ -105,9 +105,11 @@ session never has a call still running at the drop, and never answers its result
 cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
 the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
 works on a turn, so a typed turn not yet followed by a handle after its reply is missing from the
-resumed session too: if its reply hadn't started,
-[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] stops waiting for it, the
-turn stays in history, and `state_restored` is `False`. Send it again to get an answer.
+resumed session too: the turn stays in history, `state_restored` is `False`, and you can send it again.
+When its reply hadn't started and no spoken reply was in progress,
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] also stops waiting for it.
+A turn typed while the model was answering speech can't be told apart from that spoken reply, so
+`wait_for_reply()` may keep waiting for it.
 
 Local replay (OpenAI, Azure OpenAI) restores only the finalized turns, so a reply in flight when the
 socket dropped cannot continue. The session settles it before emitting the event — the partial reply

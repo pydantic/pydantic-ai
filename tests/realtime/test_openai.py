@@ -4326,8 +4326,11 @@ class _DroppableWebSocket:
 
     async def __aiter__(self) -> AsyncIterator[str]:
         while (frame := await self._inbox.get()) is not None:
-            yield frame  # pragma: no cover - nothing is pushed after the handshake here
+            yield frame
         raise rt_openai.websockets.ConnectionClosed(None, None)
+
+    def push(self, frame: dict[str, Any]) -> None:
+        self._inbox.put_nowait(json.dumps(sdk_frame(frame)))
 
     def drop(self) -> None:
         self.dropped = True
@@ -4383,3 +4386,36 @@ async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypa
             break
 
     assert [frame['type'] for frame in second.sent] == ['session.update']
+
+
+@pytest.mark.anyio
+async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deferred `response.create` that the receive loop fails to send is still asked for after the reconnect.
+
+    Only a caller's own failed request is taken back (it was told it failed); the receive loop's has no
+    caller to tell, so the reply the second turn is waiting for must come from the new connection.
+    """
+    first, second = _DroppableWebSocket(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    connect.release.set()
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        await conn.send('first')  # asks for response A, now active
+        first.push({'type': 'response.created', 'response': {'id': 'A'}})
+        events = conn.__aiter__()
+        await conn.send('second')  # deferred behind A
+        first.dropped = True  # the link is dead for writes before A's terminal arrives
+        first.push(_response_done({'id': 'A', 'status': 'completed', 'output': []}))
+        first.drop()
+        async for event in events:  # pragma: no branch
+            assert isinstance(event, RealtimeSessionReconnectEvent)
+            break
+
+    assert [frame['type'] for frame in second.sent] == ['session.update', 'response.create']
