@@ -126,7 +126,7 @@ What one request can carry is limited, and `TypeSafeModel` keeps to the first tw
 
 The whole message history is the state, so each turn adds to every request after it, and tool results, which go along whole, fill the budget fastest. Once a conversation is over the limit, every later turn fails on Jev, so behind a `FallbackModel` every one of them goes to the language model until the history is compacted.
 
-`TypeSafeModel`'s [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] is the 32k limit, so [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] measures against the limit that binds, and the [compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) processor works on a Jev agent unchanged. A `FallbackModel` reports the smallest window among its models, which is Jev's:
+Jev's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] is the 32k limit, filled in from [genai-prices](https://github.com/pydantic/genai-prices) like any model's, so [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] measures against the limit that binds, and the [compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) processor works on a Jev agent unchanged. A `FallbackModel` measures against the smallest window among its models, which is Jev's. With a genai-prices version that predates Jev's entry, its window is unknown: `context_window_used` is `None` on a `TypeSafeModel`, and a `FallbackModel` measures against the language model's much larger window instead. Upgrade genai-prices, or set the window yourself with `TypeSafeModel('jev-latest', profile={'context_window': 32_000})`.
 
 ```python {title="jev_compaction.py" requires="compact_when_window_fills.py"}
 from pydantic_ai import Agent
@@ -135,12 +135,8 @@ from pydantic_ai.models.fallback import FallbackModel
 
 from compact_when_window_fills import compact_when_window_fills
 
-model = FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol')
-print(model.context_window)
-#> 32000
-
 agent = Agent(
-    model,
+    FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
     output_type=bool,
     instructions='Does the customer want a refund?',
     capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
