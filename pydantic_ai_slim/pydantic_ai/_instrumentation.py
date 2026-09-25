@@ -433,9 +433,10 @@ def model_request_parameters_attributes(
 def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
     """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
-    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
-    the prompted-output template. Instruction parts keep their origin and ids, so what the parts are
-    and how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
+    Three fields here are that text: the instructions, whose dynamic parts can be built from deps, the
+    prompted-output template, and the `load_capability` tool's `metadata`, which repeats the capability
+    catalog in the instructions. Instruction parts keep their origin and ids, so what the parts are and
+    how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
     structure rather than message content, and `include_model_request_parameters=False` drops the
     whole attribute for anyone who wants them gone as well.
 
@@ -454,6 +455,11 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
             part.pop('content', None)
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
+    for tool in cast('list[dict[str, Any]]', parameters.get('function_tools', [])):
+        # The `load_capability` tool's `metadata` is the capability catalog, the same text as the
+        # instruction part redacted above, carried for decision models to offer each capability.
+        if tool.get('tool_kind') == 'capability-load':
+            tool.pop('metadata', None)
     return parameters
 
 

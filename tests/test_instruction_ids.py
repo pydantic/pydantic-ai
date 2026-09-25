@@ -1153,6 +1153,8 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 - deferred\
 """,
             dynamic=True,
+            # Named so a decision model can tell it apart, but with no `id`: nothing can address or override it.
+            name='capability-catalog',
         ),
     ]
 
@@ -1476,6 +1478,12 @@ DECLARING_AUTHORS = [
         (
             'agent',
             r"Instruction name 'agent' is reserved for the agent's own instructions; choose a different name\.",
+        ),
+        (
+            # A decision model leaves the part with this name out of its framing.
+            'capability-catalog',
+            r"Instruction name 'capability-catalog' is reserved for the catalog of on-demand capabilities; "
+            r'choose a different name\.',
         ),
     ],
 )

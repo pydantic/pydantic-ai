@@ -1,0 +1,215 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '872'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        Resolution.resolved:
+          instructions:
+            background: You are a customer support assistant for an online store.
+            field: resolved
+            premise: 'If the user''s request calls for Resolution: Close the conversation once the customer''s question has
+              been answered.'
+            question: Has the customer's question been answered?
+          type: noul
+        route:
+          criteria:
+            Resolution: Close the conversation once the customer's question has been answered.
+            refunds: Use for refund eligibility, refund status, or processing a refund.
+            shipping: Use for where an order is, delivery dates, and tracking.
+          instructions:
+            background: You are a customer support assistant for an online store.
+            question: Which of these does this call for?
+          type: choice
+      state: Has the refund for my returned blender gone through?
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '284'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        Resolution.resolved:
+          noul: 0.11
+          type: noul
+        route:
+          choice: refunds
+          confidence: 1.0
+          probabilities:
+            Resolution: 0.0
+            refunds: 1.0
+            shipping: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 466
+        output_tokens: 59
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1155'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        Resolution.resolved:
+          instructions:
+            background: You are a customer support assistant for an online store.
+            field: resolved
+            premise: 'If the user''s request calls for Resolution: Close the conversation once the customer''s question has
+              been answered.'
+            question: Has the customer's question been answered?
+          type: noul
+        route:
+          criteria:
+            Resolution: Close the conversation once the customer's question has been answered.
+            refund_status: Look up the status of the customer's latest refund.
+            shipping: Use for where an order is, delivery dates, and tracking.
+          instructions:
+            background: You are a customer support assistant for an online store.
+            question: Which of these does this call for?
+          type: choice
+      state:
+        done:
+        - tool_call:
+            args:
+              id: refunds
+            name: load_capability
+        - tool_return:
+            content: '{"instructions":"Confirm the order ID before issuing a refund."}'
+            name: load_capability
+        - system: 'The following tool(s) are now available: `refund_status`'
+        text: Has the refund for my returned blender gone through?
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '297'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        Resolution.resolved:
+          noul: 0.06
+          type: noul
+        route:
+          choice: refund_status
+          confidence: 0.99
+          probabilities:
+            Resolution: 0.0
+            refund_status: 1.0
+            shipping: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 573
+        output_tokens: 59
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1231'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        Resolution.resolved:
+          instructions:
+            background: You are a customer support assistant for an online store.
+            field: resolved
+            premise: 'If the user''s request calls for Resolution: Close the conversation once the customer''s question has
+              been answered.'
+            question: Has the customer's question been answered?
+          type: noul
+        route:
+          criteria:
+            Resolution: Close the conversation once the customer's question has been answered.
+            shipping: Use for where an order is, delivery dates, and tracking.
+          instructions:
+            background: You are a customer support assistant for an online store.
+            question: Which of these does this call for?
+          type: choice
+      state:
+        done:
+        - tool_call:
+            args:
+              id: refunds
+            name: load_capability
+        - tool_return:
+            content: '{"instructions":"Confirm the order ID before issuing a refund."}'
+            name: load_capability
+        - system: 'The following tool(s) are now available: `refund_status`'
+        - tool_call:
+            args: {}
+            name: refund_status
+        - tool_return:
+            content: Refund of $40 issued on 2026-05-01.
+            name: refund_status
+        text: Has the refund for my returned blender gone through?
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '272'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        Resolution.resolved:
+          noul: 0.87
+          type: noul
+        route:
+          choice: Resolution
+          confidence: 0.99
+          probabilities:
+            Resolution: 1.0
+            shipping: 0.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 620
+        output_tokens: 50
+    status:
+      code: 200
+      message: OK
+version: 1
