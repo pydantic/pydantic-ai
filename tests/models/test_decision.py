@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import pickle
+from collections import defaultdict
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Annotated, Any, Literal
 
@@ -9,7 +11,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -25,6 +27,7 @@ from pydantic_ai.models.decision import (
     ChoiceAnswer,
     ChoiceQuestion,
     DecisionAnswer,
+    DecisionHandOff,
     DecisionModel,
     DecisionModelSettings,
     DecisionRequest,
@@ -33,7 +36,7 @@ from pydantic_ai.models.decision import (
     NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
-    ToolCallProposed,
+    UnfillableRoute,
     UnsureRoute,
 )
 from pydantic_ai.models.fallback import FallbackModel
@@ -400,6 +403,17 @@ def assign(team: Literal['billing', 'technical']) -> str:
     return team
 
 
+class Reply(BaseModel):
+    """Write the customer a reply."""
+
+    body: str
+
+
+def write_note(note: str) -> str:
+    """Leave a note on the ticket."""
+    return note  # pragma: no cover
+
+
 def route_question(model: InMemoryDecisionModel, key: str = 'route') -> ChoiceQuestion:
     question = model.requests[0].questions[key]
     assert isinstance(question, ChoiceQuestion)
@@ -601,6 +615,12 @@ async def test_the_likeliest_route_is_taken_however_unsure(allow_model_requests:
         pytest.param(
             [Triage, None], {'Triage': 0.3, 'None': 0.5, 'look_up_order': 0.2, 'issue_refund': 0.0}, 'None', id='None'
         ),
+        pytest.param(
+            Reply,
+            {'Reply': 0.6, 'look_up_order': 0.3, 'issue_refund': 0.1},
+            'Reply',
+            id='an output the model cannot fill',
+        ),
     ],
 )
 async def test_a_pick_below_the_route_threshold_is_unsure(
@@ -787,7 +807,7 @@ async def test_a_boolean_schema_is_an_unsupported_argument(allow_model_requests:
     )
     model = RoutingDecisionModel({'Triage': 0.1, 'look_up': 0.9})
 
-    with pytest.raises(ToolCallProposed, match="proposed calling 'look_up'"):
+    with pytest.raises(UnfillableRoute, match="picked 'look_up'"):
         await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
 
 
@@ -820,3 +840,432 @@ async def test_the_route_question_carries_the_agent_instructions(allow_model_req
     assert route_question(model).instructions == snapshot(
         {'question': 'Which of these does this call for?', 'instructions': 'Handle support tickets.'}
     )
+
+
+class Area(str, Enum):
+    billing = 'billing'
+    bug = 'bug'
+
+
+class Customer(BaseModel):
+    area: Area = Field(description='Which part of the product is this about?')
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+    customer: Customer
+
+
+class PartReply(BaseModel):
+    """Reply, and say whether it is urgent."""
+
+    urgent: bool = Field(description='Does this need a reply within the hour?')
+    body: str
+
+
+def assign_with_note(team: Literal['billing', 'technical'], note: str) -> str:
+    """Assign the ticket to a team, with a note."""
+    return team  # pragma: no cover
+
+
+def set_urgency_with_note(urgent: bool, note: str) -> str:
+    """Set how urgent the ticket is, with a note."""
+    return note  # pragma: no cover
+
+
+@dataclass(frozen=True)
+class Cell:
+    """One output type and tool set, and the route the model picks, if it is asked to pick one."""
+
+    id: str
+    output_type: Any
+    expected: Any
+    tools: list[Any] = field(default_factory=list[Any])
+    pick: str | None = None
+
+
+# Every kind of route, each one the model can fill (`Ticket`, with a nested model and an `Enum`; `assign`;
+# `set_urgency`), can fill partly (`PartReply`, `assign_with_note`, `set_urgency_with_note`) or cannot fill at all
+# (`Reply`, `write_note`, `refund`), and the ones with nothing to fill (`escalate`, `None`, `look_up_order`). Each
+# cell is the questions of each request the step made and what the step did.
+CELLS = [
+    # A single output type, alone.
+    Cell(
+        'Ticket',
+        Ticket,
+        snapshot(([['urgent', 'customer.area']], "final_result({'urgent': True, 'customer': {'area': 'billing'}})")),
+    ),
+    Cell(
+        'PartReply',
+        PartReply,
+        snapshot(
+            (
+                [],
+                "UserError: Output field 'body' is not supported by this model",
+            )
+        ),
+    ),
+    Cell(
+        'Reply',
+        Reply,
+        snapshot(
+            (
+                [],
+                "UserError: Output field 'body' is not supported by this model",
+            )
+        ),
+    ),
+    Cell('assign', assign, snapshot(([['team']], "final_result({'team': 'billing'})"))),
+    Cell(
+        'write_note',
+        write_note,
+        snapshot(
+            (
+                [],
+                "UserError: Output field 'note' is not supported by this model",
+            )
+        ),
+    ),
+    Cell(
+        'escalate',
+        escalate,
+        snapshot(
+            (
+                [],
+                'UserError: An `output_type` with no fields is not supported by this model; there is nothing to ask the model',
+            )
+        ),
+    ),
+    # A single output type beside tools.
+    Cell(
+        'Ticket + set_urgency: Ticket',
+        Ticket,
+        snapshot(
+            ([['urgent', 'customer.area', 'route']], "final_result({'urgent': True, 'customer': {'area': 'billing'}})")
+        ),
+        [set_urgency],
+        'Ticket',
+    ),
+    Cell(
+        'Ticket + set_urgency: set_urgency',
+        Ticket,
+        snapshot(([['urgent', 'customer.area', 'route'], ['urgent']], "set_urgency({'urgent': True})")),
+        [set_urgency],
+        'set_urgency',
+    ),
+    Cell(
+        'Ticket + refund: refund',
+        Ticket,
+        snapshot(([['urgent', 'customer.area', 'route']], "hands off 'refund'")),
+        [refund],
+        'refund',
+    ),
+    Cell(
+        'assign + set_urgency: assign',
+        assign,
+        snapshot(([['team', 'route']], "final_result({'team': 'billing'})")),
+        [set_urgency],
+        'assign',
+    ),
+    Cell(
+        'PartReply + set_urgency: PartReply',
+        PartReply,
+        snapshot(([['route']], "hands off 'PartReply'")),
+        [set_urgency],
+        'PartReply',
+    ),
+    Cell(
+        'PartReply + set_urgency: set_urgency',
+        PartReply,
+        snapshot(([['route'], ['urgent']], "set_urgency({'urgent': True})")),
+        [set_urgency],
+        'set_urgency',
+    ),
+    Cell(
+        'Reply + look_up_order: Reply',
+        Reply,
+        snapshot(([['route']], "hands off 'Reply'")),
+        [look_up_order],
+        'Reply',
+    ),
+    Cell(
+        'Reply + look_up_order: look_up_order',
+        Reply,
+        snapshot(([['route']], 'look_up_order({})')),
+        [look_up_order],
+        'look_up_order',
+    ),
+    Cell(
+        'write_note + set_urgency: write_note',
+        write_note,
+        snapshot(([['route']], "hands off 'write_note'")),
+        [set_urgency],
+        'write_note',
+    ),
+    Cell(
+        'write_note + set_urgency: set_urgency',
+        write_note,
+        snapshot(([['route'], ['urgent']], "set_urgency({'urgent': True})")),
+        [set_urgency],
+        'set_urgency',
+    ),
+    Cell(
+        'Reply + refund',
+        Reply,
+        snapshot(
+            (
+                [],
+                "UserError: Output field 'body' is not supported by this model",
+            )
+        ),
+        [refund],
+    ),
+    Cell(
+        'PartReply + set_urgency_with_note',
+        PartReply,
+        snapshot(
+            (
+                [],
+                "UserError: Output field 'body' is not supported by this model",
+            )
+        ),
+        [set_urgency_with_note],
+    ),
+    # A single output type beside `None` or an output function with nothing to fill.
+    Cell(
+        'Ticket | None: Ticket',
+        [Ticket, None],
+        snapshot(
+            (
+                [['urgent', 'customer.area', 'route']],
+                "final_result_Ticket({'urgent': True, 'customer': {'area': 'billing'}})",
+            )
+        ),
+        pick='Ticket',
+    ),
+    Cell(
+        'Ticket | None: None',
+        [Ticket, None],
+        snapshot(([['urgent', 'customer.area', 'route']], "final_result_None({'response': None})")),
+        pick='None',
+    ),
+    Cell('Reply | None: Reply', [Reply, None], snapshot(([['route']], "hands off 'Reply'")), pick='Reply'),
+    Cell(
+        'Reply | None: None',
+        [Reply, None],
+        snapshot(([['route']], "final_result_None({'response': None})")),
+        pick='None',
+    ),
+    Cell(
+        'PartReply | escalate: PartReply',
+        [PartReply, escalate],
+        snapshot(([['route']], "hands off 'PartReply'")),
+        pick='PartReply',
+    ),
+    Cell(
+        'PartReply | escalate: escalate',
+        [PartReply, escalate],
+        snapshot(([['route']], 'final_result_escalate({})')),
+        pick='escalate',
+    ),
+    # A union of output types.
+    Cell(
+        'Ticket | Escalation: Escalation',
+        [Ticket, Escalation],
+        snapshot(([['route'], ['security']], "final_result_Escalation({'security': True})")),
+        pick='Escalation',
+    ),
+    Cell(
+        'Ticket | Reply: Ticket',
+        [Ticket, Reply],
+        snapshot(
+            (
+                [['route'], ['urgent', 'customer.area']],
+                "final_result_Ticket({'urgent': True, 'customer': {'area': 'billing'}})",
+            )
+        ),
+        pick='Ticket',
+    ),
+    Cell(
+        'Ticket | Reply: Reply',
+        [Ticket, Reply],
+        snapshot(([['route']], "hands off 'Reply'")),
+        pick='Reply',
+    ),
+    Cell(
+        'Ticket | assign_with_note: assign_with_note',
+        [Ticket, assign_with_note],
+        snapshot(([['route']], "hands off 'assign_with_note'")),
+        pick='assign_with_note',
+    ),
+    Cell(
+        'Ticket | assign: assign',
+        [Ticket, assign],
+        snapshot(([['route'], ['team']], "final_result_assign({'team': 'billing'})")),
+        pick='assign',
+    ),
+    Cell(
+        'PartReply | Reply',
+        [PartReply, Reply],
+        snapshot(
+            (
+                [],
+                'UserError: None of the output types can be filled by this model, so every answer would be handed off and the request asking which would be wasted',
+            )
+        ),
+    ),
+    Cell(
+        'PartReply | Reply | None: Reply',
+        [PartReply, Reply, None],
+        snapshot(([['route']], "hands off 'Reply'")),
+        pick='Reply',
+    ),
+    Cell(
+        'PartReply | Reply | None: None',
+        [PartReply, Reply, None],
+        snapshot(([['route']], "final_result_None({'response': None})")),
+        pick='None',
+    ),
+    Cell(
+        'PartReply | Reply + set_urgency: PartReply',
+        [PartReply, Reply],
+        snapshot(([['route']], "hands off 'PartReply'")),
+        [set_urgency],
+        'PartReply',
+    ),
+    Cell(
+        'PartReply | Reply + set_urgency: set_urgency',
+        [PartReply, Reply],
+        snapshot(([['route'], ['urgent']], "set_urgency({'urgent': True})")),
+        [set_urgency],
+        'set_urgency',
+    ),
+    Cell(
+        'PartReply | Reply + refund',
+        [PartReply, Reply],
+        snapshot(
+            (
+                [],
+                'UserError: None of the output types can be filled by this model, so every answer would be handed off and the request asking which would be wasted',
+            )
+        ),
+        [refund],
+    ),
+    Cell(
+        'Ticket | Escalation + refund: refund',
+        [Ticket, Escalation],
+        snapshot(([['route']], "hands off 'refund'")),
+        [refund],
+        'refund',
+    ),
+    # Only routes with nothing to fill.
+    Cell(
+        'escalate | None: escalate',
+        [escalate, None],
+        snapshot(([['route']], 'final_result_escalate({})')),
+        pick='escalate',
+    ),
+    Cell(
+        'escalate + set_urgency: set_urgency',
+        escalate,
+        snapshot(([['route'], ['urgent']], "set_urgency({'urgent': True})")),
+        [set_urgency],
+        'set_urgency',
+    ),
+]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('cell', [pytest.param(cell, id=cell.id) for cell in CELLS])
+async def test_the_route_matrix(allow_model_requests: None, cell: Cell):
+    """What each combination of routes asks, and what each pick does.
+
+    A route the model cannot fill is still offered, and picking it hands the step off; the agent is refused
+    before any request only when no route on offer could be taken without a hand-off. A unit test, because the
+    claim is about what is asked across dozens of combinations, which the TypeSafe tests cover by example.
+    """
+    model = RoutingDecisionModel(defaultdict(float, {cell.pick: 0.9} if cell.pick else {}))
+    agent = Agent(model, output_type=cell.output_type, tools=cell.tools, instructions='Handle the ticket.')
+    try:
+        async with agent.iter('I was charged twice for my order.') as run:
+            prompt_node = run.next_node
+            assert Agent.is_user_prompt_node(prompt_node)
+            request_node = await run.next(prompt_node)
+            assert Agent.is_model_request_node(request_node)
+            tools_node = await run.next(request_node)
+        assert Agent.is_call_tools_node(tools_node)
+        [call] = tools_node.model_response.parts
+        assert isinstance(call, ToolCallPart)
+        outcome = f'{call.tool_name}({call.args})'
+    except UnfillableRoute as e:
+        outcome = f'hands off {e.route!r}'
+    except UserError as e:
+        outcome = f'UserError: {str(e).split(". ")[0]}'
+    assert ([list(request.questions) for request in model.requests], outcome) == cell.expected
+
+
+@pytest.mark.anyio
+async def test_an_output_type_the_model_cannot_fill_is_left_to_the_model_behind_it(allow_model_requests: None):
+    """Beside a tool, an output type the model cannot fill is a route, where alone it would be refused.
+
+    The model picks the tool, and once it has returned the output type is the one route left. It is taken without
+    a route question, like the last tool left, and cannot be filled, so it is handed off without a request.
+    """
+    decision_model = RoutingDecisionModel({'Reply': 0.1, 'look_up_order': 0.9})
+    with pytest.raises(UnfillableRoute) as exc_info:
+        await Agent(decision_model, output_type=Reply, tools=[look_up_order]).run('Where is my order?')
+    assert (exc_info.value.route, exc_info.value.probability) == ('Reply', 1.0)
+    assert [list(request.questions) for request in decision_model.requests] == [['route']]
+
+    decision_model = RoutingDecisionModel({'Reply': 0.1, 'look_up_order': 0.9})
+    agent = Agent(FallbackModel(decision_model, TestModel(call_tools=[])), output_type=Reply, tools=[look_up_order])
+    result = await agent.run('Where is my order?')
+
+    assert result.output == Reply(body='a')
+    assert [
+        (response.model_name, [part.tool_name for part in response.parts if isinstance(part, ToolCallPart)])
+        for response in result.all_messages()
+        if isinstance(response, ModelResponse)
+    ] == snapshot([('in-memory-decisions', ['look_up_order']), ('test', ['final_result'])])
+
+
+@pytest.mark.anyio
+async def test_unfillable_output_types_left_after_the_tools_return_are_still_asked_about(allow_model_requests: None):
+    """Once the tool has returned, every route left hands off, but with several of them the model is still asked
+    which: the answer names the route the hand-off reports, and there is no one route to name without it."""
+    decision_model = RoutingDecisionModel({'PartReply': 0.3, 'Reply': 0.6, 'look_up_order': 0.9})
+    with pytest.raises(UnfillableRoute) as exc_info:
+        await Agent(decision_model, output_type=[PartReply, Reply], tools=[look_up_order]).run('Where is my order?')
+
+    assert (exc_info.value.route, exc_info.value.probability) == ('Reply', 0.6)
+    assert [list(request.questions) for request in decision_model.requests] == [['route'], ['route']]
+    assert list(route_question(decision_model).criteria) == ['PartReply', 'Reply', 'look_up_order']
+
+
+class UnavailableDecisionModel(InMemoryDecisionModel):
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        raise ModelAPIError(self.model_name, 'The backend is down.')
+
+
+@pytest.mark.anyio
+async def test_a_fallback_on_decision_hand_offs_takes_only_those(allow_model_requests: None):
+    """`fallback_on=DecisionHandOff` hands the language model the steps the decision model hands off, and nothing
+    else: an error from the decision model's backend fails the run rather than quietly costing a language model call."""
+
+    async def run(decision_model: InMemoryDecisionModel, settings: DecisionModelSettings | None = None) -> str | None:
+        model = FallbackModel(decision_model, TestModel(call_tools=[]), fallback_on=DecisionHandOff)
+        agent = Agent(model, output_type=Triage, tools=[look_up_order, refund])
+        result = await agent.run('Where is my order?', model_settings=settings)
+        return result.response.model_name
+
+    # The model picks a tool it cannot fill: `UnfillableRoute`.
+    assert await run(RoutingDecisionModel({'Triage': 0.1, 'look_up_order': 0.1, 'refund': 0.8})) == 'test'
+    # The model is unsure of its pick: `UnsureRoute`.
+    unsure = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.5, 'refund': 0.2})
+    assert await run(unsure, DecisionModelSettings(decision_route_threshold=0.7)) == 'test'
+    # The backend fails: not a hand-off, so it is not handed on.
+    with pytest.raises(ModelAPIError, match='The backend is down') as exc_info:
+        await run(UnavailableDecisionModel())
+    assert not isinstance(exc_info.value, DecisionHandOff)

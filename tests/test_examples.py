@@ -56,7 +56,7 @@ from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
 from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
-from pydantic_ai.models.decision import DecisionModel, ToolCallProposed, UnsureRoute
+from pydantic_ai.models.decision import DecisionModel, UnfillableRoute, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1031,7 +1031,7 @@ async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) ->
     if isinstance(last, ToolReturnPart) and last.tool_name == 'check_status':
         # docs/models/decision.md: with the status in view, the support desk picks `Reply`, whose `str` field a
         # decision model cannot fill, so the language model behind it takes the step
-        raise ToolCallProposed('jev-latest', _output_tool_named(info, 'Reply'), 0.81)
+        raise UnfillableRoute('jev-latest', 'Reply', 0.81)
     if isinstance(last, UserPromptPart) and last.content == (
         "Drop the staging database and restore it from last night's backup."
     ):
