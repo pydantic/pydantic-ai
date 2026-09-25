@@ -9956,6 +9956,15 @@ async def test_context_window_used_is_none_without_response_tokens() -> None:
     assert session.context_window_used is None
 
 
+async def test_context_window_used_is_none_before_any_response() -> None:
+    session = RealtimeSession(
+        FakeRealtimeConnection([]),
+        message_history=[ModelRequest.user_text_prompt('hi')],
+        profile=RealtimeModelProfile({**_profile(), 'context_window': 1000}),
+    )
+    assert session.context_window_used is None
+
+
 async def test_reported_context_window_used_is_the_latest_snapshot() -> None:
     """A provider-reported fraction wins over the derived one, and is replaced, not summed: it can go down
     after the provider compacts. A usage report that says nothing about it leaves it as it was."""
