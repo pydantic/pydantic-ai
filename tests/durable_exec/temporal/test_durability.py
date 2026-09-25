@@ -388,6 +388,62 @@ async def test_durability_agent_with_tools_in_workflow(client: Client):
         assert output == 'The country is: France'
 
 
+# --- `RunContext.in_durable_context` ---
+
+
+def _in_durable_context_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'activity: {part.content}')])
+    return ModelResponse(parts=[ToolCallPart(tool_name='tool_in_durable_context', args='{}')])
+
+
+async def tool_in_durable_context(ctx: RunContext[None]) -> bool:
+    return ctx.in_durable_context
+
+
+class _ReportInDurableContext(AbstractCapability[Any]):
+    async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        return replace(result, output=f'workflow: {ctx.in_durable_context}, {result.output}')
+
+
+_in_durable_context_agent = Agent(
+    FunctionModel(_in_durable_context_model_fn),
+    name='durability_in_durable_context',
+    toolsets=[FunctionToolset(tools=[tool_in_durable_context], id='in_durable_context')],
+    capabilities=[_ReportInDurableContext(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InDurableContextWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _in_durable_context_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_run_context_in_durable_context(client: Client):
+    """`ctx.in_durable_context` is `True` in workflow code only, not in activities or outside a workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[InDurableContextWorkflow],
+        plugins=[AgentPlugin(_in_durable_context_agent)],
+    ):
+        output = await client.execute_workflow(
+            InDurableContextWorkflow.run,
+            args=['Hello'],
+            id=InDurableContextWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'workflow: True, activity: False'
+
+    result = await _in_durable_context_agent.run('Hello')
+    assert result.output == 'workflow: False, activity: False'
+
+
 # --- Durability outside workflow (transparent passthrough) ---
 
 
@@ -2359,7 +2415,11 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2026-05-08T21:37:16Z'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'service_tier': 'default',
+                        'timestamp': '2026-05-08T21:37:16Z',
+                    },
                     provider_response_id='chatcmpl-DdNAiT49qrYrZOaeeAd39RynAa1g7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2402,7 +2462,11 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2026-05-08T21:37:17Z'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'service_tier': 'default',
+                        'timestamp': '2026-05-08T21:37:17Z',
+                    },
                     provider_response_id='chatcmpl-DdNAjt5pJt1nYbeCdbHGbo4ntTKy8',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2439,7 +2503,11 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop', 'timestamp': '2026-05-08T21:37:18Z'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'service_tier': 'default',
+                        'timestamp': '2026-05-08T21:37:18Z',
+                    },
                     provider_response_id='chatcmpl-DdNAkzvAFU1knSut20EiutyMs7PZy',
                     finish_reason='stop',
                     run_id=IsStr(),

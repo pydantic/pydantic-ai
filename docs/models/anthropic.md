@@ -125,7 +125,7 @@ You can use Anthropic models through cloud platforms by passing a custom client 
 
 To use Claude models via [AWS Bedrock](https://aws.amazon.com/bedrock/claude/), follow the [Anthropic documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock) on how to set up a Bedrock client and then pass it to `AnthropicProvider`. Both the newer `AsyncAnthropicBedrockMantle` client (recommended by Anthropic, using the Messages API) and the legacy `AsyncAnthropicBedrock` client (using the `InvokeModel` API with ARN-versioned model IDs) are supported:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - anthropic's `__all__` omits this client, so pyright reports it as not exported"}
 from anthropic import AsyncAnthropicBedrockMantle
 
 from pydantic_ai import Agent
@@ -152,7 +152,7 @@ agent = Agent(model)
 
 To use Claude models via [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude), follow the [Anthropic documentation](https://docs.anthropic.com/en/api/claude-on-vertex-ai) on how to set up an `AsyncAnthropicVertex` client and then pass it to `AnthropicProvider`:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - anthropic's `__all__` omits this client, so pyright reports it as not exported"}
 from anthropic import AsyncAnthropicVertex
 
 from pydantic_ai import Agent
@@ -512,7 +512,7 @@ agent = Agent('anthropic:claude-opus-4-8', system_prompt='You are a code reviewe
 
 
 @agent.tool
-def require_type_annotations(ctx: RunContext[None]) -> str:
+def require_type_annotations(ctx: RunContext) -> str:
     ctx.enqueue(SystemPromptPart(content='Every suggestion must include explicit type annotations.'))
     return 'rule added'
 ```

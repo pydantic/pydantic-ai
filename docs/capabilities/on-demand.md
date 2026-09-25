@@ -176,7 +176,7 @@ refunds = Capability(
 
 
 @refunds.tool
-def refund_status(ctx: RunContext[None], order_id: str) -> str:
+def refund_status(ctx: RunContext, order_id: str) -> str:
     """Look up the refund status for an order."""
     return f'Order {order_id}: refund issued on 2026-05-01.'
 ```
@@ -236,9 +236,9 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class AccountSecurityWorkflow(AbstractCapability[None]):
-    id: str = 'account-security'
-    description: str = 'Use when the next action may be destructive.'
+class AccountSecurityWorkflow(AbstractCapability):
+    id: str | None = 'account-security'
+    description: str | None = 'Use when the next action may be destructive.'
     defer_loading: bool = True
 
     def get_instructions(self) -> str:
@@ -326,8 +326,8 @@ def revoke_sessions(ctx: RunContext[Store], account_id: str) -> str:
 
 @dataclass
 class AccountSecurity(AbstractCapability[Store]):
-    id: str = 'account-security'
-    description: str = 'Use for suspicious logins, account takeover, or session revocation.'
+    id: str | None = 'account-security'
+    description: str | None = 'Use for suspicious logins, account takeover, or session revocation.'
     defer_loading: bool = True
 
     def get_instructions(self) -> str:
@@ -367,7 +367,7 @@ from pydantic_ai.capabilities import AbstractCapability, Capability
 
 
 @dataclass
-class RunbookRequired(AbstractCapability[None]):
+class RunbookRequired(AbstractCapability):
     """Bounces a tool call back until the matching runbook has been loaded."""
 
     requirements: dict[str, str] = field(default_factory=dict)

@@ -94,7 +94,7 @@ How the agent spends its context window: the difference between an agent that de
 
 ### Knowledge & memory {#knowledge-memory}
 
-What the agent knows and remembers, loaded when relevant instead of carried in every prompt. [Storage](../storage.md) covers how these sit next to the conversation history itself, which is an agent's memory of the run it is in.
+What the agent knows and remembers, loaded when relevant instead of carried in every prompt. [Persistence](../persistence.md) covers how these sit next to the conversation history itself, which is an agent's memory of the run it is in.
 
 | Capability | Package | What it does |
 |---|---|---|

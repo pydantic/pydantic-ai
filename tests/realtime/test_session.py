@@ -9022,3 +9022,497 @@ async def test_provider_output_reaches_a_view_subscribed_after_entry() -> None:
         await draining
 
     assert played == chunks
+
+
+async def test_wait_for_reply_returns_at_the_turn_boundary() -> None:
+    conn = FakeRealtimeConnection(
+        [OutputTranscript(text='hello there', is_final=True), ResponseDone()],
+    )
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Say hello.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        assert session.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())], timestamp=IsDatetime()
+                ),
+                ModelResponse(
+                    parts=[SpeechPart(speaker='assistant', transcript='hello there')],
+                    timestamp=IsDatetime(),
+                    finish_reason='stop',
+                ),
+            ]
+        )
+
+
+async def test_wait_for_reply_spans_a_tool_calling_turn() -> None:
+    """The response that calls a tool is not the reply: the answer after the tool results is.
+
+    The tool is held open so the waiter genuinely observes the gap between the tool-call response
+    finalizing and the answer starting — releasing at that first response boundary would return here
+    with nothing said yet.
+    """
+    release_tool = asyncio.Event()
+    answer_sent = asyncio.Event()
+
+    class _AnswersAfterTheTool(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}')
+            yield ResponseDone()
+            await answer_sent.wait()
+            yield OutputTranscript(text='it is sunny', is_final=True)
+            yield ResponseDone()
+
+    tool_started = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        tool_started.set()
+        await release_tool.wait()
+        return 'sunny'
+
+    session = RealtimeSession(_AnswersAfterTheTool([]), runner)
+    async with session:
+        await session.send('What is the weather?')
+        waiting = asyncio.create_task(session.wait_for_reply())
+        # Wait for the tool to be running rather than for a fixed number of loop turns, so the gap this
+        # is about — the tool-call response finalized, the answer not yet begun — is actually reached.
+        with anyio.fail_after(5):
+            await tool_started.wait()
+        assert not waiting.done(), 'returned at the tool-call response instead of the answer'
+
+        release_tool.set()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'returned before the model answered'
+
+        answer_sent.set()
+        with anyio.fail_after(5):
+            await waiting
+    assert any(
+        isinstance(part, SpeechPart) and part.transcript == 'it is sunny'
+        for message in session.all_messages()
+        for part in message.parts
+    )
+
+
+async def test_wait_for_reply_returns_immediately_when_nothing_is_owed() -> None:
+    """A reply that finished before the call is not waited for all over again."""
+    conn = FakeRealtimeConnection([OutputTranscript(text='hi', is_final=True), ResponseDone()])
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Say hi.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        # Nothing is owed now, so a second wait must not block until some later turn.
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+
+
+async def test_wait_for_reply_runs_alongside_session_iteration() -> None:
+    """The point of the method: it does not need to take over the event stream to find the boundary."""
+    conn = FakeRealtimeConnection([OutputTranscript(text='hello', is_final=True), ResponseDone()])
+    session = RealtimeSession(conn)
+    seen: list[RealtimeEvent] = []
+    async with session:
+        waiting = asyncio.create_task(session.wait_for_reply())
+        await session.send('Say hello.')
+        async for event in session:
+            seen.append(event)
+        with anyio.fail_after(5):
+            await waiting
+    assert any(isinstance(event, RealtimeTurnCompleteEvent) for event in seen)
+
+
+async def test_wait_for_reply_returns_when_the_session_closes() -> None:
+    """A never-answered reply must not park the caller forever."""
+    session = RealtimeSession(FakeRealtimeConnection([]))
+    async with session:
+        await session.send('Say hello.')
+        closing = asyncio.create_task(session.close())
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        await closing
+
+
+async def test_wait_for_reply_returns_when_the_receive_side_fails() -> None:
+    """A reply that can no longer arrive must not park the caller: the pump died owing one."""
+
+    class _DyingConnection(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield RealtimeInputSpeechStartEvent()
+            raise RuntimeError('socket died')
+
+    session = RealtimeSession(_DyingConnection([]))
+    # The failure still surfaces at close, as it would without this method: the point is that
+    # `wait_for_reply()` returns rather than parking the caller before that can happen.
+    with pytest.raises(RuntimeError, match='socket died'):
+        async with session:
+            await session.send('Say hello.')
+            assert session._pump_task is not None  # pyright: ignore[reportPrivateUsage]
+            await session._pump_task  # pyright: ignore[reportPrivateUsage]
+            with anyio.fail_after(5):
+                await session.wait_for_reply()
+
+
+async def test_wait_for_reply_returns_when_the_send_that_asked_for_it_failed() -> None:
+    """A rolled-back reservation stops counting, or the failed send would park every later waiter."""
+
+    class _RefusingConnection(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            raise RuntimeError('send failed')
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield RealtimeInputSpeechStartEvent()
+            await asyncio.Event().wait()  # the receive side stays open
+
+    session = RealtimeSession(_RefusingConnection([]))
+    async with session:
+        with pytest.raises(RuntimeError, match='send failed'):
+            await session.send('Say hello.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+
+
+async def test_wait_for_reply_waits_for_every_requested_reply() -> None:
+    """Two solicited replies are both waited for, not just the first to reach its boundary."""
+    second_reply = asyncio.Event()
+
+    class _TwoReplies(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield OutputTranscript(text='first', is_final=True)
+            yield ResponseDone()
+            await second_reply.wait()
+            yield OutputTranscript(text='second', is_final=True)
+            yield ResponseDone()
+
+    session = RealtimeSession(_TwoReplies([]))
+    async with session:
+        await session.send('One.')
+        await session.send('Two.')
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'returned at the first reply while a second was still requested'
+
+        second_reply.set()
+        with anyio.fail_after(5):
+            await waiting
+    assert any(
+        isinstance(part, SpeechPart) and part.transcript == 'second'
+        for message in session.all_messages()
+        for part in message.parts
+    )
+
+
+async def test_wait_for_reply_wakes_when_a_concurrent_send_fails() -> None:
+    """A waiter already parked on the only outstanding reservation is woken when its send fails.
+
+    The rollback alone is not enough: nothing else is coming to wake the waiter, so the release has to
+    signal as well or the caller parks until the session closes.
+    """
+    fail_send = asyncio.Event()
+
+    class _FailsMidSend(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            await fail_send.wait()
+            raise RuntimeError('send failed')
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield RealtimeInputSpeechStartEvent()
+            await asyncio.Event().wait()  # the receive side stays open
+
+    session = RealtimeSession(_FailsMidSend([]))
+    async with session:
+        sending = asyncio.create_task(session.send('Say hello.'))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'nothing was outstanding to wait on'
+
+        fail_send.set()
+        with anyio.fail_after(5):
+            await waiting
+        with pytest.raises(RuntimeError, match='send failed'):
+            await sending
+
+
+async def test_wait_for_reply_returns_when_a_reconnect_discards_the_reply() -> None:
+    """A reconnect settles the in-flight reply as interrupted; the model will never finish saying it."""
+    reconnected = asyncio.Event()
+
+    class _ReconnectsMidReply(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield OutputTranscript(text='half a sen', is_final=False)
+            yield RealtimeSessionReconnectEvent(state_restored=False)
+            reconnected.set()
+            await asyncio.Event().wait()  # the receive side stays open, but that reply is gone
+
+    session = RealtimeSession(_ReconnectsMidReply([]))
+    async with session:
+        await session.send('Say hello.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+
+
+async def test_wait_for_reply_wakes_when_a_concurrent_image_send_fails() -> None:
+    """The image path reserves a response too, so its rollback has to wake a waiter just like text's.
+
+    Every outbound call that reserves a response goes through the same release helper; this pins the
+    path that does not go through `send(str)`.
+    """
+    fail_send = asyncio.Event()
+
+    class _FailsMidSend(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            await fail_send.wait()
+            raise RuntimeError('send failed')
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield RealtimeInputSpeechStartEvent()
+            await asyncio.Event().wait()  # the receive side stays open
+
+    session = RealtimeSession(_FailsMidSend([]))
+    async with session:
+        image = BinaryImage(data=b'png', media_type='image/png')
+        sending = asyncio.create_task(session.send(image, respond=True))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'nothing was outstanding to wait on'
+
+        fail_send.set()
+        with anyio.fail_after(5):
+            await waiting
+        with pytest.raises(RuntimeError, match='send failed'):
+            await sending
+
+
+@pytest.mark.parametrize('more_expected', [False, True])
+async def test_turn_complete_waits_for_a_provider_that_says_more_is_coming(more_expected: bool) -> None:
+    """A response that ends with `more_expected` isn't the end of the exchange, so no turn boundary yet.
+
+    This is how a background-reasoning model's spoken filler is kept from claiming the model is done:
+    it completes a real response, with no tool call in it for the session to infer a continuation from,
+    while the provider is still working. See `ResponseDone.more_expected`.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Let me check that for you.', is_final=True),
+            ResponseDone(more_expected=more_expected),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events = await drain_events(session)
+
+    assert (RealtimeTurnCompleteEvent() in events) is not more_expected
+    # The response is settled either way: deferred while the exchange continues, then closed out when the
+    # session does, so history never ends on an open response.
+    assert [type(m).__name__ for m in session.all_messages()] == ['ModelResponse']
+
+
+async def test_interrupted_response_is_not_absorbed_by_what_comes_next() -> None:
+    """A barged-in utterance is over, so it closes even when the provider says more is expected.
+
+    Otherwise the interrupted speech would be merged into the model's next response and history would
+    lose the fact that the user cut it off.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Let me check tha', is_final=True),
+            ResponseDone(more_expected=True, interrupted=True),
+            OutputTranscript(text='Sorry, go ahead.', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        await drain_events(session)
+
+    responses = [m for m in session.all_messages() if isinstance(m, ModelResponse)]
+    assert [r.state for r in responses] == ['interrupted', 'complete']
+    assert [len(r.parts) for r in responses] == [1, 1]
+
+
+async def test_interrupted_response_still_closes_the_turn() -> None:
+    """A barge-in ends the exchange even when the provider says work is still in flight.
+
+    Without this, a caller waiting on `RealtimeTurnCompleteEvent` — which is every documented consumer
+    shape — would wait forever on a provider that reports the interaction as still in progress.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='Let me check tha', is_final=True),
+            ResponseDone(more_expected=True, interrupted=True),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events = await drain_events(session)
+
+    assert RealtimeTurnCompleteEvent() in events
+
+
+async def test_wait_for_reply_holds_through_a_stalled_exchange() -> None:
+    """A spoken filler the provider says isn't the end is not the reply: the answer after the tool is.
+
+    A background-reasoning model speaks, ends that response with `more_expected`, and only then calls
+    the tool it was stalling for — so, unlike `test_wait_for_reply_spans_a_tool_calling_turn`, nothing in
+    the first response tells the session a tool is coming. Returning there would hand the caller back a
+    session that is about to start talking again.
+    """
+    filler_done = asyncio.Event()
+    continue_exchange = asyncio.Event()
+
+    class _StallsThenCallsTheTool(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield OutputTranscript(text='Let me check that for you.', is_final=True)
+            yield ResponseDone(more_expected=True)
+            filler_done.set()
+            await continue_exchange.wait()
+            yield ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}')
+            yield OutputTranscript(text='it is sunny', is_final=True)
+            yield ResponseDone()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'sunny'
+
+    session = RealtimeSession(_StallsThenCallsTheTool([]), runner)
+    async with session:
+        await session.send('What is the weather?')
+        waiting = asyncio.create_task(session.wait_for_reply())
+        with anyio.fail_after(5):
+            await filler_done.wait()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'returned at the filler instead of the answer'
+
+        continue_exchange.set()
+        with anyio.fail_after(5):
+            await waiting
+
+
+def _two_stalled_utterances() -> list[RealtimeCodecEvent]:
+    """A background-reasoning model speaking twice in one exchange, with no tool call between.
+
+    Each utterance is its own provider response with its own usage report; only the first carries
+    `more_expected`, since the exchange isn't over until the second.
+    """
+    return [
+        OutputTranscript(text='Let me think.', is_final=True),
+        SessionUsage(usage=RequestUsage(input_tokens=60, output_tokens=4)),
+        ResponseDone(more_expected=True),
+        OutputTranscript(text='The answer is 42.', is_final=True),
+        SessionUsage(usage=RequestUsage(input_tokens=70, output_tokens=5)),
+        ResponseDone(),
+    ]
+
+
+async def test_stalled_utterances_without_a_tool_call_stay_separate_responses() -> None:
+    """A response is held open only for the tool call it was stalling for, not for more speech.
+
+    Merging the two would sum distinct provider responses' usage into one `ModelResponse`: 130 input
+    tokens for what were two requests of 60 and 70, one request counted where two were made.
+    """
+    session = RealtimeSession(FakeRealtimeConnection(_two_stalled_utterances()))
+    async with session:
+        events = await drain_events(session)
+
+    responses = [m for m in session.all_messages() if isinstance(m, ModelResponse)]
+    assert [[cast(SpeechPart, p).transcript for p in r.parts] for r in responses] == [
+        ['Let me think.'],
+        ['The answer is 42.'],
+    ]
+    assert [r.usage.input_tokens for r in responses] == [60, 70]
+    assert session.usage.requests == 2
+    # Still one exchange: the provider said the first response wasn't its last.
+    assert events.count(RealtimeTurnCompleteEvent()) == 1
+
+
+async def test_stalled_utterances_are_checked_against_per_request_limits_individually() -> None:
+    session = RealtimeSession(
+        FakeRealtimeConnection(_two_stalled_utterances()),
+        usage_limits=UsageLimits(per_request_input_tokens_limit=100),
+    )
+    async with session:
+        await drain_events(session)
+    assert session.usage.input_tokens == 130
+
+
+async def test_stalled_utterances_count_against_the_request_limit_individually() -> None:
+    session = RealtimeSession(
+        FakeRealtimeConnection(_two_stalled_utterances()), usage_limits=UsageLimits(request_limit=1)
+    )
+    with pytest.raises(UsageLimitExceeded):
+        async with session:
+            await drain_events(session)
+
+
+async def test_a_user_interjecting_mid_stall_is_recorded_after_the_filler() -> None:
+    """The held filler was already spoken, so a user turn that arrives next goes after it in history.
+
+    Holding the filler out of history until the exchange ended would anchor the user's interjection
+    before it — handing a standard run, or a re-seeded session, the reply before the words it answers.
+    """
+    session = RealtimeSession(
+        FakeRealtimeConnection(
+            [
+                InputTranscript(text='Find flights', is_final=False),
+                OutputTranscript(text='Let me check.', is_final=True),
+                ResponseDone(more_expected=True),
+                InputTranscript(text='Actually never mind', is_final=False),
+                ResponseDone(interrupted=True),
+                OutputTranscript(text='OK.', is_final=True),
+                ResponseDone(),
+            ]
+        )
+    )
+    async with session:
+        await drain_events(session)
+
+    assert [
+        (type(m).__name__, p.transcript) for m in session.all_messages() for p in m.parts if isinstance(p, SpeechPart)
+    ] == [
+        ('ModelRequest', 'Find flights'),
+        ('ModelResponse', 'Let me check.'),
+        ('ModelRequest', 'Actually never mind'),
+        ('ModelResponse', 'OK.'),
+    ]
+
+
+async def test_a_reconnect_mid_stall_keeps_the_spoken_filler_complete() -> None:
+    """A drop between a filler and its tool call settles the filler as the complete response it was.
+
+    Gemini doesn't resume an in-flight generation on the re-dialed connection, so the tool call the
+    filler was held for can't arrive; the codec closes the lost remainder of the exchange with an
+    interrupted terminal before the reconnect, and the filler must not be folded into that.
+    """
+    session = RealtimeSession(
+        FakeRealtimeConnection(
+            [
+                OutputTranscript(text='Let me check.', is_final=True),
+                ResponseDone(more_expected=True),
+                ResponseDone(interrupted=True),
+                RealtimeSessionReconnectEvent(state_restored=True),
+                OutputTranscript(text='Here you go.', is_final=True),
+                ResponseDone(),
+            ]
+        )
+    )
+    async with session:
+        await drain_events(session)
+
+    assert [
+        (m.state, [p.transcript for p in m.parts if isinstance(p, SpeechPart)])
+        for m in session.all_messages()
+        if isinstance(m, ModelResponse)
+    ] == [('complete', ['Let me check.']), ('interrupted', []), ('complete', ['Here you go.'])]

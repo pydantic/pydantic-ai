@@ -76,7 +76,7 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
 
 @hooks.on.before_tool_execute(tools=['send_email'])
 async def audit_tool(
-    ctx: RunContext[None],
+    ctx: RunContext,
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,
@@ -212,7 +212,7 @@ Use `for_agent(agent)` when a capability needs the agent's model, name, or tools
 
 ## Select a Model Dynamically
 
-Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, messages, and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
+Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
 
 Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win and skip capability selection. Later capabilities override earlier model contributions. Same-step continuation remains pinned to its selected model; pass an explicit model when resuming a suspended provider-side request in another run.
 

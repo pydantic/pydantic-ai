@@ -13,24 +13,25 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+openai = "2026-09-23T00:08:49Z"
 listentome = false
-typesafe-sdk = false
 logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
+google-genai = "2026-09-22T17:23:02Z"
 anthropic = "2026-09-22T16:25:39Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
-openai = "2026-09-03T19:51:09Z"
+pydantic-ai-harness = false
 logfire-api = false
 
 [manifest]
 requirements = [
     { name = "logfire" },
     { name = "opentelemetry-instrumentation-httpx" },
-    { name = "pydantic-ai-harness", specifier = "==0.7.0" },
+    { name = "pydantic-ai-harness", specifier = "==0.34.0" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "mcp"], directory = "../../pydantic_ai_slim" },
 ]
 
@@ -772,6 +773,15 @@ wheels = [
 ]
 
 [[package]]
+name = "json-repair"
+version = "0.63.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/62/72/4ec122befe7c2091ba7370d985cf0a3d4dbeccc2f832898ddb7921b4ab94/json_repair-0.63.4.tar.gz", hash = "sha256:77aa642193d62b02b889e8ce0df33898d3ea87282f0b9d8653f8ce8772c642b4", size = 52906, upload-time = "2026-08-25T07:39:02.725Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/ea/1a7b47196b0d03f59a80f5218b2a34160587c84ca8b0bcb56cb4ee93834e/json_repair-0.63.4-py3-none-any.whl", hash = "sha256:0f374f3eee21454aef0a5d72c06b8689b660a1788f80ab392639e3f7d5c5d458", size = 51295, upload-time = "2026-08-25T07:39:01.259Z" },
+]
+
+[[package]]
 name = "jsonschema"
 version = "4.26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1108,15 +1118,17 @@ email = [
 
 [[package]]
 name = "pydantic-ai-harness"
-version = "0.7.0"
+version = "0.34.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "genai-prices" },
     { name = "httpx" },
+    { name = "json-repair" },
     { name = "pydantic-ai-slim" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/a9/43f9f227bc8e8bb821e491bd9a3681e92aa11e60e7ee6e5589928efa7708/pydantic_ai_harness-0.7.0.tar.gz", hash = "sha256:b0255a347c346696f951cedef6e9664a04ce6672afe9cf4736435cc9c705a2ab", size = 1020449, upload-time = "2026-07-14T03:01:46.136Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/16/32/e0759986b8bce033e17dac91e616e096f5ab99c41a6b55588609b29c9560/pydantic_ai_harness-0.34.0.tar.gz", hash = "sha256:049ce17739b8e69067e9cdc8120fbbcc5f3c6c6bfb9cf2457a5c0b3ca8f046bf", size = 2991435, upload-time = "2026-09-23T02:50:57.536Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/27/2dd853791bbcc9ce687c072a81adfde16576bb99aebd426c27f40812d3bd/pydantic_ai_harness-0.7.0-py3-none-any.whl", hash = "sha256:1895d7ac1fa101621294505387bccdceedd1e1b67b1caaa7777e7a7d0a4de8b7", size = 313712, upload-time = "2026-07-14T03:01:44.204Z" },
+    { url = "https://files.pythonhosted.org/packages/18/e6/227553f3cc9b2b2d1350fd85ceba1e17a2bae6cfff2c6407f4bd4ef6e97e/pydantic_ai_harness-0.34.0-py3-none-any.whl", hash = "sha256:df6ca8dc6b115d75c6236ed2c9f8b708ede02efbe2de8b0b21a7ec57a47b9393", size = 928236, upload-time = "2026-09-23T02:50:55.879Z" },
 ]
 
 [[package]]
@@ -1158,8 +1170,8 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "genai-prices", specifier = ">=0.1.8" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.18.0" },
-    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.18.0" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.25.0" },
+    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.25.0" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'huggingface') or (platform_machine == 'aarch64' and extra == 'huggingface') or (platform_machine == 'amd64' and extra == 'huggingface') or (platform_machine == 'arm64' and extra == 'huggingface') or (platform_machine == 'x86_64' and extra == 'huggingface')", specifier = "<1.5.0" },
@@ -1169,15 +1181,15 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.9.2" },
-    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.8.0" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.8.0" },
+    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.19.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },

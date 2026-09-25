@@ -735,6 +735,12 @@ class RealtimeSession:
         self._pending_response_usage = RequestUsage()
         self._response_limit_checked = False
         self._pending_response_requests = 0
+        # Whether a response has actually begun, cleared at the exchange boundary that
+        # `RealtimeTurnCompleteEvent` marks. A tool-calling turn spans several responses, so the
+        # per-response flags above would read as "done" in the gaps. Reads pair with
+        # `_pending_response_requests` for the solicited-but-not-started half — see `_reply_outstanding`.
+        self._response_active = False
+        self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
@@ -835,6 +841,10 @@ class RealtimeSession:
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
+        # Set while a response the provider said isn't the last of its exchange is held open for the
+        # tool call it was stalling for; the finish reason it will be recorded with if something else
+        # arrives first. See `_handle_turn_complete`.
+        self._deferred_response_finish_reason: FinishReason | None = None
         # `ToolManager` adds a call to `usage.tool_calls` only once it *succeeds*, so calls still
         # running aren't visible there. Reserved when a `ToolCall` passes `_check_tool_call_limit`,
         # released the moment `handle_call` settles (the same event-loop segment that records a
@@ -916,6 +926,7 @@ class RealtimeSession:
             self._pending_messages.close()
             self._closed = True
             self._finish_taps(discard_pending=True)
+            self._release_exchange()
             # A session closed without ever sending, subscribing, or iterating never started one.
             # Cancelled before state is settled below so it can't mutate state mid-settlement; the
             # task is awaited together with the rest afterwards.
@@ -1206,6 +1217,73 @@ class RealtimeSession:
                 return
             await tap.progress.wait()
 
+    async def wait_for_reply(self) -> None:
+        """Wait until the model has finished the reply it owes, if any.
+
+        Returns once the exchange in progress reaches the boundary
+        [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] marks — after a
+        tool-calling turn, that is the answer that follows the tool results, not the response that
+        called them. Returns immediately when the model owes nothing, so a reply that finished between
+        the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
+        over; it also returns if the session closes.
+
+        This is the wait `async for event in session` would otherwise be written out to perform, and
+        unlike that loop it can run while something else is iterating the session, so a caller that
+        only wants the turn boundary does not have to take over the event stream to find it:
+
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+        async def main():
+            async with agent.realtime('openai:gpt-realtime').session() as session:
+                await session.send('Say hello.')
+                await session.wait_for_reply()
+        ```
+
+        Waiting for the model to stop *generating* is not the same as waiting for the speaker to stop
+        *playing*: pair it with
+        [`wait_for_playback()`][pydantic_ai.realtime.RealtimeSession.wait_for_playback] before opening
+        the microphone, so the reply is not cut off and the model does not hear itself.
+        """
+        self._ensure_streamable()
+        self._start_pump()
+        while True:
+            # Cleared before the check, so a boundary reached between the check and the wait still
+            # wakes us rather than leaving this parked until the turn after it.
+            self._exchange_progress.clear()
+            if not self._reply_outstanding():
+                return
+            await self._exchange_progress.wait()
+
+    def _release_response_reservation(self) -> None:
+        """Give back a reservation for a response that will never arrive, waking any waiter.
+
+        Rolled back by every outbound call that reserved a response and then failed to send it. The
+        decrement and the wake belong together: a caller parked in `wait_for_reply()` on that single
+        reservation has nothing else coming to wake it.
+        """
+        self._pending_response_requests -= 1
+        self._exchange_progress.set()
+
+    def _reply_outstanding(self) -> bool:
+        """Whether the model still owes speech.
+
+        Derived rather than tracked, so no failure path can leave `wait_for_reply()` parked on a reply
+        that can no longer arrive: once receiving has ended nothing more will be said, a reservation
+        rolled back by a failed send stops counting, and several `respond=True` sends in flight are all
+        waited for rather than just the first to reach its boundary.
+        """
+        if self._closed or self._pump_finished:
+            return False
+        return self._response_active or bool(self._pending_response_requests)
+
+    def _release_exchange(self) -> None:
+        self._response_active = False
+        self._exchange_progress.set()
+
     def _single_audio_tap(self, method: str, purpose: str) -> _AudioTap:
         if len(self._audio_taps) != 1:
             raise UserError(
@@ -1369,7 +1447,7 @@ class RealtimeSession:
             await self._send_frame(content if respond else TextContext(content))
         except BaseException:
             if respond:
-                self._pending_response_requests -= 1
+                self._release_response_reservation()
             self._remove_sent_request(request)
             raise
         return request
@@ -1461,7 +1539,7 @@ class RealtimeSession:
                 await self._send_frame(image)
         except BaseException:
             if respond:
-                self._pending_response_requests -= 1
+                self._release_response_reservation()
             # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
             # so nothing to take back.
             if request is not None:
@@ -1591,7 +1669,7 @@ class RealtimeSession:
         try:
             await self._send_frame(CreateResponse())
         except BaseException:
-            self._pending_response_requests -= 1
+            self._release_response_reservation()
             raise
 
     @overload
@@ -2150,9 +2228,33 @@ class RealtimeSession:
         more_expected = bool(
             self._pending_tool_calls
             or already_finalized
+            # An interrupted response ends the exchange whatever the provider says is still in flight:
+            # the user took the turn, and a boundary that never arrives would leave a caller waiting
+            # on one forever. The same exemption defers-or-finalizes below.
+            or (event.more_expected and not event.interrupted)
             or any(isinstance(part, ToolCallPart) for part in self._response_parts)
         )
         self._response_finalized_before_terminal = False
+        if event.more_expected and not event.interrupted and event.provider_details is None:
+            # The provider ended this response but said the exchange isn't over: a background-reasoning
+            # model speaks a filler, closes the response, and only then calls the tool it was stalling
+            # for. Hold the response open for that one tool call, so the utterance and the call it
+            # belongs to land in one `ModelResponse` — the same shape a response whose usage arrives
+            # mid-part gets. On Gemini the tool call's own finalization closes the pair, since its frame
+            # carries no usage to wait for.
+            #
+            # Held for the tool call *only*: anything else that arrives first — more speech, a usage
+            # report, a user transcript — settles the held response on its own (see
+            # `_settle_deferred_response`), so two utterances stay two responses with their own usage,
+            # request count, and `chat` span, and a user interjecting mid-stall is recorded after what
+            # the model had already said rather than before it.
+            #
+            # An interrupted response is exempt: the user barged in, so that utterance really is over
+            # and belongs in history as its own interrupted response. So is one carrying terminal
+            # `provider_details`, which have no pending slot to wait in.
+            self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
+            self._deferred_response_finish_reason = event.finish_reason or 'stop'
+            return events
         self._finalize_response(
             provider_response_id=event.provider_response_id,
             # An interrupted turn (barge-in) isn't an error and has no dedicated `FinishReason`; leave
@@ -2176,6 +2278,7 @@ class RealtimeSession:
         self._pending_interrupted_at_ms = None
         if not more_expected:
             events.append(RealtimeTurnCompleteEvent())
+            self._release_exchange()
             # Only the exchange boundary is marked: each response is already a `chat` span, so a marker
             # per response would say nothing the trace doesn't show, while the turn boundary — where the
             # model is actually done — has no span of its own.
@@ -2594,6 +2697,12 @@ class RealtimeSession:
         # The response the provider was cancelling on speech onset is one of the things being
         # settled here, so interrupting whatever comes next is the client's job again.
         self._server_cancelled_the_response_on_speech = False
+        # Whatever the model still owed is being settled here rather than spoken, on both the reconnect
+        # and the close path, so a `wait_for_reply()` waiting on it is waiting on nothing.
+        self._release_exchange()
+        # A response held for a tool call was spoken in full, so it is recorded as the complete response
+        # it was, ahead of anything below that really was cut short.
+        self._settle_deferred_response()
         events = self._finalize_user()
         for item_id, turn in list(self._user_turns.items()):
             if item_id is not None and not turn.finalized:
@@ -2863,7 +2972,7 @@ class RealtimeSession:
                 )
             )
         except BaseException:
-            self._pending_response_requests -= 1
+            self._release_response_reservation()
             raise
 
     # --- streaming --------------------------------------------------------------------------------
@@ -2958,6 +3067,7 @@ class RealtimeSession:
         elif self._usage_limits is not None:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
+        self._response_active = True
 
     def _accumulate_response_usage(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
@@ -3081,6 +3191,8 @@ class RealtimeSession:
     ) -> bool:
         """Process one upstream event onto the queue; return `True` to stop the pump (a limit tripped)."""
         if isinstance(event, ToolCall):
+            # The tool call a held response was waiting for joins it, so the hold is spent.
+            self._deferred_response_finish_reason = None
             if self._accept_item(event.item_id, event.tool_call_id):
                 await self._dispatch_tool_call(event)
             return False
@@ -3161,12 +3273,24 @@ class RealtimeSession:
         # before the pump processes any later event, without the pump ever waiting on user tool code.
         await validation_done.wait()
 
+    def _settle_deferred_response(self) -> None:
+        """Record a response held open for a tool call that didn't come next, as the response it was.
+
+        Only history is settled: the provider said the exchange continues, so the turn boundary and
+        `wait_for_reply()` keep waiting for the terminal that ends it.
+        """
+        if (finish_reason := self._deferred_response_finish_reason) is None:
+            return
+        self._deferred_response_finish_reason = None
+        self._finalize_response(finish_reason=finish_reason, response_occurred=True)
+
     async def _handle_non_tool_pump_event(self, event: RealtimeCodecEvent) -> bool:
         """Process an upstream event other than a tool call; return `True` to stop the pump."""
         # `_handle_pump_event` routes every `ToolCall` to `_dispatch_tool_call`, so the remaining union
         # is what `_translate_event` accepts; asserted rather than re-tested so a future codec event
         # that slips past the dispatcher fails loudly instead of reaching the wrong translator.
         assert not isinstance(event, ToolCall)
+        self._settle_deferred_response()
         if isinstance(event, ConversationCreated):
             return False
         if isinstance(event, ConversationItemCreated):
@@ -3220,6 +3344,7 @@ class RealtimeSession:
             self._pump_error = e
         finally:
             self._pump_finished = True
+            self._exchange_progress.set()
             if not self._closed:
                 self._finish_taps()
             self._queue_put(self._queue_changed)

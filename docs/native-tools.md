@@ -1068,6 +1068,7 @@ async def main():
     store = await model.client.aio.file_search_stores.create(
         config={'display_name': 'my-docs'}
     )
+    assert store.name is not None
 
     with open('my_document.txt', 'rb') as f:
         await model.client.aio.file_search_stores.upload_to_file_search_store(

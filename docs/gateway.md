@@ -283,7 +283,9 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
         model='claude-sonnet-4-5',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
-    print(response.content[0].text)
+    content = response.content[0]
+    assert isinstance(content, anthropic.types.TextBlock)
+    print(content.text)
     #> Hello user
     ```
 
@@ -302,7 +304,9 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
         model='claude-sonnet-4-5',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
-    print(response.content[0].text)
+    content = response.content[0]
+    assert isinstance(content, anthropic.types.TextBlock)
+    print(content.text)
     #> Hello user
     ```
 

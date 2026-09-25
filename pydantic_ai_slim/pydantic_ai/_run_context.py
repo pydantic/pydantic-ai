@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from ._cancel import RunCancellation
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
+    from .durable_exec._base import BaseDurabilityCapability
     from .durable_exec._toolset import RunHeldToolset
     from .models import AbstractModel
     from .realtime import RealtimeModelSettings, RealtimeSession
@@ -438,6 +439,23 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """
         realtime = sys.modules.get('pydantic_ai.realtime')
         return realtime is not None and isinstance(self.model, realtime.RealtimeModel)
+
+    @property
+    def in_durable_context(self) -> bool:
+        """Whether this code runs inside a durable container, like a Temporal workflow, DBOS workflow, or Prefect flow.
+
+        Code running there must be deterministic, since the engine replays it on recovery. This is `False`
+        inside a Temporal activity or DBOS step, where tools and model requests run, and when the agent has no
+        durability capability or is run outside a durable container. A Prefect task inherits its flow's
+        context, so it is `True` there.
+        """
+        # Looked up through `sys.modules` like `realtime`: without the module, no durability capability exists.
+        durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
+        if durable_exec is None or self.agent is None:
+            return False
+        base: type[BaseDurabilityCapability[object]] = durable_exec.BaseDurabilityCapability
+        durability = base.from_agent(self.agent)
+        return durability is not None and durability.in_durable_context
 
     @property
     def last_attempt(self) -> bool:

@@ -1718,3 +1718,29 @@ async def test_second_agent_level_instrumentation_wins_for_session_spans() -> No
 
     assert not first_exporter.get_finished_spans(), 'the superseded capability must not export'
     assert second_exporter.get_finished_spans(), 'the capability the run keeps is the one that exports'
+
+
+async def test_stalled_utterances_get_a_chat_span_each() -> None:
+    """Two provider responses in one stalled exchange are two model requests, and so two `chat` spans.
+
+    The exchange stays open across them — the first says more is coming — but a span that spanned both
+    would report the sum of two requests' usage as one.
+    """
+    settings, exporter = _settings()
+    conn = _Connection(
+        [
+            OutputTranscript(text='Let me think.', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=60, output_tokens=4)),
+            ResponseDone(more_expected=True),
+            OutputTranscript(text='The answer is 42.', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=70, output_tokens=5)),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(
+        conn, _ok_runner, instrumentation=settings, model_name='gemini-3.8-live-extended-thinking'
+    )
+    await collect_events(session)
+
+    chat_spans = [s for s in exporter.get_finished_spans() if s.name.startswith('chat ')]
+    assert [(s.attributes or {}).get('gen_ai.usage.input_tokens') for s in chat_spans] == [60, 70]

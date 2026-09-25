@@ -158,7 +158,6 @@ mixture of the two.
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.providers.azure import AzureProvider
-from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
 provider = AzureProvider(
@@ -178,9 +177,7 @@ model = AzureRealtimeModel(
 async def main():
     async with agent.realtime(model).session() as session:
         await session.send('Say hello.')
-        async for event in session:
-            if isinstance(event, RealtimeTurnCompleteEvent):
-                break  # keep listening in a real call; we stop after one reply
+        await session.wait_for_reply()  # keep listening in a real call; we stop after one reply
 ```
 
 Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.

@@ -38,17 +38,20 @@ import os
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.types import TextContent
 
 
 async def client():
     server_params = StdioServerParameters(
-        command='python', args=['mcp_server.py'], env=os.environ
+        command='python', args=['mcp_server.py'], env=dict(os.environ)
     )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool('poet', {'theme': 'socks'})
-            print(result.content[0].text)
+            content = result.content[0]
+            assert isinstance(content, TextContent)
+            print(content.text)
             """
             Oh, socks, those garments soft and sweet,
             That nestle softly 'round our feet,
@@ -153,7 +156,9 @@ async def client():
         async with ClientSession(read, write, sampling_callback=sampling_callback) as session:
             await session.initialize()
             result = await session.call_tool('poet', {'theme': 'socks'})
-            print(result.content[0].text)
+            content = result.content[0]
+            assert isinstance(content, TextContent)
+            print(content.text)
             #> Socks for a fox.
 
 
