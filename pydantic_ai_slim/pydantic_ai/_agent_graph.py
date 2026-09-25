@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import field, replace
 from functools import lru_cache
+from itertools import groupby
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
@@ -3178,63 +3179,80 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
     separates a result from the call it answers.
     """
     clean_messages: list[_messages.ModelMessage] = []
-    for message in messages:
-        last_message = clean_messages[-1] if len(clean_messages) > 0 else None
+    for plain_responses, group in groupby(messages, _is_plain_synthetic_response):
+        for message in group:
+            last_message = clean_messages[-1] if clean_messages else None
 
-        if isinstance(message, _messages.ModelRequest):
-            if (
-                last_message
-                and isinstance(last_message, _messages.ModelRequest)
-                # Requests can only be merged if they have the same instructions
-                and (
-                    not last_message.instructions
-                    or not message.instructions
-                    or last_message.instructions == message.instructions
-                )
-                # We intentionally don't block merging when `conversation_id` or application metadata
-                # differ. These fields are only bookkeeping for callers; they're never part of what gets
-                # sent to the model. Refusing to merge on a mismatch would leave two consecutive requests
-                # where the model expects one. Framework protocol state in `__pydantic_ai__` is different:
-                # model implementations read it, so combine only that reserved namespace below.
-            ):
-                parts = [*last_message.parts, *message.parts]
-                parts.sort(key=_messages._tool_results_first_sort_key)  # pyright: ignore[reportPrivateUsage]
-                metadata: dict[str, Any] | None = None
-                last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-                namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-                if is_str_dict(last_namespace) or is_str_dict(namespace):
-                    metadata = {
-                        _PYDANTIC_AI_METADATA_KEY: {
-                            **(last_namespace if is_str_dict(last_namespace) else {}),
-                            **(namespace if is_str_dict(namespace) else {}),
+            if isinstance(message, _messages.ModelRequest):
+                if (
+                    last_message
+                    and isinstance(last_message, _messages.ModelRequest)
+                    # Requests can only be merged if they have the same instructions
+                    and (
+                        not last_message.instructions
+                        or not message.instructions
+                        or last_message.instructions == message.instructions
+                    )
+                    # We intentionally don't block merging when `conversation_id` or application metadata
+                    # differ. These fields are only bookkeeping for callers; they're never part of what gets
+                    # sent to the model. Refusing to merge on a mismatch would leave two consecutive requests
+                    # where the model expects one. Framework protocol state in `__pydantic_ai__` is different:
+                    # model implementations read it, so combine only that reserved namespace below.
+                ):
+                    parts = [*last_message.parts, *message.parts]
+                    parts.sort(key=_messages._tool_results_first_sort_key)  # pyright: ignore[reportPrivateUsage]
+                    metadata: dict[str, Any] | None = None
+                    last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                    namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                    if is_str_dict(last_namespace) or is_str_dict(namespace):
+                        metadata = {
+                            _PYDANTIC_AI_METADATA_KEY: {
+                                **(last_namespace if is_str_dict(last_namespace) else {}),
+                                **(namespace if is_str_dict(namespace) else {}),
+                            }
                         }
-                    }
-                merged_message = _messages.ModelRequest(
-                    parts=parts,
-                    instructions=last_message.instructions or message.instructions,
-                    timestamp=message.timestamp or last_message.timestamp,
-                    metadata=metadata,
-                )
-                clean_messages[-1] = merged_message
-            else:
-                clean_messages.append(message)
-        elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
-            if (
-                last_message
-                and isinstance(last_message, _messages.ModelResponse)
-                # Responses can only be merged if they didn't really come from an API
-                and last_message.provider_response_id is None
-                and last_message.provider_name is None
-                and last_message.model_name is None
-                and message.provider_response_id is None
-                and message.provider_name is None
-                and message.model_name is None
-            ):
-                merged_message = replace(last_message, parts=[*last_message.parts, *message.parts])
-                clean_messages[-1] = merged_message
-            else:
-                clean_messages.append(message)
+                    merged_message = _messages.ModelRequest(
+                        parts=parts,
+                        instructions=last_message.instructions or message.instructions,
+                        timestamp=message.timestamp or last_message.timestamp,
+                        metadata=metadata,
+                    )
+                    clean_messages[-1] = merged_message
+                else:
+                    clean_messages.append(message)
+            elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
+                if (
+                    last_message
+                    and isinstance(last_message, _messages.ModelResponse)
+                    # Responses can only be merged if they didn't really come from an API
+                    and last_message.provider_response_id is None
+                    and last_message.provider_name is None
+                    and last_message.model_name is None
+                    and message.provider_response_id is None
+                    and message.provider_name is None
+                    and message.model_name is None
+                ):
+                    parts = [*last_message.parts, *message.parts]
+                    if plain_responses and _is_plain_synthetic_response(last_message):
+                        for following in group:
+                            assert isinstance(following, _messages.ModelResponse)
+                            parts.extend(following.parts)
+                    merged_message = replace(last_message, parts=parts)
+                    clean_messages[-1] = merged_message
+                else:
+                    clean_messages.append(message)
     return clean_messages
+
+
+def _is_plain_synthetic_response(message: _messages.ModelMessage) -> TypeGuard[_messages.ModelResponse]:
+    # Keep custom constructor/iterator side effects on the pairwise path.
+    return (
+        type(message) is _messages.ModelResponse
+        and type(message.parts) in (list, tuple)
+        and message.provider_response_id is None
+        and message.provider_name is None
+        and message.model_name is None
+    )
 
 
 def _clean_message_history(

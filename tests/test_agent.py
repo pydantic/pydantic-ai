@@ -2,10 +2,11 @@ import asyncio
 import json
 import re
 import sys
-from collections import defaultdict
+from collections import UserList, defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
-from dataclasses import dataclass, replace
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
@@ -80,7 +81,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.durable_exec._base import construction_toolsets
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
+from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent, SpeechPart
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -11501,6 +11502,107 @@ async def test_consecutive_model_responses_in_history():
             ),
         ]
     )
+
+
+@pytest.mark.parametrize('parts_type', [list, tuple, UserList], ids=['list', 'tuple', 'custom-sequence'])
+async def test_synthetic_response_merging_preserves_inputs(
+    parts_type: Callable[[list[ModelResponsePart]], Sequence[ModelResponsePart]],
+) -> None:
+    first = ModelResponse(
+        parts=parts_type([TextPart('a')]), usage=RequestUsage(input_tokens=7), metadata={'source': 'first'}
+    )
+    singleton = ModelResponse(parts=parts_type([TextPart('single')]))
+    history: list[ModelMessage] = [
+        first,
+        ModelResponse(parts=parts_type([])),
+        ModelResponse(
+            parts=parts_type([TextPart('b')]), usage=RequestUsage(input_tokens=99), metadata={'source': 'last'}
+        ),
+        ModelRequest(parts=[UserPromptPart('break')]),
+        singleton,
+        ModelRequest(parts=[UserPromptPart('another break')]),
+        *(ModelResponse(parts=parts_type([TextPart(text)])) for text in ('c', 'd', 'e')),
+    ]
+    original = deepcopy(history)
+    agent = Agent(TestModel(custom_output_text='ok'))
+    for _ in range(2):
+        result = await agent.run('continue', message_history=history)
+        responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+        assert [list(message.parts) for message in responses[:-1]] == [
+            [TextPart('a'), TextPart('b')],
+            [TextPart('single')],
+            [TextPart('c'), TextPart('d'), TextPart('e')],
+        ]
+        assert responses[0] is not first
+        assert responses[0].timestamp == first.timestamp
+        assert responses[0].usage is first.usage
+        assert responses[0].metadata is first.metadata
+        assert responses[1] is singleton
+        assert history == original
+
+
+@pytest.mark.parametrize(
+    'boundary',
+    [
+        ModelResponse(parts=[TextPart('boundary')], provider_response_id=''),
+        ModelResponse(parts=[TextPart('boundary')], provider_name=''),
+        ModelResponse(parts=[TextPart('boundary')], model_name=''),
+    ],
+    ids=['response-id', 'provider-name', 'model-name'],
+)
+async def test_synthetic_response_merging_preserves_provider_boundaries(boundary: ModelResponse) -> None:
+    history = [
+        *(ModelResponse(parts=[TextPart(text)]) for text in ('a', 'b', 'c')),
+        boundary,
+        *(ModelResponse(parts=[TextPart(text)]) for text in ('d', 'e', 'f')),
+    ]
+    result = await Agent(TestModel(custom_output_text='ok')).run('continue', message_history=history)
+    responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    assert [message.text for message in responses] == ['abc', 'boundary', 'def', 'ok']
+    assert responses[1] is boundary
+
+
+@pytest.mark.parametrize('subclass_first', [True, False])
+async def test_synthetic_response_merging_reconstructs_subclasses(subclass_first: bool) -> None:
+    @dataclass
+    class PreparedResponse(ModelResponse):
+        prepared_count: int = field(default=0, kw_only=True)
+
+        def __post_init__(self) -> None:
+            super().__post_init__()
+            self.prepared_count += 1
+            if len(self.parts) == 2:
+                self.model_name = 'boundary'
+
+    prepared = PreparedResponse(parts=[TextPart('a' if subclass_first else 'c')])
+    history = [ModelResponse(parts=[TextPart(text)]) for text in ('a', 'b', 'c', 'd', 'e')]
+    history[0 if subclass_first else 2] = prepared
+    result = await Agent(TestModel(custom_output_text='ok')).run('continue', message_history=history)
+    responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    if subclass_first:
+        assert [message.text for message in responses] == ['ab', 'cde', 'ok']
+        assert isinstance(responses[0], PreparedResponse)
+        assert responses[0].prepared_count == 2
+        assert responses[0].model_name == 'boundary'
+    else:
+        assert [message.text for message in responses] == ['abcde', 'ok']
+        assert type(responses[0]) is ModelResponse
+    assert prepared.prepared_count == 1
+    assert prepared.model_name is None
+
+
+async def test_synthetic_response_merging_validates_later_speech() -> None:
+    speech = SpeechPart(speaker='assistant', transcript='spoken')
+    history = [
+        ModelResponse(parts=[TextPart('a')]),
+        ModelResponse(parts=[TextPart('b')]),
+        ModelResponse(parts=[speech]),
+    ]
+    speech.speaker = 'user'
+    with pytest.raises(
+        ValueError, match=re.escape("`SpeechPart` in `ModelResponse.parts` must have `speaker='assistant'")
+    ):
+        await Agent(TestModel(custom_output_text='ok')).run('continue', message_history=history)
 
 
 def test_override_instructions_basic():
