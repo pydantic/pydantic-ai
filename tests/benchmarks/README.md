@@ -11,7 +11,9 @@ The [CodSpeed workflow](../../.github/workflows/benchmark.yml) measures wall tim
 
 You need [CodSpeed macro-runner access for public repositories](https://codspeed.io/docs/integrations/ci/github-actions/macro-runners#public-repositories). After changing the runner or measurement mode, record a fresh `main` baseline before comparing performance. Walltime results are not comparable to the previous CPU-simulation results. The job has a ten-minute timeout to bound runner usage. Superseded PR runs are canceled; `main` baseline runs are kept.
 
-The agent benchmark uses `TestModel` to avoid network latency. Its fixture warms up a reused agent before measurement. BlockBuster is disabled for this benchmark because its blocking-call instrumentation changes the workload.
+The agent benchmarks use `TestModel` to avoid network latency. Their fixtures warm up a reused agent before measurement. BlockBuster is disabled for these benchmarks because its blocking-call instrumentation changes the workload.
+
+The synthetic-history benchmark supplies 1,000 or 5,000 consecutive assistant-response fragments without provider identity metadata. The agent must merge these into one response. Fixtures construct the history and warm up the history-processing path outside the measured test.
 
 ## Stress testing
 
