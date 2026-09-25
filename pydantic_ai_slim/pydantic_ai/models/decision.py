@@ -5,7 +5,7 @@ import json
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
 from typing import Any, ClassVar, Literal, TypeAlias, cast
@@ -208,10 +208,14 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
     """A question or answer in the Decisions protocol's JSON shape: `type` first, and unset fields left out.
 
     What a `decide` span records, so it reads as what was sent and received.
+    Read field by field rather than through `asdict`, which would deep-copy whatever a backend put in an answer.
     """
-    fields = asdict(value)
-    wire: dict[str, Any] = {'type': fields.pop('type')}
-    for name, item in fields.items():
+    wire: dict[str, Any] = {'type': value.type}
+    for name in (f.name for f in dataclasses.fields(value) if f.name != 'type'):
+        item = getattr(value, name)
+        if isinstance(item, NoulCriteria):
+            # A question's own dataclass, which is the protocol's to shape, unlike what a backend answers.
+            item = dataclasses.asdict(item)
         if isinstance(value, NoulQuestion) and name == 'criteria' and item is not None:
             # Either side of a yes/no can be left undescribed, and is then left out, like the question's own fields.
             item = {outcome: meaning for outcome, meaning in item.items() if meaning is not None}
@@ -498,7 +502,9 @@ class DecisionModel(Model[InterfaceClient]):
             record_uncaught_errors(span, include_content=include_content, event_attributes=_hand_off_attributes),
         ):
             response = await self.decide(request, model_settings)
-            span.set_attributes(_decide_response_attributes(response, route_question, include_content))
+            if span.is_recording():
+                # A span that isn't recording, as a sampler can make it, keeps nothing, so nothing is built for it.
+                span.set_attributes(_decide_response_attributes(response, request, route_question, include_content))
             yield response, span
 
     async def request(
@@ -863,17 +869,15 @@ def _decide_span_attributes(
 
 
 def _decide_response_attributes(
-    response: DecisionResponse, route_question: str | None, include_content: bool
+    response: DecisionResponse, request: DecisionRequest, route_question: str | None, include_content: bool
 ) -> dict[str, AttributeValue]:
     """A `decide` span's attributes from the response.
 
     Usage is this request's alone, and deliberately not `gen_ai.usage.*`: the `chat` span above reports the sum of its
     requests there, and a backend that adds up usage across spans would count it twice.
 
-    Without content, an answer keeps its type and numbers: a score its level probabilities too, which are keyed by
-    number, but not a choice its option probabilities, nor the picked option or a rubric's legend, which can quote
-    the state. The route question's answer is kept whole, since its options are route labels: the names of the
-    user's tools and output types.
+    The answers are what the backend sent, so recording them must not be able to fail the request: whatever goes
+    wrong reading them for the span leaves them out of it, and the request goes on as it would uninstrumented.
     """
     attributes: dict[str, AttributeValue] = {
         'gen_ai.response.model': response.model_name,
@@ -882,20 +886,69 @@ def _decide_response_attributes(
     }
     if response.provider_response_id is not None:
         attributes['gen_ai.response.id'] = response.provider_response_id
-    answers: dict[str, dict[str, Any]] = {}
-    for name, answer in response.answers.items():
-        if not isinstance(answer, NoulAnswer | ChoiceAnswer | ScoreAnswer):
-            # Not an answer at all, from a backend breaking its contract. The run rejects it as it would without
-            # instrumentation, with `UnexpectedModelBehavior`, which the span records, so it is left out here.
-            continue
-        wire = _wire(answer)
-        if not include_content and name != route_question:
-            # A `type` the protocol doesn't have keeps nothing else: telemetry never fails a request the run accepts.
-            kept = _NUMERIC_ANSWER_FIELDS.get(answer.type, ())
-            wire = {key: value for key, value in wire.items() if key == 'type' or key in kept}
-        answers[name] = wire
-    attributes['pydantic_ai.decision.answers'] = safe_to_json(answers).decode()
+    offered: frozenset[str] = frozenset()
+    if route_question is not None and isinstance(question := request.questions.get(route_question), ChoiceQuestion):
+        offered = frozenset(question.criteria)
+    try:
+        answers = {
+            name: _answer_attribute(
+                answer, include_content=include_content, offered=offered if name == route_question else None
+            )
+            for name, answer in response.answers.items()
+            # Not an answer at all, from a backend breaking its contract, is left out. The run rejects it as it would
+            # without instrumentation, with `UnexpectedModelBehavior`, which the span records.
+            if isinstance(answer, NoulAnswer | ChoiceAnswer | ScoreAnswer)
+        }
+        attributes['pydantic_ai.decision.answers'] = safe_to_json(answers).decode()
+    except Exception:
+        # Instrumentation must not fail an otherwise-successful request, as a backend's answer nested too deeply to
+        # serialize would; the span is left without the answers rather than with a partial or misleading set.
+        pass
     return attributes
+
+
+def _answer_attribute(
+    answer: DecisionAnswer, *, include_content: bool, offered: frozenset[str] | None
+) -> dict[str, Any]:
+    """One answer as a `decide` span records it.
+
+    With content, it's the answer as received. Without content, it keeps its type and numbers, built from those
+    fields alone: a score its level probabilities too, which are keyed by number, but not a choice its option
+    probabilities, nor the picked option or a rubric's legend, which can quote the state. A `type` the protocol
+    doesn't have keeps nothing else.
+
+    The route question's answer, `offered` being the labels its request offered, keeps its pick and probabilities
+    without content, as they are route labels: the names of the user's tools and output types. Only those labels
+    are kept, as a backend could answer with any string, and a pick or probability under a label that wasn't
+    offered is left out.
+    """
+    if include_content:
+        return _wire(answer)
+    attribute: dict[str, Any] = {'type': answer.type}
+    if offered is not None and isinstance(answer, ChoiceAnswer):
+        if answer.choice in offered:
+            attribute['choice'] = answer.choice
+        if _is_number(answer.confidence):
+            attribute['confidence'] = answer.confidence
+        attribute['probabilities'] = {
+            label: p for label, p in answer.probabilities.items() if label in offered and _is_number(p)
+        }
+        return attribute
+    for name in _NUMERIC_ANSWER_FIELDS.get(answer.type, ()):
+        value = getattr(answer, name, None)
+        if name == 'probabilities' and isinstance(value, Mapping):
+            attribute[name] = {
+                level: p
+                for level, p in cast(Mapping[object, object], value).items()
+                if _is_number(level) and _is_number(p)
+            }
+        elif _is_number(value):
+            attribute[name] = value
+    return attribute
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 def _record_outcome(span: Span, confidence: dict[str, float] | None) -> None:
@@ -905,7 +958,9 @@ def _record_outcome(span: Span, confidence: dict[str, float] | None) -> None:
     step used none of the span's field answers.
     """
     if confidence is not None and span.is_recording():
-        span.set_attribute('pydantic_ai.decision.confidence', safe_to_json(confidence).decode())
+        # Always recorded, so only numbers: a backend could put anything where its confidence belongs.
+        numbers = {key: value for key, value in confidence.items() if _is_number(value)}
+        span.set_attribute('pydantic_ai.decision.confidence', safe_to_json(numbers).decode())
 
 
 def _threshold(settings: DecisionModelSettings, name: str, default: float) -> float:

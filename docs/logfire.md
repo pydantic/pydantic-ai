@@ -470,9 +470,9 @@ With [`include_content=False`](#excluding-prompts-and-completions), strings are 
 
 - `pydantic_ai.decision.state` is left out.
 - `pydantic_ai.decision.questions` keeps only each question's `type`, since the instructions and criteria are your own words.
-- `pydantic_ai.decision.answers` keeps only each answer's `type` and its numbers: a yes/no's `noul`, a pick's `confidence`, and a rubric's `score`, `confidence` and `probabilities`, which are keyed by level number. A pick's `choice` and its `probabilities`, keyed by option, and a rubric's `legend` are left out, since options and level descriptions can quote the text being judged. The answer to the route question is kept whole, since its options are route labels.
+- `pydantic_ai.decision.answers` keeps only each answer's `type` and its numbers: a yes/no's `noul`, a pick's `confidence`, and a rubric's `score`, `confidence` and `probabilities`, which are keyed by level number. A pick's `choice` and its `probabilities`, keyed by option, and a rubric's `legend` are left out, since options and level descriptions can quote the text being judged. The answer to the route question keeps its `choice` and `probabilities` too, since its options are route labels, but only under the labels the request offered: anything else the backend answered is left out.
 
-The route attributes and `pydantic_ai.decision.confidence` hold only labels and numbers, so they're recorded either way.
+Question keys, route labels, and the option names a question key carries for one option of a `list` or mapping are identifiers from your schema, the names of your fields, output types, tools and options, so they're always recorded, in the keys of `pydantic_ai.decision.questions`, `pydantic_ai.decision.answers` and `pydantic_ai.decision.confidence`, and in the route attributes. That includes the options of a [`Choices`][pydantic_ai.output.Choices] set built at run time, which reach the model in the schema just as a `Literal` does.
 
 Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage.*`, and no metrics are recorded for `decide` spans: the model request span above them already reports the total of its `decide` spans' usage, and a backend that adds up usage across spans would count it twice.
 
