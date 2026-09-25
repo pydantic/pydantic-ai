@@ -64,12 +64,6 @@ class ToolResult:
     """The tool's output, rendered as a string."""
     content: Sequence[UserContent] | None = None
     """Additional user content to send after the tool output when the provider supports it."""
-    respond: bool = True
-    """Whether the model should respond once this result is delivered.
-
-    On a connection that [`batches_tool_results`][pydantic_ai.realtime.codec.RealtimeConnection.batches_tool_results],
-    only the last result of a model response's tool calls asks for a response, so the model answers
-    once with all the results in hand."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -504,18 +498,13 @@ class RealtimeConnection(ABC):
         return False
 
     @property
-    def batches_tool_results(self) -> bool:
-        """Whether the connection answers a model response's tool results once, not once per result.
+    def _answers_tool_calls_per_response(self) -> bool:
+        """Whether one reply answers all the tool results of a model response, rather than one per result.
 
-        When `True`, the [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends the results
-        of the tool calls one response made as a batch, and only the last asks for a response
-        ([`ToolResult.respond`][pydantic_ai.realtime.codec.ToolResult.respond]), so the model answers
-        once with every result in hand. What the connection must then do depends on the model profile's
-        [`supports_manual_turn_control`][pydantic_ai.realtime.RealtimeModelProfile.supports_manual_turn_control]:
-        with it, honor `respond` and accept [`CreateResponse`][pydantic_ai.realtime.codec.CreateResponse]
-        (sent when every result was already out before the calling response completed); without it,
-        answer a batch by itself once it has every result, the way Gemini Live does. Defaults to
-        `False`: every result asks for a response of its own.
+        For the session's reply accounting only. The built-in connections make it so (Gemini Live answers
+        a tool-call frame once; the OpenAI-protocol connection asks for one response per calling
+        response), and the session then counts one reply per tool-calling response. Defaults to `False`,
+        which counts one per result, as a connection that asks for a response after each one needs.
         """
         return False
 

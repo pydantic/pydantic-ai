@@ -3,7 +3,6 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import contextlib
 import gc
 import io
 import wave
@@ -9908,10 +9907,10 @@ async def test_a_reconnect_mid_stall_keeps_the_spoken_filler_complete() -> None:
 
 
 class _ToolBatchConnection(FakeRealtimeConnection):
-    """One response calls `fast` and `slow` in parallel, and the model answers once it is asked to.
+    """One response calls `fast` and `slow` in parallel, and the model answers once it has every result.
 
-    Like an OpenAI-protocol server, it batches tool results and answers only a `ToolResult` that asks
-    for a response.
+    Like Gemini Live (and the OpenAI connection, which asks for one response per batch), it answers a
+    response's tool calls with a single reply once all their results have arrived.
     """
 
     def __init__(self, calls: list[RealtimeCodecEvent] | None = None, *, input_tokens: int = 1) -> None:
@@ -9921,18 +9920,21 @@ class _ToolBatchConnection(FakeRealtimeConnection):
             ToolCall(tool_call_id='c2', tool_name='slow', args='{}', response_usage_follows=True),
         ]
         self.input_tokens = input_tokens
-        self.respond = asyncio.Event()
+        self.all_results_in = asyncio.Event()
         self.close_response = asyncio.Event()
         self.after_close: list[RealtimeCodecEvent] = []
 
     @property
-    def batches_tool_results(self) -> bool:
+    def _answers_tool_calls_per_response(self) -> bool:
         return True
+
+    def results(self) -> list[ToolResult]:
+        return [content for content in self.sent if isinstance(content, ToolResult)]
 
     async def send(self, content: RealtimeInput) -> None:
         await super().send(content)
-        if isinstance(content, CreateResponse) or (isinstance(content, ToolResult) and content.respond):
-            self.respond.set()
+        if len(self.results()) == len(self.calls):
+            self.all_results_in.set()
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         for call in self.calls:
@@ -9941,11 +9943,10 @@ class _ToolBatchConnection(FakeRealtimeConnection):
         yield SessionUsage(usage=RequestUsage(input_tokens=self.input_tokens), finish_reason='tool_call')
         for event in self.after_close:
             yield event
-        while True:
-            await self.respond.wait()
-            self.respond.clear()
-            yield OutputTranscript(text='all done', is_final=True)
-            yield ResponseDone()
+        await self.all_results_in.wait()
+        yield OutputTranscript(text='all done', is_final=True)
+        yield ResponseDone()
+        await asyncio.Event().wait()  # pragma: no cover
 
 
 async def _until(condition: Callable[[], bool]) -> None:
@@ -9953,10 +9954,6 @@ async def _until(condition: Callable[[], bool]) -> None:
     with anyio.fail_after(_LIVENESS_TIMEOUT):
         while not condition():
             await asyncio.sleep(0)
-
-
-def _sent_tool_traffic(conn: FakeRealtimeConnection) -> list[RealtimeInput]:
-    return [content for content in conn.sent if isinstance(content, (ToolResult, CreateResponse))]
 
 
 def _slow_until(release: asyncio.Event) -> Callable[[str, dict[str, Any], str], Awaitable[str]]:
@@ -9970,36 +9967,32 @@ def _slow_until(release: asyncio.Event) -> Callable[[str, dict[str, Any], str], 
     return runner
 
 
-async def test_parallel_tool_results_ask_for_one_answer() -> None:
-    """A response's parallel calls get one answer: asking after each result had the model answer twice.
+@pytest.mark.parametrize('results_before_the_response_completes', [False, True])
+async def test_parallel_tool_calls_are_one_response_answered_once(results_before_the_response_completes: bool) -> None:
+    """A response's parallel calls are one `ModelResponse`, answered by one reply the session waits for.
 
-    Each result goes out once the calling response is complete and its call has settled, but only the
-    one that completes the batch asks for the answer, so exactly one reply is owed.
+    Counting a reply per result left one owed forever when the provider answered the batch once, so
+    `wait_for_reply()` hung for the rest of the session. Results that all land before the calling
+    response is complete count the reply once it is.
     """
     release_slow = asyncio.Event()
     conn = _ToolBatchConnection()
-    conn.close_response.set()
+    if not results_before_the_response_completes:
+        conn.close_response.set()
     session = RealtimeSession(conn, _slow_until(release_slow))
     async with session:
         events = asyncio.create_task(drain_events(session))
-        await _until(lambda: bool(_sent_tool_traffic(conn)))
-        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result', respond=False)]
-        waiting = asyncio.create_task(session.wait_for_reply())
-        for _ in range(10):
-            await asyncio.sleep(0)
-        assert not waiting.done()
-
+        await _until(lambda: bool(conn.results()))
         release_slow.set()
+        await _until(lambda: conn.all_results_in.is_set())
+        conn.close_response.set()
         with anyio.fail_after(_LIVENESS_TIMEOUT):
-            await waiting
-        assert _sent_tool_traffic(conn) == [
-            ToolResult(tool_call_id='c1', output='fast result', respond=False),
-            ToolResult(tool_call_id='c2', output='slow result'),
-        ]
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+            await _until(lambda: session._pending_response_requests == 0 and not session._response_active)  # pyright: ignore[reportPrivateUsage]
+            await session.wait_for_reply()
         await session.close()
         events.cancel()
 
+    assert [result.tool_call_id for result in conn.results()] == ['c1', 'c2']
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
     assert [[type(part).__name__ for part in response.parts] for response in responses] == [
         ['ToolCallPart', 'ToolCallPart'],
@@ -10008,231 +10001,65 @@ async def test_parallel_tool_results_ask_for_one_answer() -> None:
     assert session.usage.requests == 2
 
 
-async def test_tool_result_sent_before_its_response_completes_asks_for_the_answer_after_it() -> None:
-    """A result out before the calling response is complete can't know it is the last one.
-
-    The answer is asked for on its own once the response completes: the same frames the OpenAI
-    connection sent before batching, whose `response.create` for an early result also waited for the
-    calling response's `response.done`.
-    """
-    conn = _ToolBatchConnection([ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)])
-    session = RealtimeSession(conn, _slow_until(asyncio.Event()))
-    async with session:
-        events = asyncio.create_task(drain_events(session))
-        await _until(lambda: bool(_sent_tool_traffic(conn)))
-        for _ in range(10):
-            await asyncio.sleep(0)
-        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result', respond=False)]
-
-        conn.close_response.set()
-        with anyio.fail_after(_LIVENESS_TIMEOUT):
-            await _until(lambda: len(_sent_tool_traffic(conn)) >= 2)
-            await session.wait_for_reply()
-        assert _sent_tool_traffic(conn) == [
-            ToolResult(tool_call_id='c1', output='fast result', respond=False),
-            CreateResponse(),
-        ]
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-        await session.close()
-        events.cancel()
-
-
-async def test_tool_result_still_going_out_when_its_response_completes_asks_for_the_answer() -> None:
-    """The answer waits for a result still on its way to the wire, then is asked for once it's out."""
-    release_send = asyncio.Event()
-
-    class _SlowToolResultSend(_ToolBatchConnection):
-        async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, ToolResult):
-                self.close_response.set()
-                await release_send.wait()
-            await super().send(content)
-
-    conn = _SlowToolResultSend([ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)])
-    session = RealtimeSession(conn, _slow_until(asyncio.Event()))
-    async with session:
-        events = asyncio.create_task(drain_events(session))
-        await _until(lambda: session._open_tool_batch is None and not session._closed_tool_batches)  # pyright: ignore[reportPrivateUsage]
-        assert not any(isinstance(content, CreateResponse) for content in conn.sent)
-        release_send.set()
-        with anyio.fail_after(_LIVENESS_TIMEOUT):
-            await _until(lambda: len(_sent_tool_traffic(conn)) >= 2)
-            await session.wait_for_reply()
-        assert _sent_tool_traffic(conn) == [
-            ToolResult(tool_call_id='c1', output='fast result', respond=False),
-            CreateResponse(),
-        ]
-        await session.close()
-        events.cancel()
-
-
-async def test_tool_batch_answer_is_only_counted_where_the_provider_answers_by_itself() -> None:
-    """Without manual turn control the provider answers a complete batch itself; the reply is still owed."""
-    conn = _ToolBatchConnection([ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)])
-    session = RealtimeSession(
-        conn, _slow_until(asyncio.Event()), profile=RealtimeModelProfile(supports_manual_turn_control=False)
-    )
-    async with session:
-        events = asyncio.create_task(drain_events(session))
-        await _until(lambda: bool(_sent_tool_traffic(conn)))
-        conn.close_response.set()
-        await _until(lambda: session._pending_response_requests == 1)  # pyright: ignore[reportPrivateUsage]
-        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result', respond=False)]
-        conn.respond.set()  # the provider answers on its own
-        with anyio.fail_after(_LIVENESS_TIMEOUT):
-            await session.wait_for_reply()
-        await session.close()
-        events.cancel()
-
-
-async def test_tool_batch_answer_request_that_fails_to_send_ends_the_session() -> None:
-    """A failed request for a batch's answer gives its reservation back and ends the session."""
-
-    class _RefusesCreateResponse(_ToolBatchConnection):
-        async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, CreateResponse):
-                raise RuntimeError('send failed')
-            await super().send(content)
-
-    conn = _RefusesCreateResponse(
-        [ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)]
-    )
-    session = RealtimeSession(conn, _slow_until(asyncio.Event()))
-    with pytest.raises(RuntimeError, match='send failed'):
-        async with session:
-            events = asyncio.create_task(drain_events(session))
-            await _until(lambda: bool(_sent_tool_traffic(conn)))
-            conn.close_response.set()
-            with anyio.fail_after(_LIVENESS_TIMEOUT):
-                await session.wait_for_reply()
-            assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-            await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
-
-
-async def test_last_result_waits_for_a_sibling_still_going_out_before_asking_for_the_answer() -> None:
-    """The last tool to finish doesn't ask while a sibling's result is still on its way: it may fail."""
-    sending_fast = asyncio.Event()
-    fail_fast = asyncio.Event()
-
-    class _FailsTheFastResultLate(_ToolBatchConnection):
-        async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, ToolResult) and content.tool_call_id == 'c1':
-                sending_fast.set()
-                await fail_fast.wait()
-                raise RuntimeError('send failed')
-            await super().send(content)
-
+async def test_parallel_tool_calls_answer_is_waited_for_while_a_call_still_runs() -> None:
+    """`wait_for_reply()` doesn't return between the first result and the answer to the whole batch."""
     release_slow = asyncio.Event()
-    conn = _FailsTheFastResultLate()
+    conn = _ToolBatchConnection()
     conn.close_response.set()
     session = RealtimeSession(conn, _slow_until(release_slow))
-    with pytest.raises(RuntimeError, match='send failed'):
-        async with session:
-            events = asyncio.create_task(drain_events(session))
-            await _until(lambda: sending_fast.is_set() and session._open_tool_batch is None)  # pyright: ignore[reportPrivateUsage]
-            release_slow.set()
-            # Both results are now on their way: the fast one holding the send lock, the slow one queued.
-            await _until(lambda: session._tool_call_batches['c2'].sending == 2)  # pyright: ignore[reportPrivateUsage]
-            fail_fast.set()
-            await _until(lambda: bool(_sent_tool_traffic(conn)))
-            for _ in range(10):
-                await asyncio.sleep(0)
-            assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c2', output='slow result', respond=False)]
-            assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-            await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
-
-
-@pytest.mark.parametrize('loss', ['reconnect', 'cancelled'])
-async def test_result_going_out_when_its_batch_is_abandoned_asks_for_no_answer(loss: str) -> None:
-    """A lost conversation or a provider cancellation crossing an outgoing result still reaches its batch."""
-    release_send = asyncio.Event()
-
-    class _AbandonsWhileSending(_ToolBatchConnection):
-        async def send(self, content: RealtimeInput) -> None:
-            # Only the tool result is sent. A frame already handed to the transport goes out even if the
-            # sending task is cancelled.
-            self.close_response.set()
-            with contextlib.suppress(asyncio.CancelledError):
-                await release_send.wait()
-            await release_send.wait()
-            await super().send(content)
-
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-            yield ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)
-            await self.close_response.wait()
-            yield SessionUsage(usage=RequestUsage(input_tokens=1), finish_reason='tool_call')
-            if loss == 'reconnect':
-                yield RealtimeSessionReconnectEvent(state_restored=False)
-            else:
-                yield ToolCallCancelled(tool_call_ids=['c1'])
-            release_send.set()
-            await asyncio.Event().wait()
-
-    conn = _AbandonsWhileSending()
-    session = RealtimeSession(conn, _slow_until(asyncio.Event()))
     async with session:
         events = asyncio.create_task(drain_events(session))
-        await _until(lambda: bool(_sent_tool_traffic(conn)) and not session._tool_call_batches)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: bool(conn.results()))
+        waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(10):
             await asyncio.sleep(0)
-        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result', respond=False)]
+        assert not waiting.done()
+        release_slow.set()
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await waiting
         assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
 
 
-async def test_connection_that_does_not_batch_tool_results_gets_one_request_per_result() -> None:
-    """A connection that doesn't declare `batches_tool_results` keeps the old contract unchanged."""
-    release_slow = asyncio.Event()
+async def test_connection_answering_each_result_keeps_a_reply_per_result() -> None:
+    """A custom connection that asks for a response after each result keeps being counted that way."""
 
     class _PerResult(_ToolBatchConnection):
         @property
-        def batches_tool_results(self) -> bool:
+        def _answers_tool_calls_per_response(self) -> bool:
             return False
 
     conn = _PerResult()
     conn.close_response.set()
-    session = RealtimeSession(conn, _slow_until(release_slow))
+    session = RealtimeSession(conn, _slow_until(asyncio.Event()))
     async with session:
         events = asyncio.create_task(drain_events(session))
-        await _until(lambda: bool(_sent_tool_traffic(conn)))
-        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result')]
-        release_slow.set()
-        await _until(lambda: len(_sent_tool_traffic(conn)) >= 2)
-        assert _sent_tool_traffic(conn)[1] == ToolResult(tool_call_id='c2', output='slow result')
+        await _until(lambda: bool(conn.results()))
+        await _until(lambda: session._pending_response_requests == 1)  # pyright: ignore[reportPrivateUsage]
+        assert not session._tool_call_batches  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
 
 
-@pytest.mark.parametrize('manual_turn_control', [True, False])
-async def test_provider_cancelled_call_does_not_ask_for_an_answer(manual_turn_control: bool) -> None:
-    """A call the provider cancels (a barge-in) means the batch's answer is no longer wanted.
-
-    Its siblings' results still go out, since they are real, but none of them asks for a response:
-    whatever the user's interruption starts is the next reply, and a request here would answer a turn
-    the model abandoned (OpenAI) or wait on a reply that never comes (Gemini).
-    """
+async def test_provider_cancelled_call_leaves_no_reply_owed() -> None:
+    """A call the provider cancels (a barge-in) means its batch won't be answered: no reply is owed."""
     conn = _ToolBatchConnection()
     conn.close_response.set()
     conn.after_close = [ToolCallCancelled(tool_call_ids=['c2'])]
-    session = RealtimeSession(
-        conn,
-        _slow_until(asyncio.Event()),
-        profile=RealtimeModelProfile(supports_manual_turn_control=manual_turn_control),
-    )
+    session = RealtimeSession(conn, _slow_until(asyncio.Event()))
     async with session:
         events = asyncio.create_task(drain_events(session))
-        await _until(lambda: bool(_sent_tool_traffic(conn)) and 'c2' not in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: bool(conn.results()) and 'c2' not in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
         for _ in range(10):
             await asyncio.sleep(0)
-        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result', respond=False)]
         assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
 
 
-async def test_lost_conversation_drops_tool_batches() -> None:
-    """A reconnect that lost the conversation doesn't ask the model to answer results it may not have."""
+async def test_lost_conversation_leaves_no_tool_batch_reply_owed() -> None:
+    """A reconnect that lost the conversation doesn't count a reply for results it may not have."""
 
     class _DropsMidBatch(_ToolBatchConnection):
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -10246,122 +10073,78 @@ async def test_lost_conversation_drops_tool_batches() -> None:
     session = RealtimeSession(conn, _slow_until(asyncio.Event()))
     async with session:
         events = asyncio.create_task(drain_events(session))
-        await _until(lambda: bool(_sent_tool_traffic(conn)))
+        await _until(lambda: bool(conn.results()))
         conn.close_response.set()
         await _until(lambda: not session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
         with anyio.fail_after(_LIVENESS_TIMEOUT):
             await session.wait_for_reply()
-        for _ in range(10):
-            await asyncio.sleep(0)
-        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result', respond=False)]
         assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: not session._tool_call_batches)  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
 
 
-async def test_tool_that_outlives_a_lost_conversation_does_not_ask_for_an_answer() -> None:
-    """A tool that swallows the cancellation a reconnect sends and returns anyway asks for no answer."""
-    cancelled = asyncio.Event()
-
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            cancelled.set()
-        return f'{name} result'
-
-    class _DropsWhileRunning(_ToolBatchConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-            yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}', response_usage_follows=True)
-            yield SessionUsage(usage=RequestUsage(input_tokens=1))  # the calling response is complete
-            yield RealtimeSessionReconnectEvent(state_restored=False)
-            await asyncio.Event().wait()
-
-    conn = _DropsWhileRunning()
-    session = RealtimeSession(conn, runner)
-    async with session:
-        events = asyncio.create_task(drain_events(session))
-        await _until(lambda: bool(_sent_tool_traffic(conn)))
-        assert cancelled.is_set()
-        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='slow result', respond=False)]
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-        await session.close()
-        events.cancel()
+async def test_tool_batch_reply_that_would_exceed_the_request_limit_ends_the_session() -> None:
+    """The reply a complete batch is owed is a request like any other, checked against `request_limit`."""
+    conn = _ToolBatchConnection([ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)])
+    session = RealtimeSession(conn, _slow_until(asyncio.Event()), usage_limits=UsageLimits(request_limit=1))
+    with pytest.raises(UsageLimitExceeded):
+        async with session:
+            events = asyncio.create_task(drain_events(session))
+            await _until(lambda: bool(conn.results()))
+            conn.close_response.set()
+            await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
 
 
-async def test_tool_batch_answer_is_not_asked_for_when_the_calling_response_trips_a_usage_limit() -> None:
-    """Limits are checked against the calling response before its batch asks for the next one."""
+async def test_tool_batch_reply_is_not_counted_when_the_calling_response_trips_a_usage_limit() -> None:
+    """Limits are checked against the calling response before its batch counts the next one."""
     conn = _ToolBatchConnection(
         [ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)], input_tokens=5
     )
     session = RealtimeSession(
-        conn,
-        _slow_until(asyncio.Event()),
-        usage_limits=UsageLimits(per_request_input_tokens_limit=1),
+        conn, _slow_until(asyncio.Event()), usage_limits=UsageLimits(per_request_input_tokens_limit=1)
     )
-    with pytest.raises(UsageLimitExceeded):
+    with pytest.raises(UsageLimitExceeded, match='per_request_input_tokens_limit'):
         async with session:
             events = asyncio.create_task(drain_events(session))
-            await _until(lambda: bool(_sent_tool_traffic(conn)))
+            await _until(lambda: bool(conn.results()))
             conn.close_response.set()
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
-    assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result', respond=False)]
+    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_tool_batch_answer_that_would_exceed_the_request_limit_is_not_asked_for() -> None:
-    """The answer a batch asks for is a request like any other, checked against `request_limit`."""
-    conn = _ToolBatchConnection([ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)])
-    session = RealtimeSession(
-        conn,
-        _slow_until(asyncio.Event()),
-        usage_limits=UsageLimits(request_limit=1),
-    )
-    with pytest.raises(UsageLimitExceeded):
-        async with session:
-            events = asyncio.create_task(drain_events(session))
-            await _until(lambda: bool(_sent_tool_traffic(conn)))
-            conn.close_response.set()
-            with anyio.fail_after(_LIVENESS_TIMEOUT):
-                await session.wait_for_reply()
-            await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
-    assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result', respond=False)]
+@pytest.mark.parametrize('failing_call', ['c1', 'c2'])
+async def test_tool_result_that_fails_to_send_leaves_no_reply_owed(failing_call: str) -> None:
+    """A provider missing one of a batch's results won't answer it, so no reply stays counted.
 
-
-@pytest.mark.parametrize('early', [True, False])
-async def test_tool_result_that_fails_to_send_leaves_no_answer_to_ask_for(early: bool) -> None:
-    """A result that didn't go out can't be answered: nothing after it asks for a response.
-
-    `early` covers a result sent before the calling response completes, whose answer would be asked for
-    at the response boundary; otherwise it is sent after the boundary, while its sibling still runs.
+    `c2` is the last result, sent with the reply counted; `c1` goes out while `c2` still runs.
     """
-    release_slow = asyncio.Event()
 
-    class _RefusesTheFastResult(_ToolBatchConnection):
+    class _RefusesTheSlowResult(_ToolBatchConnection):
         async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, ToolResult) and content.tool_call_id == 'c1':
+            if isinstance(content, ToolResult) and content.tool_call_id == failing_call:
                 raise RuntimeError('send failed')
             await super().send(content)
 
-    conn = _RefusesTheFastResult()
+    release_slow = asyncio.Event()
+    conn = _RefusesTheSlowResult()
+    conn.close_response.set()
     session = RealtimeSession(conn, _slow_until(release_slow))
     with pytest.raises(RuntimeError, match='send failed'):
         async with session:
             events = asyncio.create_task(drain_events(session))
-            if early:
-                await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
-            conn.close_response.set()
-            await _until(lambda: bool(session._parked_errors) or session._pump_finished)  # pyright: ignore[reportPrivateUsage]
+            if failing_call == 'c2':
+                await _until(lambda: bool(conn.results()))
             release_slow.set()
-            await _until(lambda: 'c2' not in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
-            for _ in range(10):
-                await asyncio.sleep(0)
-            assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c2', output='slow result', respond=False)]
+            await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
             assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+            with anyio.fail_after(_LIVENESS_TIMEOUT):
+                await session.wait_for_reply()
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
 
 
-async def test_tool_result_outside_any_batch_asks_for_the_answer_itself() -> None:
-    """A result whose call is in no batch has no sibling to wait for, so it asks for the answer."""
+async def test_tool_result_outside_any_batch_is_a_reply_of_its_own() -> None:
+    """A result whose call is in no batch has no sibling to wait for: its reply is counted with it."""
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn)
     await session._send_tool_result(  # pyright: ignore[reportPrivateUsage]
@@ -10369,6 +10152,19 @@ async def test_tool_result_outside_any_batch_asks_for_the_answer_itself() -> Non
     )
     assert conn.sent == [ToolResult(tool_call_id='c1', output='done')]
     assert session._pending_response_requests == 1  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_tool_result_outside_any_batch_that_fails_to_send_counts_no_reply() -> None:
+    class _Refuses(FakeRealtimeConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            raise RuntimeError('send failed')
+
+    session = RealtimeSession(_Refuses([]))
+    with pytest.raises(RuntimeError, match='send failed'):
+        await session._send_tool_result(  # pyright: ignore[reportPrivateUsage]
+            ToolCallPart(tool_name='noop', args={}, tool_call_id='c1'), 'done', []
+        )
+    assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_wait_for_reply_counts_merged_response_requests_once() -> None:
@@ -10559,92 +10355,6 @@ async def test_tool_failure_does_not_hide_a_later_server_started_reply() -> None
             await events
 
 
-async def test_provider_answering_a_batch_by_itself_takes_the_reservation_made_before_its_last_result() -> None:
-    """A provider that answers the moment the last result arrives must find a reservation to take.
-
-    The fast result is still going out when the slow one settles, and the provider starts its answer
-    as soon as the slow one arrives, before that send returns. The reply was counted before the last
-    result left, so nothing leaks and `wait_for_reply()` returns once the answer is done.
-    """
-
-    def last_result_sent() -> bool:
-        return any(isinstance(content, ToolResult) and content.tool_call_id == 'c2' for content in conn.sent)
-
-    class _AnswersOnArrival(_ToolBatchConnection):
-        async def send(self, content: RealtimeInput) -> None:
-            assert isinstance(content, ToolResult)
-            if content.tool_call_id == 'c1':
-                # Still going out while the slow call settles and queues its own result.
-                await _until(lambda: session._tool_call_batches['c1'].sending == 2)  # pyright: ignore[reportPrivateUsage]
-            await super().send(content)
-            if content.tool_call_id == 'c2':
-                # The provider's answer begins before this send returns.
-                await answer_begun.wait()
-                last_send_returned.set()
-
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-            for call in self.calls:
-                yield call
-            yield SessionUsage(usage=RequestUsage(input_tokens=1))
-            await _until(last_result_sent)
-            yield OutputTranscript(text='both', is_final=True)
-            answer_begun.set()  # the session has taken the answer's first event
-            await last_send_returned.wait()
-            yield ResponseDone()
-
-    answer_begun = asyncio.Event()
-    last_send_returned = asyncio.Event()
-    release_slow = asyncio.Event()
-    conn = _AnswersOnArrival()
-    session = RealtimeSession(
-        conn, _slow_until(release_slow), profile=RealtimeModelProfile(supports_manual_turn_control=False)
-    )
-    async with session:
-        events = asyncio.create_task(drain_events(session))
-        await _until(lambda: session._open_tool_batch is None and bool(session._tool_call_batches))  # pyright: ignore[reportPrivateUsage]
-        release_slow.set()
-        with anyio.fail_after(_LIVENESS_TIMEOUT):
-            await _until(last_result_sent)
-            await session.wait_for_reply()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-        await session.close()
-        events.cancel()
-
-
-async def test_reply_counted_for_a_provider_answering_by_itself_is_given_back_if_a_result_fails() -> None:
-    """A provider missing one of the batch's results won't answer it, so the reply counted for it is released."""
-    fail_fast = asyncio.Event()
-
-    class _FailsTheFastResult(_ToolBatchConnection):
-        async def send(self, content: RealtimeInput) -> None:
-            assert isinstance(content, ToolResult)
-            if content.tool_call_id == 'c1':
-                await fail_fast.wait()
-                raise RuntimeError('send failed')
-            await super().send(content)
-
-    release_slow = asyncio.Event()
-    conn = _FailsTheFastResult()
-    conn.close_response.set()
-    session = RealtimeSession(
-        conn, _slow_until(release_slow), profile=RealtimeModelProfile(supports_manual_turn_control=False)
-    )
-    with pytest.raises(RuntimeError, match='send failed'):
-        async with session:
-            events = asyncio.create_task(drain_events(session))
-            await _until(lambda: session._open_tool_batch is None and 'c1' not in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
-            release_slow.set()
-            # The slow result is the last: the reply is counted before it goes out, behind the fast one.
-            await _until(lambda: session._pending_response_requests == 1)  # pyright: ignore[reportPrivateUsage]
-            fail_fast.set()
-            await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
-            await _until(lambda: not session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
-            assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-            with anyio.fail_after(_LIVENESS_TIMEOUT):
-                await session.wait_for_reply()
-            await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
-
-
 async def test_reconnect_with_tools_running_leaves_no_tool_batch_behind() -> None:
     """A batch whose response a reconnect settles is closed then, so it retires once its calls are cancelled."""
 
@@ -10678,52 +10388,8 @@ async def test_failed_tool_leaves_no_tool_batch_behind() -> None:
             events = asyncio.create_task(drain_events(session))
             await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
             await _until(lambda: not session._tool_call_batches)  # pyright: ignore[reportPrivateUsage]
-            assert _sent_tool_traffic(conn) == []
+            assert conn.results() == []
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
-
-
-@pytest.mark.parametrize('early', [True, False])
-@pytest.mark.parametrize('manual_turn_control', [True, False])
-async def test_cancellation_after_the_last_result_went_out_gives_its_counted_reply_back(
-    manual_turn_control: bool, early: bool
-) -> None:
-    """A provider that cancels the calls after their results went out won't answer them either.
-
-    `early` has the result settle before the calling response completes, so the tool task asks for the
-    answer itself and is cancelled while doing so, after the interrupted turn already took the reply.
-    """
-
-    class _CancelsAfterTheResult(_ToolBatchConnection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-            for call in self.calls:
-                yield call
-            yield SessionUsage(usage=RequestUsage(input_tokens=1))
-            await _until(lambda: bool(_sent_tool_traffic(self)))
-            yield ToolCallCancelled(tool_call_ids=['c1'])  # a barge-in crossing the result
-            # The interrupted turn's boundary (Gemini sends its usage with it), with no answer.
-            yield SessionUsage(usage=RequestUsage(input_tokens=1))
-            yield ResponseDone(interrupted=True)
-            await asyncio.Event().wait()  # pragma: no cover
-
-    conn = _CancelsAfterTheResult(
-        [ToolCall(tool_call_id='c1', tool_name='slow', args='{}', response_usage_follows=True)]
-    )
-    release = asyncio.Event()
-    session = RealtimeSession(
-        conn, _slow_until(release), profile=RealtimeModelProfile(supports_manual_turn_control=manual_turn_control)
-    )
-    async with session:
-        events = asyncio.create_task(drain_events(session))
-        if not early:
-            await _until(lambda: 'c1' in session._tool_call_batches and session._tool_call_batches['c1'].closed)  # pyright: ignore[reportPrivateUsage]
-        release.set()
-        await _until(lambda: bool(_sent_tool_traffic(conn)) and not session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
-        with anyio.fail_after(_LIVENESS_TIMEOUT):
-            await session.wait_for_reply()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-        assert not session._tool_call_batches  # pyright: ignore[reportPrivateUsage]
-        await session.close()
-        events.cancel()
 
 
 async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchange() -> None:

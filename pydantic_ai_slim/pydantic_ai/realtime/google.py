@@ -1270,8 +1270,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._turn_open = False
 
     @property
-    def batches_tool_results(self) -> bool:
-        # Gemini answers a tool-call frame once every call in it has a result, whatever `respond` says.
+    def _answers_tool_calls_per_response(self) -> bool:
         return True
 
     @property

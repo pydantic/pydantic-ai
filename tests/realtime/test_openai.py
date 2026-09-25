@@ -4282,14 +4282,6 @@ async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.M
 
 
 @pytest.mark.anyio
-async def test_connection_send_tool_result_without_respond_asks_for_no_response() -> None:
-    ws = FakeWebSocket([])
-    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    await conn.send(ToolResult(tool_call_id='call_1', output='42', respond=False))
-    assert [json.loads(frame)['type'] for frame in ws.sent] == ['conversation.item.create']
-
-
-@pytest.mark.anyio
 async def test_requests_merged_into_a_deferred_response_create_are_reported() -> None:
     """Requests joining one already deferred get no `response.create` of their own, and the session is told.
 
@@ -4307,7 +4299,6 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     await conn.send('second')  # deferred behind the first response
     await conn.send('third')  # joins the deferred request
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))  # joins it too
-    await conn.send(ToolResult(tool_call_id='call_2', output='43', respond=False))  # asks for nothing
 
     events = await collect_codec_events(conn)
     # Reported once the shared response has started, not when the requests joined: a refused
