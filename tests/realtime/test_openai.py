@@ -4303,6 +4303,22 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     assert [json.loads(frame)['type'] for frame in ws.sent].count('response.create') == 2
 
 
+@pytest.mark.anyio
+async def test_response_started_by_the_server_reports_no_merged_requests() -> None:
+    """Only the start of the response a `response.create` asked for settles the requests it carried."""
+    created = [
+        json.dumps({'type': 'response.created', 'response': {'id': rid, 'status': 'in_progress', 'output': []}})
+        for rid in ('resp-1', 'resp-2')
+    ]
+    conn = OpenAIRealtimeConnection(FakeWebSocket(created))  # type: ignore[arg-type]
+    await conn.send('first')
+    await conn.send('second')  # deferred behind the first
+    await conn.send('third')  # joins the deferred request
+    # A second `response.created` while the first response is still active (a server-started response)
+    # is not the deferred request starting.
+    assert not any(isinstance(event, ResponseRequestsMerged) for event in await collect_codec_events(conn))
+
+
 class _QueuedWebSocket(FakeWebSocket):
     """A fake socket fed frame by frame, so a test can interleave server frames with the session's sends."""
 
