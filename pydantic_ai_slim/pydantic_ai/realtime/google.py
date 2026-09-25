@@ -1275,7 +1275,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         Gemini takes images on two channels, and a turn only sees the images on its own channel
         (verified live): a spoken turn sees video frames, and a typed turn sees images in its client
         content. So an image is held until the next input, which decides the channel: a text turn
-        carries it in its own content, and anything else sends it as a video frame first. A newer
+        carries it in its own content, and anything else sends it as a video frame first. `TextContext`
+        leaves it held, because it doesn't say which kind of turn will ask about the image. A newer
         image sends the held one as a video frame, and one that nothing follows goes out as a video
         frame after `_IMAGE_HOLD_SECONDS`, so a camera without a microphone still streams.
         """
@@ -1283,18 +1284,22 @@ class GoogleRealtimeConnection(RealtimeConnection):
             await self._send_held_image()
             self._hold_image(content)
             return
-        if isinstance(content, (str, TextContext)):
-            image = self._take_held_image()
-            parts = [genai_types.Part(text=content if isinstance(content, str) else content.text)]
-            if image is not None:
+        if isinstance(content, str):
+            parts = [genai_types.Part(text=content)]
+            if (image := self._take_held_image()) is not None:
                 parts.insert(
                     0, genai_types.Part(inline_data=genai_types.Blob(data=image.data, mime_type=image.media_type))
                 )
             # A typed message is a discrete turn: commit it with `send_client_content(turn_complete=True)`
-            # so the model replies, rather than buffering it as streaming realtime input. `TextContext`
-            # waits for the next turn instead.
+            # so the model replies, rather than buffering it as streaming realtime input.
             await self._session.send_client_content(
-                turns=genai_types.Content(role='user', parts=parts), turn_complete=isinstance(content, str)
+                turns=genai_types.Content(role='user', parts=parts), turn_complete=True
+            )
+            return
+        if isinstance(content, TextContext):
+            await self._session.send_client_content(
+                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
+                turn_complete=False,
             )
             return
         await self._send_held_image()

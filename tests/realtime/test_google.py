@@ -1035,8 +1035,6 @@ async def test_send_image_then_text_carries_image_in_text_turn() -> None:
     conn = _conn(session)
     await conn.send(_IMAGE)
     await conn.send('What is on it?')
-    await conn.send(_OTHER_IMAGE)
-    await conn.send(TextContext('Background.'))
     assert session.realtime == []
     assert [(sent['turns'].parts, sent['turn_complete']) for sent in session.client_content] == [
         (
@@ -1045,15 +1043,22 @@ async def test_send_image_then_text_carries_image_in_text_turn() -> None:
                 genai_types.Part(text='What is on it?'),
             ],
             True,
-        ),
-        (
-            [
-                genai_types.Part(inline_data=genai_types.Blob(data=b'\xff\xd9', mime_type='image/png')),
-                genai_types.Part(text='Background.'),
-            ],
-            False,
-        ),
+        )
     ]
+
+
+async def test_text_context_leaves_image_held() -> None:
+    # Context text doesn't say how the image will be asked about: in client content, a spoken turn
+    # wouldn't see it, so the image waits for the input that does decide.
+    session = _RecordingSession()
+    conn = _conn(session)
+    await conn.send(_IMAGE)
+    await conn.send(TextContext('It is my fridge.'))
+    await conn.send(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    assert [(sent['turns'].parts, sent['turn_complete']) for sent in session.client_content] == [
+        ([genai_types.Part(text='It is my fridge.')], False)
+    ]
+    assert [list(frame) for frame in session.realtime] == [['video'], ['audio']]
 
 
 async def test_send_image_then_audio_sends_video_frame_first() -> None:

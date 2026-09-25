@@ -240,8 +240,9 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
   because Live cannot accept function parts in seeded turns.
 - A Gemini turn only sees the [images](audio.md#images) sent on its own channel: a spoken turn sees
   live video frames, and a typed turn sees images in its own content. So an image sent with `send()`
-  waits for the next input for up to a second. A text turn carries it in its own content, and
-  anything else (audio, another image, a tool result) sends it as a video frame first. If nothing
+  waits for the next input for up to a second. A text turn carries it in its own content, text sent
+  with `respond=False` leaves it waiting, and anything else (audio, another image, a tool result)
+  sends it as a video frame first. If nothing
   follows within the second, it goes out as a video frame, so a camera without a microphone still
   streams. A question typed later than that may not see the image, so send the two together:
   `session.send([image, 'What is this?'])`.
