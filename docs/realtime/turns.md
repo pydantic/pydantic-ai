@@ -1,3 +1,7 @@
+---
+description: "Control turn-taking in Pydantic AI realtime voice agents: voice activity detection (VAD), barge-in when the user talks over the model, and push-to-talk."
+---
+
 # Turns and interruptions
 
 Realtime providers normally use voice activity detection (VAD) to decide when the user starts and

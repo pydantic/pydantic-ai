@@ -1,3 +1,7 @@
+---
+description: "Send Pydantic Evals experiments to Pydantic Logfire to view results, inspect each case and its full trace, and compare evaluation runs over time."
+---
+
 # Logfire Integration
 
 Visualize and analyze evaluation results using Pydantic Logfire.

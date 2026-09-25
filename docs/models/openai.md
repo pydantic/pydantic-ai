@@ -1,3 +1,7 @@
+---
+description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, or any OpenAI-compatible API such as DeepSeek, Azure, vLLM or LiteLLM."
+---
+
 # OpenAI
 
 ## Install

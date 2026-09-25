@@ -1,3 +1,7 @@
+---
+description: "Use tools from third-party libraries such as LangChain and from MCP servers in your Pydantic AI agents, as toolsets or as capabilities."
+---
+
 # Third-Party Tools
 
 Pydantic AI supports integration with various third-party tool libraries, allowing you to leverage existing tool ecosystems in your agents. Third-party tools are also available as [capabilities](capabilities/third-party.md) — see [Extensibility](extensibility.md) for the full ecosystem.

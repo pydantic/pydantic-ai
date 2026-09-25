@@ -1,3 +1,7 @@
+---
+description: "Build typed workflow graphs with the pydantic-graph GraphBuilder API: async steps, conditional branching, parallel fan-out, joins and Mermaid diagrams."
+---
+
 # Graph Builder API
 
 The graph builder API provides a powerful builder pattern for constructing parallel execution graphs. The original [`BaseNode`][pydantic_graph.basenode.BaseNode]-based graph API is still available (and interoperable with the builder API) and is documented in the [main graph documentation](../../graph.md).

@@ -1,3 +1,7 @@
+---
+description: "Manage a Pydantic AI realtime session's connection: reconnect after drops and session limits, hang up on idle timeouts, and handle realtime errors."
+---
+
 # Connection lifecycle
 
 A realtime model uses one persistent provider connection. Your backend owns that session and the

@@ -1,3 +1,7 @@
+---
+description: "Enable thinking and reasoning effort in Pydantic AI with the Thinking capability, or use native settings for OpenAI, Anthropic, Google, Bedrock and more."
+---
+
 # Thinking
 
 Thinking (or reasoning) is the process by which a model works through a problem step-by-step before

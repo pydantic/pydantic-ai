@@ -1,3 +1,7 @@
+---
+description: "See every LLM provider Pydantic AI supports, how models, providers and profiles relate, and how to add fallback models, concurrency limits or a custom model."
+---
+
 # Models and Providers
 
 Pydantic AI supports model developers, cloud platforms, inference services, gateways, and local model servers. Find your service below and follow its setup guide for installation, authentication, and supported features.

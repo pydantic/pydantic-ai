@@ -1,3 +1,7 @@
+---
+description: "Use open-weight models from Crusoe Serverless Inference with Pydantic AI, with lab-prefixed model names and native structured output across the whole catalog."
+---
+
 # Crusoe
 
 ## Install

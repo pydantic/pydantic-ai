@@ -1,3 +1,7 @@
+---
+description: "Run a Pydantic AI agent as a durable Apache Airflow task that resumes from its last completed model request or tool call instead of replaying the run."
+---
+
 # Durable Execution with Apache Airflow
 
 [Apache Airflow](https://airflow.apache.org) is a workflow orchestrator. Its Pydantic AI integration is provided by the [`apache-airflow-providers-common-ai`](https://airflow.apache.org/docs/apache-airflow-providers-common-ai/stable/index.html) package through `airflow.providers.common.ai`, rather than by `pydantic_ai.durable_exec`.

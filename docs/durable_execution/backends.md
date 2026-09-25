@@ -1,3 +1,7 @@
+---
+description: "Integrate a new durable execution engine with Pydantic AI using the stable backend builder, routing model requests, tool calls and events through your engine."
+---
+
 # Building a durable execution backend
 
 Pydantic AI's durable execution builder lets an integration route model requests, tool discovery,

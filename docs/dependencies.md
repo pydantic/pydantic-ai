@@ -1,3 +1,7 @@
+---
+description: "Pass data and services to a Pydantic AI agent's instructions, tools and output validators with type-safe dependency injection, and override them in tests."
+---
+
 # Dependencies
 
 Pydantic AI uses a dependency injection system to provide data and services to your agent's [system prompts](agent.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).

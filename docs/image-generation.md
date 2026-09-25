@@ -1,3 +1,7 @@
+---
+description: "Generate and edit images from Python with the Pydantic AI ImageGenerator API, using GPT Image, Gemini and Grok Imagine models from OpenAI, Google and xAI."
+---
+
 # Image Generation
 
 Pydantic AI provides a provider-agnostic API for generating and editing images with dedicated image models.
