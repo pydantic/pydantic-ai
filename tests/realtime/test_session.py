@@ -10108,6 +10108,79 @@ async def test_tool_batch_answer_request_that_fails_to_send_ends_the_session() -
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
 
 
+async def test_last_result_waits_for_a_sibling_still_going_out_before_asking_for_the_answer() -> None:
+    """The last tool to finish doesn't ask while a sibling's result is still on its way: it may fail."""
+    sending_fast = asyncio.Event()
+    fail_fast = asyncio.Event()
+
+    class _FailsTheFastResultLate(_ToolBatchConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, ToolResult) and content.tool_call_id == 'c1':
+                sending_fast.set()
+                await fail_fast.wait()
+                raise RuntimeError('send failed')
+            await super().send(content)
+
+    release_slow = asyncio.Event()
+    conn = _FailsTheFastResultLate()
+    conn.close_response.set()
+    session = RealtimeSession(conn, _slow_until(release_slow))
+    with pytest.raises(RuntimeError, match='send failed'):
+        async with session:
+            events = asyncio.create_task(drain_events(session))
+            await _until(lambda: sending_fast.is_set() and session._open_tool_batch is None)  # pyright: ignore[reportPrivateUsage]
+            release_slow.set()
+            # Both results are now on their way: the fast one holding the send lock, the slow one queued.
+            await _until(lambda: session._tool_call_batches['c2'].sending == 2)  # pyright: ignore[reportPrivateUsage]
+            fail_fast.set()
+            await _until(lambda: bool(_sent_tool_traffic(conn)))
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c2', output='slow result', respond=False)]
+            assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+            await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
+
+
+@pytest.mark.parametrize('loss', ['reconnect', 'cancelled'])
+async def test_result_going_out_when_its_batch_is_abandoned_asks_for_no_answer(loss: str) -> None:
+    """A lost conversation or a provider cancellation crossing an outgoing result still reaches its batch."""
+    release_send = asyncio.Event()
+
+    class _AbandonsWhileSending(_ToolBatchConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            if isinstance(content, ToolResult):
+                self.close_response.set()
+                # A frame already handed to the transport goes out even if the sending task is cancelled.
+                try:
+                    await release_send.wait()
+                except asyncio.CancelledError:
+                    await release_send.wait()
+            await super().send(content)
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)
+            await self.close_response.wait()
+            yield SessionUsage(usage=RequestUsage(input_tokens=1), finish_reason='tool_call')
+            if loss == 'reconnect':
+                yield RealtimeSessionReconnectEvent(state_restored=False)
+            else:
+                yield ToolCallCancelled(tool_call_ids=['c1'])
+            release_send.set()
+            await asyncio.Event().wait()
+
+    conn = _AbandonsWhileSending()
+    session = RealtimeSession(conn, _slow_until(asyncio.Event()))
+    async with session:
+        events = asyncio.create_task(drain_events(session))
+        await _until(lambda: bool(_sent_tool_traffic(conn)) and not session._tool_call_batches)  # pyright: ignore[reportPrivateUsage]
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='fast result', respond=False)]
+        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        await session.close()
+        events.cancel()
+
+
 async def test_connection_that_does_not_batch_tool_results_gets_one_request_per_result() -> None:
     """A connection that doesn't declare `batches_tool_results` keeps the old contract unchanged."""
     release_slow = asyncio.Event()

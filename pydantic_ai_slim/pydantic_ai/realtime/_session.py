@@ -375,6 +375,8 @@ class _ToolBatch:
     when every result is out by then, the answer is asked for once the response completes.
     """
 
+    calls: set[str] = field(default_factory=set[str])
+    """Every call in the batch."""
     running: set[str] = field(default_factory=set[str])
     """Calls still executing."""
     sending: int = 0
@@ -388,6 +390,11 @@ class _ToolBatch:
     unanswerable: bool = False
     """Whether the batch must not ask for an answer: the provider cancelled one of its calls (a barge-in
     abandons the turn), lost the conversation it was made in, or one of its results failed to send."""
+
+    @property
+    def settled(self) -> bool:
+        """No call can still join, run, or put a result on the wire."""
+        return self.closed and not self.running and not self.sending
 
     @property
     def answer_owed(self) -> bool:
@@ -924,8 +931,9 @@ class RealtimeSession:
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
         # The batch the response being assembled is adding tool calls to, closed when that response is
-        # finalized; the batch of every call whose result hasn't been sent; and batches just closed,
-        # which the pump checks for an answer still to ask for. See `_ToolBatch`.
+        # finalized; the batch of every call whose batch hasn't settled (kept until it has, so a
+        # cancellation or lost conversation crossing an outgoing result can still reach it); and
+        # batches just closed, which the pump checks for an answer still to ask for. See `_ToolBatch`.
         self._open_tool_batch: _ToolBatch | None = None
         self._tool_call_batches: dict[str, _ToolBatch] = {}
         self._closed_tool_batches: list[_ToolBatch] = []
@@ -3120,15 +3128,16 @@ class RealtimeSession:
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
         result = ToolResult(tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None)
-        if (batch := self._tool_call_batches.pop(call_part.tool_call_id, None)) is None:
+        if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is None:
             # A connection that doesn't batch tool results (or a call dispatched outside the pump): the
             # result asks for its own answer, as it always has.
             await self._send_tool_result_frame(result, respond=True)
             return
         batch.running.discard(call_part.tool_call_id)
-        # Decided with no await before `_send_frame` queues on the send lock, which is taken in arrival
-        # order, so the result that asks for the answer goes out after every other result of the batch.
-        respond = batch.closed and not batch.running and not batch.unanswerable
+        # Asks for the answer only when nothing else of the batch can still fail or join: a sibling
+        # still on its way to the wire might not arrive, so while one is, the answer is left to whichever
+        # send settles last (below).
+        respond = batch.settled and not batch.unanswerable
         batch.answered |= respond
         batch.sending += 1
         try:
@@ -3139,11 +3148,18 @@ class RealtimeSession:
             raise
         finally:
             batch.sending -= 1
+            self._retire_tool_batch_if_settled(batch)
         if not respond:
             batch.sent_unanswered = True
             if batch.answer_owed:
-                # The calling response completed while this was going out.
+                # The last of the batch to go out, or the calling response completed while it did.
                 await self._ask_for_tool_batch_answer(batch)
+
+    def _retire_tool_batch_if_settled(self, batch: _ToolBatch) -> None:
+        """Forget a batch whose calls can no longer run or send, so nothing else can reach it."""
+        if batch.settled:
+            for call_id in batch.calls:
+                self._tool_call_batches.pop(call_id, None)
 
     async def _send_tool_result_frame(self, result: ToolResult, *, respond: bool) -> None:
         if respond:
@@ -3172,6 +3188,7 @@ class RealtimeSession:
         """
         while self._closed_tool_batches:
             batch = self._closed_tool_batches.pop(0)
+            self._retire_tool_batch_if_settled(batch)
             if batch.answer_owed:
                 await self._ask_for_tool_batch_answer(batch)
 
@@ -3345,8 +3362,9 @@ class RealtimeSession:
                 reserved_budget=reserved_budget,
             )
         except asyncio.CancelledError:
-            if (batch := self._tool_call_batches.pop(call_part.tool_call_id, None)) is not None:
+            if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is not None:
                 batch.running.discard(call_part.tool_call_id)
+                self._retire_tool_batch_if_settled(batch)
             raise
         except BaseException as e:
             self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
@@ -3436,6 +3454,7 @@ class RealtimeSession:
             batch = self._open_tool_batch
             if batch is None:
                 batch = self._open_tool_batch = _ToolBatch()
+            batch.calls.add(event.tool_call_id)
             batch.running.add(event.tool_call_id)
             self._tool_call_batches[event.tool_call_id] = batch
         # Captured at dispatch so every call from one response runs at the step in effect when the
@@ -3528,12 +3547,13 @@ class RealtimeSession:
             return False
         if isinstance(event, ToolCallCancelled):
             for tool_call_id in event.tool_call_ids:
-                if (batch := self._tool_call_batches.pop(tool_call_id, None)) is not None:
+                if (batch := self._tool_call_batches.get(tool_call_id)) is not None:
                     # A cancelled call means the model abandoned the turn (usually a barge-in): its
                     # siblings' results still go out, but nothing asks for an answer to them, since the
                     # interruption starts the next reply.
                     batch.unanswerable = True
                     batch.running.discard(tool_call_id)
+                    self._retire_tool_batch_if_settled(batch)
                 if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
                     continue
                 task, call_part = pending
