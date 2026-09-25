@@ -2408,6 +2408,7 @@ async def test_history_from_another_model(allow_model_requests: None):
         ModelResponse(
             parts=[
                 ThinkingPart('Let me check.'),
+                ThinkingPart('', signature='encrypted'),
                 NativeToolCallPart('web_search', {'query': 'weather'}, tool_call_id='call_1'),
                 NativeToolReturnPart('web_search', 'Rainy', tool_call_id='call_1'),
                 ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_2'),
@@ -2426,6 +2427,7 @@ async def test_history_from_another_model(allow_model_requests: None):
         {
             'history': [
                 {'user': 'What is the weather?'},
+                {'thinking': 'Let me check.'},
                 {'tool_call': {'name': 'web_search', 'args': {'query': 'weather'}}},
                 {'tool_return': {'name': 'web_search', 'content': 'Rainy'}},
                 {'tool_call': {'name': 'get_weather', 'args': {'city': 'London'}}},

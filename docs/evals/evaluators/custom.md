@@ -1,3 +1,7 @@
+---
+description: "Write custom Pydantic Evals evaluators for domain-specific logic, external integrations or specialized metrics by subclassing Evaluator and defining evaluate."
+---
+
 # Custom Evaluators
 
 Write custom evaluators for domain-specific logic, external integrations, or specialized metrics.

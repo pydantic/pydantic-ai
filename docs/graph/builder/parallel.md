@@ -1,3 +1,7 @@
+---
+description: "Run steps in parallel in a pydantic-graph workflow by broadcasting one value to several steps or mapping over a collection, using the graph builder API."
+---
+
 # Parallel Execution
 
 The graph builder API provides two powerful mechanisms for parallel execution: **broadcasting** and **mapping**.

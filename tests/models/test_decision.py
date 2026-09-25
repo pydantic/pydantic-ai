@@ -10,7 +10,16 @@ from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
@@ -117,6 +126,70 @@ async def test_decision_model_extension_point(allow_model_requests: None):
     assert result.response.usage == RequestUsage(input_tokens=4, output_tokens=2)
     assert result.response.provider_name == 'test-decisions'
     assert result.response.provider_url == 'https://example.test/decisions'
+
+
+@pytest.mark.anyio
+async def test_thinking_goes_into_the_history(allow_model_requests: None):
+    """A model's thinking is sent with the rest of its response, in the order it was produced.
+
+    A unit test pins the exact `state`, which a cassette matched without its body would not.
+    """
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Where is my order?')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart('I should look the order up.'),
+                TextPart('Let me check.'),
+                ThinkingPart('', signature='encrypted-by-the-provider'),
+                ToolCallPart('look_up_order', {'order_id': 42}, tool_call_id='call_1'),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart('look_up_order', 'Shipped.', tool_call_id='call_1')]),
+        ModelResponse(parts=[TextPart('It has shipped.')]),
+    ]
+    await Agent(model, output_type=Triage).run('Thanks!', message_history=history)
+
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [
+                {'user': 'Where is my order?'},
+                {'thinking': 'I should look the order up.'},
+                {'assistant': 'Let me check.'},
+                {'tool_call': {'name': 'look_up_order', 'args': {'order_id': 42}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Shipped.'}},
+                {'assistant': 'It has shipped.'},
+            ],
+            'text': 'Thanks!',
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_judging_what_a_model_thought(allow_model_requests: None):
+    """A judge given another run's messages sees that run's thinking, which can be the very thing judged."""
+    model = InMemoryDecisionModel()
+    judge = Agent(model, output_type=bool, instructions='Did the assistant consider getting around the tests?')
+    conversation: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Make the tests pass.')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart('The quickest way is to skip the failing test.'),
+                TextPart('Done: all tests pass.'),
+            ]
+        ),
+    ]
+    await judge.run(message_history=conversation)
+
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [
+                {'user': 'Make the tests pass.'},
+                {'thinking': 'The quickest way is to skip the failing test.'},
+                {'assistant': 'Done: all tests pass.'},
+            ]
+        }
+    )
 
 
 @pytest.mark.anyio

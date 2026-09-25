@@ -1563,12 +1563,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
         if model_contribution is not None:
+            selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
+                message_history, user_prompt, has_deferred_tool_results=deferred_tool_results is not None
+            )
             selection_ctx = models.ModelSelectionContext(
                 agent=self,
                 deps=deps,
                 model=default_model,
                 run_step=1,
-                messages=list(message_history) if message_history else [],
+                prompt=selection_prompt,
+                messages=selection_messages,
                 usage=usage,
             )
             model_used, model_id = await self._evaluate_model_contribution(
@@ -2299,12 +2303,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if model is None and self._override_model.get() is None:
             contribution = capability.get_model()
             if contribution is not None:
+                selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
+                    message_history, prompt
+                )
                 selection_ctx = models.ModelSelectionContext(
                     agent=self,
                     deps=deps,
                     model=default_model,
                     run_step=1,
-                    messages=messages,
+                    prompt=selection_prompt,
+                    messages=selection_messages,
                     usage=usage,
                 )
                 selected_model, _ = await self._evaluate_model_contribution(

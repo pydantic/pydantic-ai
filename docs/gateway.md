@@ -1,6 +1,7 @@
 ---
 title: Pydantic AI Gateway
 status: new
+description: "Pydantic AI Gateway: one API key for OpenAI, Anthropic, Google, Groq and Bedrock models, with spending limits, failover, load balancing and observability."
 ---
 
 # Pydantic AI Gateway

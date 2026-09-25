@@ -1,3 +1,7 @@
+---
+description: "Add lifecycle hooks to a Pydantic AI agent to log, modify, retry or skip model requests, tool calls, output and stream events, without subclassing."
+---
+
 
 # Hooks
 
