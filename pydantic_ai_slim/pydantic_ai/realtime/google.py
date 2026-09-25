@@ -351,7 +351,8 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     Vertex's half-cascade `gemini-live-2.5-flash` sends one once it has taken the tool results and
     another after speaking the answer (verified live); other Live models send only the answer's. With
     this set, the first of the two is reported as the tool-call response's usage rather than a turn
-    boundary, so the exchange isn't reported complete before the answer is spoken.
+    boundary, so the exchange isn't reported complete before the answer is spoken. Applied only on
+    Vertex AI, where it was verified.
     """
     google_supports_async_tool_call_scheduling: bool
     """Whether the model takes a `scheduling` field on an async tool call's result. Default: `False`.
@@ -1202,9 +1203,16 @@ class GoogleRealtimeModel(RealtimeModel):
             # resumption restores server state, and a `RealtimeSessionReconnectEvent` starts a fresh turn.
             if turns := await _seed_turns(messages, profile=self.profile, provider_name=self.system):
                 await session.send_client_content(turns=turns, turn_complete=False)
+            profile = self.profile
+            if not self.client.vertexai and profile.get('google_closes_tool_call_turn_separately', False):
+                # Verified on Vertex AI only: on another surface the model may close the turn once.
+                profile = cast(
+                    RealtimeModelProfile,
+                    {**cast(GoogleRealtimeModelProfile, profile), 'google_closes_tool_call_turn_separately': False},
+                )
             yield GoogleRealtimeConnection(
                 session,
-                profile=self.profile,
+                profile=profile,
                 provider_name=self._provider.name,
                 provider_url=self._provider.base_url,
                 dial=dial if reconnect is not None else None,

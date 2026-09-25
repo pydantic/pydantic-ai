@@ -2896,6 +2896,49 @@ async def test_empty_answer_after_the_tool_call_turn_boundary_still_ends_the_tur
     assert not conn._turn_open  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize('vertexai', [True, False])
+async def test_separate_tool_call_turn_boundary_applies_on_vertex_ai_only(vertexai: bool) -> None:
+    """The flag was verified on Vertex AI; the same model id elsewhere keeps every boundary."""
+    client = _fake_client(_RecordingSession())
+    client.vertexai = vertexai  # pyright: ignore[reportAttributeAccessIssue]
+    model = GoogleRealtimeModel('gemini-live-2.5-flash', provider=GoogleProvider(client=client))
+    async with _connect(model, '') as conn:
+        assert conn._closes_tool_call_turn_separately is vertexai  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_drop_after_the_tool_call_turn_boundary_closes_the_turn_as_interrupted() -> None:
+    """The turn stays open for the answer after the suppressed boundary, so a drop still ends it."""
+
+    class _DropsBeforeTheAnswer(_RecordingSession):
+        async def receive(self) -> AsyncIterator[Any]:
+            if self._turn:
+                raise self._close_exc
+            self._turn += 1
+            yield _tool_call_message()
+            await conn.send(ToolResult(tool_call_id='c1', output='sunny'))
+            yield _turn_complete_message()  # suppressed: the answer is still to come
+
+    dial, _ = _dialer(_RecordingSession([]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _DropsBeforeTheAnswer()),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False},
+        profile=GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True),
+    )
+    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+
+    assert [type(event).__name__ for event in events][:5] == [
+        'ToolCall',
+        'SessionUsage',
+        'SessionUsage',
+        'ResponseDone',
+        'RealtimeSessionReconnectEvent',
+    ]
+    assert events[3] == ResponseDone(interrupted=True)
+
+
 async def test_turn_complete_after_every_call_was_cancelled_ends_the_turn() -> None:
     """A tool-call frame the model abandoned (`tool_call_cancellation`) has no answer to wait for."""
     conn = _separate_boundary_conn()
@@ -2922,6 +2965,10 @@ async def test_model_without_a_separate_tool_call_boundary_keeps_every_turn_comp
     ('model_name', 'separate'),
     [
         ('gemini-live-2.5-flash', True),
+        ('gemini-live-2.5-flash-001', True),
+        ('gemini-live-2.5-flash@20250924', True),
+        ('gemini-live-2.5-flash-preview', False),
+        ('gemini-live-2.5-flash-lite', False),
         ('gemini-live-2.5-flash-preview-native-audio-09-2025', False),
         ('gemini-2.5-flash-native-audio-latest', False),
         ('gemini-3.1-flash-live-preview', False),
