@@ -5785,6 +5785,67 @@ async def test_reconnect_response_state(
     assert session.new_messages() == expected
 
 
+async def test_response_cut_off_by_a_reconnect_keeps_its_id() -> None:
+    """A reply the drop cut off is recorded with the response id its content carried.
+
+    Its `ResponseDone` never arrives, so the content is the only place the session sees that id. The next
+    response gets its own id rather than inheriting the cut one.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='One, two, three', response_id='resp_cut'),
+            RealtimeSessionReconnectEvent(state_restored=True),
+            OutputTranscript(text='after', is_final=True, response_id='resp_next'),
+            ResponseDone(provider_response_id='resp_next'),
+        ],
+        reconnect_restores_in_flight_state=False,
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
+    assert [(r.state, r.provider_response_id) for r in responses] == [
+        ('interrupted', 'resp_cut'),
+        ('complete', 'resp_next'),
+    ]
+
+
+async def test_response_cut_off_names_the_response_its_latest_content_came_from() -> None:
+    """A reply whose content moved on to a new response before it was cut off is named after that one."""
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='One, ', response_id='resp_a'),
+            OutputTranscript(text='two', response_id='resp_b'),
+            RealtimeSessionReconnectEvent(state_restored=True),
+        ],
+        reconnect_restores_in_flight_state=False,
+    )
+    session = RealtimeSession(conn)
+    await collect_events(session)
+    responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
+    assert [(r.state, r.provider_response_id) for r in responses] == [('interrupted', 'resp_b')]
+
+
+async def test_response_cut_off_by_close_keeps_its_id() -> None:
+    """Closing the session mid-reply records the partial reply with the response id its content carried."""
+    conn = BlockingRealtimeConnection([OutputTranscript(text='One, two, three', response_id='resp_cut')])
+    async with RealtimeSession(conn) as session:
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            async for event in session:  # pragma: no branch
+                # The reply's first event: close with it in flight.
+                assert isinstance(event, PartStartEvent)
+                break
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='One, two, three')],
+                timestamp=IsDatetime(),
+                provider_response_id='resp_cut',
+                state='interrupted',
+            )
+        ]
+    )
+
+
 async def test_reconnect_while_idle_on_replay_provider_keeps_state_restored() -> None:
     # A local-replay provider (OpenAI/Azure) that drops while Listening loses nothing: the replay
     # restores the finalized call and there is no in-flight turn to settle. The connection's
