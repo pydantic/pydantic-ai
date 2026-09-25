@@ -845,19 +845,12 @@ class GoogleRealtimeModel(RealtimeModel):
     def system(self) -> str:
         return self._provider.name
 
-    @property
-    def profile(self) -> RealtimeModelProfile:
-        """The Gemini realtime profile, with the flags that depend on the API surface narrowed to it.
-
-        [`google_closes_tool_call_turn_separately`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_closes_tool_call_turn_separately]
-        was verified on Vertex AI only, so it's off on the Gemini Developer API unless a `profile=`
-        override sets it explicitly.
-        """
-        profile = super().profile
-        flag = 'google_closes_tool_call_turn_separately'
-        user = self._profile
-        user_set = user is not None and not callable(user) and flag in user
-        if profile.get(flag, False) and not user_set and not self.client.vertexai:
+    def _adjust_provider_profile(self, profile: RealtimeModelProfile) -> RealtimeModelProfile:
+        # `google_closes_tool_call_turn_separately` was verified on Vertex AI only, so it's off on the Gemini
+        # Developer API unless a `profile=` override (applied after this) turns it back on.
+        if cast(GoogleRealtimeModelProfile, profile).get('google_closes_tool_call_turn_separately', False) and (
+            not self.client.vertexai
+        ):
             profile = merge_realtime_profile(
                 profile, GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=False)
             )

@@ -52,6 +52,7 @@ from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, Web
 from pydantic_ai.realtime import (
     RealtimeError,
     RealtimeModelProfile,
+    RealtimeModelProfileSpec,
     RealtimeModelSettings,
     RealtimeResponseInterruptedEvent,
     RealtimeSession,
@@ -68,6 +69,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     ToolCallCancelled,
     ToolResult,
+    merge_realtime_profile,
 )
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -3113,14 +3115,35 @@ def test_profile_marks_models_that_close_the_tool_call_turn_separately(model_nam
         assert profile.get('google_closes_tool_call_turn_separately') is (separate and vertexai)
 
 
-def test_explicit_separate_tool_call_turn_opt_in_is_kept_off_vertex_ai() -> None:
-    """A `profile=` that sets the flag explicitly wins over the Vertex-only default."""
+@pytest.mark.parametrize('form', ['dict', 'callable'])
+def test_explicit_separate_tool_call_turn_opt_in_is_kept_off_vertex_ai(form: str) -> None:
+    """A `profile=` that sets the flag wins over the Vertex-only default, as a dict or a callable."""
+    profile: RealtimeModelProfileSpec = (
+        GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True)
+        if form == 'dict'
+        else lambda resolved: merge_realtime_profile(
+            resolved, GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True)
+        )
+    )
     model = GoogleRealtimeModel(
-        'gemini-live-2.5-flash',
-        provider=GoogleProvider(client=_fake_client(_RecordingSession())),
-        profile=GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True),
+        'gemini-live-2.5-flash', provider=GoogleProvider(client=_fake_client(_RecordingSession())), profile=profile
     )
     assert cast('GoogleRealtimeModelProfile', model.profile).get('google_closes_tool_call_turn_separately') is True
+
+
+def test_callable_profile_override_sees_the_vertex_only_flag_already_narrowed() -> None:
+    """A callable `profile=` receives the resolved profile, so on the Gemini API it sees the flag off."""
+    seen: list[bool | None] = []
+
+    def override(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+        seen.append(cast('GoogleRealtimeModelProfile', resolved).get('google_closes_tool_call_turn_separately'))
+        return resolved
+
+    model = GoogleRealtimeModel(
+        'gemini-live-2.5-flash', provider=GoogleProvider(client=_fake_client(_RecordingSession())), profile=override
+    )
+    assert cast('GoogleRealtimeModelProfile', model.profile).get('google_closes_tool_call_turn_separately') is False
+    assert seen == [False]
 
 
 async def test_turn_complete_with_a_tool_call_still_unanswered_stays_a_response_boundary() -> None:

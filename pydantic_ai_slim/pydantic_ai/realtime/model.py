@@ -319,6 +319,7 @@ class RealtimeModel(AbstractModel):
             context_window = lookup_context_window(self)
             if context_window is not None:
                 resolved = merge_realtime_profile(resolved, RealtimeModelProfile(context_window=context_window))
+        resolved = self._adjust_provider_profile(resolved)
         if user is not None:
             # The callable form replaces the resolved profile wholesale rather than merging, so a caller
             # can drop a claim the provider made and not just add to it.
@@ -328,6 +329,13 @@ class RealtimeModel(AbstractModel):
         if effective_tools != profile_supported:
             resolved = merge_realtime_profile(resolved, RealtimeModelProfile(supported_native_tools=effective_tools))
         return resolved
+
+    def _adjust_provider_profile(self, profile: RealtimeModelProfile) -> RealtimeModelProfile:
+        """Narrow the provider's profile to what this model instance supports, before `profile=` applies.
+
+        For flags that depend on more than the model name, such as which API surface the client talks to.
+        """
+        return profile
 
     @property
     def context_window(self) -> int | None:
