@@ -498,6 +498,39 @@ async def test_reconnect_reads_the_redialed_config_for_asynchronous_calls() -> N
     assert [(e.tool_name, e.runs_asynchronously) for e in events if isinstance(e, ToolCall)] == [('second', True)]
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'runs_asynchronously'),
+    [
+        # `gemini-3.8-live` treats a declaration without a `behavior` as `NON_BLOCKING`.
+        ('gemini-3.8-live', True),
+        ('gemini-2.5-flash-native-audio-latest', False),
+    ],
+)
+async def test_an_unset_declaration_follows_the_model_default(model_name: str, runs_asynchronously: bool) -> None:
+    """A declaration left without a `behavior` runs as the model's own default says, read off its profile."""
+    model = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession())))
+    settings = GoogleRealtimeModelSettings(
+        google_config_overrides={
+            'tools': [genai_types.Tool(function_declarations=[genai_types.FunctionDeclaration(name='unset_one')])]
+        },
+    )
+    async with model.connect(
+        messages=[ModelRequest(parts=[], instructions='x')],
+        model_settings=settings,
+        model_request_parameters=ModelRequestParameters(),
+    ) as conn:
+        events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id='c', name='unset_one', args={})]
+                )
+            )
+        )
+    assert [(e.tool_name, e.runs_asynchronously) for e in events if isinstance(e, ToolCall)] == [
+        ('unset_one', runs_asynchronously)
+    ]
+
+
 @pytest.mark.parametrize('unset_is_non_blocking', [False, True])
 def test_non_blocking_function_names_follow_each_declaration(unset_is_non_blocking: bool) -> None:
     """Only a call to a function declared `NON_BLOCKING` (or left unset where that's the default) runs asynchronously."""
