@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '818'
+      - '872'
       content-type:
       - application/json
       host:
@@ -17,11 +17,12 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        resolved:
+        Resolution.resolved:
           instructions:
+            background: You are a customer support assistant for an online store.
             field: resolved
-            goal: Close the conversation once the customer's question has been answered.
-            instructions: You are a customer support assistant for an online store.
+            premise: 'If the user''s request calls for Resolution: Close the conversation once the customer''s question has
+              been answered.'
             question: Has the customer's question been answered?
           type: noul
         route:
@@ -30,7 +31,7 @@ interactions:
             refunds: Use for refund eligibility, refund status, or processing a refund.
             shipping: Use for where an order is, delivery dates, and tracking.
           instructions:
-            instructions: You are a customer support assistant for an online store.
+            background: You are a customer support assistant for an online store.
             question: Which of these does this call for?
           type: choice
       state: Has the refund for my returned blender gone through?
@@ -38,13 +39,13 @@ interactions:
   response:
     headers:
       content-length:
-      - '272'
+      - '284'
       content-type:
       - application/json
     parsed_body:
       answers:
-        resolved:
-          noul: 0.1
+        Resolution.resolved:
+          noul: 0.11
           type: noul
         route:
           choice: refunds
@@ -56,8 +57,8 @@ interactions:
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 456
-        output_tokens: 56
+        input_tokens: 466
+        output_tokens: 59
     status:
       code: 200
       message: OK
@@ -70,7 +71,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1106'
+      - '1155'
       content-type:
       - application/json
       host:
@@ -79,11 +80,12 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        resolved:
+        Resolution.resolved:
           instructions:
+            background: You are a customer support assistant for an online store.
             field: resolved
-            goal: Close the conversation once the customer's question has been answered.
-            instructions: You are a customer support assistant for an online store.
+            premise: 'If the user''s request calls for Resolution: Close the conversation once the customer''s question has
+              been answered.'
             question: Has the customer's question been answered?
           type: noul
         route:
@@ -92,12 +94,11 @@ interactions:
             refund_status: Look up the status of the customer's latest refund.
             shipping: Use for where an order is, delivery dates, and tracking.
           instructions:
-            instructions: You are a customer support assistant for an online store.
+            background: You are a customer support assistant for an online store.
             question: Which of these does this call for?
           type: choice
       state:
-        history:
-        - user: Has the refund for my returned blender gone through?
+        done:
         - tool_call:
             args:
               id: refunds
@@ -106,21 +107,22 @@ interactions:
             content: '{"instructions":"Confirm the order ID before issuing a refund."}'
             name: load_capability
         - system: 'The following tool(s) are now available: `refund_status`'
+        text: Has the refund for my returned blender gone through?
     uri: https://api.typesafe.ai/v1/systemone
   response:
     headers:
       content-length:
-      - '285'
+      - '297'
       content-type:
       - application/json
     parsed_body:
       answers:
-        resolved:
-          noul: 0.04
+        Resolution.resolved:
+          noul: 0.06
           type: noul
         route:
           choice: refund_status
-          confidence: 1.0
+          confidence: 0.99
           probabilities:
             Resolution: 0.0
             refund_status: 1.0
@@ -128,8 +130,8 @@ interactions:
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 565
-        output_tokens: 56
+        input_tokens: 573
+        output_tokens: 59
     status:
       code: 200
       message: OK
@@ -142,7 +144,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1182'
+      - '1231'
       content-type:
       - application/json
       host:
@@ -151,11 +153,12 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        resolved:
+        Resolution.resolved:
           instructions:
+            background: You are a customer support assistant for an online store.
             field: resolved
-            goal: Close the conversation once the customer's question has been answered.
-            instructions: You are a customer support assistant for an online store.
+            premise: 'If the user''s request calls for Resolution: Close the conversation once the customer''s question has
+              been answered.'
             question: Has the customer's question been answered?
           type: noul
         route:
@@ -163,12 +166,11 @@ interactions:
             Resolution: Close the conversation once the customer's question has been answered.
             shipping: Use for where an order is, delivery dates, and tracking.
           instructions:
-            instructions: You are a customer support assistant for an online store.
+            background: You are a customer support assistant for an online store.
             question: Which of these does this call for?
           type: choice
       state:
-        history:
-        - user: Has the refund for my returned blender gone through?
+        done:
         - tool_call:
             args:
               id: refunds
@@ -183,17 +185,18 @@ interactions:
         - tool_return:
             content: Refund of $40 issued on 2026-05-01.
             name: refund_status
+        text: Has the refund for my returned blender gone through?
     uri: https://api.typesafe.ai/v1/systemone
   response:
     headers:
       content-length:
-      - '261'
+      - '272'
       content-type:
       - application/json
     parsed_body:
       answers:
-        resolved:
-          noul: 0.85
+        Resolution.resolved:
+          noul: 0.87
           type: noul
         route:
           choice: Resolution
@@ -204,8 +207,8 @@ interactions:
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 612
-        output_tokens: 47
+        input_tokens: 620
+        output_tokens: 50
     status:
       code: 200
       message: OK

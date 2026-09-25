@@ -37,7 +37,7 @@ A question written into the prompt is not lifted out: it is text to be judged, a
 
 Most agents ask more than one thing. Give the agent an output type and each field is a question of its own, all of them sent in a single request and answered together. The type is also where the wording goes:
 
-- The class docstring states what the type is for, as a goal: "Triage a support ticket." It is sent as the goal on every question about the type.
+- The class docstring states what the type is for, as a goal: "Triage a support ticket." It is sent as the goal on every question about the type, or, when the type is one of several [routes](#routes-which-thing-to-do), as the premise every such question is asked under.
 - A field's description is that field's question. Write it with `Field(description=...)`, or, as here, as a docstring under the field: setting `model_config = ConfigDict(use_attribute_docstrings=True)` on the model makes Pydantic read that docstring as the field's description.
 - An `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings], with a docstring under each member, says what each option means. The options of a `Literal`, or of a plain `Enum`, are seen by their names alone.
 - A `bool` field's question is usually all it needs. Where the line between yes and no is subtle, as it is for "urgent", [`BoolCriteria`][pydantic_ai.output.BoolCriteria] says what a yes and a no mean. It is `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime.
@@ -225,9 +225,9 @@ print(result.response.model_name)
 
 Each ticket is a run, and Jev takes every step it can:
 
-1. **The route question.** The first request asks Jev one pick-one question over the ticket: does it call for `Triage`, `Refund`, `Reply`, or `check_status`? Each option is described by its docstring. No fields are asked yet, since until a route is picked there is no telling which fields apply.
+1. **The route question.** The first request asks Jev one pick-one question over the ticket: does it call for `Triage`, `Refund`, `Reply`, or `check_status`? Each option is described by its docstring. The routes' fields go along beside it when that is cheaper than asking them afterwards, but `Triage`'s four questions cost more than sending a short ticket a second time, so here no fields are asked yet.
 2. **The fill.** A second request asks only the picked route's questions, over the same ticket: `Refund`'s `reason`, or all four of `Triage`'s fields at once. The run ends with that output. The first two tickets go this way, and cost two Jev requests each and no language model call.
-3. **A tool call.** A picked tool is filled the same way — here, `check_status`'s `service`. Your function runs, and the next step asks Jev the route question again, with the result in the history. `check_status` is not offered a second time in the same run.
+3. **A tool call.** A picked tool is filled the same way — here, `check_status`'s `service`. Your function runs, and the next step asks Jev the route question again, with the ticket as the text and the call and its result beside it as what has been done. `check_status` is not offered a second time in the same run.
 4. **Escalation.** `Reply` has a field Jev cannot fill, so picking it — like picking a tool with such an argument — raises [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The `FallbackModel` hands the whole step to the language model, with the same tools and output types, and the language model decides afresh: it could triage, refund or check the status as well. On the third ticket, Jev checked the status and then picked `Reply`, so the language model wrote the reply with the status in view, and the response names it as the model that answered. That one step is the only language model call; the steps before it stayed on Jev.
 
 The rest of this page takes each piece in turn: [where the wording comes from](#where-the-wording-comes-from), [each field type](#what-each-field-type-does), [routes](#routes-which-thing-to-do) through [tools](#tools-pick-then-fill) and [unions](#a-union-of-output-types), [escalation](#escalating-to-a-language-model), and [confidence](#confidence-and-thresholds) — where the same `FallbackModel` can also take the steps Jev was unsure about.
@@ -242,6 +242,7 @@ Every input to the agent ends up in one of two places: the state, which is judge
 |---|---|
 | the run's prompt | the whole state when there is no history, otherwise its `text` |
 | the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
+| the tool calls and results since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
 | a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
 
 A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
@@ -251,12 +252,13 @@ A question can point at a part of the state by its name, such as "Is the request
 | Agent input | Where it ends up |
 |---|---|
 | the agent's `instructions` | the question itself, when the output is a bare `bool`, pick-one or `float` with no field to describe; otherwise, shared framing on every question |
-| the output type's docstring | the goal, on every question about it, and its description when it is offered as a [route](#routes-which-thing-to-do) |
+| the output type's docstring | the goal, on every question about it; as one of several [routes](#routes-which-thing-to-do), its description on the route question and the premise its fields are asked under |
 | a field's description — `Field(description=...)`, or the docstring under the field with `use_attribute_docstrings=True`; an `Enum` field's class docstring only when the field has neither | that field's question |
+| a nested model's docstring, the description of the field that holds it, and an `Enum` field's class docstring when the field has a description of its own | the context of every question about a field inside it |
 | a description on an option in the schema, such as an `Enum` member's docstring | that option's meaning |
 | [`BoolCriteria`][pydantic_ai.output.BoolCriteria] on a `bool` field | what a yes and a no mean |
 | a description on the `None` itself, `Annotated[None, Field(description=...)]` | what "none of these" means |
-| a tool's description, and its arguments' descriptions | the tool's option on the route question, and the questions that [fill its arguments](#tools-pick-then-fill) |
+| a tool's description, and its arguments' descriptions | the tool's option on the route question and the premise of its argument questions, and the questions that [fill its arguments](#tools-pick-then-fill) |
 
 Dependencies and anything else on the run context are not sent, unless a prompt, instructions function or history processor puts them into one of the rows above.
 
@@ -325,7 +327,7 @@ Each field type is asked as one kind of question, and comes back as one kind of 
 | an `IntEnum` of `0, 1, 2, …` with a description per level, from `UseEnumMemberDocstrings` | score against a rubric | the nearest level | at most the backend's `max_score_levels`; the unrounded position is in `provider_details['scores']` |
 | `list` of a `Literal` or `Enum` of strings | one yes or no per option | the options answered yes | word its question about one option; its confidence is the least sure option's |
 | `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer | the same question as the `list` |
-| a nested model of these | its fields, asked as `outer.inner` | the model | the parent field's description is not sent |
+| a nested model of these | its fields, asked as `outer.inner` | the model | each question carries the fields and models it sits in |
 
 The bound on a number field is the units it is asked in, not a second question: `ge=0, le=1` is the probability as the model gives it, and `ge=0, le=100` the same answer written as a percentage. A `dict` keyed by options and valued by `bool` asks what a `list` of those options asks — one yes or no each — and differs only in the answer, which keeps every option rather than just the ones answered yes.
 
@@ -407,7 +409,7 @@ print(result.response.provider_details['scores'])
 #> {'clarity': 0.12}
 ```
 
-A nested model is its fields, asked as `outer.inner` and put back in place; the parent field's description is not sent, so put the context each question needs on the field that asks it. A dot in a field name is how a nested field is named, so a field whose own name contains one is refused.
+A nested model is its fields, asked as `outer.inner` and put back in place. Each of those questions carries what it sits in as its context, from the outside in: the description of each field on the way down and the docstring of each nested model, so `origin.city` and `destination.city` are told apart by where they sit even when both ask "Which city?". An `Enum` field with a description of its own, which takes the place of the `Enum`'s docstring as the question, gets that docstring in its context. A dot in a field name is how a nested field is named, so a field whose own name contains one is refused.
 
 ### Options known only at run time
 
@@ -450,24 +452,26 @@ Each option goes by the name you gave the route:
 
 Where a tool and an output type would share a name, the tool keeps it and the output type's option becomes, say, `Refund (output)`. A capability that shares a tool's name becomes `refund (capability)` the same way.
 
-The route the model picks is the one that runs, and how much it costs to fill depends on which route it is. A single output type's fields, when the model can fill them, ride along in the *same* request as the route question, so its answers are already in hand when the pick comes back. Every other route is picked first and filled after: a chosen tool's arguments, or a chosen [union](#a-union-of-output-types) member's fields, go out in a second request carrying only that route's questions. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone, with no second request at all.
+The route the model picks is the one that runs. The fields of every route the model can fill — a tool's arguments, a [union](#a-union-of-output-types) member's fields — ride along in the *same* request as the route question, so the answers the pick needs are already in hand when it comes back. Only the picked route's answers are read: the rest are about routes that were not taken, and reach neither the output nor `provider_details`. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone.
 
-Fields are never merged across routes: a tool's arguments are only asked once the tool is picked, and a union member's fields once that member is. A route with even one field or argument the model cannot fill is still offered, and picking it [escalates](#escalating-to-a-language-model) the step:
+A route with even one field or argument the model cannot fill is still offered, and picking it [escalates](#escalating-to-a-language-model) the step. Its fields are never asked, a single output type's included:
 
 | Route | How it is asked | If the model cannot fill it |
 |---|---|---|
 | a single output type or output function with arguments | its fields in the same request as the route question, or alone when nothing else is on offer | only the route is asked, and picking it escalates; with no route beside it that the model can take, a [`UserError`][pydantic_ai.exceptions.UserError] |
-| a member of a union of output types or output functions | picked, then its fields in a second request | picking it escalates |
-| a tool with arguments | picked, then its arguments in a second request | picking it escalates |
+| a member of a union of output types or output functions | its fields beside the route question, or, past the size cutoff below, in a second request once picked | picking it escalates |
+| a tool with arguments | its arguments beside the route question, or, past the size cutoff, in a second request once picked | picking it escalates |
 | an output function with no arguments, `None`, a tool with no arguments, or an [on-demand capability](#on-demand-capabilities) | picked, and taken with nothing to fill | — |
 
-The pick is on the response, in `provider_details['route']`, under the same names: `choice` is the route the model picked, `probabilities` the probability it gave every route, and `offered` the routes the question offered. `provider_details` describes the response rather than each request: `confidence`, `probabilities` and `scores` are for the answers the output or the tool call was built from, which are the second request's when there was one, and are empty for a route called on the pick alone. A single output type's answers that rode along with the pick of something else built nothing, so they are not reported.
+Asking every route up front costs the questions of the routes not taken, so it is only done while they cost no more than the second request they save, which sends the state again, and while the request stays under about 16,000 tokens. Past that, a route is picked first and filled after, in a second request carrying only its questions; a single output type beside tools is still asked up front. Many routes with many fields, over a short text, is what tips it, as in the [support desk](#how-it-runs).
 
-The second request is about the same text as the first, which on its own would leave nothing in it saying a route had been picked. So each of its questions names the chosen route, under the same name the route question offered it by, alongside the field's own question and whatever the route's docstring said about it. What you already said in the text is unchanged between the two requests; only the questions differ.
+The pick is on the response, in `provider_details['route']`, under the same names: `choice` is the route the model picked, `probabilities` the probability it gave every route, and `offered` the routes the question offered. `provider_details` describes the response rather than each request: `confidence`, `probabilities` and `scores` are for the answers the output or the tool call was built from, which are the second request's when there was one, and are empty for a route called on the pick alone.
 
-The response sums the input and output tokens from both requests, but [`RequestUsage.requests`][pydantic_ai.usage.RequestUsage.requests] is fixed at one request per model step and cannot carry the real count, so `provider_details['requests']` is `2` when the model picked and then filled.
+A field only means something on the route it belongs to, and nothing else in the request says which that is: asked before the pick, the route has not been chosen yet, and asked in a second request, the first one is not in view. So every question about a route's fields is asked under a premise that names it, by the name the route question offers it under, with what its docstring says it is for: "If the user's request calls for Refund: Give back money for a charge the customer did not owe." What you already said in the text is unchanged between requests; only the questions differ.
 
-The second request has already committed to the selected route. If that request fails or returns invalid answers, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] names the route and stops the run; the default `FallbackModel` does not replay the original step and quietly choose another one.
+When the model picks and then fills, the response sums the input and output tokens from both requests, but [`RequestUsage.requests`][pydantic_ai.usage.RequestUsage.requests] is fixed at one request per model step and cannot carry the real count, so `provider_details['requests']` is `2` when the model picked and then filled.
+
+A second request has already committed to the selected route. If it fails or returns invalid answers, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] names the route and stops the run; the default `FallbackModel` does not replay the original step and quietly choose another one.
 
 The questions in one request are answered independently. A field cannot depend on another field's answer: two arguments of the same tool are decided separately, and neither sees the other. Where one judgement genuinely follows from another, they belong in different steps, not in two fields of the same call — which is what the [patterns below](#decision-models-inside-an-agent-run) build on: an output function is a route the model can choose, and choosing it *is* calling it.
 
@@ -480,10 +484,10 @@ With tools attached, the first request carries the route question, with every ou
 | The model picks | What runs | Language model call |
 |---|---|---|
 | a single output type | the decision model fills the fields, in the same request | none |
-| one member of a union of output types | the decision model fills that member's fields in a second request | none |
+| one member of a union of output types | the decision model fills that member's fields, in the same request or a second one | none |
 | a tool with no arguments | your function, then the decision model again with its result in view | none |
 | an output function with no arguments | your function, and the run ends | only if the function makes one |
-| a tool whose arguments the model can express | the decision model fills its arguments in a second request, then your function runs | none |
+| a tool whose arguments the model can express | the decision model fills its arguments, in the same request or a second one, then your function runs | none |
 | a tool, output type or output function with any field or argument the model cannot fill | the model behind the decision model [takes the whole step](#escalating-to-a-language-model), tools and all | one |
 | any route, below [`decision_route_threshold`](#handing-off-an-unsure-route) when you set one | the model behind the decision model takes the whole step | one |
 
@@ -493,7 +497,7 @@ With no output type to fill and every other route already returned this turn, th
 
 A pick is a classification of the text, not a judgement that running the tool is safe: the framework emits the call and your function runs, exactly as on a language model's call, so a tool that sends mail or charges an account is one a decision model can set off, and approval and limits are the agent's job here as anywhere.
 
-**A tool with no arguments: the decision model alone.** There is nothing to fill, so the call is made on the pick, and its result comes back as history for the next request. The model can work through a sequence of such tools. A tool whose result is already in the turn is not offered again, because a decision model has no notion of having made a call and would pick it again with the result in view; one that asked for a retry stays on offer. What was on offer is in `provider_details['route']['offered']`. Every request here is a decision model request:
+**A tool with no arguments: the decision model alone.** There is nothing to fill, so the call is made on the pick, and its result comes back under the state's `done` for the next request. The model can work through a sequence of such tools. A tool whose result is already in the turn is not offered again, because a decision model has no notion of having made a call and would pick it again with the result in view; one that asked for a retry stays on offer. What was on offer is in `provider_details['route']['offered']`. Every request here is a decision model request:
 
 ```python
 from pydantic import BaseModel, Field
@@ -560,7 +564,7 @@ async def main():
     #> It shipped this morning; the tracking link is on its way to you now.
 ```
 
-**Supported arguments: the model picks, then fills.** Tool arguments use the same [mapping](#supported-field-types) as output fields. The argument name is the field, its `Args:` entry in the function docstring is the question, and the tool description is the goal. The first request picks the tool; the second carries only its argument questions over the same text and history, as `check_status` does in the [support desk](#a-support-desk-end-to-end).
+**Supported arguments: the model picks, then fills.** Tool arguments use the same [mapping](#supported-field-types) as output fields. The argument name is the field, its `Args:` entry in the function docstring is the question, and the tool description is what the premise of each argument question says the tool is for. The argument questions go out beside the route question, each under the tool's premise, or, past the [size cutoff](#routes-which-thing-to-do), in a second request once the tool is picked, as `check_status`'s do in the [support desk](#a-support-desk-end-to-end).
 
 An `Args:` entry describes the *argument*, not its options: a `Literal` argument's options go out named and nothing more, the same as [a `Literal` output field](#where-the-wording-comes-from). Where the difference between two of them needs explaining, make the argument an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] with a docstring under each member, or a [`Choices`][pydantic_ai.output.Choices] set built from a mapping of option to meaning — either puts a description on each option in the schema, which is what the model weighs them by. `Choices` built from a bare sequence of names describes nothing, and leaves the model weighing the names alone like a `Literal` does.
 
@@ -631,11 +635,11 @@ The first request's route question offers `Resolution`, `refunds` and `shipping`
 
 ### A union of output types
 
-An `output_type` of several structured types is a set of routes. The model picks which one the text calls for, then a second request asks only that type's fields — the same two steps a [selected tool's arguments](#tools-pick-then-fill) take, because it is the same question asked twice. The [support desk](#a-support-desk-end-to-end) is one: `Triage`, `Refund` and `Reply` are three routes.
+An `output_type` of several structured types is a set of routes. The model picks which one the text calls for and the fields of that type are read back, from the same request or, past the size cutoff, from a second one — the same as a [selected tool's arguments](#tools-pick-then-fill), because it is the same question. The [support desk](#a-support-desk-end-to-end) is one: `Triage`, `Refund` and `Reply` are three routes.
 
 Each member is described by **its own docstring**, which is what the model weighs the routes against. With one output type the agent's instructions can say what filling it is for; with several they cannot, because one instruction cannot describe two different routes, so a member without a docstring is a [`UserError`][pydantic_ai.exceptions.UserError].
 
-The pick is reported in `provider_details['route']`, with the probability of every route, and `provider_details['requests']` is `2`.
+The pick is reported in `provider_details['route']`, with the probability of every route, and `provider_details['requests']` is `2` when the picked member was filled in a second request.
 
 #### Declining with `None`
 
@@ -929,7 +933,7 @@ for threshold in (0.5, 0.8, 0.9):
     #> 0.9: 4 handed off, 3 of 3 kept right
 ```
 
-Jev sent two ordinary product tickets that mention privacy to `Escalation`, at 0.6 and 0.67. A bar of 0.8 hands both of them on and keeps every pick it had right; 0.9 hands on two more that it had right as well, at 0.84 and 0.88. The numbers move by a few hundredths from one run to the next, so a bar is a range to choose from rather than a point.
+Jev sent two ordinary product tickets that mention privacy to `Escalation`, at 0.57 and 0.72. A bar of 0.8 hands both of them on and keeps every pick it had right; 0.9 hands on two more that it had right as well, at 0.83 and 0.87. The numbers move by a few hundredths from one run to the next, so a bar is a range to choose from rather than a point.
 
 The same works for [`decision_boolean_threshold`][pydantic_ai.models.decision.DecisionModelSettings.decision_boolean_threshold]: declare the field as a `float` bounded with `ge=0` and `le=1` while you tune, which returns the probability of yes itself, and compare it with each bar. Tune on a few hundred texts rather than a handful, drawn from the traffic the agent will see, and tune again when you change the model version, the routes or their docstrings. Your production traces carry the same numbers on each decision model request, so the texts you label later can come from there.
 
@@ -949,11 +953,11 @@ print(result.output)
 #> True
 ```
 
-A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness](https://github.com/pydantic/pydantic-ai-harness)'s compaction does.
+A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Once a tool has returned since the latest prompt, the state is split at that prompt: the conversation before it is `history`, the prompt is `text`, and everything since — the calls, their results, retry prompts — is `done`, so the text being judged stays the request, whether the agent made those calls itself or they came in a `message_history` that ended partway through a turn. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness](https://github.com/pydantic/pydantic-ai-harness)'s compaction does.
 
 A model's thinking goes along as a `thinking` entry, where it was in the response, so a question can be about the reasoning itself, such as whether the model considered getting around its tests. Thinking a provider returned only in encrypted form, as a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] with a `signature` and no text, has nothing to judge and is left out.
 
-Accuracy falls as the state grows with detail the question does not need, and a backend has a limit on how large the state can be; past it the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], which a `FallbackModel` hands to the model behind it like any API error, so an over-long conversation quietly becomes a language model call. Compact earlier than a language model would need, since the decision model is being asked to *judge* the whole of it, not to continue from it. Jev's limits are on the [TypeSafe page](typesafe.md#limits).
+Accuracy falls as the state grows with detail the question does not need, and a backend has a limit on how large the state can be; past it the request fails with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], which a `FallbackModel` hands to the model behind it like any API error. Every later turn of the conversation is then over the limit too, so each one quietly becomes a language model call until the history is compacted. With the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] set to the limit that binds, as [Jev's](typesafe.md#compaction) is, compacting on [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used], as the [compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) processor does, fires in time, and a `FallbackModel` measures against the smallest window among its models. A compaction that summarizes needs a language model to write the summary, since the decision model cannot. Jev's limits, and a worked example, are on the [TypeSafe page](typesafe.md#compaction).
 
 !!! note "A system prompt is judged, not asked"
     A decision model is told what a conversation said and asked what the agent's `instructions` ask. A
@@ -1226,7 +1230,7 @@ Two things to hold on to. A classifier in the loop is a component like any other
 A decision model does not write text or read files, and it only fills tool arguments that map to the [typed questions](#supported-field-types) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be made of the field types above, or be [handed off](#escalating-to-a-language-model) when it is picked from beside other routes: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-pick-then-fill) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
-- No native tools. A function tool is offered to the model; supported arguments are [filled after it is picked](#tools-pick-then-fill), while any unsupported argument makes the pick an `UnfillableRoute` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
+- No native tools. A function tool is offered to the model; supported arguments are [filled when it is picked](#tools-pick-then-fill), while any unsupported argument makes the pick an `UnfillableRoute` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
 - No image, audio, video or document in the prompt or the history.
 - A pick-one needs two or more options, each a string or a whole number: one option leaves nothing to pick, and `True` is not a label.
 - No more options in one question than the backend's `max_choice_options`, where it sets one. A pick-one field counts its own options, and the route question counts every tool plus every output type, so on Jev 255 tools is already one too many once the output type is counted beside them.
@@ -1320,7 +1324,8 @@ A probability of 0.5 lands exactly on the default threshold, so `urgent` comes b
 
 What `decide` receives and owes:
 
-- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history` and the latest prompt under `text`, as [above](#judging-a-conversation). Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts (`field`, `question`, `goal`, `instructions`, `option` on each yes/no a `list` or `dict` of options fans out to, and `chosen` on the second request of a [pick, then fill](#tools-pick-then-fill)).
+- `request.state` is the text to judge as a `str`, or a dict with the conversation under `history`, the latest prompt under `text`, and what was done since under `done`, as [above](#judging-a-conversation). Each question's `instructions` is likewise a `str` when there is one thing to say, or a dict of labelled parts: `field`; `premise`, the route a field belongs to, when there is more than one [route](#routes-which-thing-to-do); `context`, a list of what a nested field sits in; `question`; `goal`, the output type's docstring when it is the only route; `background`, the agent's instructions; and `option` on each yes/no a `list` or `dict` of options fans out to.
+- A question's name is for reading its answer back, and is not something to send to the model. The fields asked beside the route question are named `'<route>.<field>'`, and the route question is named `route`.
 - Every question in `request.questions` needs an answer of the matching kind under the same name: a [`NoulAnswer`][pydantic_ai.models.decision.NoulAnswer] with the probability of yes, a [`ChoiceAnswer`][pydantic_ai.models.decision.ChoiceAnswer] with a probability for every option in `criteria`, or a [`ScoreAnswer`][pydantic_ai.models.decision.ScoreAnswer] with a position along the levels. A missing or mismatched answer is an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
 - Probabilities are read as probabilities, and the [thresholds](#confidence-and-thresholds) and reported confidence assume they are calibrated. A backend whose scores are not should calibrate them before returning them, or document that its bars need tuning of their own.
 - Report the tokens a request used on `DecisionResponse.usage`, and the model version that answered on `model_name`.
