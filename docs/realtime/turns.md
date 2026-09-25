@@ -110,7 +110,8 @@ on ordinary user turns. A reply that has not reached its first audio chunk is st
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
 (xAI) the response is cancelled without a truncation point, and when the provider interrupts
-itself without reporting speech onset (Gemini) only the local flush is performed. The events still
+itself without reporting speech onset (Gemini) only the local flush is performed. Either way,
+history still records where playback stopped. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
 chunk boundary the device reached, so it attributes at most one chunk less than was really heard,
@@ -202,7 +203,10 @@ and should flush it on barge-in, as above.
 
 History records a known cutoff on
 [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms] and marks the
-response state as interrupted. When this history is sent to a text model, Pydantic AI adds a readable
+response state as interrupted. Models generate audio several times faster than it plays, so the reply
+the user speaks over has usually finished generating and is already in history as complete. The
+barge-in still truncates that reply and marks it as interrupted where playback stopped. The cutoff
+is not carried over to the next response that gets interrupted. When this history is sent to a text model, Pydantic AI adds a readable
 interruption note to the prepared request without modifying stored history.
 
 ## Speaking first

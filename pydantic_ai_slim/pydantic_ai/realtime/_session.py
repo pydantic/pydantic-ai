@@ -365,6 +365,18 @@ def _pcm_to_wav(data: bytes, sample_rate: int) -> bytes:
     return buffer.getvalue()
 
 
+def _mark_last_speech_interrupted(
+    parts: Sequence[ModelResponsePart], interrupted_at_ms: int | None
+) -> list[ModelResponsePart]:
+    """Record a barge-in's cut position on a response's last `SpeechPart`, the one being spoken."""
+    marked = list(parts)
+    for index in range(len(marked) - 1, -1, -1):
+        if isinstance(part := marked[index], SpeechPart):
+            marked[index] = replace(part, interrupted_at_ms=interrupted_at_ms)
+            break
+    return marked
+
+
 def _accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
     """Fold a transcript event's `text` into the running transcript, returning `(new_accumulated, appended)`.
 
@@ -744,6 +756,12 @@ class RealtimeSession:
         self._pending_provider_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
+        # The streamed index of the last assistant `SpeechPart` in the response being assembled, and, once
+        # a response holding one is in history, that index with the response. Generation outruns playback,
+        # so a barge-in usually cuts off audio whose response is already recorded as complete: this is
+        # how the cut position finds that response instead of the next one.
+        self._response_speech_index: int | None = None
+        self._finalized_speech: tuple[int, ModelResponse] | None = None
         self._response_finalized_before_terminal = False
         # User requests sent while a response is in flight are held until that response is finalized,
         # so the pump remains the sole writer for that portion of history and a caller cannot splice a
@@ -1688,7 +1706,9 @@ class RealtimeSession:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
 
         This is server-side only — it stops generation and (when a playback position is given) syncs
-        the provider's transcript to what was actually heard.
+        the provider's transcript to what was actually heard. Generation outruns playback, so the reply
+        being heard has often finished generating already: it is still truncated, and its response in
+        history is marked interrupted at that position.
 
         With `played_ms`, the caller owns all playback accounting: flushing locally buffered
         playback is the caller's responsibility, and deciding whether to interrupt at all is too.
@@ -1732,10 +1752,9 @@ class RealtimeSession:
                 'This realtime model does not support output truncation, so `interrupt(played_ms=...)` '
                 'is unavailable. Call `interrupt()` without `played_ms` to cancel without truncating.'
             )
-        # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
-        # output item, so a truncate sent afterwards could no-op. Both frames go out under one hold of
-        # the send lock, so a tool result completing in between can't start a new response for the
-        # cancel to hit instead. The client cancel is skipped while the provider's own turn detection
+        # Truncate before cancelling: cancelling forgets the tracked output item, so a truncate sent
+        # afterwards could no-op. Both frames go out under one hold of the send lock, so a tool result
+        # completing in between can't start a new response for the cancel to hit instead. The client cancel is skipped while the provider's own turn detection
         # is already cancelling the response spoken over — the same rule as the `played_bytes` path
         # and `handle_barge_in=True` — so it can't land on the *next* response instead.
         frames: list[TruncateOutput | CancelResponse] = []
@@ -1745,7 +1764,7 @@ class RealtimeSession:
             frames.append(CancelResponse())
         if frames:
             await self._send_frame(*frames)
-        self._pending_interrupted_at_ms = played_ms
+        self._record_interruption(played_ms)
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
@@ -1798,18 +1817,61 @@ class RealtimeSession:
             # unavailable.
             if cancel:
                 await self._send_frame(CancelResponse())
+            # The provider keeps the whole reply, but history can still say where the listener stopped.
+            self._record_interruption(self._played_ms(playhead))
             self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
             return True
-        # A playhead still inside a previous turn's audio means none of the current turn was heard.
-        played_ms = max(0, playhead - self._turn_audio_start_bytes) * 1000 // (self.audio_output_sample_rate * 2)
+        played_ms = self._played_ms(playhead)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
         await self._send_frame(
             TruncateOutput(audio_end_ms=played_ms),
             *([CancelResponse()] if cancel else []),
         )
-        self._pending_interrupted_at_ms = played_ms
+        self._record_interruption(played_ms)
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
+
+    def _played_ms(self, playhead: int) -> int:
+        """Map an emitted-audio playhead onto milliseconds into the audio part being played."""
+        # A playhead still inside a previous turn's audio means none of the current turn was heard.
+        return max(0, playhead - self._turn_audio_start_bytes) * 1000 // (self.audio_output_sample_rate * 2)
+
+    def _record_interruption(self, played_ms: int | None) -> None:
+        """Attribute a barge-in's cut position to the response whose audio it cut off.
+
+        Generation outruns playback, so the reply being heard is usually already in history: it is
+        marked interrupted in place. A reply still being generated takes the position when it is
+        finalized. With neither, there is nothing it describes, and it is dropped rather than left for
+        whichever response is interrupted next.
+        """
+        self._pending_interrupted_at_ms = None
+        if played_ms is None:
+            return
+        if (finalized := self._finalized_speech) is not None:
+            speech_index, response = finalized
+            if self._audio_part_index is not None:
+                # The session sees the audio: the part it last emitted is the one being played.
+                heard_finalized = self._audio_part_index == speech_index
+            else:
+                # No audio passes through the session (a WebRTC sideband): the last spoken reply is
+                # the one playing, unless a newer one is already being generated.
+                heard_finalized = not self._response_in_flight
+            if heard_finalized:
+                self._mark_recorded_response_interrupted(speech_index, response, played_ms)
+                return
+        if self._response_in_flight:
+            self._pending_interrupted_at_ms = played_ms
+
+    def _mark_recorded_response_interrupted(self, speech_index: int, response: ModelResponse, played_ms: int) -> None:
+        """Replace a response already in history with its interrupted form.
+
+        Replaced rather than mutated, so a snapshot a caller took from `all_messages()` doesn't change.
+        Responses are never removed from history, only inserted around, so it is found by identity.
+        """
+        position = next(index for index in range(len(self._history) - 1, -1, -1) if self._history[index] is response)
+        marked = replace(response, parts=_mark_last_speech_interrupted(response.parts, played_ms), state='interrupted')
+        self._history[position] = marked
+        self._finalized_speech = (speech_index, marked)
 
     def _flush_tap(self, tap: _AudioTap) -> None:
         """Discard the tap's buffered chunks, counting them as dropped for position mapping."""
@@ -1850,6 +1912,11 @@ class RealtimeSession:
                     tap.played_bytes, cancel=not self._server_cancelled_the_response_on_speech
                 )
         elif isinstance(event, RealtimeResponseInterruptedEvent):
+            # The provider stopped generating, but the playback position is still ours to report:
+            # record it when the listener hadn't heard everything, as the barge-in's cut position.
+            playhead = tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes
+            if playhead < self._emitted_audio_bytes:
+                self._record_interruption(self._played_ms(playhead))
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index
 
@@ -2054,6 +2121,8 @@ class RealtimeSession:
                     ),
                 )
         index = self._active_assistant_index
+        if isinstance(part, SpeechPart):
+            self._response_speech_index = index
         self._active_assistant = None
         self._active_assistant_item_id = None
         self._assistant_transcript = ''
@@ -2068,10 +2137,15 @@ class RealtimeSession:
         finish_reason: FinishReason | None = None,
         provider_details: dict[str, Any] | None = None,
         interrupted: bool = False,
-        interrupted_at_ms: int | None = None,
         response_occurred: bool = False,
     ) -> None:
         """Finalize the current assistant response's parts into a `ModelResponse` in history."""
+        # A barge-in's cut position belongs to the response in flight when it was reported, which is
+        # this one: consumed here so it can never land on a later response. A reply cut at a playback
+        # position was interrupted even when it finished generating before the provider processed the
+        # cancel, and so reports itself as complete.
+        interrupted_at_ms, self._pending_interrupted_at_ms = self._pending_interrupted_at_ms, None
+        interrupted = interrupted or interrupted_at_ms is not None
         response: ModelResponse | None = None
         # The chat span's input is the history the response replied to, captured before we append it.
         input_messages = self.all_messages()
@@ -2079,10 +2153,7 @@ class RealtimeSession:
         # speech), matching the classic `GoogleModel`, which prepends them ahead of the assistant's text.
         parts = [*self._native_tool_parts, *self._response_parts]
         if interrupted:
-            for index in range(len(parts) - 1, -1, -1):
-                if isinstance(part := parts[index], SpeechPart):
-                    parts[index] = replace(part, interrupted_at_ms=interrupted_at_ms)
-                    break
+            parts = _mark_last_speech_interrupted(parts, interrupted_at_ms)
         # Parts prove a response happened. For an output-less response, only terminal/pending provider
         # metadata (or an interruption) does; a bare logical turn boundary must not invent a response.
         response_occurred = bool(
@@ -2142,6 +2213,8 @@ class RealtimeSession:
                 # at this response boundary. A provider-reported cost arrived in those events too.
                 self.usage.incr(RequestUsage(cost=response.usage.cost))  # usage-attribution: the session owns its spans
             self._history.append(response)
+            if self._response_speech_index is not None:
+                self._finalized_speech = (self._response_speech_index, response)
             if not any(isinstance(part, ToolCallPart) for part in parts):
                 # The model has said what it had to say (a tool call means its answer is still to come),
                 # so audio from here on can be the user's next turn again.
@@ -2163,6 +2236,7 @@ class RealtimeSession:
         self._session_instrumentation.end_chat_span(input_messages, response)
         self._response_parts = []
         self._native_tool_parts = []
+        self._response_speech_index = None
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id = None
         self._pending_finish_reason = None
@@ -2274,7 +2348,6 @@ class RealtimeSession:
             or (None if event.interrupted or event.provider_details is not None else 'stop'),
             provider_details=event.provider_details,
             interrupted=event.interrupted,
-            interrupted_at_ms=self._pending_interrupted_at_ms,
             response_occurred=bool(
                 not already_finalized
                 and (
@@ -2285,7 +2358,6 @@ class RealtimeSession:
                 )
             ),
         )
-        self._pending_interrupted_at_ms = None
         if not more_expected:
             events.append(RealtimeTurnCompleteEvent())
             self._release_exchange()

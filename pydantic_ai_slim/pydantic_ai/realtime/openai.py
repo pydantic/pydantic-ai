@@ -866,8 +866,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 and not self._cancel_sent
             )
             self._clear_active_response()
-            # A fresh socket also drops anything the old one was still holding for us.
+            # A fresh socket also drops anything the old one was still holding for us, including the
+            # output item a barge-in would have truncated.
             self._cancelled_response_id = None
+            self._current_item_id = None
+            self._generated_audio_bytes = 0
             if replay_response:
                 await self._request_response()
             # Cleared only once the replay is on the wire, so a send that failed above leaves the
@@ -889,12 +892,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._response_started = False
         self._active_response_id = None
         self._cancel_sent = False
-        # On a sideband, the provider keeps playing this response's audio to the browser after
-        # `response.done`, and a barge-in truncation during that tail still has to name the playing
-        # item — so it is retired when playback ends (`output_audio_buffer.stopped`/`.cleared`) instead.
-        if self._observes_output_audio or not self._output_audio_playing:
+        # The response's output item outlives its generation: the provider generates audio several
+        # times faster than real time, so the user is usually still hearing the reply after its
+        # `response.done`, and a barge-in in that tail still has to name the item it truncates. Over a
+        # WebSocket the item is retired by the next item's first audio delta, which also restarts the
+        # generated-audio count the truncation is clamped to. A sideband sees no audio deltas, so it
+        # retires the item when the provider's playback ends (`output_audio_buffer.stopped`/`.cleared`).
+        if not self._observes_output_audio and not self._output_audio_playing:
             self._current_item_id = None
-        self._generated_audio_bytes = 0
 
 
 @dataclass(init=False)

@@ -3323,11 +3323,16 @@ async def test_truncate_resets_generated_audio_between_items() -> None:
 @pytest.mark.anyio
 async def test_truncate_resets_generated_audio_between_responses() -> None:
     done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
-    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=480), done, _audio_delta('item_7', audio_bytes=240)])
+    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=480), done, _audio_delta('item_8', audio_bytes=240)])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     _ = [e async for e in conn]
     await conn.send(TruncateOutput(audio_end_ms=20))
-    assert json.loads(ws.sent[0])['audio_end_ms'] == 5
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_8',
+        'content_index': 0,
+        'audio_end_ms': 5,
+    }
 
 
 @pytest.mark.anyio
@@ -3436,14 +3441,14 @@ async def test_sideband_playback_end_retires_output_item() -> None:
 
 
 @pytest.mark.anyio
-async def test_websocket_clear_active_response_retires_output_item() -> None:
-    """A connection that observes output audio retires the item on `response.done` as before."""
+async def test_websocket_clear_active_response_keeps_output_item() -> None:
+    """A connection that observes output audio keeps the item past `response.done` for barge-in."""
     ws = FakeWebSocket([_audio_delta('item_ws')])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     _ = await collect_codec_events(conn)
     conn._clear_active_response()  # pyright: ignore[reportPrivateUsage]
     await conn.send(TruncateOutput(audio_end_ms=800))
-    assert ws.sent == []
+    assert json.loads(ws.sent[0])['item_id'] == 'item_ws'
 
 
 @pytest.mark.anyio
@@ -3505,11 +3510,37 @@ async def test_truncate_without_current_item_is_noop() -> None:
 
 
 @pytest.mark.anyio
-async def test_response_done_resets_tracked_item() -> None:
+async def test_truncate_after_response_done_names_the_finished_item() -> None:
+    """Generation outruns playback, so a barge-in usually lands after `response.done`.
+
+    The finished reply's item is still the one being heard, so the truncation names it and is still
+    clamped to the audio it generated.
+    """
+    done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    ws = FakeWebSocket([_audio_delta('item_9', audio_bytes=4800), done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=500))
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_9',
+        'content_index': 0,
+        'audio_end_ms': 100,
+    }
+
+
+@pytest.mark.anyio
+async def test_reconnect_forgets_the_finished_output_item() -> None:
+    """A re-dialed socket holds none of the old one's items, so there is nothing left to truncate."""
     done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
     ws = FakeWebSocket([_audio_delta('item_9'), done])
-    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    _ = [e async for e in conn]  # delta sets the item, response.done clears it
+
+    async def dial() -> Any:
+        return ws
+
+    conn = OpenAIRealtimeConnection(ws, dial=dial, reconnect={'base_delay': 0.0})  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    assert await conn._attempt_reconnect() is True  # pyright: ignore[reportPrivateUsage]
     await conn.send(TruncateOutput(audio_end_ms=500))
     assert ws.sent == []
 

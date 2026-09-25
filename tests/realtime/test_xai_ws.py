@@ -537,7 +537,8 @@ async def test_handle_barge_in_over_live_speech(
     local flush that keeps stale audio out of the playback stream. In this recording the reply had
     already completed server-side by the time the user spoke over it (generation outruns playback),
     which is exactly when a client-side cancel would have been applied to the *next* response —
-    the session sent nothing, and both replies completed.
+    the session sent nothing. The provider keeps the whole reply, but history records that the
+    listener cut the first one off where playback stopped.
     """
     provider, cassette = xai_ws_cassette
     model = XaiRealtimeModel(MODEL, provider=provider)
@@ -567,4 +568,7 @@ async def test_handle_barge_in_over_live_speech(
     assert sent_frames_containing(cassette, 'conversation.item.truncate') == []
     assert sent_frames_containing(cassette, 'response.cancel') == []
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['complete', 'complete'])
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    assert [
+        [part.interrupted_at_ms for part in response.parts if isinstance(part, SpeechPart)] for response in responses
+    ] == snapshot([[0], [None]])

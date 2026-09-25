@@ -53,7 +53,7 @@ from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import CassetteMessage, RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
@@ -1279,3 +1279,48 @@ async def test_handle_barge_in_over_live_speech(
     assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
     speech = next(part for part in responses[0].parts if isinstance(part, SpeechPart))
     assert speech.interrupted_at_ms == 0
+
+
+async def test_interrupt_after_the_reply_finished_generating(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Generation outruns playback, so the user usually barges in after the reply's `response.done`.
+
+    The reply is still being heard, so the barge-in must still truncate its item and the provider must
+    accept that for a finished response. History marks that reply interrupted instead of complete,
+    and the next reply is unaffected. The playback position is 0 so it replays deterministically.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        _stream = session.stream_audio()  # the single playback view the position is attributed to
+        events = aiter(session)
+        with anyio.fail_after(60):
+            await session.send('Say hello.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+            # The reply has finished generating but none of it has been played.
+            assert await session.interrupt(played_bytes=0) is True
+            await session.send('Say goodbye.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+
+    truncates = sent_frames_containing(cassette, 'conversation.item.truncate')
+    assert [frame['audio_end_ms'] for frame in truncates] == [0]
+    # No response was active, so there was nothing to cancel.
+    assert sent_frames_containing(cassette, 'response.cancel') == []
+    received = [
+        message.data['type']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'received'
+    ]
+    assert 'conversation.item.truncated' in received
+    assert 'error' not in received
+
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    assert [
+        [part.interrupted_at_ms for part in response.parts if isinstance(part, SpeechPart)] for response in responses
+    ] == snapshot([[0], [None]])
