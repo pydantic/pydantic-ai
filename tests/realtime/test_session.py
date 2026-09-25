@@ -5001,6 +5001,93 @@ async def test_send_on_a_dropped_connection_waits_for_the_reconnect() -> None:
             await asyncio.wait_for(failed, _LIVENESS_TIMEOUT)
 
 
+async def test_sends_keep_their_order_across_a_reconnect() -> None:
+    # A send made while an earlier one is parked on the dropped connection queues behind it, even once
+    # the new link is up, so the provider sees them in the order they were made. Several parked sends
+    # go out in the order they were made, too.
+    conn = _DroppingConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        await session.send_audio(b'\x01')
+        conn.dropped = True
+        first = asyncio.create_task(session.send_audio(b'\x02'))
+        await _parked(first)
+        second = asyncio.create_task(session.send_audio(b'\x03'))
+        await _parked(second)
+        conn.dropped = False  # the replacement is up before the pump reports the reconnect
+        third = asyncio.create_task(session.send_audio(b'\x04'))
+        await _parked(third)
+        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
+        await asyncio.wait_for(asyncio.gather(first, second, third), _LIVENESS_TIMEOUT)
+        assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [
+            b'\x01',
+            b'\x02',
+            b'\x03',
+            b'\x04',
+        ]
+
+
+async def test_parked_send_waits_out_a_second_drop() -> None:
+    # A retry that finds the replacement gone too keeps its place and waits for the next reconnect.
+    conn = _DroppingConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        await session.send_audio(b'\x01')
+        conn.dropped = True
+        parked = asyncio.create_task(session.send_audio(b'\x02'))
+        await _parked(parked)
+        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
+        await _parked(parked)
+        conn.dropped = False
+        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
+        await asyncio.wait_for(parked, _LIVENESS_TIMEOUT)
+    assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [b'\x01', b'\x02']
+
+
+async def test_parked_send_fails_when_receiving_ends_right_after_the_reconnect() -> None:
+    # The pump can handle the reconnect and then end before the parked send resumes. Nothing would read
+    # the reply to a frame sent then, so the send fails instead of going out.
+    conn = _DroppingConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        await session.send_audio(b'\x01')
+        conn.dropped = True
+        parked = asyncio.create_task(session.send_audio(b'\x02'))
+        await _parked(parked)
+        conn.dropped = False
+        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
+        conn.inbox.put_nowait(None)
+        with pytest.raises(RealtimeError, match='failed while sending'):
+            await asyncio.wait_for(parked, _LIVENESS_TIMEOUT)
+    assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [b'\x01']
+
+
+async def test_parked_send_is_not_retried_after_close() -> None:
+    # The session can close between the reconnect waking a parked send and the send taking the lock
+    # again; the retry must not go out on a closed session.
+    conn = _DroppingConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        await session.send_audio(b'\x01')
+        conn.dropped = True
+        parked = asyncio.create_task(session.send_audio(b'\x02'))
+        await _parked(parked)
+        conn.dropped = False
+        lock = session._send_lock  # pyright: ignore[reportPrivateUsage]
+        await lock.acquire()
+        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
+        while session._reconnects_handled == 0:  # pyright: ignore[reportPrivateUsage]
+            await asyncio.sleep(0)
+        await _parked(parked)
+        closing = asyncio.create_task(session.close())
+        await asyncio.sleep(0)
+        lock.release()
+        with pytest.raises(RealtimeError, match='failed while sending'):
+            await asyncio.wait_for(parked, _LIVENESS_TIMEOUT)
+        await closing
+    assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [b'\x01']
+
+
 async def test_send_parked_on_a_dropped_connection_fails_when_the_session_closes() -> None:
     conn = _DroppingConnection()
     session = RealtimeSession(conn, model_name='gpt-realtime')

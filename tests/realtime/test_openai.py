@@ -4361,7 +4361,7 @@ async def test_sends_during_a_reconnect_go_out_on_the_new_connection(monkeypatch
                 },
             },
             {'type': 'input_audio_buffer.append', 'audio': 'AgM='},
-            {'type': 'response.create', 'event_id': 'pydantic_ai.response.4'},
+            {'type': 'response.create', 'event_id': 'pydantic_ai.response.3'},
         ]
     )
 

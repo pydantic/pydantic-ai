@@ -596,7 +596,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             event['event_id'] = client_event_id('response', input_indexes)
         try:
             await self._send_event(event)
-        except BaseException:
+        except self.transport_errors:
             # The request never reached the server, so no response is active. Left set, a reconnect
             # would re-ask for it while the session also retries the failed send: two responses.
             self._response_active = False

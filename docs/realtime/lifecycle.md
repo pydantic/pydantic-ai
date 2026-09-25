@@ -69,8 +69,10 @@ session, preventing an endpoint that repeatedly accepts and closes connections f
 forever.
 
 While a reconnect is under way, anything you send (microphone audio, a typed turn, a tool's result)
-waits for the new connection and goes out on it, so a `send_audio()` microphone task survives the
-drop. The send raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] only if the reconnect fails.
+waits for the new connection and goes out on it, in the order it was sent, so a `send_audio()`
+microphone task survives the drop. A send can therefore take as long as the policy's backoff; it
+raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] if the reconnect fails or the session
+closes. Delivery is at least once: a frame the socket flushed just before failing is sent again.
 On OpenAI and Azure OpenAI a typed turn is already in the replayed history (see
 [State restoration](#state-restoration)), so only its reply is requested again.
 

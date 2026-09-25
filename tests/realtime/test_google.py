@@ -2407,9 +2407,9 @@ async def test_reconnect_abandons_tool_calls_made_since_the_resumption_handle() 
     ]
 
 
-async def test_reconnect_survives_the_resumed_socket_dropping_while_answering_lost_calls() -> None:
-    # Answering the lost calls is the first send on the new socket; if that socket is already gone,
-    # the next receive notices and reconnects like any other drop, so the send just gives up.
+async def test_answering_lost_calls_is_retried_after_the_resumed_socket_drops() -> None:
+    # Answering the lost calls is the first send on the new socket. If that socket is already gone, the
+    # answer is still owed: the next resumed session carries the same stale exchange, so it gets it.
     class _DeadOnArrival(_RecordingSession):
         async def send_tool_response(self, *, function_responses: Any) -> None:
             raise ConnectionClosed(None, None)
@@ -2420,7 +2420,8 @@ async def test_reconnect_survives_the_resumed_socket_dropping_while_answering_lo
         )
     )
     s1 = _RecordingSession([[_handle_update('h1'), tool_call]])
-    dial, handles = _dialer(_DeadOnArrival([]), _RecordingSession([[_turn('back')]]))
+    s3 = _RecordingSession([[_turn('back')]])
+    dial, handles = _dialer(_DeadOnArrival([]), s3)
     conn = GoogleRealtimeConnection(
         cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
     )
@@ -2434,6 +2435,37 @@ async def test_reconnect_survives_the_resumed_socket_dropping_while_answering_lo
     ]
     assert OutputTranscript(text='back', is_final=True) in events
     assert handles[:2] == ['h1', 'h1']
+    assert [[response.id for response in responses] for responses in s3.tool_responses] == [['c1']]
+
+
+async def test_input_after_a_reconnect_goes_out_after_the_lost_calls_are_answered() -> None:
+    # The stale exchange on the resumed session swallows whatever input reaches it first, so a user
+    # input sent as soon as the calls are cancelled still goes out after their interrupted answer.
+    tool_call = genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(
+            function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+        )
+    )
+    s1 = _RecordingSession([[_handle_update('h1'), tool_call]])
+    s2 = _RecordingSession([[_turn('back')]])
+    dial, _ = _dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    order: list[str] = []
+    s2.send_tool_response = lambda **kw: _record(order, 'tool_response')  # type: ignore[method-assign]
+    s2.send_client_content = lambda **kw: _record(order, 'client_content')  # type: ignore[method-assign]
+
+    async for event in conn:  # pragma: no branch
+        if isinstance(event, ToolCallCancelled):
+            await conn.send('are you there?')
+            break
+
+    assert order == ['tool_response', 'client_content']
+
+
+async def _record(order: list[str], kind: str) -> None:
+    order.append(kind)
 
 
 class _DroppableSession:

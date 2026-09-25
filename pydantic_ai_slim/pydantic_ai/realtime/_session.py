@@ -906,6 +906,10 @@ class RealtimeSession:
         # `_send_frame`) once the replacement is ready, receiving has ended, or the session closed.
         self._reconnects_handled = 0
         self._link_changed = asyncio.Event()
+        # Sends waiting out a reconnect, in the order they were made (see `_send_frame`), and the transport
+        # error that parked the first of them.
+        self._parked_sends: deque[object] = deque()
+        self._link_error: BaseException | None = None
         self._pump_error: Exception | None = None
         self._pump_finished = False
         self._receive_ending = False
@@ -1940,63 +1944,114 @@ class RealtimeSession:
 
         A send that hits a dropped connection waits for the connection's reconnect policy to replace it
         and then goes out on the new one, so the caller (an always-on microphone task, a tool delivering
-        its result) outlives a reconnect instead of failing on the dead socket. It fails only once
-        receiving ends without a replacement. `replayed` is what to send instead when the connection
-        rebuilds the conversation from local history on re-dial: the inputs already recorded in that
-        history (a text turn) arrived with the replay, so sending them again would duplicate them.
+        its result) outlives a reconnect instead of failing on the dead socket. The wait is bounded by the
+        policy: the send fails once receiving ends without a replacement, or the session closes. Sends
+        made meanwhile queue behind the parked one, so the provider still sees them in order. Delivery
+        is at least once: a frame the transport flushed just before failing is sent again.
+
+        `replayed` is what to send instead once a reconnect has happened, on a connection that rebuilds
+        the conversation from local history on re-dial: an input already recorded in that history (a
+        text turn) arrived with the replay, so sending it again would duplicate it.
         """
         self._ensure_not_closed()
         self._start_pump()
         first = contents[0] if contents else None
         remaining = list(contents)
-        while True:
-            reconnects = self._reconnects_handled
-            # Only the closed check is re-taken here, not `_ensure_can_send`: a frame already waiting on
-            # the lock when a background failure ends receiving is one already underway, not the "next
-            # outbound method" that contract speaks of, and it costs a single frame nobody reads on a
-            # session that is ending anyway. Re-taking the full guard under the lock would also raise that
-            # parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither of
-            # which is a caller that asked to send.
-            async with self._send_lock:
-                try:
-                    while remaining:
-                        # Numbered before the call, and whether or not it raises, matching how
-                        # `InputRejected.input_index` counts. Registered before the frame goes out, since
-                        # the pump can read the refusal while a later input of this group is still sending.
-                        input_index = self._inputs_sent
-                        self._inputs_sent += 1
-                        if request is not None and remaining[0] is first:
-                            self._input_requests[input_index] = request
-                        await self._connection.send(remaining[0])
-                        del remaining[0]
-                    return
-                except self._connection.transport_errors as e:
-                    error = e
-            # Parked outside the lock: the pump that notices the drop and runs the reconnect may itself
-            # be waiting on the lock to send (draining queued messages at a turn boundary). Only a running
-            # pump can deliver a reconnect, and it can't wait on its own, so without one (a session never
-            # entered) or from the pump itself a send fails as it always has.
-            pump = self._pump_task
-            if pump is None or asyncio.current_task() is pump or not await self._await_reconnect(reconnects):
-                # A send that fails because the link is gone is the same failure the receive side
-                # reports; surface it as the same typed error rather than leaking a `websockets` or
-                # provider-SDK exception from what looks like an ordinary method call.
-                raise RealtimeError(
-                    model_name=self._error_model_name,
-                    message=f'Realtime connection failed while sending: {error}',
-                ) from error
-            if replayed is not None and not self._connection.reconnect_restores_in_flight_state:
-                remaining = list(replayed)
-                replayed = None
+        reconnects_at_start = self._reconnects_handled
+        # Our place in the queue of sends waiting out a reconnect, once we have one, and the reconnect
+        # count when our own attempt failed (`None` while queued behind another send's failure).
+        ticket: object | None = None
+        failed_at: int | None = None
+        try:
+            while True:
+                if ticket is not None and not await self._await_send_turn(ticket, failed_at):
+                    raise self._link_lost_error()
+                # Only the closed check is re-taken here, not `_ensure_can_send`: a frame already waiting on
+                # the lock when a background failure ends receiving is one already underway, not the "next
+                # outbound method" that contract speaks of, and it costs a single frame nobody reads on a
+                # session that is ending anyway. Re-taking the full guard under the lock would also raise
+                # that parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither
+                # of which is a caller that asked to send.
+                async with self._send_lock:
+                    if ticket is not None and not self._link_usable():
+                        # Closed or finished between the wake-up and taking the lock.
+                        raise self._link_lost_error()
+                    if self._parked_sends and self._parked_sends[0] is not ticket:
+                        # An earlier send is still waiting out a reconnect: queue behind it.
+                        ticket = self._park_send(ticket)
+                        continue
+                    if (
+                        replayed is not None
+                        and self._reconnects_handled != reconnects_at_start
+                        and not self._connection.reconnect_restores_in_flight_state
+                    ):
+                        remaining = list(replayed)
+                        replayed = None
+                    attempt = self._reconnects_handled
+                    try:
+                        while remaining:
+                            # Numbered before the call, and whether or not it raises, matching how
+                            # `InputRejected.input_index` counts. Registered before the frame goes out, since
+                            # the pump can read the refusal while a later input of this group is still
+                            # sending.
+                            input_index = self._inputs_sent
+                            self._inputs_sent += 1
+                            if request is not None and remaining[0] is first:
+                                self._input_requests[input_index] = request
+                            await self._connection.send(remaining[0])
+                            del remaining[0]
+                        return
+                    except self._connection.transport_errors as e:
+                        self._link_error = e
+                        ticket = self._park_send(ticket)
+                        failed_at = attempt
+        finally:
+            if ticket is not None:
+                self._parked_sends.remove(ticket)
+                self._link_changed.set()
 
-    async def _await_reconnect(self, reconnects: int) -> bool:
-        """Wait until the pump has handled a reconnect after `reconnects`; `False` if none will come."""
-        while self._reconnects_handled == reconnects:
-            if self._closed or self._pump_finished:
-                return False
+    def _park_send(self, ticket: object | None) -> object:
+        """Take (or keep) a place in the queue of sends waiting out a reconnect.
+
+        Only a running pump can deliver a reconnect, and it can't wait on its own, so without one (a
+        session never entered) or from the pump itself (draining queued messages at a turn boundary) a
+        send fails as it always has.
+        """
+        pump = self._pump_task
+        if pump is None or asyncio.current_task() is pump:
+            raise self._link_lost_error()
+        if ticket is None:
+            ticket = object()
+            self._parked_sends.append(ticket)
+        return ticket
+
+    def _link_usable(self) -> bool:
+        return not (self._closed or self._pump_finished)
+
+    async def _await_send_turn(self, ticket: object, failed_at: int | None) -> bool:
+        """Wait until `ticket` heads the queue and, if its own send failed, a reconnect has been handled.
+
+        Parked outside the send lock, since the pump that handles the reconnect may itself need the lock.
+        `False` once no reconnect can come: receiving ended or the session closed.
+        """
+        while self._link_usable():
+            if self._parked_sends[0] is ticket and (failed_at is None or self._reconnects_handled != failed_at):
+                return True
             self._link_changed.clear()
             await self._link_changed.wait()
-        return not self._closed
+        return False
+
+    def _link_lost_error(self) -> RealtimeError:
+        # A send that fails because the link is gone is the same failure the receive side reports;
+        # surface it as the same typed error rather than leaking a `websockets` or provider-SDK exception
+        # from what looks like an ordinary method call.
+        error = self._link_error
+        error_ = RealtimeError(
+            model_name=self._error_model_name,
+            message=f'Realtime connection failed while sending: {error}',
+        )
+        error_.__cause__ = error
+        return error_
 
     @property
     def _error_model_name(self) -> str:

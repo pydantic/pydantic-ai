@@ -1230,6 +1230,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # without speaking). Gemini issues no handle while a call is executing, so a call still running
         # at a drop is always one of them.
         self._tool_calls_since_handle: set[str] = set()
+        # (tool name, Gemini call id) of calls a resumed session lost but still waits on; see
+        # `_answer_lost_tool_calls`.
+        self._unanswered_lost_tool_calls: list[tuple[str, str | None]] = []
+        # Serializes this connection's own sends with the answers for lost calls, which the receive loop
+        # sends too, so a user input never overtakes them.
+        self._send_lock = Lock()
         self._native_part_index = 0
         # The `tool_call_id` generated for the most recent `executable_code` part, reused to pair the
         # following `code_execution_result` return with its call — mirroring the classic `GoogleModel`
@@ -1260,6 +1266,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
         frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
         automatic VAD).
         """
+        async with self._send_lock:
+            # Whatever reaches a resumed session first is consumed by an exchange stuck on calls it lost,
+            # so those are answered ahead of any input (see `_answer_lost_tool_calls`).
+            await self._answer_lost_tool_calls()
+            await self._send(content)
+
+    async def _send(self, content: RealtimeInput) -> None:
         # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
         if isinstance(content, BinaryAudio):
             require_pcm_audio(content, provider_name=self._provider_name)
@@ -1368,16 +1381,20 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # Losing a call loses the exchange it belongs to, so that isn't a restored state either.
                 state_restored = state_resumed and not lost_tool_calls
                 if await self._try_reconnect():
+                    if not state_resumed:
+                        # A fresh session has no stale exchange left to answer.
+                        self._unanswered_lost_tool_calls.clear()
                     if lost_tool_calls:
                         # Abandon them the way Gemini's own `tool_call_cancellation` does: the tasks are
                         # cancelled and each call still gets a matching return in history. Nothing
                         # awaits between the re-dial and this event, so no tool task can send a result
                         # for one of these calls onto the new socket before the session cancels it.
-                        lost = {call_id: self._tool_calls.pop(call_id) for call_id in lost_tool_calls}
+                        for call_id in lost_tool_calls:
+                            call = self._tool_calls.pop(call_id)
+                            if state_resumed:
+                                self._unanswered_lost_tool_calls.append(call)
                         self._tool_calls_since_handle.clear()
                         yield ToolCallCancelled(tool_call_ids=lost_tool_calls)
-                        if state_resumed:
-                            await self._settle_lost_tool_calls(list(lost.values()))
                     if self._turn_open:
                         # The dropped connection was mid-turn. Gemini never continues an in-flight
                         # generation on the re-dialed connection (resumption restores conversation
@@ -1389,6 +1406,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         self._native_part_index = 0
                         yield ResponseDone(interrupted=True)
                     yield RealtimeSessionReconnectEvent(state_restored=state_restored)
+                    if self._unanswered_lost_tool_calls:
+                        # Answered right away rather than only ahead of the next input, so the resumed
+                        # session has closed the stale exchange by the time the user speaks. A new socket
+                        # that is already gone keeps them owed; receiving notices the drop next.
+                        with suppress(*self.transport_errors):
+                            async with self._send_lock:
+                                await self._answer_lost_tool_calls()
                     continue
                 yield RealtimeSessionErrorEvent(
                     message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
@@ -1396,21 +1420,26 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.
 
-    async def _settle_lost_tool_calls(self, calls: list[tuple[str, str | None]]) -> None:
+    async def _answer_lost_tool_calls(self) -> None:
         """Answer calls a resumed session lost with an error, so they don't swallow the next input.
 
         The session resumes still waiting on the exchange the calls belong to, but no longer accepts
         their results. Verified live: on `gemini-3.8-live` the next input only closes that stale
         exchange, so the user's next turn goes unanswered. Answering the calls closes it instead, with
-        an empty `turn_complete`. Gemini 2.5 ignores the response. If the new socket drops again, the
-        next reconnect handles it like any other drop.
+        an empty `turn_complete`. Gemini 2.5 ignores the response. They stay owed until the answer is
+        sent, through any further reconnects that resume the same exchange. Called under `_send_lock`.
         """
-        responses = [
-            genai_types.FunctionResponse(id=gemini_id, name=name, response={'error': INTERRUPTED_TOOL_RETURN_CONTENT})
-            for name, gemini_id in calls
-        ]
-        with suppress(*self.transport_errors):
-            await self._session.send_tool_response(function_responses=responses)
+        if not self._unanswered_lost_tool_calls:
+            return
+        await self._session.send_tool_response(
+            function_responses=[
+                genai_types.FunctionResponse(
+                    id=gemini_id, name=name, response={'error': INTERRUPTED_TOOL_RETURN_CONTENT}
+                )
+                for name, gemini_id in self._unanswered_lost_tool_calls
+            ]
+        )
+        self._unanswered_lost_tool_calls.clear()
 
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff, resuming from the latest handle; return whether it worked."""
