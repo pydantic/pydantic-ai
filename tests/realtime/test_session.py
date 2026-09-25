@@ -64,7 +64,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
@@ -120,8 +120,16 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionTools
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsStr
+from ..conftest import IsDatetime, IsStr, try_import
 from .conversation import assert_conversation_invariants
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.anyio
 T = TypeVar('T')
@@ -1534,6 +1542,31 @@ class _CancelGatedRealtimeConnection(FakeRealtimeConnection):
             yield event
 
 
+class _ToolResultGatedConnection(FakeRealtimeConnection):
+    """Replay one batch of events, then replay a second only once the session has sent a tool result.
+
+    A provider answers a tool call only once it has the result, while a plain replay plays the answer
+    straight after the call — as if the model spoke while the tool was still running.
+    """
+
+    def __init__(self, first: list[RealtimeCodecEvent], after_result: list[RealtimeCodecEvent], **kwargs: Any) -> None:
+        super().__init__(first, **kwargs)
+        self._after_result = after_result
+        self._result_sent = asyncio.Event()
+
+    async def send(self, content: RealtimeInput) -> None:
+        await super().send(content)
+        if isinstance(content, ToolResult):  # pragma: no branch
+            self._result_sent.set()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        for event in self._events:
+            yield event
+        await self._result_sent.wait()
+        for event in self._after_result:
+            yield event
+
+
 # 100 ms per chunk at the default 24 kHz mono PCM16 output rate, so byte positions map to round
 # millisecond counts (4800 bytes == 100 ms).
 _CHUNK = 4800
@@ -2229,13 +2262,15 @@ async def test_turn_completes_once_the_tool_round_is_over_not_before() -> None:
 
 
 async def test_tool_call_round_builds_classic_history() -> None:
-    conn = FakeRealtimeConnection(
+    conn = _ToolResultGatedConnection(
         [
             InputTranscript(text="what's the weather in Paris", is_final=True),
             ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
+        ],
+        [
             OutputTranscript(text="It's sunny in Paris", is_final=True),
             ResponseDone(),
-        ]
+        ],
     )
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -2254,10 +2289,11 @@ async def test_tool_call_round_builds_classic_history() -> None:
             'PartStartEvent',  # tool call part start
             'PartEndEvent',  # tool call part end
             'FunctionToolCallEvent',
+            'FunctionToolResultEvent',
             'PartStartEvent',  # assistant answer start
             'PartDeltaEvent',
             'PartEndEvent',
-            'FunctionToolResultEvent',
+            'RealtimeTurnCompleteEvent',
         ]
     )
 
@@ -2406,15 +2442,17 @@ async def test_late_input_transcript_still_precedes_the_response_it_prompted() -
     The wire order here is Azure's, measured live: speech start, the transcript's partials, then the whole
     tool round, and only afterwards the `.completed` snapshot.
     """
-    conn = FakeRealtimeConnection(
+    conn = _ToolResultGatedConnection(
         [
             RealtimeInputSpeechStartEvent(),
             InputTranscript(text="what's the weather in Paris", item_id='item-1'),
             ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
             InputTranscript(text="what's the weather in Paris", is_final=True, item_id='item-1'),
+        ],
+        [
             OutputTranscript(text="It's sunny in Paris", is_final=True),
             ResponseDone(),
-        ]
+        ],
     )
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -2442,7 +2480,7 @@ async def test_late_input_transcript_of_a_second_turn_follows_the_first_exchange
     after it — the same rule that keeps a first turn ahead of its own response has to know how far along
     the conversation was.
     """
-    conn = FakeRealtimeConnection(
+    conn = _ToolResultGatedConnection(
         [
             InputTranscript(text='what is the weather', is_final=True, item_id='item-1'),
             OutputTranscript(text='Sunny.', is_final=True),
@@ -2451,9 +2489,11 @@ async def test_late_input_transcript_of_a_second_turn_follows_the_first_exchange
             InputTranscript(text='and tomorrow', item_id='item-2'),
             ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
             InputTranscript(text='and tomorrow', is_final=True, item_id='item-2'),
+        ],
+        [
             OutputTranscript(text='Rain.', is_final=True),
             ResponseDone(),
-        ]
+        ],
     )
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -2483,13 +2523,15 @@ async def test_late_input_transcript_anchors_from_sent_audio_without_speech_boun
     finalized at `ResponseDone` — by which time its tool round is long recorded. Audio starting is
     then the only signal that a user turn began, so that is where its place in history comes from.
     """
-    conn = FakeRealtimeConnection(
+    conn = _ToolResultGatedConnection(
         [
             ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{"city": "Paris"}'),
             InputTranscript(text="what's the weather in Paris"),
+        ],
+        [
             OutputTranscript(text="It's sunny in Paris", is_final=True),
             ResponseDone(),
-        ]
+        ],
     )
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -3297,18 +3339,33 @@ async def test_tool_does_not_block_other_events() -> None:
     assert conn.sent == [ToolResult(tool_call_id='bg_1', output='done in background')]
 
 
-async def test_tool_result_adjacent_to_call_in_history() -> None:
-    """A late result streams last, but sits right after its call in `all_messages()`.
+def _history_shape(messages: Sequence[ModelMessage]) -> list[tuple[str, list[str]]]:
+    """Each message's kind and its parts', with speech as its transcript, to read an order off at a glance."""
+    return [
+        (
+            type(message).__name__,
+            [part.transcript or '' if isinstance(part, SpeechPart) else type(part).__name__ for part in message.parts],
+        )
+        for message in messages
+    ]
 
-    Request-response APIs demand call/return adjacency (OpenAI rejects a `tool` message that doesn't
-    directly follow the assistant message carrying the call), so the portable history must keep it
-    even when the model spoke again before the tool finished.
+
+async def test_speech_while_tool_runs_stays_before_its_result() -> None:
+    """What the model says after a call and before its result is recorded in that order.
+
+    With an asynchronous tool (Gemini Live's `NON_BLOCKING`) the model keeps talking in the same turn
+    while the tool runs. The result must stay adjacent to its call for request-response APIs, so as a
+    response of its own that speech would land after the result — history would say the model spoke
+    after it had the answer. It stays in the calling response, after the call, instead: the order it
+    happened in, and still one assistant turn answered by one tool result on handoff.
     """
     release = asyncio.Event()
     conn = FakeRealtimeConnection(
         [
+            OutputTranscript(text='Let me look.', is_final=True),
             ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
-            OutputTranscript(text='still working on it', is_final=False),
+            OutputTranscript(text='This might take a moment.', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=5)),
             ResponseDone(),
         ],
         release=release,
@@ -3318,23 +3375,288 @@ async def test_tool_result_adjacent_to_call_in_history() -> None:
         await release.wait()
         return 'late result'
 
-    session = RealtimeSession(conn, runner)
+    session = RealtimeSession(conn, runner, model_name='m')
     events = await collect_events(session)
 
-    # The result event streams in completion order: after the intervening assistant turn.
+    # The result event streams in completion order: after the speech.
     assert isinstance(events[-1], FunctionToolResultEvent)
+    assert _history_shape(session.all_messages()) == snapshot(
+        [
+            ('ModelResponse', ['Let me look.', 'ToolCallPart', 'This might take a moment.']),
+            ('ModelRequest', ['ToolReturnPart']),
+        ]
+    )
+    response = session.all_messages()[0]
+    assert isinstance(response, ModelResponse)
+    # One turn, so one response carrying the turn's usage, and one request.
+    assert response.usage.input_tokens == 10
+    assert response.usage.output_tokens == 5
+    assert response.finish_reason == 'stop'
+    assert response.state == 'complete'
+    assert session.usage.requests == 1
 
-    # But in history the return is adjacent to its call, with the intervening turn after it.
-    call_response, tool_return, speech_response = session.all_messages()
-    assert isinstance(call_response, ModelResponse)
-    assert isinstance(call_response.parts[0], ToolCallPart)
-    assert isinstance(tool_return, ModelRequest)
-    assert isinstance(tool_return.parts[0], ToolReturnPart)
-    assert tool_return.parts[0].tool_call_id == 'bg_1'
-    assert tool_return.parts[0].content == 'late result'
-    assert isinstance(speech_response, ModelResponse)
-    assert isinstance(speech_response.parts[0], SpeechPart)
-    assert speech_response.parts[0].transcript == 'still working on it'
+
+async def test_interrupted_speech_while_tool_runs_marks_the_calling_response() -> None:
+    release = asyncio.Event()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
+            OutputTranscript(text='This might take', is_final=False),
+            ResponseDone(interrupted=True, provider_details={'reason': 'barge-in'}),
+        ],
+        release=release,
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return 'late result'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert _history_shape(session.all_messages()) == snapshot(
+        [('ModelResponse', ['ToolCallPart', 'This might take']), ('ModelRequest', ['ToolReturnPart'])]
+    )
+    response = session.all_messages()[0]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'interrupted'
+    assert response.provider_details == {'reason': 'barge-in'}
+
+
+async def test_answer_after_tool_result_stays_its_own_response() -> None:
+    """Speech that follows the recorded result is the answer to it, not part of the calling response."""
+    conn = _ToolResultGatedConnection(
+        [ToolCall(tool_call_id='tc_1', tool_name='get_weather', args='{}')],
+        [OutputTranscript(text='Sunny.', is_final=True), ResponseDone()],
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'Sunny, 22C'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert _history_shape(session.all_messages()) == snapshot(
+        [('ModelResponse', ['ToolCallPart']), ('ModelRequest', ['ToolReturnPart']), ('ModelResponse', ['Sunny.'])]
+    )
+    assert session.usage.requests == 2
+
+
+async def test_reply_to_user_while_tool_runs_follows_the_tool_result() -> None:
+    """A user turn between a call and its result can't be kept in order without breaking adjacency.
+
+    The result is recorded straight after its call, ahead of the user's turn and the reply to it, because
+    request-response APIs (OpenAI Chat, Anthropic) reject a tool call whose result doesn't follow it.
+    """
+    release = asyncio.Event()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
+            InputTranscript(text='what is the capital of Portugal', is_final=True),
+            OutputTranscript(text='Lisbon.', is_final=True),
+            ResponseDone(),
+        ],
+        release=release,
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return 'late result'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert _history_shape(session.all_messages()) == snapshot(
+        [
+            ('ModelResponse', ['ToolCallPart']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelRequest', ['what is the capital of Portugal']),
+            ('ModelResponse', ['Lisbon.']),
+        ]
+    )
+
+
+async def test_speech_while_a_user_turn_is_starting_stays_its_own_response() -> None:
+    """A user turn that started after the call is filed after it, so later speech can't join the call."""
+    release = asyncio.Event()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
+            RealtimeInputSpeechStartEvent(item_id='user-1'),
+            OutputTranscript(text='Still looking.', is_final=True),
+            ResponseDone(),
+            InputTranscript(text='any luck', is_final=True, item_id='user-1'),
+        ],
+        release=release,
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return 'late result'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert _history_shape(session.all_messages()) == snapshot(
+        [
+            ('ModelResponse', ['ToolCallPart']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelRequest', ['any luck']),
+            ('ModelResponse', ['Still looking.']),
+        ]
+    )
+
+
+async def test_tool_call_while_another_runs_stays_its_own_response() -> None:
+    release = asyncio.Event()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
+            OutputTranscript(text='And the hotel.', is_final=True),
+            ToolCall(tool_call_id='bg_2', tool_name='slow', args='{}'),
+            ResponseDone(),
+        ],
+        release=release,
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return call_id
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert _history_shape(session.all_messages()) == snapshot(
+        [
+            ('ModelResponse', ['ToolCallPart']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelResponse', ['And the hotel.', 'ToolCallPart']),
+            ('ModelRequest', ['ToolReturnPart']),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('user_turn_start', 'item_id'),
+    [
+        pytest.param([RealtimeInputSpeechStartEvent()], None, id='anonymous'),
+        pytest.param([RealtimeInputSpeechStartEvent(item_id='user-1')], 'user-1', id='speech-started'),
+        pytest.param(
+            [RealtimeInputSpeechStartEvent(item_id='user-1'), InputTranscript(text='any', item_id='user-1')],
+            'user-1',
+            id='transcribing',
+        ),
+    ],
+)
+async def test_user_turn_starting_during_speech_while_tool_runs_follows_it(
+    user_turn_start: list[RealtimeCodecEvent], item_id: str | None
+) -> None:
+    """A user turn that starts while the model is already talking is filed after that speech.
+
+    Its place is taken when it starts — right after the calling response — and it must still find that
+    place once the speech has been folded into the calling response.
+    """
+    release = asyncio.Event()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='bg_1', tool_name='slow', args='{}'),
+            OutputTranscript(text='Still looking.', is_final=False),
+            *user_turn_start,
+            ResponseDone(interrupted=True),
+            InputTranscript(text='any luck', is_final=True, item_id=item_id),
+        ],
+        release=release,
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return 'late result'
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    await collect_events(session)
+
+    assert _history_shape(session.all_messages()) == snapshot(
+        [
+            ('ModelResponse', ['ToolCallPart', 'Still looking.']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelRequest', ['any luck']),
+        ]
+    )
+
+
+async def _speech_while_tool_ran_history() -> list[ModelMessage]:
+    """A Gemini Live exchange where the model spoke while an asynchronous tool ran, as the session records it."""
+    conn = _ToolResultGatedConnection(
+        [
+            InputTranscript(text="What's the weather in Lisbon?", is_final=True),
+            OutputTranscript(text='Let me check.', is_final=True),
+            ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city": "Lisbon"}'),
+            OutputTranscript(text='This might take a moment.', is_final=True),
+            ResponseDone(),
+        ],
+        [OutputTranscript(text="It's sunny and 24 degrees in Lisbon.", is_final=True), ResponseDone()],
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'Sunny, 24C'
+
+    session = RealtimeSession(
+        conn, runner, model_name='gemini-2.5-flash-native-audio-latest', provider_name='google-gla'
+    )
+    await collect_events(session)
+    messages = session.all_messages()
+    assert _history_shape(messages) == snapshot(
+        [
+            ('ModelRequest', ["What's the weather in Lisbon?"]),
+            ('ModelResponse', ['Let me check.', 'ToolCallPart', 'This might take a moment.']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelResponse', ["It's sunny and 24 degrees in Lisbon."]),
+        ]
+    )
+    return messages
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    'provider',
+    [
+        pytest.param(
+            'anthropic',
+            marks=pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed'),
+        ),
+        pytest.param(
+            'openai-responses', marks=pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+        ),
+        pytest.param(
+            'openai-chat', marks=pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+        ),
+    ],
+)
+async def test_speech_while_tool_ran_hands_off(
+    provider: str, allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
+) -> None:
+    """The calling response with speech after its call is accepted by the strictest request-response APIs.
+
+    Anthropic and OpenAI Chat reject a tool call that isn't answered by the very next message, so the
+    speech can't be a response of its own between the call and its result; within the calling response it
+    is sent as assistant text after the call (Anthropic) or alongside it (Chat), which both accept.
+    """
+    if provider == 'anthropic':
+        model: Model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    elif provider == 'openai-responses':
+        model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    else:
+        model = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions='Answer in one short sentence.')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover - the history already has its result
+        return 'unknown'
+
+    result = await agent.run(
+        'What temperature did the weather tool report?', message_history=await _speech_while_tool_ran_history()
+    )
+    assert '24' in result.output
 
 
 async def test_parallel_tool_returns_stay_grouped_after_calling_response() -> None:

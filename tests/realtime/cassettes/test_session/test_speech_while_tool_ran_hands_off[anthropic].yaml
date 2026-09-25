@@ -1,0 +1,114 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1047'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What's the weather in Lisbon?
+          type: text
+        role: user
+      - content:
+        - text: Let me check.
+          type: text
+        - id: call_1
+          input:
+            city: Lisbon
+          name: get_weather
+          type: tool_use
+        - text: This might take a moment.
+          type: text
+        role: assistant
+      - content:
+        - content:
+          - text: Sunny, 24C
+            type: text
+          is_error: false
+          tool_use_id: call_1
+          type: tool_result
+        role: user
+      - content:
+        - text: It's sunny and 24 degrees in Lisbon.
+          type: text
+        role: assistant
+      - content:
+        - text: What temperature did the weather tool report?
+          type: text
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      system:
+      - text: Answer in one short sentence.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '591'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-5e95cff60e37016d6a14b05ecbfcac9a-bd54a02aee254599-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - text: The weather tool reported 24°C (24 degrees Celsius).
+        type: text
+      diagnostics: null
+      id: msg_011CfPWKSFPJnryG7EFqdYbc
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 678
+        output_tokens: 18
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

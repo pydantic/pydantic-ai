@@ -22,6 +22,25 @@ The session exposes copy-on-read snapshots:
 | [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | Seeded history plus messages recorded during this session. |
 | [`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only messages recorded during this session. |
 
+## Tool calls in history
+
+A tool round is recorded as in a standard run: a `ModelResponse` with the
+[`ToolCallPart`][pydantic_ai.messages.ToolCallPart], then a `ModelRequest` with its
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. Realtime tools
+[run in the background](tools.md#concurrent-tool-execution), so the conversation can move on before
+a result arrives. History still records each result directly after its call, because request-response
+APIs such as OpenAI Chat Completions and Anthropic reject a tool call whose result isn't in the next
+message:
+
+- What the model says right after a call, while the tool runs, stays in the calling `ModelResponse`,
+  after the `ToolCallPart`. The typical case is filler speech during a Gemini
+  [asynchronous tool call](gemini.md#asynchronous-tool-calls). That speech reads before the result,
+  where it happened, and it still hands off to every provider.
+- A user turn during the tool run can't keep its real position. Neither can the reply to it or any
+  later response. The result is recorded directly after its call, ahead of all of them.
+  [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] streams in the real
+  completion order, and the `ToolReturnPart`'s `timestamp` records when the tool finished.
+
 ## Seeding a session
 
 Pass `message_history=` to seed a new session. Replayable text, speech transcripts, thinking text,

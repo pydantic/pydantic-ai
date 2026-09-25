@@ -465,6 +465,23 @@ def _tool_result_call_id(message: ModelMessage) -> str | None:
     return result.tool_call_id
 
 
+def _continue_tool_call_response(response: ModelResponse, continuation: ModelResponse) -> ModelResponse:
+    """`response` with `continuation`'s parts after its own, as the one response they both belong to.
+
+    The continuation ended the turn, so its finish reason and state describe the whole; each half's usage
+    was priced when it was finalized, so the sum carries both costs.
+    """
+    return replace(
+        response,
+        parts=[*response.parts, *continuation.parts],
+        usage=response.usage + continuation.usage,
+        provider_details={**(response.provider_details or {}), **(continuation.provider_details or {})} or None,
+        provider_response_id=response.provider_response_id or continuation.provider_response_id,
+        finish_reason=continuation.finish_reason,
+        state=continuation.state,
+    )
+
+
 def _is_tool_result_request(message: ModelMessage) -> bool:
     """Whether a history request carries an inserted tool result and optional follow-up user content."""
     return _tool_result_call_id(message) is not None
@@ -783,6 +800,12 @@ class RealtimeSession:
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
         self._response_finalized_before_terminal = False
+        # A tool-call response recorded as soon as its call arrived (Gemini's tool-call frame carries no
+        # usage to wait for), until the next response is recorded; and, when the response being assembled
+        # started while nothing had followed that one in history, that same response, which the new one
+        # continues (see `_tool_call_response_to_continue`).
+        self._early_tool_call_response: ModelResponse | None = None
+        self._continued_tool_call_response: ModelResponse | None = None
         # User requests sent while a response is in flight are held until that response is finalized,
         # so the pump remains the sole writer for that portion of history and a caller cannot splice a
         # request between an assistant response's streamed parts.
@@ -2136,8 +2159,8 @@ class RealtimeSession:
         interrupted: bool = False,
         interrupted_at_ms: int | None = None,
         response_occurred: bool = False,
-    ) -> None:
-        """Finalize the current assistant response's parts into a `ModelResponse` in history."""
+    ) -> ModelResponse | None:
+        """Finalize the current assistant response's parts into a `ModelResponse` in history, and return it."""
         response: ModelResponse | None = None
         # The chat span's input is the history the response replied to, captured before we append it.
         input_messages = self.all_messages()
@@ -2183,7 +2206,8 @@ class RealtimeSession:
             self._response_parts = []
             self._native_tool_parts = []
             self._response_limit_checked = False
-            return
+            self._continued_tool_call_response = None
+            return None
         if response_occurred:
             response = ModelResponse(
                 parts=parts,
@@ -2207,12 +2231,11 @@ class RealtimeSession:
                 # Tokens were added as `SessionUsage` events arrived; only add the price calculated
                 # at this response boundary. A provider-reported cost arrived in those events too.
                 self.usage.incr(RequestUsage(cost=response.usage.cost))  # usage-attribution: the session owns its spans
-            self._history.append(response)
+            self._record_response(response)
             if not any(isinstance(part, ToolCallPart) for part in parts):
                 # The model has said what it had to say (a tool call means its answer is still to come),
                 # so audio from here on can be the user's next turn again.
                 self._anonymous_user_turn_awaiting_answer = False
-            self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
             self._tool_run_step += 1
             for part in parts:
                 if isinstance(part, ToolCallPart):
@@ -2233,8 +2256,54 @@ class RealtimeSession:
         self._pending_provider_response_id = None
         self._pending_finish_reason = None
         self._response_limit_checked = False
+        self._continued_tool_call_response = None
         if response is not None:
             self._check_response_boundary_limits()
+        return response
+
+    def _record_response(self, response: ModelResponse) -> None:
+        """Add a finalized response to history, as its own or as the rest of the tool-call response it continues."""
+        if (continued := self._tool_call_response_to_continue(response.parts)) is not None:
+            # One turn, not two responses: it already counts as a request.
+            self._replace_in_history(continued, _continue_tool_call_response(continued, response))
+        else:
+            self._history.append(response)
+            self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
+        self._early_tool_call_response = None
+
+    def _tool_call_response_to_continue(self, parts: Sequence[ModelResponsePart]) -> ModelResponse | None:
+        """The tool-call response that a response with `parts` continues, if any.
+
+        Gemini's tool-call frame closes the calling response early, and with an asynchronous
+        (`NON_BLOCKING`) call the model keeps talking in the same turn while the tool runs ("this might
+        take a moment"). Recorded as a response of its own, that speech would sit after the tool's
+        return once it arrives, since the return must stay adjacent to its call — so history would say
+        the model spoke after it had the result. Kept in the calling response instead, after the call,
+        history reads in the order things happened and every request-response API still sees each call
+        answered before the next assistant turn.
+
+        What counts is where the speech *started*: straight after the call, with neither its result nor
+        a user turn recorded or begun since (see `_begin_response`). The result usually arrives while the
+        speech is still streaming, and is then simply recorded after the response it continues. Speech
+        that also calls another tool stays a response of its own.
+        """
+        continued = self._continued_tool_call_response
+        if continued is None or not parts or not all(isinstance(part, (SpeechPart, TextPart)) for part in parts):
+            return None
+        return continued
+
+    def _replace_in_history(self, old: ModelResponse, new: ModelResponse) -> None:
+        """Swap `new` in for `old`, and point user turns anchored to `old` at `new`."""
+        self._history[next(i for i in range(len(self._history) - 1, -1, -1) if self._history[i] is old)] = new
+
+        def swap(anchor: ModelMessage | None) -> ModelMessage | None:
+            return new if anchor is old else anchor
+
+        self._pending_anonymous_user_turn_anchors = deque(map(swap, self._pending_anonymous_user_turn_anchors))
+        self._pending_user_turn_anchors = {
+            item_id: (swap(anchor),) for item_id, (anchor,) in self._pending_user_turn_anchors.items()
+        }
+        self._user_turn_anchors = {item_id: swap(anchor) for item_id, anchor in self._user_turn_anchors.items()}
 
     def _check_response_boundary_limits(self) -> None:
         """Check the usage limits against a response that has just been finalized.
@@ -2386,7 +2455,7 @@ class RealtimeSession:
         if response_usage_follows:
             self._tool_calls_awaiting_usage.add(call_part.tool_call_id)
         else:
-            self._finalize_response()
+            self._early_tool_call_response = self._finalize_response()
         return events
 
     def _complete_tool_call(
@@ -3159,6 +3228,16 @@ class RealtimeSession:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
         self._response_active = True
+        if (early := self._early_tool_call_response) is not None and self._history[-1] is early:
+            anchors = (
+                *self._pending_anonymous_user_turn_anchors,
+                *(anchor for (anchor,) in self._pending_user_turn_anchors.values()),
+                *self._user_turn_anchors.values(),
+            )
+            if not any(anchor is early for anchor in anchors):
+                # Nothing has followed the tool call yet — no result, no user turn, not even one that has
+                # started — so this response picks up where that one left off.
+                self._continued_tool_call_response = early
 
     def _accumulate_response_usage(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
