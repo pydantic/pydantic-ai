@@ -3724,6 +3724,56 @@ async def test_answer_in_the_turn_that_was_split_claims_the_result_reservation()
     assert session.usage.requests == 2
 
 
+async def test_speech_under_way_when_the_result_went_out_leaves_the_reservation_to_the_reply() -> None:
+    """The rest of speech the result cut into isn't the reply it reserved; `wait_for_reply()` waits for that."""
+    queue: asyncio.Queue[RealtimeCodecEvent] = asyncio.Queue()
+
+    class _Queued(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            while True:
+                yield await queue.get()
+
+    conn = _Queued([])
+    result_ready = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await result_ready.wait()
+        return 'result'
+
+    async def until(condition: Callable[[], bool]) -> None:
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            while not condition():
+                await asyncio.sleep(0.01)
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    async with session:
+        consumer = asyncio.create_task(drain_events(session))
+        queue.put_nowait(ToolCall(tool_call_id='bg_1', tool_name='fast', args='{}', runs_asynchronously=True))
+        queue.put_nowait(OutputTranscript(text='I am look', is_final=False))
+        await until(lambda: session._active_assistant is not None)  # pyright: ignore[reportPrivateUsage]
+        result_ready.set()
+        await until(lambda: any(isinstance(sent, ToolResult) for sent in conn.sent))
+        queue.put_nowait(OutputTranscript(text='ing it up.', is_final=False))
+        queue.put_nowait(ResponseDone())
+        await until(lambda: len(session.all_messages()) == 3)
+        # The turn the result cut into is over, and the model still owes the reply to the result.
+        assert session._reply_outstanding()  # pyright: ignore[reportPrivateUsage]
+        queue.put_nowait(OutputTranscript(text='Found it.', is_final=True))
+        queue.put_nowait(ResponseDone())
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await session.wait_for_reply()
+        assert _history_shape(session.all_messages()) == snapshot(
+            [
+                ('ModelResponse', ['ToolCallPart', 'I am look']),
+                ('ModelRequest', ['ToolReturnPart']),
+                ('ModelResponse', ['ing it up.']),
+                ('ModelResponse', ['Found it.']),
+            ]
+        )
+        await session.close()
+        await consumer
+
+
 async def test_cost_limit_at_the_split_still_records_the_tool_result() -> None:
     """A usage limit tripped by recording the held response doesn't leave its call without a result."""
     conn = _ToolResultGatedConnection(

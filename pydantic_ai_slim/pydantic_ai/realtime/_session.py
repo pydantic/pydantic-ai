@@ -2446,6 +2446,12 @@ class RealtimeSession:
         if not self._held_tool_call_ids:
             return
         events = self._finalize_assistant_part()
+        first_call = next(
+            index
+            for index, part in enumerate(self._response_parts)
+            if isinstance(part, ToolCallPart) and part.tool_call_id in self._held_tool_call_ids
+        )
+        spoke_after_call = any(not isinstance(part, ToolCallPart) for part in self._response_parts[first_call + 1 :])
         try:
             self._finalize_response(interrupted=interrupted)
         except UsageLimitExceeded as exceeded:
@@ -2457,6 +2463,11 @@ class RealtimeSession:
         # boundaries (a usage report, the turn's end) don't start one: they belong to the turn already
         # checked against the request limit, and must leave the result's reservation to the reply.
         self._held_response_split = True
+        # Whether what it says then is the reply the result reserved. If the model was already talking
+        # after the call, the rest of that speech was under way before the result went out, and the reply
+        # comes after it — as it would with the call recorded at its own frame, where that speech opened a
+        # response of its own. If it wasn't (a filler, then the call), what it says next is the reply.
+        self._response_limit_checked = spoke_after_call and not interrupted
         for event in events:
             # Queued directly, whatever triggered this: the tool task that finished, or a user turn
             # starting, so the part ends before the result or the user's speech that cut it.
