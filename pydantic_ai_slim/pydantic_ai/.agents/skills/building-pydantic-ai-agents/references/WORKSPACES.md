@@ -71,8 +71,9 @@ is never a label: no name-, conversation- or uuid-derived ref before the environ
 exception where the ref precedes any operation (the directory is the environment); `working_dir()`
 raises `WorkspaceUnavailableError` if the directory is missing. When a run ends, `workspace.ref` is
 recorded as `workspace_ref` on its last `ModelResponse` (`None` if no environment was created). A
-run on an agent without that provider's capability records `None`, which hides the older ref, so pass
-`workspace=result.workspace` (or its ref) to continue after it.
+run without an attached workspace (an agent with no workspace capability, or
+`workspace=UnavailableWorkspace(...)`) records the ref from history instead, so the next turn continues
+in it; after `workspace='new'` nothing is carried forward.
 
 The core does not create or destroy environments at run boundaries; the application owns
 SDK retries (outside durable execution), cleanup, TTL and pause/stop through the provider's SDK or run hooks. `Workspace.backend` reaches

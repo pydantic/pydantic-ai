@@ -644,6 +644,33 @@ async def test_latest_none_workspace_ref_suppresses_an_older_historical_ref() ->
     assert seen == [None]
 
 
+@pytest.mark.parametrize('middle', ['no_workspace_agent', 'unavailable_workspace'])
+async def test_a_turn_without_a_workspace_keeps_the_conversations_ref(middle: str) -> None:
+    capability = ProviderWorkspaceCapability('provider')
+    agent = Agent(TestModel(), capabilities=[capability])
+    ref = WorkspaceRef(provider='provider', id='existing')
+    history: list[ModelMessage] = [ModelResponse(parts=[TextPart('old')], workspace_ref=ref)]
+
+    if middle == 'no_workspace_agent':
+        middle_turn = await Agent(TestModel()).run('chat', message_history=history)
+    else:
+        middle_turn = await agent.run('chat', message_history=history, workspace=UnavailableWorkspace('off'))
+    assert middle_turn.response.workspace_ref == ref
+
+    third = await agent.run('go', message_history=middle_turn.all_messages())
+    assert third.workspace.ref == ref
+
+
+async def test_a_new_workspace_nothing_used_does_not_carry_the_old_ref_forward() -> None:
+    capability = ProviderWorkspaceCapability('provider')
+    agent = Agent(TestModel(), capabilities=[capability])
+    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='provider', id='old'))
+
+    result = await agent.run('go', message_history=[historical], workspace='new')
+
+    assert result.response.workspace_ref is None
+
+
 async def test_historical_workspace_ref_without_capability_stays_unavailable() -> None:
     historical = ModelResponse(
         parts=[ToolCallPart('probe', {})], workspace_ref=WorkspaceRef(provider='missing', id='remote')

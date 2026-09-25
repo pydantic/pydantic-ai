@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
     from .usage import RunUsage, UsageLimits
-    from .workspaces import Workspace
+    from .workspaces import Workspace, WorkspaceRef
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
@@ -115,6 +115,15 @@ def unattached_workspace() -> Workspace:
     from .workspaces import UnavailableWorkspace, Workspace
 
     return Workspace(UnavailableWorkspace(_NO_WORKSPACE_REASON))
+
+
+def recorded_workspace_ref(workspace: Workspace, carried: WorkspaceRef | None) -> WorkspaceRef | None:
+    """The `workspace_ref` a run records on its responses.
+
+    A run without an attached workspace (none selected, or an `UnavailableWorkspace`) records `carried`, the
+    conversation's ref, so a turn that couldn't touch the workspace doesn't lose it for the next one.
+    """
+    return workspace.ref if workspace.attached else carried
 
 
 _NO_WORKSPACE_REASON = (
