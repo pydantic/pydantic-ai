@@ -1754,9 +1754,10 @@ class RealtimeSession:
             )
         # Truncate before cancelling: cancelling forgets the tracked output item, so a truncate sent
         # afterwards could no-op. Both frames go out under one hold of the send lock, so a tool result
-        # completing in between can't start a new response for the cancel to hit instead. The client cancel is skipped while the provider's own turn detection
-        # is already cancelling the response spoken over — the same rule as the `played_bytes` path
-        # and `handle_barge_in=True` — so it can't land on the *next* response instead.
+        # completing in between can't start a new response for the cancel to hit instead. The client
+        # cancel is skipped while the provider's own turn detection is already cancelling the response
+        # spoken over — the same rule as the `played_bytes` path and `handle_barge_in=True` — so it
+        # can't land on the *next* response instead.
         frames: list[TruncateOutput | CancelResponse] = []
         if played_ms is not None:
             frames.append(TruncateOutput(audio_end_ms=played_ms))
