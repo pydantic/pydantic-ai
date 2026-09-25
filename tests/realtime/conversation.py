@@ -93,7 +93,8 @@ def assert_conversation_invariants(session: RealtimeSession, keywords: Sequence[
       fragment, never blank), which is what containing its keyword checks;
     - requests and responses strictly alternate, from the first user turn to the final answer;
     - every tool call is answered by the request right after its response;
-    - `session.usage.requests` counts every recorded `ModelResponse`;
+    - `session.usage.requests` counts every recorded `ModelResponse`, where the profile's
+      `responses_are_requests` says that is what a request is;
     - the history survives a round trip through `ModelMessagesTypeAdapter`.
     """
     messages = session.all_messages()
@@ -120,7 +121,9 @@ def assert_conversation_invariants(session: RealtimeSession, keywords: Sequence[
             returns = [part.tool_call_id for part in answer.parts if isinstance(part, ToolReturnPart)]
             assert sorted(returns) == sorted(calls), shape
 
-    assert session.usage.requests == sum(isinstance(message, ModelResponse) for message in messages), shape
+    if session.profile.get('responses_are_requests', True):
+        # Otherwise the requests are the ones the model delegated, which the history doesn't record.
+        assert session.usage.requests == sum(isinstance(message, ModelResponse) for message in messages), shape
     assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
 
 
