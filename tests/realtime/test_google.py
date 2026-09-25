@@ -50,6 +50,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
+    RealtimeError,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeResponseInterruptedEvent,
@@ -86,6 +87,7 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.google import (
         GoogleRealtimeConnection,
         GoogleRealtimeModel,
+        GoogleRealtimeModelProfile,
         GoogleRealtimeModelSettings,
     )
 
@@ -826,6 +828,24 @@ def test_profile() -> None:
     assert profile.get('audio_output_sample_rate') == 24000
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'sees_video_frames'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', False),
+        ('gemini-2.5-flash-native-audio-preview-09-2025', False),
+        ('gemini-3.1-flash-live-preview', False),
+        ('gemini-3.8-live', False),
+        ('models/gemini-3.8-live-extended-thinking', False),
+        ('gemini-live-2.5-flash', False),
+        ('gemini-live-2.5-flash-native-audio', False),
+        ('gemini-robotics-er-2-streaming-preview', True),  # not probed: no extra send
+    ],
+)
+def test_profile_text_turns_see_video_frames(model_name: str, sees_video_frames: bool) -> None:
+    # Verified live: a typed question right after `send(image)` doesn't see the image on these models.
+    assert GoogleRealtimeModel(model_name).profile.get('google_text_turns_see_video_frames') is sees_video_frames
+
+
 # --- config ------------------------------------------------------------------
 
 
@@ -1025,10 +1045,116 @@ async def test_send_text_context() -> None:
 
 async def test_send_image_as_video_frame() -> None:
     session = _RecordingSession()
-    await _conn(session).send(BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'))
+    conn = _conn(session)
+    await conn.send(BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'))
     blob = session.realtime[0]['video']
     assert blob.data == b'\xff\xd8'
     assert blob.mime_type == 'image/jpeg'
+    # By default a typed turn sees video frames, so nothing is sent again.
+    await conn.send('What is on it?')
+    assert session.client_content[0]['turns'].parts == [genai_types.Part(text='What is on it?')]
+
+
+_IMAGE = BinaryImage(data=b'\xff\xd8', media_type='image/jpeg')
+
+
+def _image_part() -> genai_types.Part:
+    return genai_types.Part(inline_data=genai_types.Blob(data=b'\xff\xd8', mime_type='image/jpeg'))
+
+
+def _conn_missing_video_in_text_turns(session: _RecordingSession) -> GoogleRealtimeConnection:
+    return GoogleRealtimeConnection(
+        cast('AsyncSession', session), profile=GoogleRealtimeModelProfile(google_text_turns_see_video_frames=False)
+    )
+
+
+async def test_typed_turn_carries_recent_image_again() -> None:
+    # A model whose typed turns miss video frames gets the latest image again in the typed turn's content.
+    # The image still goes out as a video frame right away, for spoken turns and camera streams.
+    session = _RecordingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    await conn.send(BinaryImage(data=b'\x00', media_type='image/png'))
+    await conn.send(_IMAGE)
+    assert [frame['video'].data for frame in session.realtime] == [b'\x00', b'\xff\xd8']
+    await conn.send('What is on it?')
+    await conn.send('And now?')  # carried once only
+    assert [sent['turns'].parts for sent in session.client_content] == [
+        [_image_part(), genai_types.Part(text='What is on it?')],
+        [genai_types.Part(text='And now?')],
+    ]
+
+
+async def test_context_text_and_audio_do_not_carry_recent_image() -> None:
+    session = _RecordingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    await conn.send(_IMAGE)
+    await conn.send(TextContext('It is my fridge.'))
+    await conn.send(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    await conn.send('What is in it?')  # the image is still recent, so the typed turn carries it
+    assert [sent['turns'].parts for sent in session.client_content] == [
+        [genai_types.Part(text='It is my fridge.')],
+        [_image_part(), genai_types.Part(text='What is in it?')],
+    ]
+    assert [list(frame) for frame in session.realtime] == [['video'], ['audio']]
+
+
+async def test_typed_turn_skips_stale_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 1000.0
+    monkeypatch.setattr(rt_google.time, 'monotonic', lambda: now)
+    session = _RecordingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    await conn.send(_IMAGE)
+    now += rt_google._RECENT_IMAGE_SECONDS  # pyright: ignore[reportPrivateUsage]
+    await conn.send('Still there?')
+    now += 0.001
+    await conn.send(_IMAGE)
+    now += rt_google._RECENT_IMAGE_SECONDS + 0.001  # pyright: ignore[reportPrivateUsage]
+    await conn.send('What was that?')
+    assert [sent['turns'].parts for sent in session.client_content] == [
+        [_image_part(), genai_types.Part(text='Still there?')],
+        [genai_types.Part(text='What was that?')],
+    ]
+
+
+async def test_image_sent_during_typed_turn_is_kept_for_the_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An image sent while a typed turn is in flight is newer than the one it carried: keep it.
+    session = _RecordingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    newer = BinaryImage(data=b'\x01', media_type='image/png')
+    send_client_content = session.send_client_content
+
+    async def send_during(**kwargs: Any) -> None:
+        await send_client_content(**kwargs)
+        if len(session.client_content) == 1:
+            await conn.send(newer)
+
+    monkeypatch.setattr(session, 'send_client_content', send_during)
+    await conn.send(_IMAGE)
+    await conn.send('First?')
+    await conn.send('Second?')
+    assert [sent['turns'].parts[0] for sent in session.client_content] == [
+        _image_part(),
+        genai_types.Part(inline_data=genai_types.Blob(data=b'\x01', mime_type='image/png')),
+    ]
+
+
+async def test_failed_typed_turn_keeps_recent_image() -> None:
+    class _FailingSession(_RecordingSession):
+        fail = True
+
+        async def send_client_content(self, *, turns: Any = None, turn_complete: bool = True) -> None:
+            if self.fail:
+                self.fail = False
+                raise ConnectionClosed(None, None)
+            await super().send_client_content(turns=turns, turn_complete=turn_complete)
+
+    session = _FailingSession()
+    conn = _conn_missing_video_in_text_turns(session)
+    await conn.send(_IMAGE)
+    with pytest.raises(ConnectionClosed):
+        await conn.send('What is on it?')
+    await conn.send('What is on it?')
+    assert session.client_content[0]['turns'].parts == [_image_part(), genai_types.Part(text='What is on it?')]
 
 
 async def test_send_tool_result_echoes_name() -> None:
@@ -1050,11 +1176,42 @@ async def test_send_tool_result_echoes_name() -> None:
 
 
 @pytest.mark.parametrize('async_tool_calls', [False, True])
-async def test_send_tool_result_async_scheduling(async_tool_calls: bool) -> None:
+async def test_send_tool_result_async_scheduling_without_a_profile(async_tool_calls: bool) -> None:
+    """A connection built without a profile schedules async results exactly as it did before the flag."""
+    session = _RecordingSession()
+    conn = GoogleRealtimeConnection(cast('AsyncSession', session), async_tool_calls=async_tool_calls)
+    _register_call(conn, name='get_weather')
+
+    await conn.send(ToolResult(tool_call_id='c1', output='Sunny'))
+
+    assert session.tool_responses[0].scheduling == (
+        genai_types.FunctionResponseScheduling.INTERRUPT if async_tool_calls else None
+    )
+
+
+@pytest.mark.parametrize(
+    ('async_tool_calls', 'supports_scheduling', 'scheduled'),
+    [
+        # A blocking session never schedules, whatever the model would accept.
+        (False, False, False),
+        (False, True, False),
+        # An async session schedules only where the model takes the field: `gemini-3.8-live-extended-thinking`
+        # closes the connection with `1007 Function response scheduling is not supported for this model`.
+        (True, False, False),
+        (True, True, True),
+    ],
+)
+async def test_send_tool_result_async_scheduling(
+    async_tool_calls: bool, supports_scheduling: bool, scheduled: bool
+) -> None:
     # As in `test_tool_def_async_behavior`, the expected enum is resolved in the body so collection
     # doesn't need the `google` extra.
     session = _RecordingSession()
-    conn = GoogleRealtimeConnection(cast('AsyncSession', session), async_tool_calls=async_tool_calls)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', session),
+        profile=GoogleRealtimeModelProfile(google_supports_async_tool_call_scheduling=supports_scheduling),
+        async_tool_calls=async_tool_calls,
+    )
     conn._map_message(  # pyright: ignore[reportPrivateUsage]
         genai_types.LiveServerMessage(
             tool_call=genai_types.LiveServerToolCall(
@@ -1068,7 +1225,7 @@ async def test_send_tool_result_async_scheduling(async_tool_calls: bool) -> None
     # `INTERRUPT`, so the result lands in the reply the model is already speaking rather than being
     # queued until after it has answered from its own knowledge.
     assert session.tool_responses[0].scheduling == (
-        genai_types.FunctionResponseScheduling.INTERRUPT if async_tool_calls else None
+        genai_types.FunctionResponseScheduling.INTERRUPT if scheduled else None
     )
 
 
@@ -1417,6 +1574,49 @@ def test_map_code_execution_to_native_tool_parts() -> None:
     ]
 
 
+def test_search_status_after_code_execution_is_skipped() -> None:
+    """A search status line after a real code execution doesn't pair with the spent call's id.
+
+    The result consumes its `executable_code`'s id, so the bare `code_execution_result` a native-audio
+    model sends to announce a Google Search is skipped like it is when no code ran, rather than recorded
+    as a second return for the earlier call.
+    """
+    conn = _conn(_RecordingSession())
+
+    def message(*parts: genai_types.Part) -> genai_types.LiveServerMessage:
+        return genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(model_turn=genai_types.Content(parts=list(parts)))
+        )
+
+    code_run = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        message(
+            genai_types.Part(
+                executable_code=genai_types.ExecutableCode(code='print(1 + 1)', language=genai_types.Language.PYTHON)
+            ),
+            genai_types.Part(
+                code_execution_result=genai_types.CodeExecutionResult(
+                    outcome=genai_types.Outcome.OUTCOME_OK, output='2\n'
+                )
+            ),
+        )
+    )
+    search_status = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        message(
+            genai_types.Part(
+                code_execution_result=genai_types.CodeExecutionResult(
+                    outcome=genai_types.Outcome.OUTCOME_OK, output='Looking up information on Google Search.\n'
+                )
+            )
+        )
+    )
+
+    assert [type(event.part).__name__ for event in code_run if isinstance(event, PartStartEvent)] == [
+        'NativeToolCallPart',
+        'NativeToolReturnPart',
+    ]
+    assert search_status == []
+
+
 def test_native_tool_part_indexes_increase_across_messages_and_reset_each_turn() -> None:
     conn = _conn(_RecordingSession())
 
@@ -1537,17 +1737,10 @@ async def test_connect_streams_events() -> None:
     assert events[-1].message.startswith('Gemini Live connection closed: ')
 
 
-async def test_connect_maps_rejected_config_to_model_http_error() -> None:
-    # A rejected session config (here an unsupported voice) closes the WebSocket, which the SDK raises as
-    # an `APIError` carrying the close code and reason. `connect` maps it to `ModelHTTPError` like a
-    # regular `GoogleModel` request, rather than leaking the raw SDK error, so users can handle realtime
-    # and non-realtime failures uniformly.
-    reason = 'No matching speaker voice found for name: alloy'
-    response = httpx.Response(429, headers={'Retry-After': '5', 'X-Request-ID': 'request-123'})
-
+def _rejecting_client(error: Exception) -> Client:
     class _RejectingConnect:
         async def __aenter__(self) -> Any:
-            raise genai_errors.APIError(1007, reason, response)
+            raise error
 
         async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
             return False
@@ -1556,14 +1749,43 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
         def connect(self, *, model: str, config: Any) -> _RejectingConnect:
             return _RejectingConnect()
 
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
-    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    return cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+
+
+async def test_connect_maps_rejected_config_to_realtime_error() -> None:
+    # A rejected session config (here an unsupported voice) closes the WebSocket, which the SDK raises as
+    # an `APIError` whose `code` is the WebSocket close code. That's not an HTTP status, so `connect` raises
+    # a `RealtimeError`, like a close later in the session and like the OpenAI-protocol providers'
+    # handshake closes, rather than a `ModelHTTPError` with `status_code=1007`.
+    reason = 'No matching speaker voice found for name: alloy'
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=_rejecting_client(genai_errors.APIError(1007, reason, None))),
+    )
+    with pytest.raises(RealtimeError) as exc_info:
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert not isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
+    assert exc_info.value.message == snapshot(
+        'Gemini Live connection closed: 1007 None. No matching speaker voice found for name: alloy'
+    )
+
+
+async def test_connect_maps_http_status_api_error_to_model_http_error() -> None:
+    # An `APIError` that does carry an HTTP status (the SDK's error-payload path) still maps to
+    # `ModelHTTPError`, like a regular `GoogleModel` request.
+    response = httpx.Response(429, headers={'Retry-After': '5', 'X-Request-ID': 'request-123'})
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=_rejecting_client(genai_errors.APIError(429, 'slow down', response))),
+    )
     with pytest.raises(ModelHTTPError) as exc_info:
         async with _connect(model, 'x'):
             pass  # pragma: no cover
-    assert exc_info.value.status_code == 1007
+    assert exc_info.value.status_code == 429
     assert exc_info.value.model_name == 'gemini-2.5-flash-native-audio-latest'
-    assert exc_info.value.body == reason
+    assert exc_info.value.body == 'slow down'
     assert exc_info.value.headers == {'retry-after': '5', 'x-request-id': 'request-123'}
 
 
@@ -1575,18 +1797,9 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
     from websockets.exceptions import InvalidStatus
     from websockets.http11 import Response
 
-    class _RejectingConnect:
-        async def __aenter__(self) -> Any:
-            raise InvalidStatus(Response(401, 'Unauthorized', Headers({'Retry-After': '5'}), body=b'bad key'))
-
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: Any) -> _RejectingConnect:
-            return _RejectingConnect()
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _rejecting_client(
+        InvalidStatus(Response(401, 'Unauthorized', Headers({'Retry-After': '5'}), body=b'bad key'))
+    )
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelHTTPError) as exc_info:
         async with _connect(model, 'x'):
@@ -1600,18 +1813,7 @@ async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
     # A handshake failure with no HTTP status (DNS, TLS, protocol) reaches us as a bare
     # `websockets.WebSocketException`. There's no status to report, so it becomes a `ModelAPIError`
     # rather than escaping untyped — the sibling of the `InvalidStatus` → `ModelHTTPError` mapping.
-    class _FailingConnect:
-        async def __aenter__(self) -> Any:
-            raise WebSocketException('handshake went sideways')
-
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: Any) -> _FailingConnect:
-            return _FailingConnect()
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _rejecting_client(WebSocketException('handshake went sideways'))
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelAPIError) as exc_info:
         async with _connect(model, 'x'):
@@ -1623,18 +1825,7 @@ async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
     # The connection never came up at all (DNS, refused, reset, dial timeout). The SDK doesn't wrap
     # these, so without mapping the caller would get a bare `OSError` from what looks like an ordinary
     # model call; there is no HTTP status, so it becomes a `ModelAPIError`.
-    class _UnreachableConnect:
-        async def __aenter__(self) -> Any:
-            raise ConnectionRefusedError('connection refused')
-
-        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
-            return False
-
-    class _Live:
-        def connect(self, *, model: str, config: Any) -> _UnreachableConnect:
-            return _UnreachableConnect()
-
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = _rejecting_client(ConnectionRefusedError('connection refused'))
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelAPIError) as exc_info:
         async with _connect(model, 'x'):
@@ -2360,6 +2551,76 @@ async def test_connect_reconnect_closes_previous_session() -> None:
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'settings', 'expected'),
+    [
+        # A model that takes no thinking config at all gets none, whatever the session asked for.
+        ('gemini-3.8-live', None, None),
+        ('gemini-3.8-live', {'thinking': 'high'}, None),
+        # A model that requires one gets it even when the session said nothing, snapped to the cheapest
+        # level it accepts — `MINIMAL` is rejected, so `LOW`.
+        ('gemini-3.8-live-extended-thinking', None, 'LOW'),
+        ('gemini-3.8-live-extended-thinking', {'thinking': 'minimal'}, 'LOW'),
+        # ...and `thinking=False` can't turn it off, so it means "as little as possible" rather than a
+        # `thinking_budget=0` the model would reject.
+        ('gemini-3.8-live-extended-thinking', {'thinking': False}, 'LOW'),
+        ('gemini-3.8-live-extended-thinking', {'thinking': True}, 'MEDIUM'),
+        ('gemini-3.8-live-extended-thinking', {'thinking': 'high'}, 'HIGH'),
+        # `xhigh` has no Gemini equivalent and lands on the top level.
+        ('gemini-3.8-live-extended-thinking', {'thinking': 'xhigh'}, 'HIGH'),
+        # An optional-thinking model is unaffected by any of the above.
+        ('gemini-2.5-flash-native-audio-latest', None, None),
+        ('gemini-2.5-flash-native-audio-latest', {'thinking': True}, 'MEDIUM'),
+    ],
+)
+def test_thinking_config_per_model(
+    model_name: str, settings: GoogleRealtimeModelSettings | None, expected: str | None
+) -> None:
+    model = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession())))
+    config = model._config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    level = config.thinking_config.thinking_level if config.thinking_config else None
+    assert (level.value if level else None) == expected
+
+
+def test_thinking_false_still_disables_where_it_can() -> None:
+    """`thinking=False` remains a real "off" on a model that allows it."""
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
+    )
+    config = model._config('', None, model_settings={'thinking': False})  # pyright: ignore[reportPrivateUsage]
+    assert config.thinking_config == genai_types.ThinkingConfig(thinking_budget=0)
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'settings', 'expected'),
+    [
+        # Opt-in on a model that honors it; silently ignored on one that doesn't.
+        ('gemini-2.5-flash-native-audio-latest', {'google_async_tool_calls': True}, True),
+        ('gemini-2.5-flash-native-audio-latest', None, False),
+        ('gemini-3.1-flash-live-preview', {'google_async_tool_calls': True}, False),
+        # `gemini-3.8-live` honors the opt-in like the native-audio models do.
+        ('gemini-3.8-live', {'google_async_tool_calls': True}, True),
+        ('gemini-3.8-live', None, False),
+        # Forced on where the model has no blocking mode, whether or not the session asked.
+        ('gemini-3.8-live-extended-thinking', None, True),
+        ('gemini-3.8-live-extended-thinking', {'google_async_tool_calls': True}, True),
+    ],
+)
+def test_async_tool_calls_resolution(
+    model_name: str, settings: GoogleRealtimeModelSettings | None, expected: bool
+) -> None:
+    model = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession())))
+    assert model._async_tool_calls(settings) is expected  # pyright: ignore[reportPrivateUsage]
+
+
+def test_async_tool_calls_opt_out_ignored_where_required() -> None:
+    """Asking for blocking tool calls on a model that has none is ignored, like any setting a model can't honor."""
+    model = GoogleRealtimeModel(
+        'gemini-3.8-live-extended-thinking', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
+    )
+    assert model._async_tool_calls({'google_async_tool_calls': False}) is True  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
     ('settings', 'api_version', 'vertexai'),
     [
         # Nothing to check when the setting is off, whatever the client is on.
@@ -2403,3 +2664,224 @@ async def test_connect_rejects_proactive_audio_before_dialing() -> None:
     with pytest.raises(UserError, match='needs a client on the `v1alpha` API version'):
         async with _connect(model, 'x', model_settings=GoogleRealtimeModelSettings(google_proactive_audio=True)):
             pass  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    ('status', 'more_expected'),
+    [
+        # A reasoning model's filler turn: the exchange continues even though this response is done.
+        ('IN_PROGRESS', True),
+        ('IDLE', False),
+        # Every other Live model reports no status at all, which has always meant "that was the last one".
+        (None, False),
+    ],
+)
+def test_turn_complete_reports_whether_more_is_expected(status: str | None, more_expected: bool) -> None:
+    # The status is named as a string and resolved here rather than in the `parametrize` decorator: as in
+    # `test_tool_def_async_behavior`, decorators run at collection time, before `pytestmark` can skip the
+    # module, so naming `genai_types` there breaks collection wherever the `google` extra isn't installed.
+    conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()))
+    events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(
+                turn_complete=True,
+                interaction_status=genai_types.InteractionStatus(status) if status else None,
+            )
+        )
+    )
+    assert events == [ResponseDone(interrupted=False, more_expected=more_expected)]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expects_thinking', 'always_enabled'),
+    [
+        ('gemini-3.8-live', False, False),
+        ('models/gemini-3.8-live', False, False),
+        ('gemini-3.8-live-extended-thinking', True, True),
+        ('models/gemini-3.8-live-extended-thinking', True, True),
+    ],
+)
+def test_profile_recognizes_resource_name_spelling(
+    model_name: str, expects_thinking: bool, always_enabled: bool
+) -> None:
+    """`models/`-prefixed ids reach the profile too: `google-genai` passes a resource name through.
+
+    Reported as the bare id, the prefixed spelling would take `gemini-3.8-live` for a thinking model and
+    `gemini-3.8-live-extended-thinking` for one that doesn't need a level — both handshake rejections.
+    """
+    profile = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession()))).profile
+    assert profile.get('supports_thinking', False) is expects_thinking
+    assert cast('GoogleRealtimeModelProfile', profile).get('google_thinking_always_enabled', False) is always_enabled
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'is_extended_thinking'),
+    [
+        ('gemini-3.8-live', False),
+        ('gemini-3.8-live-preview-09-2026', False),
+        ('gemini-3.8-live-001', False),
+        ('gemini-3.8-live@20260916', False),
+        ('gemini-3.8-live-extended-thinking', True),
+        ('gemini-3.8-live-extended-thinking-preview-09-2026', True),
+    ],
+)
+def test_profile_recognizes_snapshot_variants_of_3_8_live(model_name: str, is_extended_thinking: bool) -> None:
+    """A dated or `-preview` snapshot of `gemini-3.8-live` gets its flags, like every other id check.
+
+    An exact match on the bare id gave a snapshot `supports_thinking=True`, so a `thinking` setting was sent
+    as a level the model rejects with `1007`, and none of the 3.8 tool-call flags.
+    """
+    profile = cast(
+        'GoogleRealtimeModelProfile',
+        GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession()))).profile,
+    )
+    assert (
+        profile.get('supports_thinking'),
+        profile.get('google_thinking_always_enabled'),
+        profile.get('supports_async_tool_calls'),
+        profile.get('google_async_tool_calls_by_default'),
+        profile.get('google_supports_async_tool_call_scheduling'),
+    ) == (is_extended_thinking, is_extended_thinking, True, True, not is_extended_thinking)
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'supported'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', True),
+        ('gemini-live-2.5-flash', True),
+        ('gemini-3.1-flash-live-preview', False),
+        ('gemini-3.8-live', False),
+        ('gemini-3.8-live-extended-thinking', False),
+        ('gemini-3.8-live-preview-09-2026', False),
+        ('gemini-3.1-flash-live-preview-09-2026', False),
+        # A Gemini 3.x Live family nobody has checked isn't refused ahead of its profile being updated.
+        ('gemini-3.9-flash-live-preview', True),
+    ],
+)
+async def test_connect_rejects_affective_dialog_where_unsupported(model_name: str, supported: bool) -> None:
+    """The Gemini 3.1 Flash Live and 3.8 Live models reject affective dialog, so `connect` fails before dialing.
+
+    Verified live: `gemini-3.1-flash-live-preview` refuses the handshake, and the 3.8 models open the
+    session and then close it with `1007 Request contains an invalid argument` on the first send.
+    """
+    captured: dict[str, Any] = {}
+    model = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured)))
+    settings = GoogleRealtimeModelSettings(google_affective_dialog=True)
+    if supported:
+        async with _connect(model, 'x', model_settings=settings):
+            pass
+        assert captured['config'].enable_affective_dialog is True
+    else:
+        with pytest.raises(UserError, match=r'`google_affective_dialog=True` is not supported by'):
+            async with _connect(model, 'x', model_settings=settings):
+                pass  # pragma: no cover
+        assert captured == {}
+
+
+async def test_affective_dialog_follows_a_profile_override() -> None:
+    """A user `profile=` saying the model supports it wins over the built-in table."""
+    captured: dict[str, Any] = {}
+    model = GoogleRealtimeModel(
+        'gemini-3.8-live',
+        provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured)),
+        profile=GoogleRealtimeModelProfile(google_supports_affective_dialog=True),
+    )
+    async with _connect(model, 'x', model_settings=GoogleRealtimeModelSettings(google_affective_dialog=True)):
+        pass
+    assert captured['config'].enable_affective_dialog is True
+
+
+@pytest.mark.parametrize(
+    ('google_thinking_config', 'expected_level', 'expected_budget'),
+    [
+        # A raw config with no level of its own gets the implied one, or the model rejects the handshake.
+        ({'include_thoughts': True}, 'LOW', None),
+        ({}, 'LOW', None),
+        # An explicit level or budget is the escape hatch doing its job, and is passed through untouched —
+        # including a budget the model will reject, which is the user's call to make.
+        ({'thinking_level': 'HIGH'}, 'HIGH', None),
+        ({'thinking_budget': 512}, None, 512),
+    ],
+)
+def test_raw_thinking_config_gains_a_level_only_where_it_lacks_one(
+    google_thinking_config: dict[str, Any], expected_level: str | None, expected_budget: int | None
+) -> None:
+    model = GoogleRealtimeModel(
+        'gemini-3.8-live-extended-thinking', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
+    )
+    config = model._config(  # pyright: ignore[reportPrivateUsage]
+        '', None, model_settings={'google_thinking_config': cast('Any', google_thinking_config)}
+    )
+    assert config.thinking_config is not None
+    level = config.thinking_config.thinking_level
+    assert (level.value if level else None) == expected_level
+    assert config.thinking_config.thinking_budget == expected_budget
+
+
+def test_raw_thinking_config_is_untouched_where_no_level_is_required() -> None:
+    """Only a model that demands a level gets one filled in; everywhere else the raw config is verbatim."""
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
+    )
+    config = model._config(  # pyright: ignore[reportPrivateUsage]
+        '', None, model_settings={'google_thinking_config': {'include_thoughts': True}}
+    )
+    assert config.thinking_config == genai_types.ThinkingConfig(include_thoughts=True)
+
+
+@pytest.mark.parametrize(
+    ('status', 'interrupted', 'more_expected', 'turn_stays_open'),
+    [
+        # A stalled exchange: the response isn't over, so neither is the turn — a drop before the tool
+        # call still needs a synthetic terminal to close the partial response.
+        ('IN_PROGRESS', False, True, True),
+        # A barge-in ends the exchange whatever the status says, so the turn closes with it.
+        ('IN_PROGRESS', True, False, False),
+        ('IDLE', False, False, False),
+        (None, False, False, False),
+    ],
+)
+def test_turn_stays_open_while_the_exchange_is_stalled(
+    status: str | None, interrupted: bool, more_expected: bool, turn_stays_open: bool
+) -> None:
+    # The status is resolved here, not in the decorator — see `test_turn_complete_reports_whether_more_is_expected`.
+    conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()))
+    if interrupted:
+        conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(interrupted=True))
+        )
+    events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(
+                turn_complete=True,
+                interaction_status=genai_types.InteractionStatus(status) if status else None,
+            )
+        )
+    )
+    assert events[-1] == ResponseDone(interrupted=interrupted, more_expected=more_expected)
+    assert conn._turn_open is turn_stays_open  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'settings', 'expected_behavior'),
+    [
+        # The 3.8 family defaults an unset behavior to non-blocking, so a blocking call has to say so.
+        ('gemini-3.8-live', None, 'BLOCKING'),
+        ('gemini-3.8-live', {'google_async_tool_calls': True}, 'NON_BLOCKING'),
+        ('gemini-3.8-live-extended-thinking', None, 'NON_BLOCKING'),
+        # Every older Live model keeps the declaration it always had: unset means blocking there.
+        ('gemini-2.5-flash-native-audio-latest', None, None),
+        ('gemini-3.1-flash-live-preview', None, None),
+    ],
+)
+def test_declared_tool_behavior_per_model(
+    model_name: str, settings: GoogleRealtimeModelSettings | None, expected_behavior: str | None
+) -> None:
+    model = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession())))
+    tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})
+    config = model._config('', [tool], model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert config.tools is not None
+    genai_tool = config.tools[0]
+    assert isinstance(genai_tool, genai_types.Tool) and genai_tool.function_declarations
+    behavior = genai_tool.function_declarations[0].behavior
+    assert (behavior.value if behavior else None) == expected_behavior

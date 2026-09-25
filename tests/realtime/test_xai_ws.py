@@ -121,6 +121,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
         RunUsage(
             input_tokens=5,
             output_tokens=42,
+            audio_seconds=1,
             output_audio_tokens=39,
             details={
                 'input_text_tokens': 5,
@@ -128,7 +129,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
                 'audio_tokens': 39,
                 'billable_audio_seconds': 1,
             },
-            cost=Decimal('0.0'),
+            cost=Decimal('0.001333333333333333333333333333'),
             requests=1,
         )
     )
@@ -228,6 +229,11 @@ async def test_audio_in_server_vad_turn(
     # xAI bills Grok Voice by audio second: `billable_audio_seconds` is the authoritative cost and is
     # captured in usage `details` (it can't be reconstructed from token counts).
     assert session.usage.details.get('billable_audio_seconds') == snapshot(5)
+    # Reported under the name pricing knows it by as well, so the session has a real cost. Grok Voice
+    # has no token prices at all, so without it the token counts price to a confident zero: a
+    # `cost_limit` would never trip and no unavailable-cost warning would say why.
+    assert session.usage.audio_seconds == snapshot(5)
+    assert session.usage.cost is not None and session.usage.cost > 0
 
 
 async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
@@ -502,6 +508,7 @@ def test_profile_allow_seeding() -> None:
     profile = XaiRealtimeModel(MODEL, provider=XaiProvider(api_key='xai-test-key')).profile
     assert profile == RealtimeModelProfile(
         supports_image_input=False,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=False,
@@ -515,6 +522,9 @@ def test_profile_allow_seeding() -> None:
         supports_tool_return_schema=False,
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
+        synthesizes_turn_boundary=False,
+        responses_are_requests=True,
+        response_usage_covers_context=False,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         context_window=None,

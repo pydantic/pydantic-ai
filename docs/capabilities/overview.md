@@ -1,3 +1,7 @@
+---
+description: "Bundle tools, instructions, model settings and hooks into reusable Pydantic AI capabilities, and browse the built-in capabilities you can add to any agent."
+---
+
 # Capabilities
 
 A capability is a reusable, composable unit of agent behavior. Instead of threading multiple arguments through your `Agent` constructor — [instructions](../agent.md#instructions) here, [model settings](../agent.md#model-run-settings) there, a [toolset](../toolsets.md) somewhere else, a [history processor](../message-history.md#processing-message-history) on yet another parameter — you can bundle related behavior into a single capability and pass it via the [`capabilities`][pydantic_ai.agent.Agent.__init__] parameter.
@@ -49,6 +53,13 @@ Connections to systems outside the agent's workspace, and abilities the provider
 | [StackOne](https://pydantic.dev/docs/ai/harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [LocalStack](https://pydantic.dev/docs/ai/harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
 | [Macroscope](https://pydantic.dev/docs/ai/harness/macroscope/) | Harness | Run a local [Macroscope](https://docs.macroscope.com/cli) code review and hand the findings to the agent |
+| [GitHub](https://pydantic.dev/docs/ai/harness/github/) | Harness | Read and change repositories, issues, and pull requests through GitHub's hosted MCP server |
+| [Google Workspace](https://pydantic.dev/docs/ai/harness/google-workspace/) | Harness | Use Gmail, Calendar, Drive, Docs, and Sheets through Google's hosted MCP servers |
+| [Linear](https://pydantic.dev/docs/ai/harness/linear/) | Harness | Read and update issues, projects, and comments through Linear's hosted MCP server |
+| [Logfire MCP](https://pydantic.dev/docs/ai/harness/logfire-mcp/) | Harness | Query traces and telemetry and manage projects through the hosted [Logfire](https://pydantic.dev/logfire) MCP server |
+| [Notion](https://pydantic.dev/docs/ai/harness/notion/) | Harness | Search and edit pages in a Notion workspace through Notion's hosted MCP server |
+| [Ordinal](https://pydantic.dev/docs/ai/harness/ordinal/) | Harness | Draft, schedule, and analyze social posts through [Ordinal](https://www.tryordinal.com)'s hosted MCP server |
+| [Slack](https://pydantic.dev/docs/ai/harness/slack/) | Harness | Read and send messages, browse channels, and edit canvases through Slack's hosted MCP server |
 
 ### Web & research {#web-research}
 
@@ -94,7 +105,7 @@ How the agent spends its context window: the difference between an agent that de
 
 ### Knowledge & memory {#knowledge-memory}
 
-What the agent knows and remembers, loaded when relevant instead of carried in every prompt. [Storage](../storage.md) covers how these sit next to the conversation history itself, which is an agent's memory of the run it is in.
+What the agent knows and remembers, loaded when relevant instead of carried in every prompt. [Persistence](../persistence.md) covers how these sit next to the conversation history itself, which is an agent's memory of the run it is in.
 
 | Capability | Package | What it does |
 |---|---|---|

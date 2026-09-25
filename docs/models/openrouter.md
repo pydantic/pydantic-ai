@@ -1,3 +1,7 @@
+---
+description: "Use models from many labs through OpenRouter with Pydantic AI, with app attribution, OpenRouter model settings, tool choice, prompt caching and web search."
+---
+
 # OpenRouter
 
 ## Install

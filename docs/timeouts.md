@@ -1,3 +1,7 @@
+---
+description: "Set timeouts in Pydantic AI for model requests, tool calls, hooks, MCP servers and realtime sessions, bound a whole run, and end a run early from inside a tool."
+---
+
 # Timeouts
 
 Bounding how long one step inside a run may take, and ending a run from inside a tool, are answered by separate mechanisms with separate failure modes. This page maps them. To stop a run that is already in flight, see [Cancelling a Run](agent.md#cancelling-a-run).

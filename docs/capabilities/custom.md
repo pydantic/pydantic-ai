@@ -1,3 +1,7 @@
+---
+description: "Write your own Pydantic AI capability by subclassing AbstractCapability to bundle tools, instructions, settings and hooks, for guardrails or middleware."
+---
+
 # Building Custom Capabilities
 
 To build your own [capability](overview.md), subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction — and re-run at run setup on the replacement instance when [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns one (see [Per-run state isolation](#per-run-state-isolation)); [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] is always called per-run — and **lifecycle hooks** that fire during each run.
@@ -328,7 +332,7 @@ class AdaptiveModel(AbstractCapability[Deps]):
 agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
 ```
 
-[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, message history, and usage. Keep `get_model()` itself cheap; perform I/O in an async selector.
+[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, the run's prompt, the messages the selected model will be sent (ending with the request being routed), and usage. Keep `get_model()` itself cheap; perform I/O in an async selector.
 
 A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step.
 
@@ -908,6 +912,8 @@ Mark each operation method with `@durable_operation(name='...')`. The required n
 A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may return a fresh instance — the operation dispatches on whichever instance the run is using, from `before_run` and from per-request hooks alike. The replacement has to keep the capability's `id`, since that is what dispatch and worker-side recovery resolve it by; Pydantic AI raises a `UserError` at the start of the run if a bound capability's ID is no longer present. Dispatch is established once `for_run()` has returned, so an operation called from inside `for_run()` itself runs directly rather than durably.
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
+
+To branch on whether a hook is running in durable workflow code, check [`ctx.in_durable_context`][pydantic_ai.tools.RunContext.in_durable_context]. It is `True` inside a durable workflow or flow (like a Temporal or DBOS workflow) when the agent has a durability capability. It is `False` outside durable execution and inside the Temporal activities and DBOS steps where tools and model requests run. Prefect tasks inherit their flow's context, so it is `True` inside a Prefect task too.
 
 The live-value hooks `get_toolset`, `get_wrapper_toolset`, `wrap_run`, `wrap_node_run`, `wrap_model_request`, `wrap_tool_validate`, `wrap_tool_execute`, `wrap_output_validate`, `wrap_output_process`, and `wrap_run_event_stream` cannot be decorated because their handlers or values cannot cross a durable boundary. Pydantic AI raises a `UserError` naming the incompatible hook during agent construction.
 

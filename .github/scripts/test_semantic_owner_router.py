@@ -73,8 +73,8 @@ class FakeClient(router.attention.GitHubClient):
     def post(self, path: str, payload: Mapping[str, object]) -> Any:
         self.calls.append(('POST', path, payload))
         if path == '/graphql':
-            variables = payload['variables']
-            assert isinstance(variables, Mapping)
+            assert isinstance(payload['variables'], Mapping)
+            variables = cast(Mapping[str, Any], payload['variables'])
             if 'number' not in variables:
                 numbers = self.search_results.pop(0) if self.search_results else self.items
                 return {
@@ -113,7 +113,8 @@ class FakeClient(router.attention.GitHubClient):
         requested = payload['assignees']
         assert isinstance(requested, list)
         existing = [str(entry['login']) for entry in self.items[number]['assignees']]
-        self.items[number]['assignees'] = [{'login': login} for login in dict.fromkeys([*existing, *requested])]
+        merged = dict.fromkeys([*existing, *cast(list[str], requested)])
+        self.items[number]['assignees'] = [{'login': login} for login in merged]
         return self.items[number]
 
 
@@ -125,7 +126,7 @@ def test_repository_allowlist_is_exact():
 
 
 def test_graphql_projection_never_requests_title_or_body():
-    compact = ''.join(router._ITEM_QUERY.split()).casefold()
+    compact = ''.join(router._ITEM_QUERY.split()).casefold()  # pyright: ignore[reportPrivateUsage]
 
     assert 'title' not in compact
     assert 'body' not in compact
@@ -313,9 +314,9 @@ def test_harness_candidate_search_is_unlabeled_new_intake_only():
     assert 'label:' not in issue_query
     assert 'is:issue' in issue_query
     # Blanket intake covers new items going forward, never the backlog.
-    assert f'created:>={router._RECOVERY_EPOCH}' in issue_query
+    assert f'created:>={router._RECOVERY_EPOCH}' in issue_query  # pyright: ignore[reportPrivateUsage]
     assert 'is:pr' in pull_query
-    assert f'created:>={router._RECOVERY_EPOCH}' in pull_query
+    assert f'created:>={router._RECOVERY_EPOCH}' in pull_query  # pyright: ignore[reportPrivateUsage]
 
 
 def test_default_intake_notice_names_the_owner_without_a_slack_ping():
@@ -349,12 +350,12 @@ def test_malformed_draft_state_fails_closed(is_draft: object):
 
     def post(path: str, payload: Mapping[str, object]) -> Any:
         result = original_post(path, payload)
-        if path == '/graphql' and isinstance(result, dict):
-            value = result['data']['repository']['issueOrPullRequest']
-            value['isDraft'] = is_draft
+        if path == '/graphql':
+            response = cast(dict[str, Any], result)
+            response['data']['repository']['issueOrPullRequest']['isDraft'] = is_draft
         return result
 
-    client.post = post  # type: ignore[method-assign]
+    client.post = post
 
     selected = router.decision_for(client, HARNESS, 7)
 
@@ -464,7 +465,7 @@ def _search_queries(client: FakeClient) -> list[str]:
         if method == 'POST'
         and path == '/graphql'
         and isinstance(payload, Mapping)
-        and isinstance(payload.get('variables'), Mapping)
+        and isinstance(cast(Mapping[str, object], payload).get('variables'), Mapping)
         and 'query' in cast(Mapping[str, object], payload['variables'])
     ]
 
@@ -483,7 +484,7 @@ def test_gated_selection_queries_exclude_every_fixed_owner():
 
 def test_selection_emits_one_decision_event_per_examined_item(monkeypatch: pytest.MonkeyPatch):
     events: list[tuple[str, dict[str, Any]]] = []
-    monkeypatch.setattr(router, '_emit_event', lambda name, **attrs: events.append((name, attrs)))
+    monkeypatch.setattr(router, '_emit_event', lambda name, **attrs: events.append((name, attrs)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     client = FakeClient({7: item(7, labels=['MCP', 'p:2-high'])})
 
     router.select_batch(client, CORE)
@@ -616,7 +617,8 @@ def test_bot_unassignments_do_not_suppress_gated_routing():
 def test_a_full_page_of_recent_bot_cleanup_still_backs_off():
     recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
     cleanup: list[str | dict[str, Any]] = [
-        {'createdAt': recent, 'actor': {'__typename': 'Bot'}} for _ in range(router._UNASSIGNED_EVENT_PAGE)
+        {'createdAt': recent, 'actor': {'__typename': 'Bot'}}
+        for _ in range(router._UNASSIGNED_EVENT_PAGE)  # pyright: ignore[reportPrivateUsage]
     ]
     client = FakeClient({7: item(7, labels=['MCP', 'p:1-highest'], unassigned_at=cleanup)})
 
@@ -630,7 +632,8 @@ def test_a_full_page_of_recent_bot_cleanup_still_backs_off():
 def test_a_full_page_of_old_bot_cleanup_does_not_back_off():
     old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()
     cleanup: list[str | dict[str, Any]] = [
-        {'createdAt': old, 'actor': {'__typename': 'Bot'}} for _ in range(router._UNASSIGNED_EVENT_PAGE)
+        {'createdAt': old, 'actor': {'__typename': 'Bot'}}
+        for _ in range(router._UNASSIGNED_EVENT_PAGE)  # pyright: ignore[reportPrivateUsage]
     ]
     client = FakeClient({7: item(7, labels=['MCP', 'p:1-highest'], unassigned_at=cleanup)})
 
@@ -783,7 +786,7 @@ def test_human_assignment_after_selection_suppresses_notice():
 def test_cli_modes_write_the_workflow_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     output = tmp_path / 'github-output'
     client = FakeClient({7: item(7, labels=['streaming', 'p:2-high'])})
-    monkeypatch.setattr(router.attention, 'GitHubClient', lambda token: client)
+    monkeypatch.setattr(router.attention, 'GitHubClient', lambda token: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
     monkeypatch.setenv('GITHUB_REPOSITORY', CORE)
     monkeypatch.setenv('GITHUB_OUTPUT', str(output))

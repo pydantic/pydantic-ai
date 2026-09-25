@@ -1,3 +1,7 @@
+---
+description: "Manage a Pydantic AI realtime session's connection: reconnect after drops and session limits, hang up on idle timeouts, and handle realtime errors."
+---
+
 # Connection lifecycle
 
 A realtime model uses one persistent provider connection. Your backend owns that session and the
@@ -175,7 +179,7 @@ Realtime sessions use the standard Pydantic AI exception hierarchy:
 | Exception | Raised when |
 | --- | --- |
 | [`UserError`][pydantic_ai.exceptions.UserError] | The application requests an unsupported operation, passes incompatible settings, lacks credentials, or misuses the session. |
-| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status; Gemini also maps WebSocket close codes such as `1007` and `1008` to `status_code`, while OpenAI-protocol providers use `RealtimeError` for an in-handshake rejection. |
+| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status. A provider that accepts the upgrade and then closes the socket during the handshake (Gemini's `1007` for a rejected config, for example) raises `RealtimeError` instead, since a WebSocket close code isn't an HTTP status. |
 | [`RealtimeError`][pydantic_ai.realtime.RealtimeError] | The connection fails, times out, closes unexpectedly, returns an invalid frame, or exhausts reconnect attempts. |
 | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | A configured [usage limit](observability.md#usage-and-limits) is exceeded. |
 
@@ -187,6 +191,15 @@ Recoverable failures arrive as events: [`RealtimeSessionErrorEvent`][pydantic_ai
 for provider operations and
 [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] for one failed
 user transcription. The session remains usable after either event.
+
+A `RealtimeSessionErrorEvent` can be the provider refusing something you sent: OpenAI Realtime refuses
+a text longer than 256,000 characters, for example. When the error identifies the refused input, as
+OpenAI-protocol providers do by echoing the client event's id for a malformed or oversized one, the
+session takes back what the send assumed, the way it does when the send itself raises: refused content
+is removed from history, and a refused request for a response stops
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] waiting for it. An error
+that doesn't identify an input changes neither, because the reply can still come: on OpenAI and xAI,
+a request for a response sent after a refused item is still answered.
 
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
 Receive-loop and tool failures are raised from `async for` while the event stream is being

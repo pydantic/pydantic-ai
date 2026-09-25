@@ -1,3 +1,7 @@
+---
+description: "Trim, redact or summarize the message history before each model request in a Pydantic AI run by wrapping a history processor in the ProcessHistory capability."
+---
+
 # Process History
 
 [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] is a [capability](overview.md) that wraps a [history processor](../message-history.md#processing-message-history): a function that receives the message history before each model request and returns the (possibly modified) list of messages to send. Use it to trim old turns, redact sensitive content, or summarize long conversations:

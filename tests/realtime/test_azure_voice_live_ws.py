@@ -176,6 +176,7 @@ async def test_audio_in_server_vad_turn(
     # `azure_voice_live=True` selected Voice Live here.
     assert model.profile == RealtimeModelProfile(
         supports_image_input=True,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=True,
@@ -191,6 +192,9 @@ async def test_audio_in_server_vad_turn(
         supports_text_output=True,
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         emits_input_speech_events=True,
+        synthesizes_turn_boundary=False,
+        responses_are_requests=True,
+        response_usage_covers_context=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supports_thinking=False,

@@ -11,6 +11,7 @@ import re
 import wave
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
+from decimal import Decimal
 from typing import Any, Literal, cast, get_args, get_origin
 from unittest.mock import patch
 
@@ -19,6 +20,7 @@ from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._genai_prices import calculate_price_for_usage
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
@@ -80,6 +82,7 @@ from pydantic_ai.realtime.codec import (
     ConversationCreated,
     ConversationItemCreated,
     CreateResponse,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -92,7 +95,7 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.realtime.profiles import merge_realtime_profile
 from pydantic_ai.realtime.xai import map_conversation_event as _map_conversation_wire_event
-from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
+from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -361,7 +364,7 @@ def test_map_audio_delta() -> None:
     payload = base64.b64encode(b'\x01\x02').decode('ascii')
     for event_type in ('response.output_audio.delta', 'response.audio.delta'):
         event = map_event({'type': event_type, 'delta': payload, 'item_id': 'item-a'})
-        assert event == AudioDelta(data=b'\x01\x02', item_id='item-a')
+        assert event == AudioDelta(data=b'\x01\x02', item_id='item-a', response_id='response')
 
 
 def test_map_audio_delta_non_string_delta() -> None:
@@ -372,11 +375,11 @@ def test_map_audio_delta_non_string_delta() -> None:
 def test_map_transcript_delta_and_done() -> None:
     for event_type in ('response.output_audio_transcript.delta', 'response.audio_transcript.delta'):
         assert map_event({'type': event_type, 'delta': 'hel', 'item_id': 'item-a'}) == OutputTranscript(
-            text='hel', is_final=False, item_id='item-a'
+            text='hel', is_final=False, item_id='item-a', response_id='response'
         )
     for event_type in ('response.output_audio_transcript.done', 'response.audio_transcript.done'):
         assert map_event({'type': event_type, 'transcript': 'hello', 'item_id': 'item-a'}) == OutputTranscript(
-            text='hello', is_final=True, item_id='item-a'
+            text='hello', is_final=True, item_id='item-a', response_id='response'
         )
 
 
@@ -384,15 +387,17 @@ def test_map_text_output_delta_and_done() -> None:
     # `output_text=True` distinguishes plain text output from an audio transcript, so the session
     # persists it as a `TextPart` rather than a `SpeechPart`.
     assert map_event({'type': 'response.output_text.delta', 'delta': 'hel'}) == OutputTranscript(
-        text='hel', is_final=False, output_text=True
+        text='hel', is_final=False, output_text=True, response_id='response'
     )
     assert map_event({'type': 'response.output_text.done', 'text': 'hello'}) == OutputTranscript(
-        text='hello', is_final=True, output_text=True
+        text='hello', is_final=True, output_text=True, response_id='response'
     )
 
 
 def test_map_transcript_missing_field_defaults_to_empty() -> None:
-    assert map_event({'type': 'response.output_audio_transcript.delta'}) == OutputTranscript(text='', is_final=False)
+    assert map_event({'type': 'response.output_audio_transcript.delta'}) == OutputTranscript(
+        text='', is_final=False, response_id='response'
+    )
 
 
 @pytest.mark.parametrize('status', ['completed', None])
@@ -442,6 +447,7 @@ def test_map_function_call() -> None:
         tool_name='get_weather',
         args='{"city": "Paris"}',
         response_usage_follows=True,
+        response_id='response',
     )
 
 
@@ -525,6 +531,55 @@ def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
     )
     with pytest.raises(ValueError):
         map_event(_response_done({'status': 'incomplete', 'status_details': {'reason': 'network'}}))
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('status_details', 'expected_error', 'provider_details'),
+    [
+        pytest.param(
+            {
+                'type': 'failed',
+                'error': {'type': 'invalid_request_error', 'code': 'input_image_safety_violation', 'message': 'No.'},
+            },
+            RealtimeSessionErrorEvent(message='No.', type='invalid_request_error', code='input_image_safety_violation'),
+            {
+                'status': 'failed',
+                'error': {'type': 'invalid_request_error', 'code': 'input_image_safety_violation', 'message': 'No.'},
+            },
+            id='message',
+        ),
+        pytest.param(
+            {'type': 'failed', 'error': {'type': 'server_error', 'code': 'oops'}},
+            RealtimeSessionErrorEvent(
+                message='{"code":"oops","type":"server_error"}', type='server_error', code='oops'
+            ),
+            {'status': 'failed', 'error': {'type': 'server_error', 'code': 'oops'}},
+            id='no-message',
+        ),
+        pytest.param(
+            None,
+            RealtimeSessionErrorEvent(message='The realtime response failed.'),
+            {'status': 'failed'},
+            id='no-details',
+        ),
+    ],
+)
+async def test_failed_response_emits_recoverable_error(
+    status_details: dict[str, Any] | None,
+    expected_error: RealtimeSessionErrorEvent,
+    provider_details: dict[str, Any],
+) -> None:
+    """OpenAI reports a failed response only inside `response.done`, so the connection surfaces it as an error."""
+    response: dict[str, Any] = {'id': 'resp-failed', 'status': 'failed', 'output': []}
+    if status_details is not None:
+        response['status_details'] = status_details
+    conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(_response_done(response))]))  # type: ignore[arg-type]
+
+    assert await collect_codec_events(conn) == [
+        expected_error,
+        ResponseDone(provider_response_id='resp-failed', finish_reason='error', provider_details=provider_details),
+    ]
 
 
 def test_map_conversation_item_without_identifiers_is_ignored() -> None:
@@ -617,7 +672,7 @@ def test_map_usage_full_payload() -> None:
             'cached_tokens': 30,
             'text_tokens': 20,
             'image_tokens': 5,
-            'cached_tokens_details': {'audio_tokens': 10},
+            'cached_tokens_details': {'audio_tokens': 10, 'image_tokens': 2},
         },
         output_token_details={'audio_tokens': 40, 'text_tokens': 10},
     )
@@ -629,7 +684,24 @@ def test_map_usage_full_payload() -> None:
         cache_read_tokens=30,
         cache_audio_read_tokens=10,
         output_audio_tokens=40,
+        input_image_tokens=5,
+        cache_image_read_tokens=2,
         details={'input_text_tokens': 20, 'input_image_tokens': 5, 'output_text_tokens': 10, 'audio_tokens': 40},
+    )
+
+
+def test_map_usage_prices_image_input_at_the_image_rate() -> None:
+    """Image input has its own rate on `gpt-realtime`; reported only in `details` it was priced as text."""
+    sdk_usage = RealtimeResponseUsage.construct(
+        input_tokens=1000,
+        output_tokens=0,
+        input_token_details={'text_tokens': 200, 'image_tokens': 800},
+    )
+    usage = rt_openai._map_usage(sdk_usage)  # pyright: ignore[reportPrivateUsage]
+    assert usage is not None
+    # 200 text tokens at $4/M plus 800 image tokens at $5/M; all 1000 at the text rate would be 0.004.
+    assert calculate_price_for_usage(usage, model_name='gpt-realtime', provider_name='openai').total_price == (
+        snapshot(Decimal('0.0048'))
     )
 
 
@@ -688,32 +760,35 @@ def test_map_unhandled_event_returns_none() -> None:
     [
         (
             {'type': 'response.output_audio.delta', 'delta': 'AQI=', 'item_id': 'a'},
-            AudioDelta(b'\x01\x02', item_id='a'),
+            AudioDelta(b'\x01\x02', item_id='a', response_id='response'),
         ),
-        ({'type': 'response.audio.delta', 'delta': 'AQI=', 'item_id': 'a'}, AudioDelta(b'\x01\x02', item_id='a')),
+        (
+            {'type': 'response.audio.delta', 'delta': 'AQI=', 'item_id': 'a'},
+            AudioDelta(b'\x01\x02', item_id='a', response_id='response'),
+        ),
         (
             {'type': 'response.output_audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
-            OutputTranscript('hel', is_final=False, item_id='a'),
+            OutputTranscript('hel', is_final=False, item_id='a', response_id='response'),
         ),
         (
             {'type': 'response.audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
-            OutputTranscript('hel', is_final=False, item_id='a'),
+            OutputTranscript('hel', is_final=False, item_id='a', response_id='response'),
         ),
         (
             {'type': 'response.output_audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
-            OutputTranscript('hello', is_final=True, item_id='a'),
+            OutputTranscript('hello', is_final=True, item_id='a', response_id='response'),
         ),
         (
             {'type': 'response.audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
-            OutputTranscript('hello', is_final=True, item_id='a'),
+            OutputTranscript('hello', is_final=True, item_id='a', response_id='response'),
         ),
         (
             {'type': 'response.output_text.delta', 'delta': 'hel'},
-            OutputTranscript('hel', is_final=False, output_text=True),
+            OutputTranscript('hel', is_final=False, output_text=True, response_id='response'),
         ),
         (
             {'type': 'response.output_text.done', 'text': 'hello'},
-            OutputTranscript('hello', is_final=True, output_text=True),
+            OutputTranscript('hello', is_final=True, output_text=True, response_id='response'),
         ),
         (
             {'type': 'conversation.item.input_audio_transcription.delta', 'delta': 'hel', 'item_id': 'u'},
@@ -734,7 +809,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'name': 'weather',
                 'arguments': '{}',
             },
-            ToolCall('call-1', tool_name='weather', args='{}', response_usage_follows=True),
+            ToolCall('call-1', tool_name='weather', args='{}', response_usage_follows=True, response_id='response'),
         ),
         ({'type': 'input_audio_buffer.speech_started'}, RealtimeInputSpeechStartEvent()),
         ({'type': 'input_audio_buffer.speech_stopped'}, RealtimeInputSpeechEndEvent()),
@@ -915,7 +990,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     async with _connect(model, 'Be nice', tools=tools) as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [OutputTranscript(text='hi', is_final=True)]
+    assert events == [OutputTranscript(text='hi', is_final=True, response_id='response')]
     assert fake_connect.url == 'wss://api.openai.com/v1/realtime?model=gpt-realtime'
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
 
@@ -1131,9 +1206,9 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
     assert reasoning('low') == {'effort': 'low'}
     assert reasoning('high') == {'effort': 'high'}
     assert reasoning(True) == {'effort': 'medium'}
-    # `thinking=False` maps to effort `'none'`, which the realtime `reasoning.effort` doesn't accept,
-    # so it's omitted (a reasoning model falls back to its default rather than erroring).
-    assert reasoning(False) is None
+    # `thinking=False` sends effort `'none'`, which the SDK type omits but the reasoning models accept
+    # and honor with zero reasoning tokens; omitting `reasoning` would leave them at their default effort.
+    assert reasoning(False) == {'effort': 'none'}
 
 
 def test_session_config_thinking_on_non_reasoning_model_is_ignored() -> None:
@@ -1203,13 +1278,13 @@ def test_session_config_noise_reduction_and_speed_and_modalities() -> None:
 
 
 def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
-    settings = rt_openai.OpenAIRealtimeModelSettings(parallel_tool_calls=True, tool_choice='required')
+    settings = rt_openai.OpenAIRealtimeModelSettings(parallel_tool_calls=True, tool_choice='auto')
     model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
     assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
     config = model._session_config('hi', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config['parallel_tool_calls'] is True
-    assert config['tool_choice'] == 'required'
+    assert config['tool_choice'] == 'auto'
 
 
 def test_session_config_merges_model_defaults_and_connection_overrides() -> None:
@@ -1233,24 +1308,39 @@ def test_session_config_forwards_custom_voice_id() -> None:
     assert config['audio']['output']['voice'] == {'id': 'voice_custom'}
 
 
-def test_session_config_tool_choice_single_function() -> None:
+@pytest.mark.parametrize('tool_choice', ['required', ['get_weather'], ['get_weather', 'other']])
+def test_session_config_rejects_forced_tool_choice(tool_choice: ToolChoice) -> None:
+    # The session config applies `tool_choice` to every response, including the one after a tool
+    # result, so a forced tool call never lets the model answer: live, `gpt-realtime-mini` called the
+    # tool again after every result until the request limit ended the session.
     model = OpenAIRealtimeModel('gpt-realtime')
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('get_weather', 'other')]
-    config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=['get_weather'])
-    )
-    assert config['tool_choice'] == {'type': 'function', 'name': 'get_weather'}
-    assert [tool['name'] for tool in config['tools']] == ['get_weather']
+    with pytest.raises(UserError, match="A realtime session can't force a tool call"):
+        model._session_config(  # pyright: ignore[reportPrivateUsage]
+            'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=tool_choice)
+        )
 
 
-def test_session_config_tool_choice_multi_tool_restricts_advertised_tools() -> None:
-    model = OpenAIRealtimeModel('gpt-realtime')
-    tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('a', 'b', 'excluded')]
-    config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=['a', 'b'])
+async def test_forced_tool_choice_fails_before_dialing() -> None:
+    # Raised at session open from the resolved model and merged settings, before any connection is
+    # made: the model default here is overridden per session, and only the final value counts.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return city  # pragma: no cover
+
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='test-key'),
+        settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice='auto'),
     )
-    assert config['tool_choice'] == 'required'
-    assert [tool['name'] for tool in config['tools']] == ['a', 'b']
+    with patch.object(rt_openai.websockets, 'connect', side_effect=AssertionError('dialed')):
+        with pytest.raises(UserError, match="A realtime session can't force a tool call"):
+            async with agent.realtime(
+                model, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice='required')
+            ).session():
+                pass  # pragma: no cover
 
 
 def test_session_config_tool_choice_tool_or_output_restricts_advertised_tools() -> None:
@@ -1417,7 +1507,7 @@ async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.Monke
     model = OpenAIRealtimeModel('gpt-realtime')
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
-    assert events == [AudioDelta(data=b'\x09')]
+    assert events == [AudioDelta(data=b'\x09', response_id='response')]
 
 
 @pytest.mark.anyio
@@ -1524,7 +1614,7 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     errors = [event for event in events if isinstance(event, RealtimeSessionErrorEvent)]
     assert len(errors) == 3 + len(malformed_nested_frames) + len(malformed_transcription_frames)
     assert all(event.recoverable for event in errors)
-    assert events[-1] == AudioDelta(data=b'\x09')
+    assert events[-1] == AudioDelta(data=b'\x09', response_id='response')
 
 
 @pytest.mark.anyio
@@ -2122,7 +2212,9 @@ async def test_connection_send_text() -> None:
     await conn.send('hello')
     create = json.loads(ws.sent[0])
     assert create['item']['content'][0]['text'] == 'hello'
-    assert json.loads(ws.sent[1]) == {'type': 'response.create'}
+    # Both frames name the input they serve, so a refusal of either can be taken back.
+    assert create['event_id'] == 'pydantic_ai.content.0'
+    assert json.loads(ws.sent[1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
 
 
 @pytest.mark.anyio
@@ -2133,6 +2225,7 @@ async def test_connection_send_text_context() -> None:
     assert [json.loads(frame) for frame in ws.sent] == [
         {
             'type': 'conversation.item.create',
+            'event_id': 'pydantic_ai.content.0',
             'item': {
                 'type': 'message',
                 'role': 'user',
@@ -2149,7 +2242,7 @@ async def test_connection_send_tool_result_triggers_response() -> None:
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))
     item = json.loads(ws.sent[0])
     assert item['item'] == {'type': 'function_call_output', 'call_id': 'call_1', 'output': '42'}
-    assert json.loads(ws.sent[1]) == {'type': 'response.create'}
+    assert json.loads(ws.sent[1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
 
 
 @pytest.mark.anyio
@@ -2184,7 +2277,7 @@ async def test_connection_send_tool_result_with_follow_up_user_content() -> None
                 ],
             },
         },
-        {'type': 'response.create'},
+        {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'},
     ]
 
 
@@ -2242,7 +2335,7 @@ async def test_connection_send_create_response() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CreateResponse())
-    assert json.loads(ws.sent[0]) == {'type': 'response.create'}
+    assert json.loads(ws.sent[0]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
 
 
 @pytest.mark.anyio
@@ -2307,7 +2400,7 @@ async def test_connection_drops_deltas_from_a_cancelled_response() -> None:
             finish_reason=None,
             provider_details={'status': 'cancelled'},
         ),
-        AudioDelta(data=b'\x02', item_id='item-2'),  # the next response is unaffected
+        AudioDelta(data=b'\x02', item_id='item-2', response_id='resp-2'),  # the next response is unaffected
     ]
     assert conn._cancelled_response_id is None  # pyright: ignore[reportPrivateUsage]
 
@@ -2339,7 +2432,9 @@ async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> 
     # A's usage is recorded, B keeps streaming, and no `ResponseDone` fired for the superseded A.
     assert [type(event).__name__ for event in events] == ['SessionUsage', 'AudioDelta']
     assert isinstance(events[0], SessionUsage) and events[0].provider_response_id == 'A'
-    assert events[1] == AudioDelta(data=b'\x02', item_id='b-item')
+    # A's `cancelled` status doesn't ride along: the session may be recording B when this usage lands.
+    assert events[0].provider_details is None
+    assert events[1] == AudioDelta(data=b'\x02', item_id='b-item', response_id='B')
     assert not any(isinstance(event, ResponseDone) for event in events)
 
 
@@ -2539,6 +2634,7 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
             usage=RequestUsage(input_tokens=3, output_tokens=2),
             provider_response_id='resp-1',
             finish_reason='stop',
+            provider_details={'status': 'completed'},
         ),
         ResponseDone(
             interrupted=False,
@@ -2565,12 +2661,14 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
     ws = FakeWebSocket([done])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = await collect_codec_events(conn)
-    # function-call-only → no ResponseDone, but usage is still surfaced
+    # function-call-only → no ResponseDone, but usage is still surfaced, carrying the details the
+    # suppressed `ResponseDone` would have
     assert events == [
         SessionUsage(
             usage=RequestUsage(output_tokens=5),
             provider_response_id='resp-tool',
             finish_reason='tool_call',
+            provider_details={'status': 'completed'},
         )
     ]
 
@@ -2582,6 +2680,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
         json.dumps(
             {
                 'type': 'response.function_call_arguments.done',
+                'response_id': 'resp-tool',
                 'call_id': 'call-1',
                 'name': 'get_weather',
                 'arguments': '{}',
@@ -2601,6 +2700,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
         json.dumps(
             {
                 'type': 'response.output_audio_transcript.done',
+                'response_id': 'resp-answer',
                 'item_id': 'answer-1',
                 'transcript': 'Sunny',
             }
@@ -2658,6 +2758,7 @@ async def test_session_stamps_openai_response_metadata(
     transcript = json.dumps(
         {
             'type': 'response.output_audio_transcript.done',
+            'response_id': 'resp-1',
             'item_id': 'item-1',
             'transcript': 'hello',
         }
@@ -2792,7 +2893,7 @@ async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
     events = await collect_codec_events(conn)
     assert events == [
         RealtimeSessionReconnectEvent(state_restored=False),
-        OutputTranscript(text='still here', is_final=True),
+        OutputTranscript(text='still here', is_final=True, response_id='response'),
     ]
 
 
@@ -2836,7 +2937,10 @@ async def test_reconnects_on_drop_and_resumes() -> None:
         reconnect={'base_delay': 0.0, 'max_attempts': 1},
     )
     events = await collect_codec_events(conn)
-    assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
+    assert events == [
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
 
 
 class _DropAfterHandshake(FakeWebSocket):
@@ -2888,7 +2992,10 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
+    assert events == [
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
     assert connect.closed == [dropped, good]
 
 
@@ -2914,7 +3021,10 @@ async def test_connect_webrtc_reconnect_closes_previous_connection(monkeypatch: 
     ) as conn:
         events = await collect_codec_events(conn, sideband=True)
 
-    assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
+    assert events == [
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='hi', is_final=True, response_id='response'),
+    ]
     assert connect.closed == [dropped, good]
 
 
@@ -2951,10 +3061,10 @@ async def test_reconnect_updates_server_reported_model(monkeypatch: pytest.Monke
 
 def test_output_text_events_keep_item_id() -> None:
     assert map_event({'type': 'response.output_text.delta', 'delta': 'hi', 'item_id': 'item-1'}) == (
-        OutputTranscript(text='hi', is_final=False, item_id='item-1', output_text=True)
+        OutputTranscript(text='hi', is_final=False, item_id='item-1', output_text=True, response_id='response')
     )
     assert map_event({'type': 'response.output_text.done', 'text': 'hi', 'item_id': 'item-1'}) == (
-        OutputTranscript(text='hi', is_final=True, item_id='item-1', output_text=True)
+        OutputTranscript(text='hi', is_final=True, item_id='item-1', output_text=True, response_id='response')
     )
 
 
@@ -3204,8 +3314,108 @@ async def test_response_done_settles_a_response_whose_id_was_never_announced() -
 
     await collect_codec_events(conn)
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
-    await conn._request_response()  # pyright: ignore[reportPrivateUsage]
-    assert ws.sent == ['{"type":"response.create"}']
+    await conn.send(CreateResponse())
+    assert ws.sent == ['{"type":"response.create","event_id":"pydantic_ai.response.0"}']
+
+
+def _refusal_frame(event_id: str | None) -> str:
+    return json.dumps(
+        {
+            'type': 'error',
+            'error': {
+                'type': 'invalid_request_error',
+                'code': 'invalid_value',
+                'message': 'Refused.',
+                'event_id': event_id,
+            },
+        }
+    )
+
+
+_REFUSAL = RealtimeSessionErrorEvent('Refused.', type='invalid_request_error', code='invalid_value')
+
+
+@pytest.mark.anyio
+async def test_refused_item_is_reported_ahead_of_its_error() -> None:
+    # OpenAI echoes the `event_id` of a client event it refuses. A refused item doesn't cancel the
+    # `response.create` sent after it (checked live), so the connection keeps waiting on that response.
+    ws = FakeWebSocket([_refusal_frame('pydantic_ai.content.0')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send('hello')
+    assert await collect_codec_events(conn) == [InputRejected(0, refused='content'), _REFUSAL]
+    assert conn._response_active  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_refused_response_request_releases_the_connection() -> None:
+    # The `response.created` that would have started the refused response never comes, and neither does
+    # the `response.done` that would release it, so the refusal is what lets the next request through.
+    ws = FakeWebSocket([_refusal_frame('pydantic_ai.response.0')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(CreateResponse())
+    await conn.send(CreateResponse())  # deferred behind the first
+    assert len(ws.sent) == 1
+
+    assert await collect_codec_events(conn) == [InputRejected(0, refused='response'), _REFUSAL]
+    assert json.loads(ws.sent[-1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.1'}
+    assert conn._response_request_inputs == (1,)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_refused_shared_response_request_reports_every_input_it_served() -> None:
+    # Requests deferred behind one response go out as a single `response.create`; its refusal leaves
+    # each of them without the response it asked for.
+    ws = FakeWebSocket(
+        [
+            json.dumps({'type': 'response.created', 'response': {'id': 'resp_1'}}),
+            json.dumps({'type': 'response.done', 'response': {'id': 'resp_1', 'status': 'completed', 'output': []}}),
+            _refusal_frame('pydantic_ai.response.1-2'),
+        ]
+    )
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    for _ in range(3):
+        await conn.send(CreateResponse())
+
+    events = await collect_codec_events(conn)
+    assert json.loads(ws.sent[-1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.1-2'}
+    assert events[-3:] == [InputRejected(1, refused='response'), InputRejected(2, refused='response'), _REFUSAL]
+    assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_refused_response_request_leaves_a_started_response_active() -> None:
+    # Refused because a response was already starting (server VAD beat the client to it): that response
+    # is under way and its own `response.done` releases the connection, not this refusal.
+    ws = FakeWebSocket(
+        [
+            json.dumps({'type': 'response.created', 'response': {'id': 'resp_vad'}}),
+            _refusal_frame('pydantic_ai.response.0'),
+        ]
+    )
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(CreateResponse())
+
+    events = await collect_codec_events(conn)
+    assert events[-2:] == [InputRejected(0, refused='response'), _REFUSAL]
+    assert conn._response_active  # pyright: ignore[reportPrivateUsage]
+    assert conn._active_response_id == 'resp_vad'  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    'event_id',
+    [
+        pytest.param(None, id='no-id'),
+        # xAI puts its own id here rather than echoing the client's.
+        pytest.param('2254b1be-daf3-41bf-8a72-d42d07a9e3b1', id='foreign-id'),
+    ],
+)
+@pytest.mark.anyio
+async def test_error_naming_no_input_of_ours_refuses_nothing(event_id: str | None) -> None:
+    ws = FakeWebSocket([_refusal_frame(event_id)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send('hello')
+    assert await collect_codec_events(conn) == [_REFUSAL]
+    assert conn._response_active  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
@@ -3223,8 +3433,8 @@ async def test_malformed_response_done_still_releases_the_response() -> None:
     assert [type(e).__name__ for e in events] == ['RealtimeSessionErrorEvent']
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
     # The session can speak again, rather than only ever deferring.
-    await conn._request_response()  # pyright: ignore[reportPrivateUsage]
-    assert ws.sent == ['{"type":"response.create"}']
+    await conn.send(CreateResponse())
+    assert ws.sent == ['{"type":"response.create","event_id":"pydantic_ai.response.0"}']
 
 
 @pytest.mark.anyio

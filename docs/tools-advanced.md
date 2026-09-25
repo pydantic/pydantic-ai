@@ -1,3 +1,7 @@
+---
+description: "Advanced Pydantic AI function tools: return images and files, custom schemas, strict mode, dynamic tools, tool choice, retries, parallel calls and tool search."
+---
+
 # Advanced Tool Features
 
 This page covers advanced features for function tools in Pydantic AI. For basic tool usage, see the [Function Tools](tools.md) documentation.

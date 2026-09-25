@@ -1,6 +1,10 @@
+---
+description: "Pass data and services to a Pydantic AI agent's instructions, tools and output validators with type-safe dependency injection, and override them in tests."
+---
+
 # Dependencies
 
-Pydantic AI uses a dependency injection system to provide data and services to your agent's [system prompts](agent.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
+Pydantic AI uses a dependency injection system to provide data and services to your agent's [instructions](agent.md#instructions), [tools](tools.md) and [output validators](output.md#output-validator-functions).
 
 Pydantic AI's dependency system follows established Python practices, making dependencies type-safe, understandable, easy to test, and easy to deploy in production.
 
@@ -51,9 +55,9 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 ## Accessing Dependencies
 
-Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContext] type, this should be the first parameter of system prompt functions etc.
+Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContext] type, this should be the first parameter of instructions functions etc.
 
-```python {title="system_prompt_dependencies.py" hl_lines="20-27"}
+```python {title="instructions_dependencies.py" hl_lines="20-27"}
 from dataclasses import dataclass
 
 import httpx
@@ -73,8 +77,8 @@ agent = Agent(
 )
 
 
-@agent.system_prompt  # (1)!
-async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
+@agent.instructions  # (1)!
+async def get_instructions(ctx: RunContext[MyDeps]) -> str:  # (2)!
     response = await ctx.deps.http_client.get(  # (3)!
         'https://example.com',
         headers={'Authorization': f'Bearer {ctx.deps.api_key}'},  # (4)!
@@ -91,7 +95,7 @@ async def main():
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
-1. [`RunContext`][pydantic_ai.tools.RunContext] may optionally be passed to a [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] function as the only argument.
+1. [`RunContext`][pydantic_ai.tools.RunContext] may optionally be passed to an [`instructions`][pydantic_ai.agent.Agent.instructions] function as the only argument.
 2. [`RunContext`][pydantic_ai.tools.RunContext] is parameterized with the type of the dependencies, if this type is incorrect, static type checkers will raise an error.
 3. Access the HTTP client through the [`.deps`][pydantic_ai.tools.RunContext.deps] attribute.
 4. Access the API key through the same attribute.
@@ -104,7 +108,7 @@ Dependency fields can also be referenced in instructions and descriptions via [t
 
 ### Asynchronous vs. Synchronous dependencies
 
-[System prompt functions](agent.md#system-prompts), [function tools](tools.md) and [output validators](output.md#output-validator-functions) are all run in the async context of an agent run.
+[Instructions functions](agent.md#instructions), [function tools](tools.md) and [output validators](output.md#output-validator-functions) are all run in the async context of an agent run.
 
 If these functions are synchronous, defined with `def` rather than `async def`, Pydantic AI calls them with
 [`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool. Prefer `async` functions when dependencies
@@ -135,8 +139,8 @@ agent = Agent(
 )
 
 
-@agent.system_prompt
-def get_system_prompt(ctx: RunContext[MyDeps]) -> str:  # (2)!
+@agent.instructions
+def get_instructions(ctx: RunContext[MyDeps]) -> str:  # (2)!
     response = ctx.deps.http_client.get(
         'https://example.com', headers={'Authorization': f'Bearer {ctx.deps.api_key}'}
     )
@@ -155,13 +159,13 @@ async def main():
 ```
 
 1. Here we use a synchronous `httpx.Client` instead of an asynchronous `httpx.AsyncClient`.
-2. To match the synchronous dependency, the system prompt function is now a plain function, not a coroutine.
+2. To match the synchronous dependency, the instructions function is now a plain function, not a coroutine.
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Full Example
 
-As well as system prompts, dependencies can be used in [tools](tools.md) and [output validators](output.md#output-validator-functions).
+As well as instructions, dependencies can be used in [tools](tools.md) and [output validators](output.md#output-validator-functions).
 
 ```python {title="full_example.py" hl_lines="27-35 38-48"}
 from dataclasses import dataclass
@@ -183,8 +187,8 @@ agent = Agent(
 )
 
 
-@agent.system_prompt
-async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:
+@agent.instructions
+async def get_instructions(ctx: RunContext[MyDeps]) -> str:
     response = await ctx.deps.http_client.get('https://example.com')
     response.raise_for_status()
     return f'Prompt: {response.text}'
@@ -249,7 +253,7 @@ class MyDeps:
     api_key: str
     http_client: httpx.AsyncClient
 
-    async def system_prompt_factory(self) -> str:  # (1)!
+    async def instructions_factory(self) -> str:  # (1)!
         response = await self.http_client.get('https://example.com')
         response.raise_for_status()
         return f'Prompt: {response.text}'
@@ -258,9 +262,9 @@ class MyDeps:
 joke_agent = Agent('openai:gpt-5.2', deps_type=MyDeps)
 
 
-@joke_agent.system_prompt
-async def get_system_prompt(ctx: RunContext[MyDeps]) -> str:
-    return await ctx.deps.system_prompt_factory()  # (2)!
+@joke_agent.instructions
+async def get_instructions(ctx: RunContext[MyDeps]) -> str:
+    return await ctx.deps.instructions_factory()  # (2)!
 
 
 async def application_code(prompt: str) -> str:  # (3)!
@@ -273,8 +277,8 @@ async def application_code(prompt: str) -> str:  # (3)!
     return result.output
 ```
 
-1. Define a method on the dependency to make the system prompt easier to customise.
-2. Call the system prompt factory from within the system prompt function.
+1. Define a method on the dependency to make the instructions easier to customise.
+2. Call the instructions factory from within the instructions function.
 3. Application code that calls the agent, in a real application this might be an API endpoint.
 4. Call the agent from within the application code, in a real application this call might be deep within a call stack. Note `app_deps` here will NOT be used when deps are overridden.
 
@@ -287,7 +291,7 @@ from joke_app import MyDeps, application_code, joke_agent
 
 
 class TestMyDeps(MyDeps):  # (1)!
-    async def system_prompt_factory(self) -> str:
+    async def instructions_factory(self) -> str:
         return 'test prompt'
 
 
@@ -298,8 +302,8 @@ async def test_application_code():
     assert joke.startswith('Did you hear about the toothpaste scandal?')
 ```
 
-1. Define a subclass of `MyDeps` in tests to customise the system prompt factory.
-2. Create an instance of the test dependency. Its `http_client` goes unused, as the test system prompt factory makes no requests.
+1. Define a subclass of `MyDeps` in tests to customise the instructions factory.
+2. Create an instance of the test dependency. Its `http_client` goes unused, as the test instructions factory makes no requests.
 3. Override the dependencies of the agent for the duration of the `with` block, `test_deps` will be used when the agent is run.
 4. Now we can safely call our application code, the agent will use the overridden dependencies.
 

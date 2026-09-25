@@ -1,3 +1,7 @@
+---
+description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, or any OpenAI-compatible API such as DeepSeek, Azure, vLLM or LiteLLM."
+---
+
 # OpenAI
 
 ## Install
@@ -156,6 +160,8 @@ agent = Agent(model, model_settings=settings)
 
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
+
+OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`.
 
 ### Prompt caching
 

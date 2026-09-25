@@ -1,3 +1,7 @@
+---
+description: "Use Amazon Bedrock models like Claude, Nova and GPT-OSS with Pydantic AI via the Converse or Mantle API, with guardrails, prompt caching and inference profiles."
+---
+
 # Bedrock
 
 [Amazon Bedrock](https://aws.amazon.com/bedrock/) exposes foundation models from many providers, and Pydantic AI reaches it through two separate AWS APIs. Pick the route by model prefix:
@@ -173,7 +177,7 @@ from pydantic_ai.models.bedrock import BedrockModelSettings
 
 agent = Agent(
     'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    system_prompt='You are a helpful assistant.',
+    instructions='You are a helpful assistant.',
     model_settings=BedrockModelSettings(
         bedrock_cache_messages=True,  # Automatically caches the last message
     ),
@@ -199,7 +203,7 @@ from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSetting
 model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
 agent = Agent(
     model,
-    system_prompt='Detailed instructions...',
+    instructions='Detailed instructions...',
     model_settings=BedrockModelSettings(
         bedrock_cache_instructions=True,       # Cache system instructions
         bedrock_cache_tool_definitions='1h',   # Cache tool definitions with 1h TTL
@@ -227,7 +231,7 @@ from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
     'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    system_prompt='Instructions...',
+    instructions='Instructions...',
 )
 
 # Manually control cache points for specific content blocks
@@ -286,7 +290,7 @@ from pydantic_ai.models.bedrock import BedrockModelSettings
 
 agent = Agent(
     'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    system_prompt='Instructions...',
+    instructions='Instructions...',
     model_settings=BedrockModelSettings(
         bedrock_cache_instructions=True,      # 1 cache point
         bedrock_cache_tool_definitions=True,  # 1 cache point

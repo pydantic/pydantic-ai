@@ -37,6 +37,7 @@ with try_import() as imports_successful:
         LatestOpenAIRealtimeModelNames,
         LatestOpenAIRealtimeTranscriptionModelNames,
     )
+    from pydantic_ai.realtime.openai_live import LatestOpenAILiveModelNames
     from pydantic_ai.realtime.settings import KnownRealtimeTranscriptionModelName
     from pydantic_ai.realtime.xai import LatestXaiRealtimeModelNames, LatestXaiRealtimeTranscriptionModelNames
 
@@ -52,6 +53,7 @@ def test_known_realtime_model_names() -> None:  # pragma: lax no cover
 
     generated_names = sorted(
         [f'openai:{name}' for name in get_model_names(LatestOpenAIRealtimeModelNames)]
+        + [f'openai:{name}' for name in get_model_names(LatestOpenAILiveModelNames)]
         + [f'azure:{name}' for name in get_model_names(LatestAzureRealtimeModelNames)]
         + [f'xai:{name}' for name in get_model_names(LatestXaiRealtimeModelNames)]
         + [f'google:{name}' for name in get_model_names(LatestGoogleRealtimeModelNames)]

@@ -1,3 +1,7 @@
+---
+description: "Give Pydantic AI realtime voice agents tools that run on your backend, with argument validation, retries, concurrent execution and recorded tool-call messages."
+---
+
 # Tools
 
 [Tools](../tools.md) registered on an agent are offered to the realtime model and execute on your
@@ -36,6 +40,31 @@ attachment raises [`UserError`][pydantic_ai.exceptions.UserError]
 If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
+
+### Restricting the available tools
+
+The [`tool_choice`](../tools-advanced.md#tool-choice) setting in
+[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] is resolved as it is for a
+standard run, but applied once, when the session is created, and it then holds for every response.
+`'auto'` and `'none'` work as usual, and
+[`ToolOrOutput(function_tools=[...])`][pydantic_ai.settings.ToolOrOutput] limits the model to the
+named tools while leaving it free to answer:
+
+```python
+from pydantic_ai.realtime import RealtimeModelSettings
+from pydantic_ai.settings import ToolOrOutput
+
+settings = RealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['get_weather']))
+```
+
+A choice that forces a tool call — `'required'` or a list of tool names — raises a
+[`UserError`][pydantic_ai.exceptions.UserError] before connecting on OpenAI, Azure OpenAI, and xAI.
+Applied to every response, including the one after a tool result, it would never let the model
+answer: it would keep calling tools until a [usage limit](../agent.md#usage-limits) ended the session.
+Gemini Live has no tool-choice configuration, so it ignores `'required'` and treats a list of tool
+names as a restriction, like `ToolOrOutput`. To choose the tools from the run context, filter them
+with a [filtered toolset](../toolsets.md#filtering-tools) or
+[`prepare_tools`](../tools-advanced.md#prepare-tools) instead.
 
 ### Concurrent tool execution
 

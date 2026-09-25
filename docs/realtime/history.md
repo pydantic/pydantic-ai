@@ -1,3 +1,7 @@
+---
+description: "Start Pydantic AI voice sessions from earlier text or voice history, continue them later, or hand the conversation to a text model for summaries and extraction."
+---
+
 # History and handoff
 
 A realtime session builds the same [`ModelMessage`][pydantic_ai.messages.ModelMessage] history as a
@@ -89,6 +93,30 @@ request.
 
 For structured work that must finish while the call remains open, expose a delegated text agent as
 a [realtime function tool](tools.md#delegating-work-during-a-call).
+
+## Context window
+
+[`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used]
+reports the fraction of the model's context window in use, and
+[`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] returns the same
+value inside a session's tools and hooks. Where the provider reports the fraction itself, the session
+keeps the latest value; otherwise it is computed as in a standard run, from the latest response's
+token usage over the model's
+[`context_window`][pydantic_ai.realtime.RealtimeModelProfile.context_window]:
+
+| Provider | Source |
+| --- | --- |
+| OpenAI GPT-Live | Reported by Live |
+| OpenAI and Azure OpenAI Realtime, Gemini Live | Latest response's `total_tokens` over the context window, when the window is known |
+| xAI Grok Voice | `None`: a response's usage counts only the input it added, not the whole conversation |
+
+The value is `None` until it can be calculated, and it can go down during a session: providers
+compact or truncate the conversation server-side as it grows, and none of them report when that
+happens. To control how the provider manages a long conversation, use
+[`openai_truncation`](openai.md#settings) on OpenAI Realtime and Azure OpenAI or
+[`google_context_compression`](gemini.md#settings) on Gemini. To carry a long conversation on
+elsewhere, [hand it off to a text agent](#handing-off-to-a-text-agent) or seed a new session with a
+summary.
 
 ## Retaining audio
 

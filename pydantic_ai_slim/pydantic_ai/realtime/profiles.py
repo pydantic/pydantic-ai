@@ -32,6 +32,13 @@ class RealtimeModelProfile(TypedDict, total=False):
     """Whether the model accepts discrete image/video frames via
     image [`BinaryContent`][pydantic_ai.messages.BinaryContent] passed to
     [`send`][pydantic_ai.realtime.RealtimeSession.send]."""
+    image_input_requires_response: bool
+    """Whether an image is only taken as the start of a response, rather than as context.
+
+    When `True`, [`send`][pydantic_ai.realtime.RealtimeSession.send] accepts an image only with
+    `respond=True`, and does so without the model supporting general manual turn control; a context-only
+    image raises. OpenAI GPT-Live sets it: its voice model sees no images, and an image reaches the
+    delegated backend only when that backend runs on it. Default: `False`."""
     supports_manual_turn_control: bool
     """Whether the model supports manual turn-taking — [`commit_audio`][pydantic_ai.realtime.RealtimeSession.commit_audio],
     [`clear_audio`][pydantic_ai.realtime.RealtimeSession.clear_audio], and
@@ -102,6 +109,39 @@ class RealtimeModelProfile(TypedDict, total=False):
     operation the session can invoke. The OpenAI-protocol providers (OpenAI, Azure OpenAI, xAI) emit
     them; Gemini Live does not — a UI that shows a "listening" indicator should read this flag rather
     than wait for events that will never arrive."""
+    synthesizes_turn_boundary: bool
+    """Whether [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] is inferred
+    by Pydantic AI rather than reported by the provider.
+
+    `synthesizes_` rather than `supports_` for the same reason as
+    [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]:
+    it describes how a stream is produced, not an operation the session can invoke.
+
+    `False` (the default) means the provider sends an explicit end-of-response frame, so the turn
+    boundary is a protocol fact. `True` means the protocol has no such frame and the adapter derives
+    the boundary from output timing, so it is a good guess rather than a guarantee: a long pause
+    mid-sentence can end a turn early, and an application that must not act on a partial reply should
+    confirm against the transcript. OpenAI GPT-Live is the only model that sets it."""
+    responses_are_requests: bool
+    """Whether each response the session records is one request to the model, for `usage.requests` and
+    the [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] that bounds it.
+
+    `True` (the default) counts every recorded [`ModelResponse`][pydantic_ai.messages.ModelResponse], as a
+    standard run does, and checks the limit before each response starts. `False` is for a model whose
+    recorded responses aren't what it is asked for: OpenAI GPT-Live's spoken replies are turns the
+    session infers, while the requests that spend tokens go to the backend it delegates to. There, each
+    response-scoped usage report counts as one request, and the limit is checked as each arrives, so the
+    report that would go past it ends the session."""
+    response_usage_covers_context: bool
+    """Whether a response's reported token usage covers everything the model holds in context.
+
+    [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used]
+    divides the latest response's [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] by
+    [`context_window`][pydantic_ai.realtime.RealtimeModelProfile.context_window] when the provider
+    doesn't report the fraction itself, which is only meaningful when those tokens are the whole
+    context. Defaults to `True`. `False` makes it `None` instead of a misleading ratio: xAI Grok Voice
+    reports only the input a response added, and OpenAI GPT-Live's token usage belongs to the
+    backend it delegates to rather than to the voice model's own context."""
     audio_input_sample_rate: int
     """The sample rate, in Hz, expected for raw PCM audio input.
 
@@ -128,6 +168,7 @@ DEFAULT_AUDIO_SAMPLE_RATE = 24000
 
 DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_image_input': False,
+    'image_input_requires_response': False,
     'supports_manual_turn_control': False,
     'supports_interruption': False,
     'supports_output_truncation': False,
@@ -140,6 +181,9 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,
+    'synthesizes_turn_boundary': False,
+    'responses_are_requests': True,
+    'response_usage_covers_context': True,
     'audio_input_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'audio_output_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
     'context_window': None,

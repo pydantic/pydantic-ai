@@ -1,3 +1,7 @@
+---
+description: "Continue multi-turn conversations with Pydantic AI message history: reuse and store messages as JSON, inject messages mid-run, and trim or summarize history."
+---
+
 # Messages and chat history
 
 Pydantic AI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.
@@ -462,7 +466,7 @@ Each sanitization can be turned off individually when the corresponding parts we
 
 ## Persisting sessions
 
-[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Storage](storage.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
+[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Persistence](persistence.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
 
 For a chat application that is usually the whole design: load a thread's history, pass it as `message_history`, and write back [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] once the run finishes. Appending each run's new messages rather than rewriting the full list keeps each write proportional to the turn instead of to the conversation, and leaves the stored order intact.
 
@@ -935,7 +939,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import ProcessHistory
 
 
 def compact_when_window_fills(
@@ -960,14 +964,14 @@ def compact_when_window_fills(
 
 agent = Agent(
     'openai:gpt-5.2',
-    system_prompt='You are a helpful assistant.',
-    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+    instructions='You are a helpful assistant.',
+    capabilities=[ProcessHistory(compact_when_window_fills)],
 )
 ```
 
 Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers.
 
-Keep [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor, as shown, so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
+[Instructions](agent.md#instructions) are sent with every request rather than stored in the history, so compaction can't drop them. If you use [`system_prompt`](agent.md#system-prompts) instead, add [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
 
 Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
 

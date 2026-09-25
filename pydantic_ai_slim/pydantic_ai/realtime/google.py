@@ -16,6 +16,7 @@ Application Default Credentials.
 
 from __future__ import annotations as _annotations
 
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
@@ -84,6 +85,7 @@ from ..models.google import (
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
     _map_grounding_metadata,  # pyright: ignore[reportPrivateUsage]
     _map_url_context_metadata,  # pyright: ignore[reportPrivateUsage]
+    _snap_thinking_level,  # pyright: ignore[reportPrivateUsage]
     _thinking_effort_to_level,  # pyright: ignore[reportPrivateUsage]
     _usage_metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
 )
@@ -91,10 +93,11 @@ from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, 
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..profiles.google import (
     GoogleOpenAPISchemaTransformer,
+    GoogleThinkingLevel,
     _drop_unsupported_schema_keywords,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
-from ..settings import ThinkingLevel
+from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._utils import (
@@ -126,6 +129,8 @@ from .settings import RealtimeModelSettings, ReconnectPolicy, TurnDetection
 LatestGoogleRealtimeModelNames = Literal[
     'gemini-2.5-flash-native-audio-latest',
     'gemini-3.1-flash-live-preview',
+    'gemini-3.8-live',
+    'gemini-3.8-live-extended-thinking',
 ]
 GoogleRealtimeModelName = str | LatestGoogleRealtimeModelNames
 
@@ -205,12 +210,25 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     google_voice: str
     """Prebuilt voice used for audio output, e.g. `Puck`."""
     google_multi_speaker: MultiSpeaker
-    """Per-speaker voice assignments; takes precedence over `google_voice`."""
+    """Per-speaker voice assignments; takes precedence over `google_voice`.
+
+    No Gemini Live model supports this: `google-genai` refuses a multi-speaker voice config on the Live
+    path outright (`ValueError: multi_speaker_voice_config is not supported in the live API`), so setting
+    it raises rather than assigning voices. Multi-speaker output is a
+    [text-to-speech](../models/google.md) feature; a Live session has one voice, set with `google_voice`.
+    """
     google_affective_dialog: bool
-    """Whether to enable emotion-aware delivery (native-audio models only)."""
+    """Whether to enable emotion-aware delivery.
+
+    Not supported by the Gemini 3.1 Flash Live and 3.8 Live models, so `connect` raises
+    [`UserError`][pydantic_ai.exceptions.UserError] if it's enabled for one of them (see
+    [`google_supports_affective_dialog`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_supports_affective_dialog])."""
     google_proactive_audio: bool
     """Whether the model may decide *when* to respond, including staying silent on input not
-    addressed to it (native-audio models only). Useful for "react to the camera" experiences.
+    addressed to it. Useful for "react to the camera" experiences.
+
+    Always on for the Gemini 3.8 Live models, so there it can be left unset. They reject an explicit
+    `False`, which is never sent: `False` just leaves the field out.
 
     Gemini serves `proactivity` on the Developer API's `v1alpha` only, and the API version belongs to
     the client, so the client has to be built for it — `connect` raises
@@ -274,14 +292,104 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     result interrupts a reply the model has barely started, leaving an extra interrupted turn in
     history with nothing in it. Verified live against `gemini-2.5-flash-native-audio-latest`.
 
-    Supported by Gemini native-audio models (see
+    Supported by the Gemini native-audio models and `gemini-3.8-live` (see
     [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]).
     Other models silently ignore it.
+
+    `gemini-3.8-live-extended-thinking` has no blocking mode at all, so it runs tool calls
+    asynchronously whether or not this is set, and ignores an explicit `False` the same way.
     """
 
 
+class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
+    """Profile for Gemini Live models, adding the Gemini-specific fields to the shared realtime profile.
+
+    Mirrors the [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile] /
+    [`ModelProfile`][pydantic_ai.profiles.ModelProfile] split on the request-response side.
+    """
+
+    google_thinking_levels: frozenset[GoogleThinkingLevel]
+    """Thinking levels the Live model accepts. Default: unset.
+
+    Same meaning as [`google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
+    on a standard model: unset means the full [`GOOGLE_THINKING_LEVELS`][pydantic_ai.profiles.google.GOOGLE_THINKING_LEVELS]
+    scale, and a unified [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] effort snaps to the
+    nearest level in the set.
+    """
+
+    google_thinking_always_enabled: bool
+    """Whether the model always reasons, so its API requires a thinking level. Default: `False`.
+
+    Mirrors [`ModelProfile.thinking_always_enabled`][pydantic_ai.profiles.ModelProfile.thinking_always_enabled].
+    A session that sets no [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] still sends
+    the cheapest level the model accepts, and `thinking=False` means "as little as possible" rather than a
+    `thinking_budget=0` the model would reject. `gemini-3.8-live-extended-thinking` closes the handshake
+    with `1007 Thinking level must be specified for this model` without a level.
+    """
+
+    google_async_tool_calls_by_default: bool
+    """Whether the model runs a tool call asynchronously when its declaration sets no `behavior`. Default: `False`.
+
+    True of the Gemini 3.8 Live family, where Google made `NON_BLOCKING` the default. Tool calls stay
+    blocking unless
+    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
+    asks otherwise, so on such a model the declaration says `BLOCKING` explicitly instead of leaving it unset.
+    """
+
+    google_requires_async_tool_calls: bool
+    """Whether the model *only* runs tool calls asynchronously, having no blocking mode. Default: `False`.
+
+    Stronger than [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]:
+    tool calls are declared `NON_BLOCKING` whatever
+    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
+    says, since a `BLOCKING` declaration closes the session. `gemini-3.8-live-extended-thinking` answers
+    `1007 BLOCKING function calls are not supported for this model`.
+    """
+
+    google_supports_async_tool_call_scheduling: bool
+    """Whether the model takes a `scheduling` field on an async tool call's result. Default: `False`.
+
+    Separate from whether the call runs asynchronously at all: that is decided when the call is
+    declared, while scheduling says how its result enters the speech the model is producing when it
+    arrives. Pydantic AI sends `FunctionResponseScheduling.INTERRUPT`, so the result cuts in rather
+    than waiting for the model to go idle. `gemini-3.8-live-extended-thinking` runs every call
+    asynchronously but paces results against its own reasoning, and closes the session with `1007
+    Function response scheduling is not supported for this model` if the field is sent at all.
+    """
+
+    google_supports_affective_dialog: bool
+    """Whether the model takes [`google_affective_dialog`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_affective_dialog]. Default: `True`.
+
+    When `False`, `connect` raises [`UserError`][pydantic_ai.exceptions.UserError] for a session that
+    enables it, rather than opening one the provider rejects. `False` for the `gemini-3.1-flash-live` and
+    `gemini-3.8-live` families, which don't support affective dialog: `gemini-3.1-flash-live-preview`
+    refuses the handshake with `1007 Request contains an invalid argument`, and the 3.8 models open the
+    session and then close it with the same error on the first send.
+    """
+
+    google_text_turns_see_video_frames: bool
+    """Whether a typed turn sees an image sent just before it as a live video frame. Default: `True`.
+
+    `session.send(image)` sends the image as a video frame, which a spoken turn sees. On a model where
+    a typed turn doesn't, the most recent image sent in the last 10 seconds is sent again in the typed
+    turn's own content, ahead of the text. Every Gemini Live model probed misses it:
+    `gemini-3.1-flash-live-preview`, `gemini-3.8-live` and its extended-thinking variant answer that
+    they can't see an image, and `gemini-2.5-flash-native-audio-*` and Vertex's `gemini-live-2.5-flash`
+    misread it.
+    """
+
+
+_MIN_WEBSOCKET_CLOSE_CODE = 1000
+"""The lowest WebSocket close code (RFC 6455 section 7.4), above every HTTP status."""
+
 INPUT_SAMPLE_RATE = 16000
 """Sample rate (Hz) Gemini expects for PCM16 input audio."""
+
+# How recently an image must have been sent for a typed turn to carry it again, on a model whose typed
+# turns don't see video frames. Long enough for someone to type a short question about an image they
+# just shared, short enough that a question well after it doesn't re-send a stale one. A camera stream
+# always has a fresh frame.
+_RECENT_IMAGE_SECONDS = 10.0
 
 
 # Literal -> SDK enum mappings, kept as small tables so the public API stays string-friendly.
@@ -330,16 +438,30 @@ def _ws_connect_lock() -> Lock:
     return lock
 
 
-def _thinking_to_config(thinking: ThinkingLevel) -> genai_types.ThinkingConfig:
-    """Map the unified `thinking` setting to a Gemini `ThinkingConfig`."""
-    if thinking is False:
+_IMPLIED_THINKING_EFFORT: ThinkingEffort = 'minimal'
+"""The thinking effort implied for a model that requires a thinking level when the session set none.
+
+`gemini-3.8-live-extended-thinking` rejects the handshake without a level, so one has to be chosen on
+the session's behalf. It snaps to the cheapest level the model accepts, because reasoning costs latency
+and latency is what a voice conversation can least afford; a session that wants more says so with
+`thinking='medium'` or `thinking='high'`.
+"""
+
+
+def _thinking_to_config(thinking: ThinkingLevel, profile: GoogleRealtimeModelProfile) -> genai_types.ThinkingConfig:
+    """Map the unified `thinking` setting to a Gemini `ThinkingConfig`.
+
+    A model that always reasons has no "off": `thinking=False` snaps to the cheapest level it accepts
+    rather than a `thinking_budget=0` it would reject, mirroring how the request-response path resolves
+    `thinking=False` on a Gemini 3+ model.
+    """
+    if thinking is False and not profile.get('google_thinking_always_enabled', False):
         return genai_types.ThinkingConfig(thinking_budget=0)  # disable thinking
-    level = (
-        genai_types.ThinkingLevel.MEDIUM
-        if thinking is True
-        else genai_types.ThinkingLevel(_thinking_effort_to_level(thinking))
+    effort: ThinkingEffort = (
+        _IMPLIED_THINKING_EFFORT if thinking is False else 'medium' if thinking is True else thinking
     )
-    return genai_types.ThinkingConfig(thinking_level=level)
+    level = _snap_thinking_level(_thinking_effort_to_level(effort), profile.get('google_thinking_levels'))
+    return genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel(level))
 
 
 def _automatic_vad_from_turn_detection(turn_detection: TurnDetection) -> AutomaticVAD:
@@ -502,14 +624,24 @@ def _schema_from_json_schema(json_schema: dict[str, Any]) -> genai_types.Schema:
     )
 
 
-def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
-    """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration."""
+def _tool_def_to_genai(
+    tool: ToolDefinition, *, async_tool_calls: bool = False, explicit_blocking: bool = False
+) -> genai_types.FunctionDeclaration:
+    """Convert a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] to a Gemini function declaration.
+
+    `explicit_blocking` declares a blocking call `BLOCKING` rather than leaving the behavior unset, for a
+    model whose unset default is non-blocking.
+    """
     return genai_types.FunctionDeclaration(
         name=tool.name,
         description=tool.description or '',
         parameters=_schema_from_json_schema(tool.parameters_json_schema),
         response=_schema_from_json_schema(tool.return_schema) if tool.return_schema else None,
-        behavior=genai_types.Behavior.NON_BLOCKING if async_tool_calls else None,
+        behavior=genai_types.Behavior.NON_BLOCKING
+        if async_tool_calls
+        else genai_types.Behavior.BLOCKING
+        if explicit_blocking
+        else None,
     )
 
 
@@ -654,8 +786,9 @@ class GoogleRealtimeModel(RealtimeModel):
     key, client, or region. Gemini Live is available on both surfaces.
 
     Args:
-        model: The model name, e.g. `gemini-2.5-flash-native-audio-latest` (an alias that tracks the
-            newest native-audio Live model) or `gemini-3.1-flash-live-preview`.
+        model: The model name, e.g. `gemini-3.8-live` (low-latency voice), `gemini-3.8-live-extended-thinking`
+            (reasons in the background while it speaks, and always runs tools asynchronously), or
+            `gemini-2.5-flash-native-audio-latest` (an alias that tracks the newest native-audio Live model).
         provider: The provider to use for authentication and API access — `'google'` (Gemini Developer
             API, the default) or `'google-cloud'` (Vertex AI), or a `Provider` instance.
         settings: Model-level defaults for session and generation configuration.
@@ -702,6 +835,11 @@ class GoogleRealtimeModel(RealtimeModel):
     def system(self) -> str:
         return self._provider.name
 
+    @property
+    def _google_profile(self) -> GoogleRealtimeModelProfile:
+        """[`profile`][pydantic_ai.realtime.RealtimeModel.profile], narrowed to the Gemini-specific fields."""
+        return cast(GoogleRealtimeModelProfile, self.profile)
+
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         return frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
@@ -745,21 +883,26 @@ class GoogleRealtimeModel(RealtimeModel):
 
         Opt-in, and only where the model actually honors it — the other Live families accept
         `NON_BLOCKING` and then block anyway, so enabling it there would promise something the
-        provider doesn't deliver.
+        provider doesn't deliver. A model that has no blocking mode
+        ([`google_requires_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_requires_async_tool_calls])
+        runs them asynchronously whether or not the session asked, since a `BLOCKING` declaration
+        closes the session outright. Either way a setting the model can't honor is ignored, not raised.
         """
-        if not model_settings or not model_settings.get('google_async_tool_calls', False):
+        profile = self._google_profile
+        if profile.get('google_requires_async_tool_calls', False):
+            return True
+        if not (model_settings and model_settings.get('google_async_tool_calls', False)):
             return False
-        if not self.profile.get('supports_async_tool_calls', False):
-            return False
-        return True
+        return profile.get('supports_async_tool_calls', False)
 
     def _check_proactive_audio_api_version(self, settings: GoogleRealtimeModelSettings) -> None:
         """Reject a proactive-audio session on a client that can't carry the setting.
 
         `proactivity` is served on the Gemini Developer API's `v1alpha` only: on any other version the
         API answers `1007 Invalid JSON payload received. Unknown name "proactivity" at 'setup'` and the
-        session never opens (verified live 2026-09-16 against `gemini-2.5-flash-native-audio-latest`,
-        on the SDK default `v1beta` and on an explicit one).
+        session never opens (verified live 2026-09-16 on the SDK default `v1beta` and on an explicit one,
+        against `gemini-2.5-flash-native-audio-latest`, `gemini-3.8-live`, and
+        `gemini-3.8-live-extended-thinking`).
 
         The version is a property of the *client*, which `google-genai` reads when it builds the
         WebSocket path and which ordinary `GoogleModel` requests on the same client read too — so it is
@@ -863,8 +1006,7 @@ class GoogleRealtimeModel(RealtimeModel):
         self, config: genai_types.LiveConnectConfig, model_settings: GoogleRealtimeModelSettings | None
     ) -> None:
         """Apply generation params from `model_settings` (base keys + Google-specific ones)."""
-        if not model_settings:
-            return
+        model_settings = model_settings or {}
         if (max_tokens := model_settings.get('max_tokens')) is not None:
             config.max_output_tokens = max_tokens
         if (temperature := model_settings.get('temperature')) is not None:
@@ -875,12 +1017,27 @@ class GoogleRealtimeModel(RealtimeModel):
             config.top_k = top_k
         if (seed := model_settings.get('seed')) is not None:
             config.seed = seed
+        profile = self._google_profile
         if (google_thinking := model_settings.get('google_thinking_config')) is not None:
             # The Gemini-native config takes precedence over the cross-provider `thinking` setting.
-            config.thinking_config = genai_types.ThinkingConfig(**google_thinking)
+            thinking_config = genai_types.ThinkingConfig(**google_thinking)
+            if (
+                thinking_config.thinking_level is None
+                and thinking_config.thinking_budget is None
+                and profile.get('google_thinking_always_enabled', False)
+            ):
+                # A raw config that only turns on, say, `include_thoughts` still has to carry a level on a
+                # model that demands one, or the handshake is rejected outright. An explicit level or
+                # budget is left exactly as given: the escape hatch's whole point is going around us.
+                thinking_config.thinking_level = _thinking_to_config(_IMPLIED_THINKING_EFFORT, profile).thinking_level
+            config.thinking_config = thinking_config
         elif (thinking := model_settings.get('thinking')) is not None:
-            if self.profile.get('supports_thinking', False):
-                config.thinking_config = _thinking_to_config(thinking)
+            if profile.get('supports_thinking', False):
+                config.thinking_config = _thinking_to_config(thinking, profile)
+        elif profile.get('google_thinking_always_enabled', False):
+            # The session asked for nothing, but the model's API demands a level: `gemini-3.8-live-extended-thinking`
+            # closes the handshake with `1007 Thinking level must be specified for this model` when it's absent.
+            config.thinking_config = _thinking_to_config(_IMPLIED_THINKING_EFFORT, profile)
         if (resolution := model_settings.get('google_video_resolution')) is not None:
             config.media_resolution = resolution
 
@@ -931,10 +1088,15 @@ class GoogleRealtimeModel(RealtimeModel):
         # functions are advertised; the mode the resolution asks for is dropped.
         advertised_tools, _ = resolve_advertised_tools(tools, settings.get('tool_choice'))
         if advertised_tools:
+            async_tool_calls = self._async_tool_calls(settings)
             genai_tools.append(
                 genai_types.Tool(
                     function_declarations=[
-                        _tool_def_to_genai(t, async_tool_calls=self._async_tool_calls(settings))
+                        _tool_def_to_genai(
+                            t,
+                            async_tool_calls=async_tool_calls,
+                            explicit_blocking=self._google_profile.get('google_async_tool_calls_by_default', False),
+                        )
                         for t in advertised_tools
                     ]
                 )
@@ -972,6 +1134,13 @@ class GoogleRealtimeModel(RealtimeModel):
                 'policy enables resumption.'
             )
         self._check_proactive_audio_api_version(settings)
+        if settings.get('google_affective_dialog', False) and not self._google_profile.get(
+            'google_supports_affective_dialog', True
+        ):
+            raise UserError(
+                f'`google_affective_dialog=True` is not supported by {self.model!r}; Gemini Live rejects it. '
+                'Leave it unset for this model.'
+            )
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.
         cm: AbstractAsyncContextManager[AsyncSession] | None = None
@@ -1002,12 +1171,17 @@ class GoogleRealtimeModel(RealtimeModel):
 
         try:
             # A rejected config (unsupported `voice`, unknown model) closes the WebSocket, which the SDK
-            # surfaces as an `APIError`. Map it to the same typed exceptions a regular request raises,
-            # mirroring `GoogleModel`. Reconnects dial from the receive loop, which keeps handling the
-            # `APIError` as a retryable drop.
+            # surfaces as an `APIError`. Map it to a typed exception rather than leaking the SDK's.
+            # Reconnects dial from the receive loop, which keeps handling the `APIError` as a retryable drop.
             try:
                 session = await dial(None)
             except genai_errors.APIError as e:
+                if e.code >= _MIN_WEBSOCKET_CLOSE_CODE:
+                    # The server closed the socket during setup, and the SDK reports the WebSocket close
+                    # code (`1007` for a rejected config, `1008` for an unknown model) where an HTTP status
+                    # would go. A close code is not an HTTP status, so this is a `RealtimeError`, worded like
+                    # a close later in the session and like the OpenAI-protocol providers' handshake closes.
+                    raise RealtimeError(model_name=self.model, message=f'Gemini Live connection closed: {e}') from e
                 mapped_error = _map_api_error(e, self.model)
                 if isinstance(mapped_error, ModelHTTPError):
                     raise mapped_error from e
@@ -1079,6 +1253,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
         self._async_tool_calls_enabled = async_tool_calls
+        # Whether the model takes a `scheduling` field at all: extended thinking paces results against its
+        # own reasoning and closes the session if one is sent. A connection built without a profile keeps
+        # sending it, as it did before the flag existed; `GoogleRealtimeModel.connect` always passes one.
+        self._async_tool_call_scheduling_enabled = profile is None or cast('GoogleRealtimeModelProfile', profile).get(
+            'google_supports_async_tool_call_scheduling', False
+        )
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.
@@ -1106,6 +1286,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # verified live), so when this is set at reconnect time the turn's boundary would otherwise
         # never arrive — see `__aiter__`, which closes the orphaned turn before the reconnect event.
         self._turn_open = False
+        # On a model whose typed turns don't see video frames, the most recent image sent and when (by
+        # `time.monotonic()`), for the next typed turn to carry again. See `send`.
+        self._text_turns_see_video_frames = cast('GoogleRealtimeModelProfile', self._profile).get(
+            'google_text_turns_see_video_frames', True
+        )
+        self._recent_image: tuple[BinaryImage, float] | None = None
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -1126,12 +1312,21 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 audio=genai_types.Blob(data=content.data, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
             )
         elif isinstance(content, str):
+            parts = [genai_types.Part(text=content)]
+            recent_image = self._recent_image
+            if recent_image is not None and time.monotonic() - recent_image[1] <= _RECENT_IMAGE_SECONDS:
+                # This model's typed turns don't see video frames: send the image again, in the turn.
+                image = recent_image[0]
+                parts.insert(
+                    0, genai_types.Part(inline_data=genai_types.Blob(data=image.data, mime_type=image.media_type))
+                )
             # A typed message is a discrete turn: commit it with `send_client_content(turn_complete=True)`
             # so the model replies, rather than buffering it as streaming realtime input.
             await self._session.send_client_content(
-                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content)]),
-                turn_complete=True,
+                turns=genai_types.Content(role='user', parts=parts), turn_complete=True
             )
+            if self._recent_image is recent_image:
+                self._recent_image = None  # carried (or stale): a later typed turn doesn't send it again
         elif isinstance(content, TextContext):
             await self._session.send_client_content(
                 turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
@@ -1141,6 +1336,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
                 video=genai_types.Blob(data=content.data, mime_type=content.media_type)
             )
+            if not self._text_turns_see_video_frames:
+                self._recent_image = (content, time.monotonic())
         elif isinstance(content, ToolResult):
             name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))
             # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
@@ -1184,7 +1381,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # while the model said "15 degrees with clouds".) A model calls a tool because it
                     # needs the result, so cut in with it.
                     scheduling=genai_types.FunctionResponseScheduling.INTERRUPT
-                    if self._async_tool_calls_enabled
+                    if self._async_tool_calls_enabled and self._async_tool_call_scheduling_enabled
                     else None,
                 )
             )
@@ -1281,14 +1478,20 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         )
                     )
                 elif part.code_execution_result is not None:
-                    # The result always follows its `executable_code` part, so the id is set (mirrors the
-                    # classic streaming path's assertion).
-                    assert self._code_execution_tool_call_id is not None
+                    if self._code_execution_tool_call_id is None:
+                        # No code ran: native-audio models announce a Google Search with a bare
+                        # `code_execution_result` ("Looking up information on Google Search.") and no
+                        # `executable_code` before it (verified live). The search itself arrives as
+                        # grounding metadata, mapped below, so this status line has nothing to pair with.
+                        continue
                     native_tool_parts.append(
                         _map_code_execution_result(
                             part.code_execution_result, self._provider_name, self._code_execution_tool_call_id
                         )
                     )
+                    # Each `executable_code` has exactly one result, as the classic path assumes, so the
+                    # pairing ends here: a search status line later in the session must not pair with it.
+                    self._code_execution_tool_call_id = None
                 elif part.text and not part.thought:
                     # Skip thinking parts: native-audio models stream their reasoning as `thought`
                     # text alongside the spoken answer, and it must not leak into the transcript. A
@@ -1296,7 +1499,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # distinct from the spoken-audio transcription in `output_transcription` below, so it
                     # becomes a `TextPart` rather than a `SpeechPart`.
                     events.append(OutputTranscript(text=part.text, is_final=False, output_text=True))
-        if content.input_transcription is not None and content.input_transcription.text:
+        # Gemini 3.x models transcribe the user's speech even when the setup asks for no input
+        # transcription (verified live), so honor the setting here: with it off, the user's words must
+        # stay out of history.
+        if (
+            self._input_transcription_enabled
+            and content.input_transcription is not None
+            and content.input_transcription.text
+        ):
             events.append(
                 InputTranscript(
                     text=content.input_transcription.text, is_final=bool(content.input_transcription.finished)
@@ -1366,10 +1576,23 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # tokens into the finalized `ModelResponse` / `chat` span before `ResponseDone` closes it.
         if message.server_content is not None and message.server_content.turn_complete:
             interrupted = self._turn_interrupted
-            events.append(ResponseDone(interrupted=interrupted))
+            # A reasoning model rides several responses through one exchange: it speaks a filler, ends
+            # the turn, calls a tool in the background, and speaks again. `interaction_status` is what
+            # tells the two boundaries apart — `IN_PROGRESS` alongside `turn_complete` means the model
+            # is still working, and only `IDLE` ends the exchange. Models without background reasoning
+            # send no status at all, which reads as "this was the last response", as it always was.
+            more_expected = (
+                message.server_content.interaction_status == genai_types.InteractionStatus.IN_PROGRESS
+                and not interrupted
+            )
+            events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
             self._turn_interrupted = False
-            self._turn_open = False
-            self._native_part_index = 0
+            # A stalled exchange's response is still open — the model will add a tool call and an answer
+            # to it — so the turn stays open too. Closing it here would leave a drop between the filler
+            # and the tool call with no synthetic terminal, and the partial response in flight forever.
+            self._turn_open = more_expected
+            if not more_expected:
+                self._native_part_index = 0
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
         if update is not None and update.new_handle:
