@@ -410,6 +410,10 @@ navigation:
       - section: "Control & Safety"
         slug: ""
         contents:
+          - page: "Goal"
+            path: "goal.md"
+            source: "harness"
+            slug: "harness/goal"
           - page: "Guardrails"
             path: "guardrails.md"
             source: "harness"
