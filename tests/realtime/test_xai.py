@@ -53,6 +53,7 @@ from ..conftest import IsStr, try_import
 from .ws_helpers import collect_codec_events, collect_session_events
 
 with try_import() as imports_successful:
+    from openai.types.realtime import RealtimeResponseUsage
     from xai_sdk import AsyncClient
 
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -532,22 +533,42 @@ async def test_response_done_maps_xai_usage_extras() -> None:
     conn = XaiRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
     events = await collect_codec_events(conn)
 
+    expected = RequestUsage(
+        input_tokens=8,
+        output_tokens=5,
+        input_audio_tokens=6,
+        output_audio_tokens=4,
+        # Reported twice on purpose: in `details` under xAI's own name, and as the meter that prices it.
+        audio_seconds=3,
+        details={
+            'audio_tokens': 4,
+            'input_grok_tokens': 2,
+            'output_grok_tokens': 1,
+            'billable_audio_seconds': 3,
+        },
+    )
     assert events[0] == SessionUsage(
-        usage=RequestUsage(
-            input_tokens=8,
-            output_tokens=5,
-            input_audio_tokens=6,
-            output_audio_tokens=4,
-            details={
-                'audio_tokens': 4,
-                'input_grok_tokens': 2,
-                'output_grok_tokens': 1,
-                'billable_audio_seconds': 3,
-            },
-        ),
+        usage=expected,
         provider_response_id='resp-xai',
         finish_reason='stop',
     )
+
+
+async def test_response_done_without_billable_seconds_leaves_audio_seconds_unset() -> None:
+    """A usage frame with no billed duration reports none, rather than guessing one from the tokens."""
+    done = json.dumps(
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp-xai', 'status': 'completed', 'output': [], 'usage': None},
+            'usage': {'input_tokens': 8, 'output_tokens': 5},
+        }
+    )
+    conn = XaiRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
+    events = await collect_codec_events(conn)
+
+    usage_event = events[0]
+    assert isinstance(usage_event, SessionUsage)
+    assert usage_event.usage.audio_seconds == 0
 
 
 class FakeConnect:
@@ -1053,3 +1074,55 @@ def test_provider_from_xai_client_without_exposed_key_raises() -> None:
     provider = XaiProvider(xai_client=AsyncClient(api_key='hidden'))
     with pytest.raises(UserError, match='pre-configured `xai_client`'):
         XaiRealtimeModel('grok-voice-latest', provider=provider)
+
+
+def _done_with_billed_seconds(total: int) -> str:
+    return json.dumps(
+        {
+            'type': 'response.done',
+            'response': {'id': f'resp-{total}', 'status': 'completed', 'output': [], 'usage': None},
+            'usage': {'input_tokens': 3, 'output_tokens': 40, 'billable_audio_seconds': total},
+        }
+    )
+
+
+async def test_billable_audio_seconds_running_total_is_split_per_response() -> None:
+    """xAI reports the session's running total; each response is credited only its own increase.
+
+    Recorded live against `grok-voice-latest`: three turns of 0.71s, 0.71s and 0.87s of audio reported
+    `billable_audio_seconds` of 1, 2 and 3. Summing those as-is would bill 6 seconds for a 3-second
+    session, and the overcount grows with every turn.
+    """
+    frames = [_done_with_billed_seconds(total) for total in (1, 2, 3)]
+    conn = XaiRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
+    events = await collect_codec_events(conn)
+
+    usages = [event.usage for event in events if isinstance(event, SessionUsage)]
+    assert [usage.audio_seconds for usage in usages] == [1, 1, 1]
+    assert [usage.details['billable_audio_seconds'] for usage in usages] == [1, 1, 1]
+
+
+async def test_billable_audio_seconds_lower_total_in_the_same_conversation_adds_nothing() -> None:
+    """xAI's total only grows within a conversation, so a lower one is not new usage to bill again."""
+    frames = [_done_with_billed_seconds(total) for total in (2, 4, 2, 5)]
+    conn = XaiRealtimeConnection(FakeWebSocket(frames), conversation_id='conv-1')  # type: ignore[arg-type]
+    events = await collect_codec_events(conn)
+
+    usages = [event.usage for event in events if isinstance(event, SessionUsage)]
+    assert [usage.audio_seconds for usage in usages] == [2, 2, 0, 1]
+
+
+async def test_billable_audio_seconds_restart_with_a_new_conversation() -> None:
+    """A new conversation is the one place xAI's count starts again from zero."""
+    conn = XaiRealtimeConnection(FakeWebSocket([]), conversation_id='conv-1')  # type: ignore[arg-type]
+    usage = RealtimeResponseUsage.model_validate({'input_tokens': 1, 'output_tokens': 1, 'billable_audio_seconds': 4})
+    first = conn._map_response_usage(usage)  # pyright: ignore[reportPrivateUsage]
+
+    conn.conversation_id = 'conv-2'
+    restarted = RealtimeResponseUsage.model_validate(
+        {'input_tokens': 1, 'output_tokens': 1, 'billable_audio_seconds': 1}
+    )
+    second = conn._map_response_usage(restarted)  # pyright: ignore[reportPrivateUsage]
+
+    assert first is not None and second is not None
+    assert (first.audio_seconds, second.audio_seconds) == (4, 1)

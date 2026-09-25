@@ -271,8 +271,17 @@ def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         # Left unset — not zeroed — when the provider doesn't report it, so a model that doesn't reason
         # is distinguishable from one that reasoned for free, exactly as `RequestUsage.extract` leaves it.
         **({'output_reasoning_tokens': details['reasoning_tokens']} if 'reasoning_tokens' in details else {}),
+        # Image input is priced at its own rate (and cached image input at another), so it has to reach
+        # pricing under the meter names genai-prices reads; in `details` alone it was priced as text.
+        **({'input_image_tokens': image} if (image := details.get('input_image_tokens')) else {}),
+        **({'cache_image_read_tokens': cached_image} if (cached_image := _int_or_none(cached, 'image_tokens')) else {}),
         details=details,
     )
+
+
+def _int_or_none(obj: object | None, name: str) -> int | None:
+    value = getattr(obj, name, None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 RealtimeTranscriptionUsage = UsageTranscriptTextUsageTokens | UsageTranscriptTextUsageDuration

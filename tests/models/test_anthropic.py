@@ -12791,6 +12791,88 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
 
 
 @pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'stream,expected_usage',
+    [
+        pytest.param(
+            False,
+            snapshot(
+                RequestUsage(
+                    details={
+                        'input_tokens': 3,
+                        'output_tokens': 210,
+                        'cache_creation_input_tokens': 2966,
+                        'cache_read_input_tokens': 0,
+                        'ephemeral_1h_input_tokens': 2412,
+                    },
+                    input_tokens=2969,
+                    cache_write_tokens=2966,
+                    cache_write_1h_tokens=2412,
+                    output_tokens=210,
+                    cost=Decimal('0.0197085'),
+                )
+            ),
+            id='request',
+        ),
+        pytest.param(
+            True,
+            snapshot(
+                RequestUsage(
+                    details={
+                        'input_tokens': 3,
+                        'output_tokens': 160,
+                        'cache_creation_input_tokens': 2965,
+                        'cache_read_input_tokens': 0,
+                        'ephemeral_1h_input_tokens': 2411,
+                    },
+                    input_tokens=2968,
+                    cache_write_tokens=2965,
+                    cache_write_1h_tokens=2411,
+                    output_tokens=160,
+                    cost=Decimal('0.0189525'),
+                )
+            ),
+            id='stream',
+        ),
+    ],
+)
+async def test_anthropic_cache_write_ttl_pricing(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    stream: bool,
+    expected_usage: RequestUsage,
+):
+    """One-hour cache writes are priced at their own rate, not the five-minute one.
+
+    The instructions are cached for an hour and the rest of the prompt for five minutes, so the response reports
+    both kinds of write. In streaming, only `message_start` carries the split, so it has to survive the merge with
+    the later `message_delta` usage.
+
+    For the non-streamed case, the cost is 3 uncached input tokens at $3/MTok, 554 five-minute cache writes at
+    $3.75/MTok, 2412 one-hour cache writes at $6/MTok, and 210 output tokens at $15/MTok. Pricing all 2966 writes at
+    the five-minute rate would report $0.0143 instead.
+    """
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a helpful assistant ({"streamed" if stream else "not streamed"}). '
+        + 'Answer questions about Python concisely. ' * 300,
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions='1h', anthropic_cache_messages=True),
+    )
+    prompt = 'Please explain what Python is and its main use cases. ' * 50
+
+    if stream:
+        async with agent.run_stream(prompt) as result:
+            await result.get_output()
+    else:
+        result = await agent.run(prompt)
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.usage == expected_usage
+
+
+@pytest.mark.vcr()
 async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropic_api_key: str):
     """Test that count_tokens endpoint accepts the top-level cache_control parameter.
 
@@ -13947,8 +14029,67 @@ async def test_anthropic_compaction_end_to_end(
     assert result2.output
 
 
+@pytest.mark.parametrize(
+    'ttl,expected_usage',
+    [
+        pytest.param(
+            '5m',
+            snapshot(
+                RunUsage(
+                    input_tokens=55425,
+                    cache_write_tokens=55096,
+                    output_tokens=136,
+                    details={
+                        'input_tokens': 229,
+                        'output_tokens': 5,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'compaction_iterations': 1,
+                        'message_iterations': 1,
+                        'compaction_input_tokens': 100,
+                        'compaction_output_tokens': 131,
+                        'compaction_cache_creation_input_tokens': 55096,
+                    },
+                    requests=1,
+                    cost=Decimal('0.209637'),
+                )
+            ),
+            id='5m',
+        ),
+        pytest.param(
+            '1h',
+            snapshot(
+                RunUsage(
+                    details={
+                        'input_tokens': 205,
+                        'output_tokens': 15,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'message_iterations': 1,
+                        'compaction_iterations': 1,
+                        'compaction_input_tokens': 100,
+                        'compaction_output_tokens': 107,
+                        'compaction_cache_creation_input_tokens': 55096,
+                        'compaction_ephemeral_1h_input_tokens': 55096,
+                    },
+                    requests=1,
+                    cache_write_tokens=55096,
+                    output_tokens=122,
+                    cache_write_1h_tokens=55096,
+                    input_tokens=55401,
+                    cost=Decimal('0.333321'),
+                )
+            ),
+            id='1h',
+        ),
+    ],
+)
 async def test_anthropic_compaction_usage_with_cache(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    ttl: Literal['5m', '1h'],
+    expected_usage: RunUsage,
 ):
     """Verify usage aggregation when compaction + prompt caching interact in a real response.
 
@@ -13956,7 +14097,8 @@ async def test_anthropic_compaction_usage_with_cache(
     compaction iteration usage — they're silent on cache tokens. This cassette pins the real
     shape: top-level `cache_creation_input_tokens` is `0` even though the compaction iteration
     wrote ~55k tokens to cache, so `_map_usage` must sum the compaction cache back in to avoid
-    understating the real cost.
+    understating the real cost. The compaction iteration writes with the request's TTL, so with a
+    one-hour TTL its writes are also one-hour writes, priced at the one-hour rate.
 
     Where the cache breakpoints sit is asserted off the wire rather than the cassette, because a
     breakpoint that moves still replays against a recording that pins the old position.
@@ -13967,31 +14109,12 @@ async def test_anthropic_compaction_usage_with_cache(
         model=model,
         instructions='You are a helpful assistant. Be very brief.',
         capabilities=[AnthropicCompaction(token_threshold=50_000)],
-        model_settings=AnthropicModelSettings(anthropic_cache=True),
+        model_settings=AnthropicModelSettings(anthropic_cache=ttl),
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
-    assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, []))
-    assert result.usage == snapshot(
-        RunUsage(
-            input_tokens=55425,
-            cache_write_tokens=55096,
-            output_tokens=136,
-            details={
-                'input_tokens': 229,
-                'output_tokens': 5,
-                'cache_creation_input_tokens': 0,
-                'cache_read_input_tokens': 0,
-                'compaction_iterations': 1,
-                'message_iterations': 1,
-                'compaction_input_tokens': 100,
-                'compaction_output_tokens': 131,
-                'compaction_cache_creation_input_tokens': 55096,
-            },
-            requests=1,
-            cost=Decimal('0.209637'),
-        )
-    )
+    assert cache_breakpoints(request_capture.body()) == ({'type': 'ephemeral', 'ttl': ttl}, [])
+    assert result.usage == expected_usage
 
 
 async def test_anthropic_compaction_usage_with_cache_streaming(
