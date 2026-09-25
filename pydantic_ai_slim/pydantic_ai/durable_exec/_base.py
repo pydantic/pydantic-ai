@@ -231,17 +231,6 @@ class _DynamicCallToolCacheIdentity(CacheIdentity[DynamicToolsetCallToolParams])
         return (params.name, params.tool_args, params.ctx, params.tool_def)
 
 
-def _supplies_workspace(capability: AbstractCapability[Any]) -> bool:
-    """Whether a leaf capability (or a wrapper it sits in) overrides `get_workspace`."""
-    while True:
-        if isinstance(capability, WrapperCapability):
-            if type(capability).get_workspace is not WrapperCapability.get_workspace:
-                return True
-            capability = capability.wrapped
-            continue
-        return type(capability).get_workspace is not AbstractCapability.get_workspace
-
-
 class _TypedResultCodec(ResultCodec[_T]):
     """Apply the capability codec and its engine-specific serialization error mapping."""
 
@@ -392,7 +381,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         units existed would otherwise be asked to name them for every agent.
         """
         self._bound_workspace_operations = {}
-        if not any(_supplies_workspace(capability) for capability in leaf_capabilities(agent.root_capability)):
+        if not agent.root_capability.has_get_workspace:
             return
         backend = self.get_durable_operation_backend()
         for spec in WORKSPACE_OPERATIONS:

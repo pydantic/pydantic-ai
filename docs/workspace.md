@@ -229,8 +229,8 @@ agent = Agent(
 
 When no capability supplies a workspace:
 
-- A reference from `message_history` raises `UserError`. An agent with no workspace capability, such
-  as one that summarizes the conversation, ignores it instead.
+- A reference from `message_history` raises `UserError` if the agent has workspace capabilities and
+  none recognizes it. An agent with none, such as one that summarizes the conversation, ignores it.
 - A `WorkspaceRef` passed as `workspace=` raises `UserError`.
 - `workspace='new'` raises `UserError`.
 - Without a reference, the run has no workspace, and tools that use it raise `UserError`.
