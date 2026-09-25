@@ -2879,7 +2879,8 @@ async def test_a_union_picks_the_type_then_fills_only_that_one(allow_model_reque
 async def test_a_union_member_jev_cannot_express_is_offered_and_hands_off_when_picked(allow_model_requests: None):
     """A union is the route set, so a member beyond Jev is a hand-off rather than a refusal.
 
-    With one output type there is no other route the run could take, so an unfillable one still raises up front.
+    With one output type and nothing else on offer there is no other route the run could take, so an unfillable one
+    still raises up front.
     """
     seen: list[dict[str, Any]] = []
 

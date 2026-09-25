@@ -330,13 +330,15 @@ class DecisionModel(Model[InterfaceClient]):
     - Each field of the `output_type` is one question, and its type picks the kind: a `bool` is a yes/no, a
       `Literal` or `Enum` of strings is a pick-one, and whole numbers from 0 with a description per level are a
       rubric. A `list` or `dict` of options is one yes/no per option, and a nested model is its fields. A field of
-      any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent.
+      any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, unless there
+      is another route to take, as below.
     - The field's description is the question, the output type's docstring its goal, and the agent's
       `instructions` framing shared by every question. The latest user prompt is the text to judge, and the
       message history before it goes along beside it.
     - With tools attached, or a union of output types, one more pick-one asks which route the text calls for, and
       the likeliest is taken. A picked route with fields is filled in a second request, and one whose fields the
-      model cannot express is raised as [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], for a
+      model cannot express, a single output type's included, is raised as
+      [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed], for a
       [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand to a language model. A pick below
       `decision_route_threshold`, when set, is raised as [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute]
       the same way.
@@ -405,10 +407,6 @@ class DecisionModel(Model[InterfaceClient]):
         output_name = output_object.name if (output_object := model_request_parameters.output_object) else None
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tools, hand_offs = _output_tools(model_request_parameters)
-        # One output type is filled in the same request that picks a route; several are a union, so the first
-        # request only picks, and the chosen type's fields are asked in the second — the same two steps a
-        # selected tool's arguments take, through the same helper.
-        output_tool = output_tools[0] if len(output_tools) == 1 else None
         # A withheld tool is not on any wire; one revealed through the history is, and the model sees the history.
         function_tools = [
             tool
@@ -439,16 +437,33 @@ class DecisionModel(Model[InterfaceClient]):
             return await self._forced_with_arguments(
                 forced_tool, next(iter(routes)), state, instructions, settings, boolean_threshold, limits
             )
-        if len(output_tools) > 1 and not any(_expressible(tool, instructions, limits) for tool in output_tools):
-            # A member the model cannot fill is a hand-off, but only while some other member is a real alternative.
-            # With none of them fillable the choice is decided before it is asked: every answer hands off, so the
-            # request that asks it buys nothing, and every run pays for the decision model on top of the model
-            # behind it.
+        fillable = [tool for tool in output_tools if _expressible(tool, instructions, limits)]
+        if (
+            output_tools
+            and not fillable
+            and not any(_none_route(tool) or _expressible(tool, instructions, limits) for tool in offered)
+        ):
+            # A route the model cannot fill is a hand-off, but only while some other route is a real alternative:
+            # an output type it can fill, a route with nothing to fill, or a tool whose arguments it can. With
+            # none of them the choice is decided before it is asked: every answer hands off, so the request that
+            # asks it buys nothing, and every run pays for the decision model on top of the model behind it.
+            if len(output_tools) == 1:
+                # Alone, the output type's own unsupported field is the error, as it names what to change.
+                _Ask.about(output_tools[0], instructions, limits)
             raise UserError(
                 'None of the output types can be filled by this model, so every answer would be handed off and '
                 'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
                 'it from this model.'
             )
+        # One output type the model can fill is filled in the same request that picks a route. Several are a
+        # union, so the first request only picks, and the chosen type's fields are asked in the second — the same
+        # two steps a selected tool's arguments take, through the same helper. One the model cannot fill is
+        # treated like a union member: its fields are not asked, and picking it hands off in `_fill`.
+        output_tool = fillable[0] if len(output_tools) == 1 and fillable else None
+        if len(output_tools) == 1 and output_tool is None and not tools:
+            # Every other route has returned this turn, and the one left cannot be filled: it is taken without a
+            # choice question, like the last tool left, and handing it off needs no request either.
+            raise ToolCallProposed(self.model_name, output_tools[0].name, 1.0)
         ask = _Ask.about(output_tool, instructions, limits) if output_tool else _Ask.nothing()
         route_key = _route_question(ask.questions, routes, output_tools, tools, instructions, limits)
 
@@ -513,9 +528,9 @@ class DecisionModel(Model[InterfaceClient]):
         way — [`ToolCallProposed`][pydantic_ai.models.decision.ToolCallProposed] is a `ModelAPIError`, so a
         [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] gives a language model the whole step.
 
-        This is why a union may hold a member the model cannot express while a lone `output_type` may not: with one
-        output type there is no other route the run could have taken, so an unfillable one can only ever fail,
-        and it is refused before any request. Offered beside others, it is a route like any other.
+        This is also how a single output type the model cannot express is taken when tools or a `None` are on
+        offer beside it: it is a route like any other. Only when no route on offer could be taken without a hand-off
+        is the agent refused before any request, since then every answer could only hand off.
 
         `label` is the route's name on the route question, from `_route_labels`, which the fill's questions repeat
         as `chosen` so that the model sees one name for one route across the two requests.
