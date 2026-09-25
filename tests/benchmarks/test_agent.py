@@ -65,6 +65,7 @@ async def captured_text_stream(request: pytest.FixtureRequest) -> tuple[ModelRes
         return stream.get(), events
 
 
+@pytest.mark.benchmark(max_time=15)
 async def test_replay_text_stream(captured_text_stream: tuple[ModelResponse, list[ModelResponseStreamEvent]]) -> None:
     response, events = captured_text_stream
     stream = CompletedStreamedResponse(
