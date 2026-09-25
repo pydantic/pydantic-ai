@@ -590,7 +590,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         `ref` names an environment to continue in (from `workspace=` or the message history); `None`
         asks for a fresh one. Build the backend only, without I/O or side effects: it creates or
-        attaches on first use. Capabilities are asked in order before `for_run`, and the first answer wins.
+        attaches on first use. Capabilities passed to the run are asked before the agent's, each list in
+        order, before `for_run`; the first answer wins. Return `None` for a `ref` you don't own.
         """
         return None
 

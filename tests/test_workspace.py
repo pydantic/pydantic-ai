@@ -726,6 +726,24 @@ async def test_a_run_workspace_capability_joins_the_agents() -> None:
     assert [result.workspace.backend] == second.supplied
 
 
+async def test_a_run_workspace_capability_is_asked_before_the_agents(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path)])
+    run_level = ProviderWorkspaceCapability('run')
+
+    result = await agent.run('go', capabilities=[run_level])
+
+    assert [result.workspace.backend] == run_level.supplied
+
+
+async def test_a_run_workspace_capability_function_is_asked_before_the_agents_after_for_run(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), capabilities=[lambda ctx: LocalWorkspace(tmp_path)])
+    run_level = ProviderWorkspaceCapability('run')
+
+    result = await agent.run('go', capabilities=[lambda ctx: run_level])
+
+    assert [result.workspace.backend] == run_level.supplied
+
+
 async def test_an_unrecognized_history_ref_is_an_error_when_the_agent_has_workspace_capabilities() -> None:
     """Silently dropping the ref would put the conversation in a different environment than it continued from."""
     historical = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='gone', id='sb-1'))

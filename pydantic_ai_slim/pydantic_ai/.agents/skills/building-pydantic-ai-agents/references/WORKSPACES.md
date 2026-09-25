@@ -53,7 +53,7 @@ latest `ModelResponse.workspace_ref` from message history; a latest `None` suppr
 supplies identity, not provider configuration. Precedence is: explicit `workspace=`, then the
 history ref, then a fresh workspace from the capability. An agent may have several workspace
 capabilities, like `resolve_model_id`: they are asked in order and the first that returns a
-workspace wins, so listing a new provider's capability before the old one moves new conversations
+workspace wins (capabilities passed to the run are asked before the agent's), so listing a new provider's capability before the old one moves new conversations
 while old ones continue where they started. A history ref that no capability recognizes raises
 `UserError` (pass `workspace='new'` to start fresh), unless the agent has no workspace capability at
 all (a summarizer given the history), which ignores it. With no ref and no supplier the run gets an
