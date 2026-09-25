@@ -132,7 +132,6 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
-from ..workspaces._policy import same_workspace
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -1718,35 +1717,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             workspace=unattached_workspace(),
         )
 
-        # The workspace is selected before `for_run`, the way the bootstrap model is above, so `for_run`
-        # can read from it: a caller-provided one, else one from the capabilities that exist before
-        # `for_run`. Nothing here does I/O: a backend creates or attaches on its first operation.
-        run_workspace = initial_ctx.workspace
-        explicit_workspace = False
-        explicit_ref = workspace if isinstance(workspace, WorkspaceRef) else None
-        # `'new'` asks for a fresh environment, so the ref in history is deliberately not offered.
-        selection_ref = historical_workspace_ref if workspace is None else explicit_ref
-        if workspace is not None and workspace != 'new' and not isinstance(workspace, WorkspaceRef):
-            # An explicit backend, or an existing `Workspace` passed straight through from a
-            # parent run or a previous result.
-            run_workspace = workspace if isinstance(workspace, Workspace) else Workspace(workspace)
-            explicit_workspace = True
+        # The workspace is selected before `for_run`, like the bootstrap model above, so `for_run` can use
+        # it. Selecting does no I/O: a backend creates or attaches on its first operation.
+        requested_ref = workspace if isinstance(workspace, WorkspaceRef) else None
+        # `'new'` asks for a fresh environment, so the ref in history is not offered.
+        offered_ref = historical_workspace_ref if workspace is None else requested_ref
+        # A backend or `Workspace` passed to the run is used as is.
+        explicit = None if workspace is None or workspace == 'new' or isinstance(workspace, WorkspaceRef) else workspace
         # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
-        _, workspace_capability = _compose_layers([base_capability], extra_capabilities)
-        bootstrap_selection = (
-            None
-            if explicit_workspace
-            else _as_workspace(workspace_capability.get_workspace(initial_ctx, ref=selection_ref))
-        )
-        if bootstrap_selection is not None:
-            run_workspace = bootstrap_selection
-        # The wrap hook sees the tree it selected from, so a durability capability can rebuild the
-        # selection through it and `for_run` reads run as durable operations.
-        initial_ctx.root_capability = workspace_capability
-        run_workspace = workspace_capability._wrap_workspace(  # pyright: ignore[reportPrivateUsage]
-            initial_ctx, run_workspace, explicit=explicit_workspace
-        )
-        initial_ctx.workspace = run_workspace
+        pre_run_root = _compose_layers(_combine_layer_duplicates([base_capability], extra_capabilities))
+        if explicit is not None:
+            selected = explicit if isinstance(explicit, Workspace) else Workspace(explicit)
+        else:
+            selected = _select_workspace(pre_run_root, initial_ctx, ref=offered_ref)
+        initial_ctx.root_capability = pre_run_root
+        if selected is not None:
+            initial_ctx.workspace = pre_run_root._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
+                initial_ctx, selected, explicit=explicit is not None
+            )
         # An explicit `Instrumentation` capability (agent- or call-level) replaces the one injected from
         # `instrumentation_settings` (see `_resolve_run_capabilities`), so `for_run` hooks and metadata
         # factories are shown the settings of the one that will actually instrument the run.
@@ -1799,32 +1787,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
         )
 
-        # A workspace a capability contributes only in `for_run`, such as a capability function's, can't
-        # answer before it, so it is selected now if nothing was. One selected before `for_run` is final:
-        # `for_run` may have used it, and a durable run rebuilds that one in every unit.
+        # A workspace capability that exists only after `for_run` (a capability function's) is asked now.
+        # One selected before `for_run` is final: `for_run` may have used it.
         initial_ctx.root_capability = run_capability
-        final_selection = bootstrap_selection
-        if not explicit_workspace and not model_layers_unchanged:
-            selection = _as_workspace(run_capability.get_workspace(initial_ctx, ref=selection_ref))
-            if bootstrap_selection is None:
-                final_selection = selection
-                if selection is not None:
-                    run_workspace = run_capability._wrap_workspace(  # pyright: ignore[reportPrivateUsage]
-                        initial_ctx, selection, explicit=False
+        if explicit is None and not model_layers_unchanged:
+            candidate = _select_workspace(run_capability, initial_ctx, ref=offered_ref)
+            if selected is None:
+                selected = candidate
+                if selected is not None:
+                    initial_ctx.workspace = run_capability._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
+                        initial_ctx, selected, explicit=False
                     )
-                    initial_ctx.workspace = run_workspace
-            elif selection is None or not same_workspace(bootstrap_selection, selection):
+            elif candidate is None or _workspace_identity(candidate) != _workspace_identity(selected):
                 raise exceptions.UserError(
                     "A capability's `for_run` changed the workspace this run selected before `for_run`. The "
                     'workspace is selected first so that `for_run` can use it; configure it on the capability the '
                     'agent is built with, or pass it to the run with `workspace=`.'
                 )
-        if not explicit_workspace and final_selection is None:
-            _check_unselected_workspace(
-                new=workspace == 'new',
-                explicit_ref=explicit_ref,
-                history_ref=historical_workspace_ref if workspace is None else None,
-                has_resolvers=workspace_capability.has_get_workspace or run_capability.has_get_workspace,
+        if selected is None:
+            _raise_for_unresolved_workspace(
+                workspace,
+                history_ref=historical_workspace_ref,
+                has_resolvers=pre_run_root.has_get_workspace or run_capability.has_get_workspace,
             )
 
         # Build model settings resolver using per-run capability. Shared with `realtime_session` via
@@ -1967,7 +1951,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
-            workspace=run_workspace,
+            workspace=initial_ctx.workspace,
             durable_operations=durable_operations,
             run_capabilities_by_id=run_capabilities_by_id,
             native_tools=cap_native_tools,
@@ -3205,9 +3189,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # namesake outright -- `run(capabilities=[WebSearch(allowed_domains=[...])])` states what
         # this run may reach, and merging it into the agent's list would widen the restriction it
         # was passed to impose.
-        combined_layers, run_capability = _compose_layers(
+        combined_layers = _combine_layer_duplicates(
             resolved_layers[: len(resolved_layers) - len(extra_capabilities)], resolved_extras
         )
+        run_capability = _compose_layers(combined_layers)
         # Not covered by the construction-time check: a run's capabilities compose with a retained
         # overriding container exactly as a registered sibling does, and `for_run` may hand back a
         # capability whose `id` differs from the one that was validated, so the resolved tree is
@@ -4485,42 +4470,55 @@ def _run_instrumentation_settings(
     return instrumentations[-1].settings if instrumentations else default
 
 
-def _compose_layers(
+def _combine_layer_duplicates(
     agent_layer: Sequence[AbstractCapability[AgentDepsT]], run_layer: Sequence[AbstractCapability[AgentDepsT]]
-) -> tuple[list[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT]]:
-    """Combine each layer's duplicates, then the layers, so a run's capability overrides the agent's namesake."""
-    combined_layers = [
+) -> list[AbstractCapability[AgentDepsT]]:
+    """Resolve the duplicates within each non-empty layer, giving one capability per layer."""
+    return [
         _combine_duplicate_capabilities(CombinedCapability(list(layer)) if len(layer) > 1 else layer[0], [layer])
         for layer in (agent_layer, run_layer)
         if layer
     ]
-    root = (
-        _combine_duplicate_capabilities(CombinedCapability(combined_layers), [[layer] for layer in combined_layers])
-        if len(combined_layers) > 1
-        else combined_layers[0]
-    )
-    return combined_layers, root
 
 
-def _as_workspace(selection: WorkspaceBackend | Workspace | None) -> Workspace | None:
-    return selection if selection is None or isinstance(selection, Workspace) else Workspace(selection)
+def _compose_layers(layers: list[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+    """Compose the layers into the run's root, so a run's capability overrides the agent's namesake."""
+    if len(layers) == 1:
+        return layers[0]
+    return _combine_duplicate_capabilities(CombinedCapability(layers), [[layer] for layer in layers])
 
 
-def _check_unselected_workspace(
-    *, new: bool, explicit_ref: WorkspaceRef | None, history_ref: WorkspaceRef | None, has_resolvers: bool
+def _select_workspace(
+    capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None
+) -> Workspace | None:
+    """The workspace the capabilities supply for `ref`, as a `Workspace`, or `None` if none does."""
+    selected = capability.get_workspace(ctx, ref=ref)
+    return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
+
+
+def _workspace_identity(workspace: Workspace) -> tuple[object, ...]:
+    """What must match for two selections to be the same workspace: its layers' types and its ref."""
+    return type(workspace), type(workspace.backend), workspace.ref
+
+
+def _raise_for_unresolved_workspace(
+    workspace: WorkspaceBackend | Workspace | WorkspaceRef | Literal['new'] | None,
+    *,
+    history_ref: WorkspaceRef | None,
+    has_resolvers: bool,
 ) -> None:
-    """Raise when no capability returned a workspace the run asked for; otherwise the placeholder stays.
+    """Raise when no capability supplied the workspace the run asked for.
 
-    A ref from message history is ignored by an agent with no workspace capabilities, such as one
-    summarizing the conversation, but an agent with some must not silently drop it.
+    A ref in history is ignored by an agent with no workspace capabilities (say, one summarizing the
+    conversation), but an agent with some must not silently drop it.
     """
-    if new:
+    if workspace == 'new':
         raise exceptions.UserError(
             "`workspace='new'` needs a capability that can create a workspace, but none returned one. "
             "Attach one, such as `capabilities=[LocalWorkspace('.')]`."
         )
-    if explicit_ref is not None:
-        named = f'`{explicit_ref.provider}:{explicit_ref.id}`'
+    if isinstance(workspace, WorkspaceRef):
+        named = f'`{workspace.provider}:{workspace.id}`'
         if not has_resolvers:
             raise exceptions.UserError(
                 f'Workspace {named} was passed to the run, but the agent has no workspace capability to resolve it.'
@@ -4528,7 +4526,7 @@ def _check_unselected_workspace(
         raise exceptions.UserError(
             f"Workspace {named} was passed to the run, but none of the agent's workspace capabilities recognized it."
         )
-    if history_ref is not None and has_resolvers:
+    if workspace is None and history_ref is not None and has_resolvers:
         raise exceptions.UserError(
             f'The message history continues in workspace `{history_ref.provider}:{history_ref.id}`, but none of '
             "the agent's workspace capabilities recognized it. Pass `workspace='new'` to start a fresh workspace, "

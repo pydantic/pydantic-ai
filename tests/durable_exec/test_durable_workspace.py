@@ -49,7 +49,6 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileEntry,
-    LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
     WorkspaceBackend,
@@ -58,7 +57,6 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
-    WrapperWorkspace,
 )
 
 from ..workspace_fakes import FakeWorkspace, InMemoryProvider, WorkspaceCapability
@@ -112,18 +110,6 @@ class FakeDurability(BaseDurabilityCapability[Any]):
 
 class TransparentDurability(FakeDurability):
     in_container = False
-
-
-class RebuildingDurability(FakeDurability):
-    """An engine whose units rebuild the workspace elsewhere, so per-run policy must match."""
-
-    engine_spec = DurabilityEngineSpec(
-        engine_name='Fake',
-        durable_unit_noun='unit',
-        durable_container_noun='journal',
-        codec=JSON_CODEC,
-        workspace_rebuilt_in_unit=True,
-    )
 
 
 class FreshWorkspaces(AbstractCapability[Any]):
@@ -429,43 +415,6 @@ async def test_forwarded_durable_workspace_without_a_ref_asks_for_a_fresh_enviro
     other = DurableWorkspace(Workspace(FakeWorkspace('parent')), durability=durability, ctx=_run_context())
     # `LocalWorkspace` supplies without a ref, so this claims a fresh local workspace instead.
     assert (await declining.run('go', workspace=other)).workspace.ref == WorkspaceRef(provider='local', id='/tmp')
-
-
-async def test_per_run_policy_must_match_the_construction_tree_when_units_rebuild(tmp_path: Path) -> None:
-    read_only = LocalWorkspace[Any](tmp_path, read_only=True)
-    agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path), RebuildingDurability()])
-    with pytest.raises(UserError, match=r'\(ReadOnlyWorkspace, Workspace\) differs from .* \(Workspace\)'):
-        await agent.run('go', capabilities=[read_only])
-
-    # The same override is fine for an engine whose units use the run's live workspace.
-    live = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path), FakeDurability()])
-    result = await live.run('go', capabilities=[read_only])
-    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
-        await result.workspace.make_dir('sub')
-
-    # The same wrapper classes with different state are a different policy too: the wrappers'
-    # own attributes are compared, not just their types.
-    class Allowlist(WrapperWorkspace):
-        def __init__(self, wrapped: Workspace, allowed: frozenset[str]) -> None:
-            super().__init__(wrapped)
-            self.allowed = allowed
-
-    class Allowlisted(AbstractCapability[Any]):
-        id = 'allowlisted'
-
-        def __init__(self, allowed: frozenset[str]) -> None:
-            self.allowed = allowed
-
-        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-            # Only ever asked for its own local ref (or none), so there is nothing to decline.
-            return Allowlist(Workspace(LocalWorkspaceBackend(tmp_path)), self.allowed)
-
-    agent = Agent(TestModel(), name='ws', capabilities=[Allowlisted(frozenset({'src'})), RebuildingDurability()])
-    result = await agent.run('go', capabilities=[Allowlisted(frozenset({'src'}))])
-    assert isinstance(result.workspace, DurableWorkspace) and isinstance(result.workspace.wrapped, Allowlist)
-
-    with pytest.raises(UserError, match=r'\(Allowlist, Workspace\) is configured differently .* wrappers are the same'):
-        await agent.run('go', capabilities=[Allowlisted(frozenset({'src', 'secrets'}))])
 
 
 async def test_sub_agent_run_from_a_unit_uses_the_forwarded_workspace_directly() -> None:

@@ -857,12 +857,12 @@ class _WrapHook(AbstractCapability[Any]):
         self.tag = tag
         self.seen: list[tuple[type[Workspace], bool, bool]] = []
 
-    def _wrap_workspace(self, ctx: RunContext[Any], workspace: Workspace, *, explicit: bool) -> Workspace:
+    def _prepare_workspace(self, ctx: RunContext[Any], workspace: Workspace, *, explicit: bool) -> Workspace:
         self.seen.append((type(workspace), explicit, ctx.root_capability is not None))
         return _Tagged(workspace, self.tag)
 
 
-async def test_wrap_workspace_hook_wraps_innermost_last_and_reports_explicit_workspaces() -> None:
+async def test_prepare_workspace_hook_wraps_innermost_last_and_reports_explicit_workspaces() -> None:
     """The private hook composes like middleware and sees the composed per-run tree on the context.
 
     Not reachable through a public API: nothing first-party overrides it besides the durability

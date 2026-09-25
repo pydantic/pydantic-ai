@@ -610,19 +610,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def _wrap_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
-        """Wrap the run's selected workspace, or return it unchanged.
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+        """Prepare the run's selected workspace for the run; called once per selection.
 
-        Called once per run, right after the workspace is selected and before it is installed on
-        the run context, with `explicit` telling whether the caller passed a live backend or facade
-        through `workspace=` rather than leaving the selection to
-        [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace]. The default
-        returns `workspace` as is, so a run without an overriding capability keeps the very object
-        it selected.
-
-        Deliberately private, like `_prepare_run_context`: it serves the durability capabilities,
-        which route workspace operations through durable units, and whether first-party workspace
-        hooks become public capability surface is tracked in #5477.
+        Private: durability capabilities use it to route workspace calls through durable units.
         """
         return workspace
 

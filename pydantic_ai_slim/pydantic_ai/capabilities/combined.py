@@ -457,11 +457,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 return workspace
         return None
 
-    def _wrap_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
         # Middleware order, like `get_wrapper_toolset`: the last capability wraps first, so its
         # wrapper sits innermost, directly around the selected workspace.
         for capability in reversed(self.capabilities):
-            workspace = capability._wrap_workspace(ctx, workspace, explicit=explicit)
+            workspace = capability._prepare_workspace(ctx, workspace, explicit=explicit)
         return workspace
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:

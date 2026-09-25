@@ -264,8 +264,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         return self.wrapped.get_workspace(ctx, ref=ref)
 
-    def _wrap_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
-        return self.wrapped._wrap_workspace(ctx, workspace, explicit=explicit)
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+        return self.wrapped._prepare_workspace(ctx, workspace, explicit=explicit)
 
     async def prepare_tools(
         self,

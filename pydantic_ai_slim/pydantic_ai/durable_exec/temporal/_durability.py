@@ -171,7 +171,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
         tool_config_key='temporal',
-        workspace_rebuilt_in_unit=True,
     )
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]

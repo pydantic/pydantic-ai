@@ -458,7 +458,7 @@ def resolve_run_workspace(
 class DurableWorkspace(WrapperWorkspace):
     """The run's workspace inside a durable container: each operation is its own durable unit.
 
-    Installed by a durability capability's `_wrap_workspace` hook, innermost around the workspace
+    Installed by a durability capability's `_prepare_workspace` hook, innermost around the workspace
     the run selected. Outside the container, and inside a durable unit, calls go straight to the
     wrapped workspace. The first dispatched call runs `ensure` if the run's companion capability
     has not already, so a capability whose `wrap_run` touches the workspace before the run body
@@ -662,7 +662,7 @@ class RejectWorkspaceInContainer(AbstractCapability[AgentDepsT]):
         self._container_noun = container_noun
         self._capability = capability
 
-    def _wrap_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
         if workspace.attached:
             raise UserError(
                 f'Workspaces are not supported inside a {self._engine} {self._container_noun} through the deprecated '

@@ -63,7 +63,7 @@ runs there.
 Workspaces are routed by the base, not by engines: when a construction-time capability overrides
 `get_workspace`, `_bind_workspace_operations` binds one `WorkspaceOperationId(method)` unit per
 `Workspace` method plus `'ensure'` (a persisted name set; bind nothing otherwise, so agents without a
-supplier keep their pinned names), `_wrap_workspace` installs one `DurableWorkspace` innermost around
+supplier keep their pinned names), `_prepare_workspace` installs one `DurableWorkspace` innermost around
 the selected workspace inside the container, and the `WorkspaceEnsurer` companion (composed in
 `for_agent` through `_companion_capabilities`) runs `ensure` before the run body, with a lazy
 locked fallback on first dispatch. A `DurableWorkspace` never reaches a unit: in-process engines
