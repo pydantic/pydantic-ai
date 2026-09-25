@@ -1,6 +1,6 @@
 ---
 title: Pydantic AI comparisons
-description: "Pydantic AI compared with LangChain and LangGraph, the Claude Agent SDK, the Vercel AI SDK, the OpenAI Agents SDK, Google ADK, Mastra, LiveKit Agents, Pi, Agno and CrewAI, one page each, plus the migration skills that port an existing agent."
+description: "Pydantic AI compared with LangChain, LangGraph, CrewAI, Claude Agent SDK, OpenAI Agents SDK, Google ADK, Vercel AI SDK, Mastra, Agno, LiveKit, Pipecat and Pi."
 ---
 
 # Pydantic AI comparisons

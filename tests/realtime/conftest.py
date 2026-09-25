@@ -388,6 +388,28 @@ def azure_ws_sideband_cassette(
 
 
 @pytest.fixture
+def blockbuster_enabled(realtime_recording: bool) -> bool:
+    """Leave the blocking-call detector on for replay, which is what CI runs.
+
+    Recording dials the provider for real, and building the TLS context reads CA bundles from disk
+    inside the event loop. That is the recording harness's own blocking call, not the library's, and
+    it cannot happen on the replay path, where nothing dials.
+    """
+    return not realtime_recording
+
+
+@pytest.fixture
+def realtime_recording(request: pytest.FixtureRequest) -> bool:
+    """Whether this run dials providers for real, rather than replaying recorded frames.
+
+    Audio-driven tests pace their microphone in real time only then: a provider hears a burst of audio
+    very differently from a live microphone, so a burst records behavior no real call has. Replay
+    keeps sending instantly, since the recorded frame order is what drives it.
+    """
+    return realtime_cassette_plan(cassette_exists=True, record_mode=_record_mode(request)) == 'record'
+
+
+@pytest.fixture
 def parity_ws_cassette(
     request: pytest.FixtureRequest,
     openai_api_key: str,

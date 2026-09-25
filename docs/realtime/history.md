@@ -1,3 +1,7 @@
+---
+description: "Start Pydantic AI voice sessions from earlier text or voice history, continue them later, or hand the conversation to a text model for summaries and extraction."
+---
+
 # History and handoff
 
 A realtime session builds the same [`ModelMessage`][pydantic_ai.messages.ModelMessage] history as a

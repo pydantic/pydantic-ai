@@ -1,3 +1,7 @@
+---
+description: "Migrate an agent app from LangChain, LangGraph, the OpenAI Agents SDK, Google ADK, Mastra and other frameworks to Pydantic AI with bundled coding agent skills."
+---
+
 # Migrate to Pydantic AI
 
 If you have an application built with another agent framework, your coding agent can use a migration skill bundled with Pydantic AI. Each skill helps the agent understand the source framework, choose the right Pydantic AI components, and port one working application path at a time.

@@ -20,6 +20,7 @@ from .decision import (
     ChoiceAnswer,
     ChoiceQuestion,
     DecisionAnswer,
+    DecisionHandOff,
     DecisionModel,
     DecisionModelSettings,
     DecisionQuestion,
@@ -30,7 +31,8 @@ from .decision import (
     NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
-    ToolCallProposed,
+    UnfillableRoute,
+    UnsureRoute,
 )
 
 try:
@@ -56,12 +58,14 @@ except ImportError as _import_error:
     ) from _import_error
 
 __all__ = (
+    'DecisionHandOff',
     'LatestTypeSafeModelNames',
-    'ToolCallProposed',
     'TypeSafeModel',
     'TypeSafeModelName',
     'TypeSafeModelSettings',
     'TypeSafeStreamedResponse',
+    'UnfillableRoute',
+    'UnsureRoute',
 )
 
 LatestTypeSafeModelNames = Literal['jev-latest', 'jev-preview']
@@ -80,7 +84,11 @@ class TypeSafeModelSettings(DecisionModelSettings, total=False):
     """Deprecated: use `decision_boolean_threshold` instead."""
 
     typesafe_tool_call_threshold: float
-    """Deprecated: use `decision_tool_call_threshold` instead."""
+    """Deprecated and ignored: the likeliest route is always taken.
+
+    Use `decision_route_threshold` with a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand
+    the picks the model is unsure of to a language model.
+    """
 
 
 TypeSafeStreamedResponse = DecisionStreamedResponse
@@ -180,25 +188,30 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
 
         # TODO(v3): remove the deprecated `typesafe_*` threshold aliases
         settings = cast(TypeSafeModelSettings, model_settings.copy())
-        aliases = (
-            ('typesafe_boolean_threshold', 'decision_boolean_threshold'),
-            ('typesafe_tool_call_threshold', 'decision_tool_call_threshold'),
-        )
-        for old_name, new_name in aliases:
-            if old_name not in settings:
-                continue
-            # Settings reach the model deep inside a run, where no stack level points at the code that set them,
-            # so the message names the setting instead, like the other deprecated model settings.
+        # Settings reach the model deep inside a run, where no stack level points at the code that set them,
+        # so the messages name the setting instead, like the other deprecated model settings.
+        if 'typesafe_tool_call_threshold' in settings:
+            # Not mapped to `decision_route_threshold`: that raises where this quietly filled the output, and
+            # would fail the run of anyone without a model behind Jev to take the step.
             warnings.warn(
-                f'`{old_name}` is deprecated; use `{new_name}` instead.',
+                '`typesafe_tool_call_threshold` is deprecated and ignored: the likeliest route is now always taken. '
+                'To hand the picks Jev is unsure of to a language model instead, set `decision_route_threshold` and '
+                'run Jev as `FallbackModel(jev, language_model)`.',
                 PydanticAIDeprecationWarning,
                 stacklevel=2,
             )
-            old_value = cast(float, settings.pop(old_name))
-            if new_name not in settings:
+            del settings['typesafe_tool_call_threshold']
+        if 'typesafe_boolean_threshold' in settings:
+            warnings.warn(
+                '`typesafe_boolean_threshold` is deprecated; use `decision_boolean_threshold` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            old_value = settings.pop('typesafe_boolean_threshold')
+            if 'decision_boolean_threshold' not in settings:
                 if not 0 <= old_value <= 1:
-                    raise UserError(f'`{old_name}` must be between 0 and 1; got {old_value!r}.')
-                settings[new_name] = old_value
+                    raise UserError(f'`typesafe_boolean_threshold` must be between 0 and 1; got {old_value!r}.')
+                settings['decision_boolean_threshold'] = old_value
         return settings, model_request_parameters
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
@@ -284,3 +297,17 @@ def _from_typesafe_answer(answer: object) -> DecisionAnswer:
             legend=dict(answer.legend),
         )
     raise UnexpectedModelBehavior(f'Unexpected answer from TypeSafe: {answer!r}')
+
+
+# TODO(v3): remove the `ToolCallProposed` alias and this `__getattr__`.
+def __getattr__(name: str) -> object:
+    if name == 'ToolCallProposed':
+        warnings.warn(
+            '`ToolCallProposed` has been renamed to `UnfillableRoute`, which `pydantic_ai.models.decision` defines, '
+            'and its `tool_name` to `route`. Update your imports; this deprecated alias will be removed in a future '
+            'release.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return UnfillableRoute
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

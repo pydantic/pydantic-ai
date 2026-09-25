@@ -1,3 +1,7 @@
+---
+description: "Use an LLM as a judge in Pydantic Evals: grade outputs against a rubric with LLMJudge, get pass/fail or scores, pick the judge model and write good rubrics."
+---
+
 # LLM Judge Deep Dive
 
 The [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] evaluator uses an LLM to assess subjective qualities of outputs based on a rubric.

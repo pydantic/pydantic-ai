@@ -1,3 +1,7 @@
+---
+description: "A small but complete Pydantic AI example of a support agent for a bank, using a dynamic system prompt, structured output and tools."
+---
+
 Small but complete example of using Pydantic AI to build a support agent for a bank.
 
 Demonstrates:

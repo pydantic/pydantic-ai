@@ -1,3 +1,7 @@
+---
+description: "Handle the Pydantic AI realtime session event stream: content parts, tool activity, turn boundaries, reconnects and recoverable errors, as typed events."
+---
+
 # Events
 
 Iterating a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] yields the session's event

@@ -1,3 +1,7 @@
+---
+description: "Stream Pydantic AI agent runs to frontends built with Vercel AI SDK UI hooks like useChat, using the Vercel AI Data Stream Protocol adapter."
+---
+
 # Vercel AI Data Stream Protocol
 
 Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to receive agent run input from, and stream events to, a frontend using [AI SDK UI](https://ai-sdk.dev/docs/ai-sdk-ui/overview) hooks like [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat). You can optionally use [AI Elements](https://ai-sdk.dev/elements) for pre-built UI components.
