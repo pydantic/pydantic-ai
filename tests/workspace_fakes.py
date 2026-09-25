@@ -121,7 +121,7 @@ def _run_conformance_command(
     if cwd is not None and not posixpath.isabs(cwd):
         raise ValueError('cwd must be absolute')
     if not isinstance(command, str) and list(command) == ['sh', '-c', 'sleep 30'] and timeout is not None:
-        raise WorkspaceTimeoutError('command timed out', timeout=timeout)
+        raise WorkspaceTimeoutError('command timed out')
     if isinstance(command, str):
         match = _SHELL_RESULT.fullmatch(command)
         if match is not None:

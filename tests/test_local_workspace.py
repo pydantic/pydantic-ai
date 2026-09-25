@@ -210,9 +210,7 @@ async def test_timeout_kills_the_whole_process_group_and_raises(tmp_path: Path):
         # a command that has not completed rather than to a descendant holding a pipe open.
         await workspace.run(f'echo $$ > {shlex.quote(str(pid_file))}; exec sleep 30', shell=True, timeout=timeout)
 
-    error = exc_info.value
-    assert isinstance(error, TimeoutError)
-    assert error.timeout == timeout
+    assert isinstance(exc_info.value, TimeoutError)
 
     await _assert_process_gone(int(pid_file.read_text()))
 

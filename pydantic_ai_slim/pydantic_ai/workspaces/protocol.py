@@ -112,22 +112,12 @@ class WorkspaceUnavailableError(WorkspaceError):
 
 
 class WorkspaceTimeoutError(WorkspaceError, TimeoutError):
-    """A command exceeded the `timeout=` it was started with.
+    """A command exceeded its `timeout=`; `stdout`/`stderr` hold partial output, like `subprocess.TimeoutExpired`."""
 
-    `stdout` and `stderr` carry any captured output available when the error is raised (empty when
-    the backend cannot recover it). Whether the command and its descendants are terminated is backend-specific.
-    `timeout` is the deadline that was enforced, which may be coarser than requested (e.g. platforms
-    that take whole seconds).
-    """
-
-    def __init__(self, message: str, *, stdout: str = '', stderr: str = '', timeout: float | None = None) -> None:
+    def __init__(self, message: str, *, stdout: str = '', stderr: str = '') -> None:
         super().__init__(message)
         self.stdout = stdout
-        """Captured standard output, when available."""
         self.stderr = stderr
-        """Captured standard error, when available."""
-        self.timeout = timeout
-        """The deadline that was enforced, in seconds."""
 
 
 class WorkspaceReadOnlyError(WorkspaceError, PermissionError):

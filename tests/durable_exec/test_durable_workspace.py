@@ -537,7 +537,7 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
 @pytest.mark.parametrize(
     'error',
     [
-        WorkspaceTimeoutError('slow', stdout='partial', stderr='err', timeout=1.5),
+        WorkspaceTimeoutError('slow', stdout='partial', stderr='err'),
         WorkspaceUnavailableError('gone'),
         WorkspaceReadOnlyError('read-only'),
         WorkspaceError('broken'),
@@ -563,7 +563,7 @@ def test_error_table_round_trips_every_kind(error: Exception) -> None:
     assert type(raised.value) is type(error)
     if isinstance(error, WorkspaceTimeoutError):
         assert isinstance(raised.value, WorkspaceTimeoutError)
-        assert (raised.value.stdout, raised.value.stderr, raised.value.timeout) == ('partial', 'err', 1.5)
+        assert (raised.value.stdout, raised.value.stderr) == ('partial', 'err')
     if isinstance(error, UnicodeDecodeError):
         assert isinstance(raised.value, UnicodeDecodeError)
         assert raised.value.object == b'\xff'

@@ -306,13 +306,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                         'denied, so only the direct child was killed and grandchildren may survive',
                         stdout=stdout,
                         stderr=stderr,
-                        timeout=timeout,
                     ) from denial
                 raise WorkspaceTimeoutError(
                     f'command timed out after {timeout} seconds and was killed',
                     stdout=stdout,
                     stderr=stderr,
-                    timeout=timeout,
                 ) from error
             raise
         return CommandResult(

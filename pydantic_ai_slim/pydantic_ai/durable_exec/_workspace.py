@@ -313,7 +313,6 @@ class WorkspaceOperationError:
     message: str
     stdout: str = ''
     stderr: str = ''
-    timeout: float | None = None
     decode: UnicodeDecodeDetails | None = None
 
 
@@ -351,7 +350,7 @@ def workspace_operation_error(error: Exception) -> WorkspaceOperationError | Non
     """
     if isinstance(error, WorkspaceTimeoutError):
         return WorkspaceOperationError(
-            kind='timeout', message=str(error), stdout=error.stdout, stderr=error.stderr, timeout=error.timeout
+            kind='timeout', message=str(error), stdout=error.stdout, stderr=error.stderr
         )
     if isinstance(error, WorkspaceUnavailableError):
         return WorkspaceOperationError(kind='unavailable', message=str(error))
@@ -376,7 +375,7 @@ def workspace_operation_error(error: Exception) -> WorkspaceOperationError | Non
 def raise_operation_error(error: WorkspaceOperationError) -> Never:
     """Re-raise a workspace failure that crossed a durable boundary as data, as its original type."""
     if error.kind == 'timeout':
-        raise WorkspaceTimeoutError(error.message, stdout=error.stdout, stderr=error.stderr, timeout=error.timeout)
+        raise WorkspaceTimeoutError(error.message, stdout=error.stdout, stderr=error.stderr)
     if error.kind == 'unavailable':
         raise WorkspaceUnavailableError(error.message)
     if error.kind == 'workspace':
