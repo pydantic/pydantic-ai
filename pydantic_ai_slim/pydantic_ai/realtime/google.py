@@ -1491,7 +1491,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # A tool call opens the turn like audio output does: the session holds a partial
                 # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
                 self._turn_open = True
-                events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=to_json(call.args or {}).decode()))
+                events.append(
+                    ToolCall(
+                        tool_call_id=call_id,
+                        tool_name=name,
+                        args=to_json(call.args or {}).decode(),
+                        runs_asynchronously=self._async_tool_calls_enabled,
+                    )
+                )
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
             # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
             # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).

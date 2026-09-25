@@ -34,10 +34,12 @@ a result arrives. History still records each result directly after its call, bec
 APIs such as OpenAI Chat Completions and Anthropic reject a tool call whose result isn't in the next
 message:
 
-- What the model says right after a call, while the tool runs, stays in the calling `ModelResponse`,
-  after the `ToolCallPart`. The typical case is filler speech during a Gemini
-  [asynchronous tool call](gemini.md#asynchronous-tool-calls). That speech reads before the result,
-  where it happened, and it still hands off to every provider.
+- During a Gemini [asynchronous tool call](gemini.md#asynchronous-tool-calls), the model keeps
+  talking in the turn that called the tool. The calling `ModelResponse` stays open, so that speech is
+  recorded in it after the `ToolCallPart` and before the result, where it happened. It still hands
+  off to every provider. The response is recorded, and never changed afterwards, as soon as the
+  result or a user turn must follow it. Speech still in progress at that point is split: what came
+  after is recorded as the next response.
 - A user turn during the tool run can't keep its real position. Neither can the reply to it or any
   later response. The result is recorded directly after its call, ahead of all of them.
   [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] streams in the real

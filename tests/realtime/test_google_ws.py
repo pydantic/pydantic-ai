@@ -630,9 +630,9 @@ async def test_async_tool_speech_stays_before_its_result(
     """What the model says while an asynchronous tool runs is recorded before the tool's result.
 
     With `NON_BLOCKING` tools, Gemini 2.5 keeps talking in the same turn after the `toolCall` frame
-    ("I'm searching…"), and ends that turn before the result goes back. The session closes the calling
-    response at the `toolCall` frame, so that speech used to become a response of its own — recorded
-    after the result, since the result stays adjacent to its call.
+    ("I'm searching…"), and the result goes back while it is still streaming. Recorded at the `toolCall`
+    frame, the calling response would leave that speech to a response of its own — recorded after the
+    result, since the result stays adjacent to its call. Held open until the result, it keeps the speech.
     """
     provider, _ = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)
@@ -669,14 +669,15 @@ async def test_async_tool_speech_stays_before_its_result(
             ('ModelResponse', ['The cheapest flight is KLM 1234 at 9:15 for 180 euros.']),
         ]
     )
-    # The result went back while the filler was still streaming, and Gemini cut the rest of that turn
-    # short to take it (`scheduling: INTERRUPT`), so the one response that holds the call and the filler
-    # ends interrupted and carries that turn's usage.
-    calling = session.all_messages()[1]
-    assert isinstance(calling, ModelResponse)
-    assert calling.state == 'interrupted'
-    assert (calling.usage.input_tokens, calling.usage.output_tokens) == snapshot((1453, 89))
-    assert session.usage.requests == 3
+    # The result went back while the filler was still streaming, so the held response was recorded right
+    # then, and Gemini cut the rest of that turn short to take it (`scheduling: INTERRUPT`). That cut
+    # adds nothing to history: the turn's usage, reported only at its end, rides on to the answer.
+    calling, answer = session.all_messages()[1], session.all_messages()[3]
+    assert isinstance(calling, ModelResponse) and isinstance(answer, ModelResponse)
+    assert calling.state == 'complete'
+    assert calling.usage.input_tokens == 0
+    assert (answer.usage.input_tokens, answer.usage.output_tokens) == snapshot((3076, 250))
+    assert session.usage.requests == 2
 
 
 async def test_extended_thinking_async_tool_round(
