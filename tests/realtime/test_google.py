@@ -2896,6 +2896,16 @@ async def test_empty_answer_after_the_tool_call_turn_boundary_still_ends_the_tur
     assert not conn._turn_open  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_turn_complete_after_every_call_was_cancelled_ends_the_turn() -> None:
+    """A tool-call frame the model abandoned (`tool_call_cancellation`) has no answer to wait for."""
+    conn = _separate_boundary_conn()
+    conn._map_message(_tool_call_message())  # pyright: ignore[reportPrivateUsage]
+    conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(tool_call_cancellation=genai_types.LiveServerToolCallCancellation(ids=['c1']))
+    )
+    assert conn._map_message(_turn_complete_message())[-1] == ResponseDone()  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_model_without_a_separate_tool_call_boundary_keeps_every_turn_complete() -> None:
     """Other Gemini models send only the answer's boundary, so one after the results is always the turn's end.
 

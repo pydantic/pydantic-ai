@@ -1560,6 +1560,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # or every barge-in leaks an entry for the life of the connection.
             for call_id in cancelled_ids:
                 self._tool_calls.pop(call_id, None)
+            if not self._tool_calls:
+                # A frame the model abandoned has no answer coming, so no boundary after it is taken for
+                # the tool-call turn's own.
+                self._tool_call_turn_unanswered = False
             events.append(ToolCallCancelled(tool_call_ids=list(cancelled_ids)))
         if message.usage_metadata is not None:
             events.append(
