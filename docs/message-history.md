@@ -939,7 +939,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import ProcessHistory
 
 
 def compact_when_window_fills(
@@ -964,14 +964,14 @@ def compact_when_window_fills(
 
 agent = Agent(
     'openai:gpt-5.2',
-    system_prompt='You are a helpful assistant.',
-    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+    instructions='You are a helpful assistant.',
+    capabilities=[ProcessHistory(compact_when_window_fills)],
 )
 ```
 
 Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers.
 
-Keep [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor, as shown, so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
+[Instructions](agent.md#instructions) are sent with every request rather than stored in the history, so compaction can't drop them. If you use [`system_prompt`](agent.md#system-prompts) instead, add [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
 
 Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
 
