@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
-from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, get_current_span
+from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
@@ -79,7 +79,7 @@ TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
 
 @dataclass(frozen=True)
 class ContentPolicy:
-    """One span's `include_content`, tagged with the span it was set for.
+    """One span's `include_content` and tracer, tagged with the span it was set for.
 
     The tag is what makes the variable safe to read. Restoring it is a plain `set` rather than a
     `reset` (an interrupted streamed run finalizes the context manager in a different `Context`,
@@ -90,20 +90,27 @@ class ContentPolicy:
 
     span_id: int
     include_content: bool
+    tracer: Tracer
 
 
 include_content_ctx: ContextVar[ContentPolicy | None] = ContextVar('include_content', default=None)
-"""Carries the open `chat` span's `include_content` to code that updates that span without holding
-the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
-model answered. Set by `open_model_request_span` for the span's lifetime, so a refresh redacts the
-instruction content of the model it picked the way the span was opened, rather than guessing from
-what is already recorded. Read it through `span_include_content`, never directly. `None` means no
-instrumented request is open.
+"""Carries the open `chat` span's `include_content` and tracer to code that updates that span without
+holding the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
+model answered and opens a child span for each attempt it fell back from. Set by
+`open_model_request_span` for the span's lifetime, so a refresh redacts the instruction content of the
+model it picked the way the span was opened, rather than guessing from what is already recorded, and
+child spans go to the span's own tracer provider. Read it through `span_include_content` and
+`span_tracer`, never directly. `None` means no instrumented request is open.
 
 A context variable for the same reason as `time_to_first_chunk_ctx`: `ModelRequestContext` is public
 and holds only the inputs to `Model.request[_stream]`, and `FallbackModel` reaches the span through
 `get_current_span()` anyway, so it is already relying on the ambient context.
 """
+
+
+def _span_policy(span: Span) -> ContentPolicy | None:
+    policy = include_content_ctx.get()
+    return policy if policy is not None and policy.span_id == span.get_span_context().span_id else None
 
 
 def span_include_content(span: Span) -> bool:
@@ -112,8 +119,14 @@ def span_include_content(span: Span) -> bool:
     Fails closed on every answer but "this span's own request wanted content": no request open, or a
     policy belonging to a different span, both mean nothing vouches for exporting content here.
     """
-    policy = include_content_ctx.get()
-    return policy is not None and policy.span_id == span.get_span_context().span_id and policy.include_content
+    policy = _span_policy(span)
+    return policy is not None and policy.include_content
+
+
+def span_tracer(span: Span) -> Tracer | None:
+    """The tracer `span` was opened with, for opening its child spans, or `None` if no policy names `span`."""
+    policy = _span_policy(span)
+    return policy.tracer if policy is not None else None
 
 
 time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
@@ -548,15 +561,8 @@ class _FinishModelRequestSpan(Protocol):
     def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
 
 
-def record_exception(
-    span: Span,
-    error: BaseException,
-    *,
-    include_content: bool,
-    escaped: bool = True,
-    attributes: Mapping[str, AttributeValue] | None = None,
-) -> None:
-    """Record `error` on `span` as an `exception` event, with any extra event `attributes`.
+def record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
+    """Record `error` on `span` as an `exception` event.
 
     With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
     only the exception type is kept: the message and stack trace of an exception raised around
@@ -572,7 +578,7 @@ def record_exception(
     if not span.is_recording():
         return
     if include_content:
-        span.record_exception(error, attributes=attributes, escaped=escaped)
+        span.record_exception(error, escaped=escaped)
         return
     error_type = type(error)
     type_name = (
@@ -581,9 +587,7 @@ def record_exception(
         else error_type.__qualname__
     )
     # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
-    span.add_event(
-        'exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped), **(attributes or {})}
-    )
+    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
 
 
 def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
@@ -682,7 +686,9 @@ def open_model_request_span(
             record_uncaught_errors(span, include_content=settings.include_content),
         ):
             # Set inside the `with`, because the policy names the span it speaks for.
-            include_content_ctx.set(ContentPolicy(span.get_span_context().span_id, settings.include_content))
+            include_content_ctx.set(
+                ContentPolicy(span.get_span_context().span_id, settings.include_content, settings.tracer)
+            )
 
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the

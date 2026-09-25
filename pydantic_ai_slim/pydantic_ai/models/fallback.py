@@ -6,11 +6,12 @@ from copy import copy
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from functools import cached_property
+from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
 import anyio
-from opentelemetry.trace import Span, get_current_span
+from opentelemetry.trace import Span, Status, StatusCode, get_current_span, set_span_in_context
 from opentelemetry.util.types import AttributeValue
 from typing_extensions import assert_never
 
@@ -18,7 +19,9 @@ from pydantic_ai._instrumentation import (
     model_attributes,
     model_request_parameters_attributes,
     record_exception,
+    set_error_status,
     span_include_content,
+    span_tracer,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import await_maybe, get_first_param_type
@@ -260,6 +263,7 @@ class FallbackModel(Model):
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
             prepared_parameters = model_request_parameters
+            started_at = time_ns()
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
@@ -277,7 +281,7 @@ class FallbackModel(Model):
                 messages = _rewind_messages(messages)
                 rewound = True
                 exceptions.append(exc)
-                self._record_failed_attempt(pinned, 0, exc)
+                self._record_failed_attempt(pinned, 0, started_at, exc)
                 # Fall through to normal chain below
             else:
                 if response.state == 'suspended':
@@ -288,6 +292,7 @@ class FallbackModel(Model):
         # A failed pinned continuation was attempt 0, so the chain's attempts count on from it.
         for attempt, model in enumerate(self.models, start=int(rewound)):
             prepared_parameters = model_request_parameters
+            started_at = time_ns()
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
@@ -296,7 +301,7 @@ class FallbackModel(Model):
             except Exception as exc:
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
-                    self._record_failed_attempt(model, attempt, exc)
+                    self._record_failed_attempt(model, attempt, started_at, exc)
                     continue
                 self._set_span_attributes(model, prepared_parameters)
                 raise exc
@@ -306,7 +311,7 @@ class FallbackModel(Model):
                 if response.usage.cost is not None:
                     rejected_cost = (rejected_cost or Decimal()) + response.usage.cost
                 rejected_responses.append(response)
-                self._record_rejected_response(model, attempt, response)
+                self._record_failed_attempt(model, attempt, started_at, response)
                 continue
 
             if rejected_cost is not None:
@@ -351,6 +356,7 @@ class FallbackModel(Model):
             assert isinstance(suspended_response, ModelResponse)
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
+                started_at = time_ns()
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
@@ -369,7 +375,7 @@ class FallbackModel(Model):
                     messages = _rewind_messages(messages)
                     rewound = True
                     exceptions.append(exc)
-                    self._record_failed_attempt(pinned, 0, exc)
+                    self._record_failed_attempt(pinned, 0, started_at, exc)
                     # Fall through to normal chain below
                 else:
                     self._set_span_attributes(pinned, prepared_parameters)
@@ -385,6 +391,7 @@ class FallbackModel(Model):
         for attempt, model in enumerate(self.models, start=int(rewound)):
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
+                started_at = time_ns()
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
@@ -394,7 +401,7 @@ class FallbackModel(Model):
                 except Exception as exc:
                     if await self._should_fallback(exc):
                         exceptions.append(exc)
-                        self._record_failed_attempt(model, attempt, exc)
+                        self._record_failed_attempt(model, attempt, started_at, exc)
                         continue
                     self._set_span_attributes(model, prepared_parameters)
                     raise exc
@@ -530,35 +537,41 @@ class FallbackModel(Model):
                     )
                 span.set_attributes(span_attributes)
 
-    def _record_failed_attempt(self, model: Model, attempt: int, error: Exception) -> None:
-        """Record an error this request fell back from as a non-escaping `exception` event on the span.
+    def _record_failed_attempt(
+        self, model: Model, attempt: int, started_at: int, failure: Exception | ModelResponse
+    ) -> None:
+        """Record an attempt this request fell back from as an ERROR child span of the `chat` span.
 
-        The message and stack trace follow the span's `include_content`, like any other exception
-        instrumentation records, since a provider's error response can echo the request.
+        The `chat` span keeps its own outcome, that of the model that answered, the way a failed
+        tool call gets its own ERROR span under an agent run that goes on to succeed. The span is
+        only opened once the attempt has failed, back-dated to when it started, so the winning
+        attempt, which `chat` already describes, gets none. It is deliberately not named `chat`,
+        so model-call views don't count it as a model call. An error's message and stack trace
+        follow the span's `include_content`, since a provider's error response can echo the request.
         """
         with suppress(Exception):
-            if span := self._fallback_span():
-                record_exception(
-                    span,
-                    error,
-                    include_content=span_include_content(span),
-                    escaped=False,
-                    attributes=_attempt_attributes(model, attempt),
+            if (span := self._fallback_span()) and (tracer := span_tracer(span)):
+                attributes: dict[str, AttributeValue] = {
+                    **model_attributes(model),
+                    'pydantic_ai.fallback.attempt': attempt,
+                }
+                if isinstance(failure, ModelResponse) and failure.finish_reason is not None:
+                    attributes['gen_ai.response.finish_reasons'] = [failure.finish_reason]
+                attempt_span = tracer.start_span(
+                    f'fallback attempt {model.model_name}',
+                    context=set_span_in_context(span),
+                    attributes=attributes,
+                    start_time=started_at,
                 )
-
-    def _record_rejected_response(self, model: Model, attempt: int, response: ModelResponse) -> None:
-        """Record a response a `fallback_on` response handler rejected as an event on the span."""
-        with suppress(Exception):
-            if span := self._fallback_span():
-                attributes = _attempt_attributes(model, attempt)
-                if response.finish_reason is not None:
-                    attributes['gen_ai.response.finish_reasons'] = [response.finish_reason]
-                span.add_event('pydantic_ai.fallback.response_rejected', attributes)
-
-
-def _attempt_attributes(model: Model, attempt: int) -> dict[str, AttributeValue]:
-    """Name the model behind a failed attempt, in the attributes the span uses for the model that answers."""
-    return {**model_attributes(model), 'pydantic_ai.fallback.attempt': attempt}
+                if isinstance(failure, Exception):
+                    include_content = span_include_content(span)
+                    record_exception(attempt_span, failure, include_content=include_content)
+                    set_error_status(attempt_span, failure, include_content=include_content)
+                else:
+                    attempt_span.set_status(
+                        Status(StatusCode.ERROR, 'Response rejected by a `fallback_on` response handler')
+                    )
+                attempt_span.end(time_ns())
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

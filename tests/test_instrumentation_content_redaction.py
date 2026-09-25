@@ -23,7 +23,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, span_include_content
+from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, span_include_content, span_tracer
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.fallback import FallbackModel
@@ -297,7 +297,7 @@ async def test_no_content_reaches_telemetry_through_a_fallback_refresh(include_c
 
 @pytest.mark.parametrize('include_content', [True, False])
 async def test_no_content_reaches_telemetry_from_a_failed_fallback_attempt(include_content: bool) -> None:
-    """An error `FallbackModel` fell back from is recorded on the span even though the run succeeds."""
+    """An error `FallbackModel` fell back from gets its own span even though the run succeeds."""
     settings, exporter = redacted_setup(include_content)
 
     def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
@@ -367,15 +367,18 @@ def test_a_content_policy_from_another_span_is_not_trusted() -> None:
         own_span_id = span.get_span_context().span_id
 
         # What a cross-context finalization leaves behind: capture enabled, but for another span.
-        include_content_ctx.set(ContentPolicy(span_id=own_span_id ^ 1, include_content=True))
+        include_content_ctx.set(ContentPolicy(span_id=own_span_id ^ 1, include_content=True, tracer=settings.tracer))
         assert span_include_content(span) is False
+        assert span_tracer(span) is None
 
         # This span's own policy is honoured, in both directions.
-        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=True))
+        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=True, tracer=settings.tracer))
         assert span_include_content(span) is True
-        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=False))
+        assert span_tracer(span) is settings.tracer
+        include_content_ctx.set(ContentPolicy(span_id=own_span_id, include_content=False, tracer=settings.tracer))
         assert span_include_content(span) is False
 
         # No request open at all.
         include_content_ctx.set(None)
         assert span_include_content(span) is False
+        assert span_tracer(span) is None
