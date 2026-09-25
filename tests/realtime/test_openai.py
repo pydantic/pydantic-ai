@@ -83,6 +83,7 @@ from pydantic_ai.realtime.codec import (
     ConversationCreated,
     ConversationItemCreated,
     CreateResponse,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -529,6 +530,55 @@ def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
     )
     with pytest.raises(ValueError):
         map_event(_response_done({'status': 'incomplete', 'status_details': {'reason': 'network'}}))
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('status_details', 'expected_error', 'provider_details'),
+    [
+        pytest.param(
+            {
+                'type': 'failed',
+                'error': {'type': 'invalid_request_error', 'code': 'input_image_safety_violation', 'message': 'No.'},
+            },
+            RealtimeSessionErrorEvent(message='No.', type='invalid_request_error', code='input_image_safety_violation'),
+            {
+                'status': 'failed',
+                'error': {'type': 'invalid_request_error', 'code': 'input_image_safety_violation', 'message': 'No.'},
+            },
+            id='message',
+        ),
+        pytest.param(
+            {'type': 'failed', 'error': {'type': 'server_error', 'code': 'oops'}},
+            RealtimeSessionErrorEvent(
+                message='{"code":"oops","type":"server_error"}', type='server_error', code='oops'
+            ),
+            {'status': 'failed', 'error': {'type': 'server_error', 'code': 'oops'}},
+            id='no-message',
+        ),
+        pytest.param(
+            None,
+            RealtimeSessionErrorEvent(message='The realtime response failed.'),
+            {'status': 'failed'},
+            id='no-details',
+        ),
+    ],
+)
+async def test_failed_response_emits_recoverable_error(
+    status_details: dict[str, Any] | None,
+    expected_error: RealtimeSessionErrorEvent,
+    provider_details: dict[str, Any],
+) -> None:
+    """OpenAI reports a failed response only inside `response.done`, so the connection surfaces it as an error."""
+    response: dict[str, Any] = {'id': 'resp-failed', 'status': 'failed', 'output': []}
+    if status_details is not None:
+        response['status_details'] = status_details
+    conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(_response_done(response))]))  # type: ignore[arg-type]
+
+    assert await collect_codec_events(conn) == [
+        expected_error,
+        ResponseDone(provider_response_id='resp-failed', finish_reason='error', provider_details=provider_details),
+    ]
 
 
 def test_map_conversation_item_without_identifiers_is_ignored() -> None:
@@ -1152,9 +1202,9 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
     assert reasoning('low') == {'effort': 'low'}
     assert reasoning('high') == {'effort': 'high'}
     assert reasoning(True) == {'effort': 'medium'}
-    # `thinking=False` maps to effort `'none'`, which the realtime `reasoning.effort` doesn't accept,
-    # so it's omitted (a reasoning model falls back to its default rather than erroring).
-    assert reasoning(False) is None
+    # `thinking=False` sends effort `'none'`, which the SDK type omits but the reasoning models accept
+    # and honor with zero reasoning tokens; omitting `reasoning` would leave them at their default effort.
+    assert reasoning(False) == {'effort': 'none'}
 
 
 def test_session_config_thinking_on_non_reasoning_model_is_ignored() -> None:
@@ -2143,7 +2193,9 @@ async def test_connection_send_text() -> None:
     await conn.send('hello')
     create = json.loads(ws.sent[0])
     assert create['item']['content'][0]['text'] == 'hello'
-    assert json.loads(ws.sent[1]) == {'type': 'response.create'}
+    # Both frames name the input they serve, so a refusal of either can be taken back.
+    assert create['event_id'] == 'pydantic_ai.content.0'
+    assert json.loads(ws.sent[1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
 
 
 @pytest.mark.anyio
@@ -2154,6 +2206,7 @@ async def test_connection_send_text_context() -> None:
     assert [json.loads(frame) for frame in ws.sent] == [
         {
             'type': 'conversation.item.create',
+            'event_id': 'pydantic_ai.content.0',
             'item': {
                 'type': 'message',
                 'role': 'user',
@@ -2170,7 +2223,7 @@ async def test_connection_send_tool_result_triggers_response() -> None:
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))
     item = json.loads(ws.sent[0])
     assert item['item'] == {'type': 'function_call_output', 'call_id': 'call_1', 'output': '42'}
-    assert json.loads(ws.sent[1]) == {'type': 'response.create'}
+    assert json.loads(ws.sent[1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
 
 
 @pytest.mark.anyio
@@ -2205,7 +2258,7 @@ async def test_connection_send_tool_result_with_follow_up_user_content() -> None
                 ],
             },
         },
-        {'type': 'response.create'},
+        {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'},
     ]
 
 
@@ -2263,7 +2316,7 @@ async def test_connection_send_create_response() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CreateResponse())
-    assert json.loads(ws.sent[0]) == {'type': 'response.create'}
+    assert json.loads(ws.sent[0]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
 
 
 @pytest.mark.anyio
@@ -3225,8 +3278,108 @@ async def test_response_done_settles_a_response_whose_id_was_never_announced() -
 
     await collect_codec_events(conn)
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
-    await conn._request_response()  # pyright: ignore[reportPrivateUsage]
-    assert ws.sent == ['{"type":"response.create"}']
+    await conn.send(CreateResponse())
+    assert ws.sent == ['{"type":"response.create","event_id":"pydantic_ai.response.0"}']
+
+
+def _refusal_frame(event_id: str | None) -> str:
+    return json.dumps(
+        {
+            'type': 'error',
+            'error': {
+                'type': 'invalid_request_error',
+                'code': 'invalid_value',
+                'message': 'Refused.',
+                'event_id': event_id,
+            },
+        }
+    )
+
+
+_REFUSAL = RealtimeSessionErrorEvent('Refused.', type='invalid_request_error', code='invalid_value')
+
+
+@pytest.mark.anyio
+async def test_refused_item_is_reported_ahead_of_its_error() -> None:
+    # OpenAI echoes the `event_id` of a client event it refuses. A refused item doesn't cancel the
+    # `response.create` sent after it (checked live), so the connection keeps waiting on that response.
+    ws = FakeWebSocket([_refusal_frame('pydantic_ai.content.0')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send('hello')
+    assert await collect_codec_events(conn) == [InputRejected(0, refused='content'), _REFUSAL]
+    assert conn._response_active  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_refused_response_request_releases_the_connection() -> None:
+    # The `response.created` that would have started the refused response never comes, and neither does
+    # the `response.done` that would release it, so the refusal is what lets the next request through.
+    ws = FakeWebSocket([_refusal_frame('pydantic_ai.response.0')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(CreateResponse())
+    await conn.send(CreateResponse())  # deferred behind the first
+    assert len(ws.sent) == 1
+
+    assert await collect_codec_events(conn) == [InputRejected(0, refused='response'), _REFUSAL]
+    assert json.loads(ws.sent[-1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.1'}
+    assert conn._response_request_inputs == (1,)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_refused_shared_response_request_reports_every_input_it_served() -> None:
+    # Requests deferred behind one response go out as a single `response.create`; its refusal leaves
+    # each of them without the response it asked for.
+    ws = FakeWebSocket(
+        [
+            json.dumps({'type': 'response.created', 'response': {'id': 'resp_1'}}),
+            json.dumps({'type': 'response.done', 'response': {'id': 'resp_1', 'status': 'completed', 'output': []}}),
+            _refusal_frame('pydantic_ai.response.1-2'),
+        ]
+    )
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    for _ in range(3):
+        await conn.send(CreateResponse())
+
+    events = await collect_codec_events(conn)
+    assert json.loads(ws.sent[-1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.1-2'}
+    assert events[-3:] == [InputRejected(1, refused='response'), InputRejected(2, refused='response'), _REFUSAL]
+    assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_refused_response_request_leaves_a_started_response_active() -> None:
+    # Refused because a response was already starting (server VAD beat the client to it): that response
+    # is under way and its own `response.done` releases the connection, not this refusal.
+    ws = FakeWebSocket(
+        [
+            json.dumps({'type': 'response.created', 'response': {'id': 'resp_vad'}}),
+            _refusal_frame('pydantic_ai.response.0'),
+        ]
+    )
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(CreateResponse())
+
+    events = await collect_codec_events(conn)
+    assert events[-2:] == [InputRejected(0, refused='response'), _REFUSAL]
+    assert conn._response_active  # pyright: ignore[reportPrivateUsage]
+    assert conn._active_response_id == 'resp_vad'  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    'event_id',
+    [
+        pytest.param(None, id='no-id'),
+        # xAI puts its own id here rather than echoing the client's.
+        pytest.param('2254b1be-daf3-41bf-8a72-d42d07a9e3b1', id='foreign-id'),
+    ],
+)
+@pytest.mark.anyio
+async def test_error_naming_no_input_of_ours_refuses_nothing(event_id: str | None) -> None:
+    ws = FakeWebSocket([_refusal_frame(event_id)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send('hello')
+    assert await collect_codec_events(conn) == [_REFUSAL]
+    assert conn._response_active  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
@@ -3244,8 +3397,8 @@ async def test_malformed_response_done_still_releases_the_response() -> None:
     assert [type(e).__name__ for e in events] == ['RealtimeSessionErrorEvent']
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
     # The session can speak again, rather than only ever deferring.
-    await conn._request_response()  # pyright: ignore[reportPrivateUsage]
-    assert ws.sent == ['{"type":"response.create"}']
+    await conn.send(CreateResponse())
+    assert ws.sent == ['{"type":"response.create","event_id":"pydantic_ai.response.0"}']
 
 
 @pytest.mark.anyio
@@ -4131,7 +4284,10 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     of the next frame's events for it to release.
     """
     done = json.dumps({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': []}})
-    ws = FakeWebSocket([done])
+    created = json.dumps(
+        {'type': 'response.created', 'response': {'id': 'resp-2', 'status': 'in_progress', 'output': []}}
+    )
+    ws = FakeWebSocket([done, created])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send('first')
     await conn.send('second')  # deferred behind the first response
@@ -4140,7 +4296,10 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     await conn.send(ToolResult(tool_call_id='call_2', output='43', respond=False))  # asks for nothing
 
     events = await collect_codec_events(conn)
-    assert events[0] == ResponseRequestsMerged(count=2)
+    # Reported once the shared response has started, not when the requests joined: a refused
+    # `response.create` takes back every request it carried instead.
+    assert [type(event).__name__ for event in events] == ['ResponseDone', 'ResponseRequestsMerged']
+    assert events[-1] == ResponseRequestsMerged(count=2)
     assert [json.loads(frame)['type'] for frame in ws.sent].count('response.create') == 2
 
 
@@ -4149,7 +4308,7 @@ class _QueuedWebSocket(FakeWebSocket):
 
     def __init__(self) -> None:
         super().__init__([])
-        self.frames: asyncio.Queue[str | None] = asyncio.Queue()
+        self.frames: asyncio.Queue[str] = asyncio.Queue()
         self.sent_changed = asyncio.Event()
 
     def push(self, frame: dict[str, Any]) -> None:
@@ -4166,8 +4325,8 @@ class _QueuedWebSocket(FakeWebSocket):
                 await self.sent_changed.wait()
 
     async def __aiter__(self) -> AsyncIterator[Any]:
-        while (frame := await self.frames.get()) is not None:
-            yield frame
+        while True:
+            yield await self.frames.get()
 
 
 def _response_frames(response_id: str, transcript: str) -> list[dict[str, Any]]:
@@ -4208,7 +4367,6 @@ async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for
         with anyio.fail_after(5):
             await session.wait_for_reply()
         assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
-        ws.frames.put_nowait(None)
 
     transcripts = [
         part.transcript
@@ -4282,7 +4440,6 @@ async def test_parallel_tool_calls_get_one_response_create() -> None:
             ws.push(frame)
         with anyio.fail_after(5):
             await session.wait_for_reply()
-        ws.frames.put_nowait(None)
 
     sent = [json.loads(frame) for frame in ws.sent]
     assert [frame['type'] for frame in sent[-2:]] == ['conversation.item.create', 'response.create']

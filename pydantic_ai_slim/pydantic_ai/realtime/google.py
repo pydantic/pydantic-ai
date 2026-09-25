@@ -1417,14 +1417,20 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         )
                     )
                 elif part.code_execution_result is not None:
-                    # The result always follows its `executable_code` part, so the id is set (mirrors the
-                    # classic streaming path's assertion).
-                    assert self._code_execution_tool_call_id is not None
+                    if self._code_execution_tool_call_id is None:
+                        # No code ran: native-audio models announce a Google Search with a bare
+                        # `code_execution_result` ("Looking up information on Google Search.") and no
+                        # `executable_code` before it (verified live). The search itself arrives as
+                        # grounding metadata, mapped below, so this status line has nothing to pair with.
+                        continue
                     native_tool_parts.append(
                         _map_code_execution_result(
                             part.code_execution_result, self._provider_name, self._code_execution_tool_call_id
                         )
                     )
+                    # Each `executable_code` has exactly one result, as the classic path assumes, so the
+                    # pairing ends here: a search status line later in the session must not pair with it.
+                    self._code_execution_tool_call_id = None
                 elif part.text and not part.thought:
                     # Skip thinking parts: native-audio models stream their reasoning as `thought`
                     # text alongside the spoken answer, and it must not leak into the transcript. A
@@ -1432,7 +1438,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # distinct from the spoken-audio transcription in `output_transcription` below, so it
                     # becomes a `TextPart` rather than a `SpeechPart`.
                     events.append(OutputTranscript(text=part.text, is_final=False, output_text=True))
-        if content.input_transcription is not None and content.input_transcription.text:
+        # Gemini 3.x models transcribe the user's speech even when the setup asks for no input
+        # transcription (verified live), so honor the setting here: with it off, the user's words must
+        # stay out of history.
+        if (
+            self._input_transcription_enabled
+            and content.input_transcription is not None
+            and content.input_transcription.text
+        ):
             events.append(
                 InputTranscript(
                     text=content.input_transcription.text, is_final=bool(content.input_transcription.finished)
