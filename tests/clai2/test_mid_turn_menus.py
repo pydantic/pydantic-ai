@@ -1,5 +1,6 @@
 """Menus opened while a turn streams: the run's output waits behind the menu, in order."""
 
+import asyncio
 import io
 import threading
 from collections.abc import AsyncGenerator, Generator, Sequence
@@ -112,6 +113,15 @@ class _MenuCommand(AbstractCapability[None]):
 async def test_menu_opened_mid_turn_holds_the_run_output_until_it_closes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    await _open_menu_mid_turn(tmp_path, monkeypatch)
+
+
+def test_menu_opens_mid_turn_on_a_plain_asyncio_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI uses `asyncio.run`, so key callbacks run with no task and no anyio backend marker."""
+    asyncio.run(_open_menu_mid_turn(tmp_path, monkeypatch))
+
+
+async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
     opened, close = threading.Event(), threading.Event()
     written: list[str] = []
@@ -159,7 +169,7 @@ async def test_menu_opened_mid_turn_holds_the_run_output_until_it_closes(
             pipe.send_text('start\n')
             await working.wait()
             pipe.send_text('/menu\n')
-            await in_worker(opened.wait)
+            assert await in_worker(opened.wait, 5)
             finish.set()
             await streamed.wait()
             assert 'Finished work' not in output.getvalue()
