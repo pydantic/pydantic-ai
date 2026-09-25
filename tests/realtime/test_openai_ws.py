@@ -524,6 +524,39 @@ async def test_dated_ga_snapshot_ignores_thinking(
     assert isinstance(events[-1], RealtimeTurnCompleteEvent)
 
 
+async def test_thinking_false_turns_reasoning_off(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`thinking=False` sends `reasoning.effort: 'none'`, which a reasoning model accepts and honors."""
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime-2.1-mini',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(thinking=False, output_modality='text'),
+    )
+
+    events: list[Any] = []
+    async with Agent(instructions='Answer with the number only.').realtime(model).session() as session:
+        await session.send(
+            'A bat and a ball cost 1.10 total; the bat costs 1 more than the ball. What does the ball cost?'
+        )
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    session_updates = sent_frames_containing(cassette, 'session.update')
+    assert len(session_updates) == 1
+    assert session_updates[0]['session']['reasoning'] == {'effort': 'none'}
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.usage.output_tokens > 0
+    # Left at its default effort, this model spends tens of reasoning tokens on this question.
+    assert 'reasoning_tokens' not in response.usage.details
+
+
 async def test_audio_in_server_vad_turn(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
