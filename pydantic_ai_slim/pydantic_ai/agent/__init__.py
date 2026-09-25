@@ -1961,6 +1961,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
             workspace=initial_ctx.workspace,
+            # `'new'` asked to leave the conversation's workspace, so its ref isn't carried forward.
+            carried_workspace_ref=None if workspace == 'new' else historical_workspace_ref,
             durable_operations=durable_operations,
             run_capabilities_by_id=run_capabilities_by_id,
             native_tools=cap_native_tools,
@@ -4291,7 +4293,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 None,
             )
             if message is not None and all(message is not original for original in initial_responses):
-                message.workspace_ref = graph_deps.workspace.ref
+                message.workspace_ref = graph_deps.workspace_ref
 
         pending_message_queue = state.pending_messages
         assert isinstance(pending_message_queue, _enqueue.PendingMessageQueue)

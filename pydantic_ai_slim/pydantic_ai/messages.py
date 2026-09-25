@@ -2886,8 +2886,9 @@ class ModelResponse:
     """Identity of the environment the run that produced this response worked in, if any.
 
     Set on the run's last response when the run ends, from the workspace's
-    [`ref`][pydantic_ai.workspaces.Workspace.ref] at that point: `None` when the run had no
-    workspace, or when its backend never created an environment because nothing used it. The most
+    [`ref`][pydantic_ai.workspaces.Workspace.ref] at that point, or `None` when its backend never
+    created an environment because nothing used it. A run with no attached workspace carries the
+    conversation's ref forward, unless it was started with `workspace='new'`. The most
     recent value in `message_history` is offered to `get_workspace` on the next run, so a
     continued conversation attaches to the same environment. Not sent to the model.
     """
