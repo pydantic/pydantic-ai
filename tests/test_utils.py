@@ -1011,7 +1011,7 @@ def test_merge_json_schema_defs_pattern_properties_property_names():
         },
         'properties': {
             'by_key': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/Key'}},
-            'by_pattern': {'type': 'object', 'patternProperties': {'^x_': {'$ref': '#/$defs/Value'}}},
+            'by_pattern': {'type': 'object', 'patternProperties': {'^x_': {'$ref': '#/$defs/Value'}, '^y_': True}},
         },
         'type': 'object',
         'title': 'SchemaB',
@@ -1024,7 +1024,10 @@ def test_merge_json_schema_defs_pattern_properties_property_names():
         {
             'properties': {
                 'by_key': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/SchemaB_Key_1'}},
-                'by_pattern': {'type': 'object', 'patternProperties': {'^x_': {'$ref': '#/$defs/SchemaB_Value_1'}}},
+                'by_pattern': {
+                    'type': 'object',
+                    'patternProperties': {'^x_': {'$ref': '#/$defs/SchemaB_Value_1'}, '^y_': True},
+                },
             },
             'type': 'object',
             'title': 'SchemaB',

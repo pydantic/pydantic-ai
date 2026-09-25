@@ -946,24 +946,20 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
         if keyword in s:
             props: dict[str, dict[str, Any]] = s[keyword]
             for prop in props.values():
-                _update_mapped_json_schema_refs(prop, name_mapping)
+                if isinstance(prop, dict):
+                    _update_mapped_json_schema_refs(prop, name_mapping)
 
-    # Handle arrays
-    if 'items' in s and isinstance(s['items'], dict):
-        items: dict[str, Any] = s['items']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(items, name_mapping)
+    # Handle single-subschema keywords: arrays, additionalProperties, propertyNames and negation
+    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not']:
+        subschema = s.get(keyword)
+        if isinstance(subschema, dict):
+            _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
+
+    # Handle prefixItems
     if 'prefixItems' in s:
         prefix_items: list[dict[str, Any]] = s['prefixItems']
         for item in prefix_items:
             _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle additionalProperties and propertyNames
-    if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
-        additional_props: dict[str, Any] = s['additionalProperties']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(additional_props, name_mapping)
-    if 'propertyNames' in s and isinstance(s['propertyNames'], dict):
-        property_names: dict[str, Any] = s['propertyNames']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(property_names, name_mapping)
 
     # Handle unions and composition keywords
     for keyword in ['anyOf', 'oneOf', 'allOf']:
@@ -971,11 +967,6 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             keyword_items: list[dict[str, Any]] = s[keyword]
             for item in keyword_items:
                 _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle negation
-    if 'not' in s and isinstance(s['not'], dict):
-        not_schema: dict[str, Any] = s['not']  # pyright: ignore[reportUnknownVariableType]
-        _update_mapped_json_schema_refs(not_schema, name_mapping)
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
