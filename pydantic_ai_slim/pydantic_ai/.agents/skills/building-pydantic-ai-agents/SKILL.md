@@ -294,7 +294,8 @@ Key facts for building realtime agents:
   `gemini-live-2.5-flash` half-cascade can opt in with `profile={'supports_text_output': True}`.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
-  stay attached to the user turn they describe even when they arrive after its response. A reported
+  stay attached to the user turn they describe even when they arrive after its response, and a turn
+  started while the model is still answering (barge-in) is recorded after that answer. A reported
   speech segment whose transcript never arrives remains represented by retained audio or a content-less
   `SpeechPart` when the session closes. Transcripts are what carry over; OpenAI and Azure can also
   replay retained transcript-less *user* audio, Gemini

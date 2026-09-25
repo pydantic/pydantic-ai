@@ -84,13 +84,15 @@ async def speak_continuously(
                 await anyio.sleep(FRAME_SECONDS)  # pragma: no cover  # only while recording
 
 
-def assert_conversation_invariants(session: RealtimeSession, keywords: Sequence[str]) -> None:
+def assert_conversation_invariants(session: RealtimeSession, keywords: Sequence[str | None]) -> None:
     """Check the history of a finished scripted conversation against what every provider must produce.
 
-    `keywords` holds a word from each utterance, in the order they were spoken.
+    `keywords` holds a word from each utterance, in the order they were spoken, or `None` for an
+    utterance spoken with input transcription off.
 
     - one user request per utterance, in speaking order, each with its whole transcript (never a lone
-      fragment, never blank), which is what containing its keyword checks;
+      fragment, never blank), which is what containing its keyword checks; an untranscribed utterance
+      has no transcript at all, so the check there is that no stray (silent) user turn was recorded;
     - requests and responses strictly alternate, from the first user turn to the final answer;
     - every tool call is answered by the request right after its response;
     - `session.usage.requests` counts every recorded `ModelResponse`;
@@ -111,7 +113,10 @@ def assert_conversation_invariants(session: RealtimeSession, keywords: Sequence[
     ]
     assert len(user_turns) == len(keywords), shape
     for turn, keyword in zip(user_turns, keywords):
-        assert turn.transcript and keyword in turn.transcript.lower(), shape
+        if keyword is None:
+            assert turn.transcript is None, shape
+        else:
+            assert turn.transcript and keyword in turn.transcript.lower(), shape
 
     for index, message in enumerate(messages):
         calls = [part.tool_call_id for part in message.parts if isinstance(part, ToolCallPart)]

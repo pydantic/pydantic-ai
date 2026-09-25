@@ -6,7 +6,7 @@ import asyncio
 import gc
 import io
 import wave
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from threading import Event as ThreadEvent
@@ -2866,22 +2866,39 @@ async def test_idless_late_transcript_does_not_merge_with_next_audio_turn() -> N
     )
 
 
-class _Microphone:
-    """Marks where a scripted connection's always-on microphone sends another (silent) frame."""
+class _UserAction:
+    """Marks where a scripted connection's user acts on the session, in between the provider's events."""
+
+    def __init__(self, act: Callable[[_RealtimeSession], Awaitable[None]]) -> None:
+        self.act = act
 
 
-_MIC = _Microphone()
+async def _send_microphone_frame(session: _RealtimeSession) -> None:
+    await session.send_audio(bytes(3200))
+
+
+async def _release_push_to_talk(session: _RealtimeSession) -> None:
+    await session.commit_audio()
+    await session.create_response()
+
+
+_MIC = _UserAction(_send_microphone_frame)
+"""The microphone sends another frame: speech, or the silence an always-on microphone streams between turns."""
+_RELEASE = _UserAction(_release_push_to_talk)
+"""The user lets go of the push-to-talk button: the buffered audio is committed and a response requested."""
 
 
 class _ContinuousMicrophoneConnection(FakeRealtimeConnection):
-    """An id-less (Gemini-shaped) connection whose script interleaves the user's microphone with its events.
+    """A connection whose script interleaves what the user does, their microphone above all, with its events.
 
     The microphone never stops, so a frame lands between most provider events, and each is sent only
     after the session has handled every event before it.
     """
 
-    def __init__(self, script: list[RealtimeCodecEvent | _Microphone]) -> None:
-        super().__init__([])
+    def __init__(
+        self, script: list[RealtimeCodecEvent | _UserAction], *, input_transcription_enabled: bool = True
+    ) -> None:
+        super().__init__([], input_transcription_enabled=input_transcription_enabled)
         self._script = script
         self.session: _RealtimeSession | None = None
         self._tool_result_sent = asyncio.Event()
@@ -2894,8 +2911,8 @@ class _ContinuousMicrophoneConnection(FakeRealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         assert self.session is not None
         for item in self._script:
-            if isinstance(item, _Microphone):
-                await self.session.send_audio(bytes(3200))
+            if isinstance(item, _UserAction):
+                await item.act(self.session)
                 continue
             yield item
             if isinstance(item, ToolCall):
@@ -3001,6 +3018,194 @@ async def test_idless_continuous_microphone_keeps_one_user_request_per_turn() ->
         ]
     )
     assert_conversation_invariants(session, ['alice', 'paris', 'remind'])
+
+
+async def test_push_to_talk_user_turn_precedes_its_answer_when_its_transcript_lags() -> None:
+    """A push-to-talk turn whose transcript lands after its answer is still recorded ahead of that answer.
+
+    With manual turn-taking nothing reports speech boundaries: the audio the user sent is the only sign
+    a turn began, and the transcript that names its item routinely arrives after `response.done`.
+    """
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _MIC,
+            _MIC,
+            _RELEASE,
+            InputTranscript(text='What is the capital of France?', is_final=True, item_id='u1'),
+            OutputTranscript(text='Paris.', is_final=True),
+            ResponseDone(),
+            _MIC,
+            _MIC,
+            _RELEASE,
+            OutputTranscript(text='Lima.', is_final=True),
+            ResponseDone(),
+            InputTranscript(text='And of Peru?', is_final=True, item_id='u2'),
+            _MIC,
+            _RELEASE,
+            InputTranscript(text='Remind me of the first one.', is_final=True, item_id='u3'),
+            OutputTranscript(text='Paris.', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert_conversation_invariants(session, ['france', 'peru', 'remind'])
+
+
+async def test_push_to_talk_turn_committed_while_the_model_answers_follows_that_answer() -> None:
+    """A turn recorded and committed while the previous answer is still streaming is filed after that answer.
+
+    Audio sent while the model answers reserves no place in history, so the commit that ends the turn is
+    what places it.
+    """
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _MIC,
+            _RELEASE,
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Paris.'),
+            _MIC,
+            _RELEASE,
+            ResponseDone(),
+            InputTranscript(text='What is the capital of France?', is_final=True, item_id='u1'),
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='Lima.'),
+            ResponseDone(),
+            InputTranscript(text='And of Peru?', is_final=True, item_id='u2'),
+        ]
+    )
+    session = RealtimeSession(conn)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert_conversation_invariants(session, ['france', 'peru'])
+
+
+@pytest.mark.parametrize(
+    'interrupted_turn',
+    [
+        pytest.param(
+            [
+                RealtimeInputSpeechStartEvent(item_id='u2'),
+                ResponseDone(interrupted=True),
+                _MIC,
+                RealtimeInputSpeechEndEvent(item_id='u2'),
+                InputTranscript(text='Stop, what is two plus two?', is_final=True, item_id='u2'),
+            ],
+            id='cancelled-before-transcript',
+        ),
+        pytest.param(
+            [
+                RealtimeInputSpeechStartEvent(item_id='u2'),
+                _MIC,
+                RealtimeInputSpeechEndEvent(item_id='u2'),
+                InputTranscript(text='Stop, what is two plus two?', is_final=True, item_id='u2'),
+                ResponseDone(interrupted=True),
+            ],
+            id='transcript-before-cancelled',
+        ),
+        pytest.param(
+            [
+                RealtimeInputSpeechStartEvent(item_id='u2'),
+                _MIC,
+                RealtimeInputSpeechEndEvent(item_id='u2'),
+                InputTranscript(text='Stop, what is', item_id='u2'),
+                ResponseDone(interrupted=True),
+                InputTranscript(text='Stop, what is two plus two?', is_final=True, item_id='u2', cumulative=True),
+            ],
+            id='transcript-streaming-across-cancelled',
+        ),
+    ],
+)
+async def test_barge_in_user_turn_follows_the_response_it_interrupted(
+    interrupted_turn: list[RealtimeCodecEvent | _UserAction],
+) -> None:
+    """Speech that starts while the model is still answering is filed after that answer, not before it."""
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _MIC,
+            RealtimeInputSpeechStartEvent(item_id='u1'),
+            _MIC,
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            InputTranscript(text='Tell me a story.', is_final=True, item_id='u1'),
+            AudioDelta(data=b'\x01\x00'),
+            _MIC,
+            OutputTranscript(text='Once upon a time'),
+            _MIC,
+            *interrupted_turn,
+            AudioDelta(data=b'\x01\x00'),
+            _MIC,
+            OutputTranscript(text='Four.', is_final=True),
+            ResponseDone(),
+            _MIC,
+        ]
+    )
+    session = RealtimeSession(conn)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert_conversation_invariants(session, ['story', 'two'])
+    assert [message.state for message in session.all_messages() if isinstance(message, ModelResponse)] == [
+        'interrupted',
+        'complete',
+    ]
+
+
+@pytest.mark.parametrize('audio_retention', ['transcript_only', 'input_audio'])
+async def test_untranscribed_continuous_microphone_records_one_user_turn_per_utterance(
+    audio_retention: Literal['transcript_only', 'input_audio'],
+) -> None:
+    """Without input transcription, the silence an always-on microphone streams between turns is no turn.
+
+    The provider's speech boundaries delimit each utterance; neither the audio sent while the model
+    answers nor the trailing audio at close becomes a user turn of its own.
+    """
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _MIC,
+            RealtimeInputSpeechStartEvent(item_id='u1'),
+            _MIC,
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            _MIC,
+            AudioDelta(data=b'\x01\x00'),
+            _MIC,
+            OutputTranscript(text='Hello Alice.', is_final=True),
+            ResponseDone(),
+            _MIC,
+            _MIC,
+            RealtimeInputSpeechStartEvent(item_id='u2'),
+            _MIC,
+            RealtimeInputSpeechEndEvent(item_id='u2'),
+            _MIC,
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='It is foggy in Paris.', is_final=True),
+            ResponseDone(),
+            _MIC,
+        ],
+        input_transcription_enabled=False,
+    )
+    session = RealtimeSession(conn, audio_retention=audio_retention)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert_conversation_invariants(session, [None, None])
+
+
+async def test_empty_push_to_talk_commit_without_transcription_records_no_user_turn() -> None:
+    """Committing an empty input buffer is no user turn, even with no transcript to wait for."""
+    session = RealtimeSession(FakeRealtimeConnection([], input_transcription_enabled=False))
+    async with session:
+        await session.commit_audio()
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await drain_events(session)
+
+    assert session.all_messages() == []
 
 
 async def test_tool_response_finalized_on_usage_is_not_duplicated_at_terminal() -> None:
@@ -6106,6 +6311,7 @@ async def test_manual_contentless_user_turn_without_transcription() -> None:
     conn = FakeRealtimeConnection([], input_transcription_enabled=False)
     session = RealtimeSession(conn, _noop_runner)
 
+    await session.send_audio(b'\x00\x01')
     await session.commit_audio()
     events = await collect_events(session)
 
