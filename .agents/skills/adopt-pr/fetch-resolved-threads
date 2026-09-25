@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo 'Usage: fetch-resolved-threads <pr-number> [owner/repo]' >&2
+    exit 1
+}
+
+[[ $# -ge 1 && $# -le 2 ]] || usage
+
+PR_NUMBER="$1"
+REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+OWNER="${REPO%%/*}"
+NAME="${REPO##*/}"
+
+if [[ -z "$OWNER" || -z "$NAME" || "$OWNER" == "$NAME" ]]; then
+    echo "error: expected repository as owner/name, got: $REPO" >&2
+    exit 1
+fi
+
+THREAD_QUERY='query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          isResolved
+        }
+      }
+    }
+  }
+}'
+
+COMMENT_QUERY='query($thread: ID!, $cursor: String) {
+  node(id: $thread) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          databaseId
+          body
+          url
+          createdAt
+          author { login }
+          replyTo { databaseId }
+        }
+      }
+    }
+  }
+}'
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+cursor=''
+page=0
+while true; do
+    page=$((page + 1))
+    output="$TMP_DIR/page-$page.json"
+
+    args=(graphql -f "query=$THREAD_QUERY" -f "owner=$OWNER" -f "name=$NAME" -F "number=$PR_NUMBER")
+    if [[ -n "$cursor" ]]; then
+        args+=(-f "cursor=$cursor")
+    fi
+    gh api "${args[@]}" > "$output"
+
+    has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' "$output")"
+    [[ "$has_next" == 'true' ]] || break
+    cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' "$output")"
+done
+
+result_files=()
+thread_index=0
+while IFS= read -r thread_id; do
+    thread_index=$((thread_index + 1))
+    comment_cursor=''
+    comment_page=0
+    comment_files=()
+
+    while true; do
+        comment_page=$((comment_page + 1))
+        comment_output="$TMP_DIR/thread-$thread_index-page-$comment_page.json"
+        comment_args=(graphql -f "query=$COMMENT_QUERY" -f "thread=$thread_id")
+        if [[ -n "$comment_cursor" ]]; then
+            comment_args+=(-f "cursor=$comment_cursor")
+        fi
+        gh api "${comment_args[@]}" > "$comment_output"
+        comment_files+=("$comment_output")
+
+        comments_next="$(jq -r '.data.node.comments.pageInfo.hasNextPage' "$comment_output")"
+        [[ "$comments_next" == 'true' ]] || break
+        comment_cursor="$(jq -r '.data.node.comments.pageInfo.endCursor' "$comment_output")"
+    done
+
+    result="$TMP_DIR/result-$thread_index.json"
+    jq -s --arg id "$thread_id" '{
+      id: $id,
+      comments: [.[].data.node.comments.nodes[] | {
+        id: .databaseId,
+        author: .author.login,
+        body,
+        url,
+        created_at: .createdAt,
+        in_reply_to_id: .replyTo.databaseId
+      }]
+    }' "${comment_files[@]}" > "$result"
+    result_files+=("$result")
+done < <(jq -rs '.[] | .data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved) | .id' "$TMP_DIR"/page-*.json)
+
+if [[ ${#result_files[@]} -eq 0 ]]; then
+    echo '[]'
+else
+    jq -s '.' "${result_files[@]}"
+fi

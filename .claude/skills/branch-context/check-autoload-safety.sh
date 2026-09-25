@@ -1,0 +1,1 @@
+../../../.agents/skills/branch-context/check-autoload-safety.sh
