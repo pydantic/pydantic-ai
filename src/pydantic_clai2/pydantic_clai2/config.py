@@ -1,6 +1,6 @@
 """Validated settings, independent of persistence and terminal code."""
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from .theme import names
 
@@ -96,6 +96,9 @@ def resolve_settings(overrides: dict[str, JsonValue]) -> Settings:
     return Settings.model_validate({SETTING_FIELDS[key]: value for key, value in overrides.items()})
 
 
+_CODER_FACTORY = 'pydantic_ai_harness.coder:Coder'
+
+
 class PluginSettings(BaseModel):
     """Declaration for a trusted plugin: a module with `activate`, or `module:Capability`."""
 
@@ -105,3 +108,14 @@ class PluginSettings(BaseModel):
     path: str | None = None
     enabled: bool = True
     settings: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @model_validator(mode='after')
+    def _coder_without_delegation(self) -> 'PluginSettings':
+        """Turn `Coder`'s delegation off unless a declaration asks for it.
+
+        CLAI passes plugins to each run, and `Coder`'s delegation needs `Coder` bound to the agent,
+        so it raises otherwise. Declarations saved before `sub_agents` existed do not set it.
+        """
+        if self.factory != _CODER_FACTORY or 'sub_agents' in self.settings:
+            return self
+        return self.model_copy(update={'settings': {**self.settings, 'sub_agents': False}})

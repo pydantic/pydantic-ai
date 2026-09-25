@@ -14,6 +14,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, MAX_FOREGROUND_WAIT, Shell
+from pydantic_ai_harness.subagents import SubAgents
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'list_files', 'grep')
@@ -45,12 +46,18 @@ def _file_system(workspace: Path, *, unrestricted: bool) -> FileSystem[AgentDeps
 
 
 class Coder(CombinedCapability[AgentDepsT]):
-    """Autonomous local coding with six tools and context management.
+    """Autonomous local coding with six tools, delegation, and context management.
 
     Commands are unrestricted and can outlive runs. Use an OS sandbox for
     untrusted work. Additional instructions supplement the default guidance.
     `repo_context=False` leaves out the bundled `RepoContext`, for hosts that
     bind their own and would otherwise load the instruction files twice.
+
+    `sub_agents=True` adds `delegate_task`, which hands a self-contained sub-task
+    to a fresh run of the same agent `Coder` is bound to, so the delegate has
+    everything the agent has, including capabilities bound next to `Coder`.
+    That requires binding `Coder` with `Agent(capabilities=[...])` rather than
+    passing it to `run()`. `sub_agents=False` leaves delegation out.
     """
 
     def __init__(
@@ -60,6 +67,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         instructions: str | None = None,
         unrestricted_filesystem: bool = False,
         repo_context: bool = True,
+        sub_agents: bool = True,
     ) -> None:
         root = Path(workspace).resolve()
         capabilities: list[AbstractCapability[AgentDepsT]] = [
@@ -76,6 +84,8 @@ class Coder(CombinedCapability[AgentDepsT]):
         ]
         if repo_context:
             capabilities.append(RepoContext[AgentDepsT](workspace_dir=root, expose_inventory_tool=False))
+        if sub_agents:
+            capabilities.append(SubAgents[AgentDepsT](include_self=True, agent_folders=None))
         capabilities += [
             ClearToolResults[AgentDepsT](max_fraction=0.7),
             WarnNearLimits[AgentDepsT](max_context_fraction=0.9),

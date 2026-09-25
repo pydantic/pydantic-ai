@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,11 +15,13 @@ from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, Usage
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -812,3 +815,180 @@ class TestNameValidation:
         nameless = Agent(TestModel())
         capability = SubAgents(agents=[SubAgent(nameless, name='worker')])
         assert 'worker' in capability._by_name
+
+
+def _prompt(messages: list[ModelMessage]) -> str:
+    """The prompt the current run started from, which tells a shared model function which run it is serving."""
+    part = messages[0].parts[-1]
+    assert isinstance(part, UserPromptPart)
+    return str(part.content)
+
+
+def _delegate_to_self(task: str) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': task})])
+
+
+class TestIncludeSelf:
+    def test_listed_and_exposed_without_a_roster(self) -> None:
+        capability = SubAgents[None](include_self=True, agent_folders=None)
+        assert '- self: A fresh run of this same agent' in str(capability.get_instructions())
+        assert capability.get_toolset() is not None
+
+    async def test_delegates_to_the_running_agent(self) -> None:
+        """The delegate is the running agent: its own tools, and the parent run's model."""
+        offered: dict[str, list[str]] = {}
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prompt = _prompt(messages)
+            offered.setdefault(prompt, [tool.name for tool in info.function_tools])
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart(f'{prompt} done')])
+            if prompt == 'go':
+                return _delegate_to_self('subtask')
+            return ModelResponse(parts=[ToolCallPart('parent_tool', {})])
+
+        # `inherit_tools=True` would register the parent's tools a second time on a delegate
+        # that already has them, which fails on the duplicate name; it does not apply to `self`.
+        agent = Agent(capabilities=[SubAgents(include_self=True, agent_folders=None, inherit_tools=True)])
+
+        @agent.tool_plain
+        def parent_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'PT'
+
+        result = await agent.run('go', model=FunctionModel(model_fn))
+        assert result.output == 'go done'
+        assert _delegate_returns(result) == ['subtask done']
+        assert offered == {'go': ['parent_tool', 'delegate_task'], 'subtask': ['parent_tool', 'delegate_task']}
+
+    async def test_depth_is_capped(self) -> None:
+        """A run at `max_depth` gets neither the delegate tool nor the listing, so it does the work itself."""
+        seen: dict[str, tuple[list[str], bool]] = {}
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prompt = _prompt(messages)
+            instructions = str(messages[0].instructions) if isinstance(messages[0], ModelRequest) else ''
+            seen.setdefault(
+                prompt, ([tool.name for tool in info.function_tools], 'Available sub-agents' in instructions)
+            )
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart(f'{prompt} done')])
+            if 'delegate_task' in [tool.name for tool in info.function_tools]:
+                return _delegate_to_self(f'level {len(seen) + 1}')
+            return ModelResponse(parts=[TextPart(f'{prompt} done')])
+
+        agent = Agent(
+            FunctionModel(model_fn), capabilities=[SubAgents(include_self=True, max_depth=2, agent_folders=None)]
+        )
+        result = await agent.run('level 1')
+        assert result.output == 'level 1 done'
+        assert _delegate_returns(result) == ['level 2 done']
+        assert seen == {'level 1': (['delegate_task'], True), 'level 2': ([], False)}
+
+    async def test_directly_registered_toolset_hides_the_tool_at_max_depth(self) -> None:
+        offered: list[list[str]] = []
+
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            offered.append([tool.name for tool in info.function_tools])
+            return ModelResponse(parts=[TextPart('w')])
+
+        worker: Agent[object, str] = Agent(FunctionModel(worker_fn), name='worker')
+        toolset = SubAgentToolset[object](
+            agents={'worker': SubAgent(worker)},
+            forward_usage=True,
+            inherit_tools=False,
+            shared_capabilities=(),
+            event_stream_handler=None,
+            tool_name='delegate_task',
+            tool_retries=2,
+            contain_errors=False,
+            call_counts={},
+            max_depth=2,
+        )
+        worker_with_toolset = Agent(FunctionModel(worker_fn), name='nested', toolsets=[toolset])
+        parent = Agent(
+            _delegate_then_finish('nested'),
+            capabilities=[SubAgents(agents=[SubAgent(worker_with_toolset)], agent_folders=None)],
+        )
+        await parent.run('go')
+        assert offered == [[]]
+
+    async def test_depth_is_restored_after_a_delegation(self) -> None:
+        """Consecutive delegations each start one level down, rather than one level below the last."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if _prompt(messages) != 'go':
+                return ModelResponse(parts=[TextPart('ran')])
+            if len(messages) < 5:
+                return _delegate_to_self('subtask')
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model_fn), capabilities=[SubAgents(include_self=True, max_depth=2, agent_folders=None)]
+        )
+        result = await agent.run('go')
+        assert _delegate_returns(result) == ['ran', 'ran']
+
+    async def test_passing_it_to_run_is_refused(self) -> None:
+        agent = Agent(TestModel(call_tools=[]))
+        with pytest.raises(UserError, match='only carries what is bound to the `Agent`'):
+            await agent.run('go', capabilities=[SubAgents(include_self=True, agent_folders=None)])
+
+    async def test_a_different_bound_one_does_not_stand_in(self) -> None:
+        """A run-level `SubAgents` overrides the agent's, so the agent's is not what the delegate would get."""
+        agent = Agent(TestModel(call_tools=[]), capabilities=[SubAgents(include_self=True, agent_folders=None)])
+        with pytest.raises(UserError, match='only carries what is bound to the `Agent`'):
+            await agent.run('go', capabilities=[SubAgents(include_self=True, agent_folders=None, max_depth=2)])
+
+    async def test_an_explicit_delegate_that_is_the_running_agent_keeps_its_own_model(self) -> None:
+        """Only the reserved `self` entry runs on the parent run's model; listing the agent by hand does not."""
+        runs: list[str] = []
+
+        def own_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            runs.append(_prompt(messages))
+            return ModelResponse(parts=[TextPart('own')])
+
+        agent = Agent(FunctionModel(own_model), name='worker')
+        await agent.run(
+            'go',
+            model=_delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents=[SubAgent(agent)], agent_folders=None)],
+        )
+        assert runs == ['do it']
+
+    async def test_unknown_name_lists_self(self) -> None:
+        worker = Agent(TestModel(custom_output_text='w'), name='worker')
+        agent = Agent(
+            _delegate_then_finish('worker', retries_before=1),
+            capabilities=[SubAgents(agents=[SubAgent(worker)], include_self=True, agent_folders=None)],
+        )
+        result = await agent.run('go')
+        retries = [
+            str(part.content)
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        assert retries == ["Unknown sub-agent 'ghost'. Available sub-agents: self, worker."]
+
+    def test_self_name_is_reserved(self) -> None:
+        with pytest.raises(ValueError, match="Sub-agent name 'self' is taken by the running agent"):
+            SubAgents(agents=[SubAgent(Agent(TestModel(), name='self'))], include_self=True)
+
+    def test_disk_agent_named_self_is_shadowed(self, tmp_path: Path) -> None:
+        (tmp_path / 'self.md').write_text('---\nname: self\n---\n\nBody.\n', encoding='utf-8')
+        with pytest.warns(UserWarning, match="Disk sub-agent 'self' is shadowed"):
+            capability = SubAgents[None](include_self=True, agent_folders=[tmp_path])
+        assert capability._by_name == {}  # pyright: ignore[reportPrivateUsage]
+
+    def test_max_depth_counts_the_top_level_run(self) -> None:
+        with pytest.raises(ValueError, match='must be at least 1; got 0'):
+            SubAgents[None](max_depth=0)
+
+    def test_combining_keeps_self(self) -> None:
+        worker = Agent(TestModel(), name='worker')
+        merged = SubAgents.combine(
+            [SubAgents(agents=[SubAgent(worker)], agent_folders=None), SubAgents(include_self=True, agent_folders=None)]
+        )
+        assert isinstance(merged, SubAgents)
+        assert merged.include_self
+        assert '- self: ' in str(merged.get_instructions())

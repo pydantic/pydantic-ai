@@ -76,6 +76,10 @@ checkout path. For the six-tool Coder, select a release containing
 Until that code is released, this release-pinned recipe cannot benchmark it.
 Record which Coder generation you used when comparing scores.
 
+Later releases add `delegate_task` by default, so a run on one of those measures a
+different composition. Pass `sub_agents=False` as an agent kwarg to compare against the
+six-tool generation.
+
 Install the matching `[coder]` extra via `pip_packages` so the agent venv also
 gets ripgrep. Omit `allowed_commands`: current Coder has no command allowlist,
 and the older adapter's override path rebuilds the agent with legacy options.

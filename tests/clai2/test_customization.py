@@ -62,7 +62,7 @@ async def test_instruction_order_puts_the_hint_between_guidance_and_repository(t
     agent = create_agent()
     model = TestModel(call_tools=[], custom_output_text='hello')
     capabilities: list[AgentCapability[None]] = [
-        Coder(workspace=tmp_path, unrestricted_filesystem=True, repo_context=False),
+        Coder(workspace=tmp_path, unrestricted_filesystem=True, repo_context=False, sub_agents=False),
         AskUser(answerer=decline),
         RepoContext(workspace_dir=tmp_path, expose_inventory_tool=False),
     ]
@@ -85,7 +85,7 @@ async def test_hint_still_follows_the_coding_guidance_without_ask_user(tmp_path:
     agent = create_agent()
     model = TestModel(call_tools=[], custom_output_text='hello')
     capabilities: list[AgentCapability[None]] = [
-        Coder(workspace=tmp_path, unrestricted_filesystem=True, repo_context=False),
+        Coder(workspace=tmp_path, unrestricted_filesystem=True, repo_context=False, sub_agents=False),
         RepoContext(workspace_dir=tmp_path, expose_inventory_tool=False),
     ]
     with agent.override(model=model):

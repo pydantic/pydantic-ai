@@ -49,6 +49,25 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
 - **Sub-agent events can be streamed.** Pass an `event_stream_handler` and it's forwarded to each sub-agent run, so the sub-agent's model-streaming and tool events surface to the caller (the handler receives the sub-agent's own `RunContext`).
 
+## Delegating to the agent itself
+
+With `include_self=True`, the roster also lists the running agent itself, as `self`. A delegation to `self` starts a fresh run of that agent (`RunContext.agent`) on the parent run's model (or the `models` option the parent picks), with no parent conversation. Because the child is the same `Agent`, it has every capability, toolset, and instruction bound to it, and they register again in the child run: a guardrail, approval gate, or audit hook bound next to `SubAgents` sees the tool calls the delegate makes, not only the `delegate_task` call. This is what [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) uses by default.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import SubAgents
+
+agent = Agent(
+    'anthropic:claude-opus-4-7',
+    capabilities=[SubAgents(include_self=True, agent_folders=None)],
+)
+```
+
+- **Only what is bound to the `Agent` carries over.** Capabilities, toolsets, instructions, and model settings passed to the parent's `run()` are not part of the agent, so the delegate does not get them. Passing `SubAgents(include_self=True)` itself to `run()` raises a `UserError` when the run starts, since the delegate would come up without it.
+- **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
+- **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()`.
+- `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
+
 ## Per-delegate run controls
 
 Each `SubAgent` carries its own budgets, so one delegate's controls do not touch the others. A `SubAgent` with no controls set runs with the `SubAgents` defaults.
@@ -266,6 +285,8 @@ SubAgents(
     tool_name='delegate_task',
     tool_retries=2,        # extra delegate-tool attempts after a sub-agent error before aborting (None inherits the agent default)
     contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
+    include_self=False,    # also list the running agent itself as the delegate `self`
+    max_depth=3,           # delegation levels, counting the top-level run
 )
 ```
 
@@ -287,7 +308,7 @@ SubAgent(
 
 ## Notes
 
-- Sub-agents can themselves have `SubAgents`, forming a tree. Share `usage` (the default) and set a `usage_limits` on the top-level run to bound the whole tree.
+- Sub-agents can themselves have `SubAgents`, forming a tree. Each `SubAgents` stops offering delegation once the run is at its own `max_depth`, so a delegate with a higher limit can go deeper than its parent's. Share `usage` (the default) and set a `usage_limits` on the top-level run to bound the whole tree.
 - Delegations the model issues in parallel run as independent sub-agent runs.
 
 ## Further reading

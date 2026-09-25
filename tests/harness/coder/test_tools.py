@@ -1,12 +1,17 @@
 """Coder's tool surface as the model sees it; the tools themselves are tested with `FileSystem` and `Shell`."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext, ToolDefinition
 
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
@@ -15,6 +20,30 @@ from .._recording_durability import RecordingDurability
 from .._tool_calls import call_tool
 
 pytestmark = pytest.mark.anyio
+
+
+@dataclass
+class _ToolLog(AbstractCapability[object]):
+    """A host capability bound next to `Coder`, recording every tool call it sees."""
+
+    seen: list[str] = field(default_factory=list[str])
+
+    async def before_tool_execute(
+        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        self.seen.append(call.tool_name)
+        return args
+
+
+def _delegate_a_command(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """The parent run delegates, the delegate runs one command, and both then finish."""
+    first = messages[0].parts[-1]
+    prompt = first.content if isinstance(first, UserPromptPart) else None
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    if prompt == 'Delegate it':
+        return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'Run it'})])
+    return ModelResponse(parts=[ToolCallPart('shell', {'command': 'echo delegated'})])
 
 
 async def call(
@@ -58,10 +87,32 @@ class TestCoder:
         await Agent(model, capabilities=[Coder(tmp_path)]).run('Inspect tools')
         assert model.last_model_request_parameters is not None
         tools = {tool.name: tool for tool in model.last_model_request_parameters.function_tools}
-        assert list(tools) == ['read_file', 'write_file', 'edit_file', 'list_files', 'grep', 'shell']
+        assert list(tools) == ['read_file', 'write_file', 'edit_file', 'list_files', 'grep', 'shell', 'delegate_task']
         assert 'expected_hash' not in str(tools)
         assert 'replacements' in tools['edit_file'].parameters_json_schema['properties']
         assert tools['shell'].parameters_json_schema['properties']['mode']['enum'] == ['foreground', 'background']
+
+    async def test_sub_agents_can_be_left_out(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[Coder(tmp_path, sub_agents=False)]).run('Inspect tools')
+        assert model.last_model_request_parameters is not None
+        tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
+        assert tools == ['read_file', 'write_file', 'edit_file', 'list_files', 'grep', 'shell']
+
+    async def test_the_delegate_carries_capabilities_bound_next_to_coder(self, tmp_path: Path) -> None:
+        """The delegate is the agent `Coder` is bound to, so a host hook sees the commands it runs."""
+        log = _ToolLog()
+        capabilities: list[AbstractCapability[object]] = [Coder(tmp_path, repo_context=False), log]
+        agent = Agent(FunctionModel(_delegate_a_command), capabilities=capabilities)
+        assert (await agent.run('Delegate it')).output == 'done'
+        assert log.seen == ['delegate_task', 'shell']
+
+    async def test_passing_coder_to_run_is_refused(self, tmp_path: Path) -> None:
+        agent = Agent(TestModel(call_tools=[]))
+        with pytest.raises(UserError, match='only carries what is bound to the `Agent`'):
+            await agent.run('Inspect tools', capabilities=[Coder(tmp_path)])
+        result = await agent.run('Inspect tools', capabilities=[Coder(tmp_path, sub_agents=False)])
+        assert result.output == 'success (no tool calls)'
 
     @pytest.mark.parametrize('extra_instructions', [None, '', 'Keep new files under 400 lines.'])
     async def test_instructions(self, tmp_path: Path, extra_instructions: str | None) -> None:

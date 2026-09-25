@@ -87,7 +87,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(
         id='coder',
         factory='pydantic_ai_harness.coder:Coder',
-        settings={'unrestricted_filesystem': True, 'repo_context': False},
+        settings={'unrestricted_filesystem': True, 'repo_context': False, 'sub_agents': False},
     ),
     PluginSettings(id='ask_user', factory='pydantic_clai2.ask_user_menu:activate'),
     PluginSettings(id='repo_context', factory='pydantic_clai2.repo_context'),

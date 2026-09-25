@@ -1,6 +1,6 @@
 ---
 title: Coder
-description: "Build a coding agent with Pydantic AI Harness: Coder gives any model read, write, edit, grep, and shell tools plus repo instructions and context management."
+description: "Build a coding agent with Pydantic AI Harness: Coder gives any model read, write, edit, grep, and shell tools, delegation to a fresh run of itself, plus repo instructions and context management."
 goal: >-
   Show that Coder is an assembly of linked, individually usable capabilities. The composition
   list is the point of this page: keep every component hyperlinked to its own page, and keep this
@@ -10,7 +10,7 @@ goal: >-
 # Coder
 
 `Coder` gives a Pydantic AI agent tools and guidance for investigating, editing, and testing a local codebase.
-It is a regular combined capability made from [`FileSystem`](filesystem.md), [`Shell`](shell.md), [`RepoContext`](repo-context.md), and the [context management](compaction.md) capabilities, so you can use it whole or take it apart.
+It is a regular combined capability made from [`FileSystem`](filesystem.md), [`Shell`](shell.md), [`RepoContext`](repo-context.md), [`SubAgents`](subagents.md), and the [context management](compaction.md) capabilities, so you can use it whole or take it apart.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
@@ -63,20 +63,22 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
 4. [`RepoContext`](repo-context.md)`(workspace_dir=workspace, expose_inventory_tool=False)` for repository instructions and structure.
    Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
    instruction files are not loaded twice.
+5. [`SubAgents`](subagents.md)`(include_self=True, agent_folders=None)`, so the agent can hand a self-contained
+   sub-task to a fresh run of itself (see below). Pass `sub_agents=False` to leave it out.
 
 Then the plumbing, which the agent never calls directly:
 
-5. [`ClearToolResults`](compaction.md)`(max_fraction=0.7)` and [`WarnNearLimits`](compaction.md)`(max_context_fraction=0.9)`.
-6. A private [`ToolOutputLimits`](tool-output-limits.md) specialization that truncates any tool result over 64,000 characters
+6. [`ClearToolResults`](compaction.md)`(max_fraction=0.7)` and [`WarnNearLimits`](compaction.md)`(max_context_fraction=0.9)`.
+7. A private [`ToolOutputLimits`](tool-output-limits.md) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
-7. [`RepairToolArguments`](repair-tool-arguments.md) repairs malformed JSON tool arguments before normal validation (see below).
+8. [`RepairToolArguments`](repair-tool-arguments.md) repairs malformed JSON tool arguments before normal validation (see below).
 
-Every tool comes from `FileSystem` or `Shell`; those pages document each one in full. Build the same
+Every tool comes from `FileSystem`, `Shell`, or `SubAgents`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,
 or allowlist commands.
 
-## Six tools
+## Tools
 
 | Tool | Behavior |
 | --- | --- |
@@ -86,12 +88,28 @@ or allowlist commands.
 | `list_files(path='.', glob=None)` | `rg --files`, sorted by path, respecting ignore files and skipping hidden files. |
 | `grep(pattern, ...)` | Ripgrep search with `path`, `glob`, `file_type`, `ignore_case`, `literal`, and `context` (0 to 20). |
 | `shell(command, mode='foreground', timeout=270)` | Unrestricted commands rooted at the workspace that outlive the run. |
+| `delegate_task(agent_name, task)` | Hand a self-contained sub-task to `self`, a fresh run of this agent. Present unless `sub_agents=False`. |
 
 Results are bounded by `FileSystem`'s caps (2,000 lines or 60,000 characters per `read_file`, 1,000 lines or files per search or listing) and Coder's 64,000-character
 tool-output limit; a truncation marker means more output was omitted, so narrow the search rather than
 assuming it was complete. A `read_file` window stays under the output limit, so paging by `offset` never skips lines. Use `shell` for `mkdir`, `find`, process inspection, and `kill`. File writes
 keep the standalone filesystem's protected-path rules (`.git`, `.env`, keys, and secrets); shell can bypass
-these rules. Coder does not include planning, delegation, or the run-scoped `run_command` family.
+these rules. Coder does not include planning or the run-scoped `run_command` family.
+
+## Sub-agents
+
+With `sub_agents=True` (the default), `Coder` adds [`SubAgents`](subagents.md)`(include_self=True, agent_folders=None)`,
+which gives the agent `delegate_task` and one delegate, `self`: a fresh run of the same agent `Coder` is bound
+to. The delegate starts without this conversation, so the agent passes it everything it needs, and it has
+everything the agent has -- the same model, workspace, instructions, and capabilities, including an approval
+gate, guardrail, or audit hook bound next to `Coder`, so those see the commands a delegate runs too. A
+delegate can delegate in turn, up to three levels counting the top-level run (`SubAgents.max_depth`).
+
+Only what is bound to the `Agent` carries over to a delegate; capabilities, toolsets, instructions, and model
+settings passed to `run()` do not. So bind `Coder` with `Agent(capabilities=[...])`: passing it to `run()`
+raises a `UserError` unless you also pass `sub_agents=False`. Disk agent definitions are not loaded. Pass
+`sub_agents=False` to drop `delegate_task`, or compose [`SubAgents`](subagents.md) yourself for a different roster,
+per-delegate budgets, or a model menu.
 
 ## Filesystem scope
 

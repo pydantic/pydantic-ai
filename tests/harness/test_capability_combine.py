@@ -646,7 +646,11 @@ def _child(name: str) -> Agent[Any, str]:
     reason='`Researcher` needs the `researcher` optional group.',
 )
 async def test_coder_and_researcher_compose() -> None:
-    """Coder's private limits coexist with Researcher's independent tools and limits."""
+    """Coder's private limits coexist with Researcher's independent tools and limits.
+
+    Both harnesses bring a `SubAgents`, so this also covers them merging into one roster: Researcher's
+    delegate, plus the running agent that Coder delegates to.
+    """
     tree = CombinedCapability([Coder[Any](), Researcher[Any]()])
     combined = combine_duplicate_capabilities(tree, [tree.capabilities])
     leaves = leaf_capabilities(combined)
@@ -656,3 +660,4 @@ async def test_coder_and_researcher_compose() -> None:
     assert counts['SubAgents'] == 1
     sub_agents = next(leaf for leaf in leaves if isinstance(leaf, SubAgents))
     assert [entry.agent.name for entry in sub_agents.agents] == ['researcher']
+    assert sub_agents.include_self
