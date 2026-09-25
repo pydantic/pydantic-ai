@@ -349,6 +349,28 @@ class ConversationItemCreated:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class InputRejected:
+    """The provider refused part of an input this connection was sent, so it had no effect.
+
+    Yielded just ahead of the [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent]
+    that explains the refusal, and only when the provider's error identifies the frame it refused (the
+    OpenAI protocol echoes the client `event_id`). A connection that can't tell which input an error was
+    about yields the error alone. The session uses it to take back what it assumed the input did: a
+    refused request for a response releases the reply
+    [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would otherwise wait for
+    forever, and refused content is removed from history.
+    """
+
+    input_index: int
+    """Zero-based position of the refused input among every [`send`][pydantic_ai.realtime.codec.RealtimeConnection.send] call made on this connection, including calls that raised."""
+    _: KW_ONLY
+    refused: Literal['content', 'response']
+    """What was refused: `'content'` when the input never joined the conversation, `'response'` when the response it asked for will never come."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 RealtimeCodecEvent = TypeAliasType(
     'RealtimeCodecEvent',
     AudioDelta
@@ -367,6 +389,7 @@ RealtimeCodecEvent = TypeAliasType(
     | RealtimeSessionReconnectEvent
     | ConversationCreated
     | ConversationItemCreated
+    | InputRejected
     | PartStartEvent
     | PartEndEvent
     | RealtimeSessionErrorEvent,
@@ -500,6 +523,7 @@ __all__ = (
     'ResponseDone',
     'ConversationCreated',
     'ConversationItemCreated',
+    'InputRejected',
     'SessionUsage',
     # Turn-control verbs a connection accepts.
     'CommitAudio',

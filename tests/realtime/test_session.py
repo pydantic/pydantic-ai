@@ -94,6 +94,7 @@ from pydantic_ai.realtime.codec import (
     ConversationCreated,
     ConversationItemCreated,
     CreateResponse,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -9238,6 +9239,158 @@ async def test_wait_for_reply_wakes_when_a_concurrent_send_fails() -> None:
             await waiting
         with pytest.raises(RuntimeError, match='send failed'):
             await sending
+
+
+class _AnswersEachInput(FakeRealtimeConnection):
+    """Answers every input as it is sent with the events `answer` gives for it, numbered as `send()` is called."""
+
+    def __init__(self, answer: Callable[[int, RealtimeInput], list[RealtimeCodecEvent]]) -> None:
+        super().__init__([])
+        self._answer = answer
+        self._events: asyncio.Queue[RealtimeCodecEvent] = asyncio.Queue()
+
+    async def send(self, content: RealtimeInput) -> None:
+        index = len(self.sent)
+        await super().send(content)
+        for event in self._answer(index, content):
+            self._events.put_nowait(event)
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        while True:
+            yield await self._events.get()
+
+
+_REFUSAL = RealtimeSessionErrorEvent('Refused.', type='invalid_request_error', code='invalid_value')
+
+
+async def test_wait_for_reply_returns_when_the_provider_refuses_the_response() -> None:
+    """A refused request for a response releases its reservation, since no response will ever come."""
+    conn = _AnswersEachInput(lambda index, _: [InputRejected(index, refused='response'), _REFUSAL])
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Say hello.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        # Only the request for a response was refused: the text itself joined the conversation.
+        assert session.all_messages() == snapshot(
+            [ModelRequest(parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())], timestamp=IsDatetime())]
+        )
+
+
+async def test_refused_content_is_taken_out_of_history() -> None:
+    """Content the provider refused never reached the model, so history must not claim it did."""
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        if content == TextContext('refused'):
+            return [InputRejected(index, refused='content'), _REFUSAL]
+        return []
+
+    session = RealtimeSession(_AnswersEachInput(answer))
+    async with session:
+        await session.send('refused', respond=False)
+        await session.send('kept', respond=False)
+        for _ in range(20):  # let the pump read the refusal
+            await asyncio.sleep(0)
+        assert session.all_messages() == snapshot(
+            [ModelRequest(parts=[UserPromptPart(content='kept', timestamp=IsDatetime())], timestamp=IsDatetime())]
+        )
+
+
+async def test_refused_image_frees_its_place_under_the_retention_cap() -> None:
+    """A refused image is no longer retained, so it doesn't evict a real one to make room for itself."""
+    refused = BinaryImage(data=b'refused', media_type='image/png')
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        return [InputRejected(index, refused='content'), _REFUSAL] if content == refused else []
+
+    images = [BinaryImage(data=f'image-{index}'.encode(), media_type='image/png') for index in range(3)]
+    session = RealtimeSession(_AnswersEachInput(answer), _noop_runner, retain_images_max=3)
+    async with session:
+        await session.send(images[0])
+        await session.send(images[1])
+        await session.send(refused)
+        for _ in range(20):  # let the pump read the refusal
+            await asyncio.sleep(0)
+        await session.send(images[2])
+        assert session.all_messages() == [
+            ModelRequest(parts=[UserPromptPart(content=[image], timestamp=IsDatetime())], timestamp=IsDatetime())
+            for image in images
+        ]
+
+
+async def test_refused_content_without_a_recorded_request_changes_nothing() -> None:
+    """Refused content the session recorded nothing for (a bare response request) has nothing to take back."""
+    conn = _AnswersEachInput(lambda index, _: [InputRejected(index, refused='content'), _REFUSAL])
+    session = RealtimeSession(conn, _noop_runner)
+    async with session:
+        await session.create_response()
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        # The request for a response wasn't what was refused, so the reply is still owed.
+        assert not waiting.done()
+        await session.close()
+        with anyio.fail_after(5):
+            await waiting
+
+
+async def test_refused_response_request_already_answered_releases_nothing() -> None:
+    """A refusal arriving after a response took the reservation must not release another caller's.
+
+    A response the provider started on its own (server VAD) takes whichever reservation is pending, so
+    that is the reply the caller gets; releasing again would leave the next send's reply unwaited for.
+    """
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        if index == 0:
+            return [
+                OutputTranscript(text='hi', is_final=True),
+                InputRejected(index, refused='response'),
+                _REFUSAL,
+                ResponseDone(),
+            ]
+        return []
+
+    class _GatedSecondReply(_AnswersEachInput):
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            if len(self.sent) == 2:
+                self._events.put_nowait(OutputTranscript(text='again', is_final=True))
+
+    conn = _GatedSecondReply(answer)
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Hi.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        await session.send('Again.')
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'the refusal released the reservation of the reply still owed'
+        conn._events.put_nowait(ResponseDone())  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(5):
+            await waiting
+
+
+async def test_error_naming_no_input_leaves_the_reply_owed() -> None:
+    """An error that doesn't say which input it refused doesn't cancel the reply.
+
+    Checked live: an OpenAI or xAI error that names no client event (an unsupported image format, an
+    invalid event on xAI) still leaves the `response.create` after it to be answered.
+    """
+    conn = _AnswersEachInput(lambda index, _: [_REFUSAL])
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Say hello.')
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'an unattributed error released the reply'
+        conn._events.put_nowait(OutputTranscript(text='hello', is_final=True))  # pyright: ignore[reportPrivateUsage]
+        conn._events.put_nowait(ResponseDone())  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(5):
+            await waiting
 
 
 async def test_wait_for_reply_returns_when_a_reconnect_discards_the_reply() -> None:

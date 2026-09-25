@@ -300,6 +300,10 @@ class ReplayWebSocket:
                 )
             self._position += 1
             self._condition.notify_all()
+        if 'event_id' not in interaction.data:
+            # Recorded before OpenAI-protocol client frames carried an `event_id` (the id a refusal
+            # echoes, see `client_event_id`); the rest of the frame is still pinned.
+            actual.pop('event_id', None)
         assert actual == interaction.data, (
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
             f'expected={interaction.data!r}\nactual={actual!r}'
