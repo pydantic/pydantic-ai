@@ -238,6 +238,9 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
 - [Seeded](history.md#seeding-a-session) function calls/results are represented as readable text
   because Live cannot accept function parts in seeded turns.
+- Gemini 3.x Live models transcribe the user's speech even with input transcription
+  [turned off](audio.md#input-transcription). Pydantic AI discards those transcripts, so the setting
+  still keeps the user's words out of history, but they are still produced on Google's side.
 - Native transcription can produce only a completed sentence on some models.
   [Caption UIs](audio.md#live-captions) should replace text from `TranscriptUpdate.transcript`
   rather than assume incremental deltas.

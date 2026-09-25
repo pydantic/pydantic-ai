@@ -95,6 +95,7 @@ from ._openai_protocol import (
     rejected_inputs,
     resolve_base_turn_detection,
     resolve_transcription_model,
+    response_failed_error,
     response_finish_reason,
     seed_items,
     tool_choice_config,
@@ -879,6 +880,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     finish_reason='tool_call',
                 )
             )
+        # Reported even for a superseded response: its failure is real, and it's the only report of it.
+        if (error := response_failed_error(response)) is not None:
+            events.append(error)
         return events, superseded
 
     async def _try_reconnect(self) -> bool:

@@ -4,15 +4,15 @@ import pickle
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from pydantic_ai import Agent, RunContext, Tool, ToolOutput
-from pydantic_ai.capabilities import Capability
-from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai import Agent, BoolCriteria, RunContext, Tool, ToolOutput
+from pydantic_ai.capabilities import Capability, Instrumentation
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -42,11 +42,17 @@ from pydantic_ai.models.decision import (
     UnsureRoute,
 )
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsStr
+from ..conftest import IsStr, try_import
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.sampling import Decision, Sampler, SamplingResult
 
 
 class InMemoryDecisionModel(DecisionModel[None]):
@@ -133,6 +139,640 @@ async def test_decision_model_extension_point(allow_model_requests: None):
     assert result.response.usage == RequestUsage(input_tokens=4, output_tokens=2)
     assert result.response.provider_name == 'test-decisions'
     assert result.response.provider_url == 'https://example.test/decisions'
+
+
+class Release(BaseModel):
+    """Decide whether a change can ship."""
+
+    ship: Annotated[bool, BoolCriteria(true='It can go out today.', false='It has to wait.')] = Field(
+        description='Can this change ship?'
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span(allow_model_requests: None, capfire: CaptureLogfire):
+    """The `decide` span belongs to the base class, so any decision model gets one, with the protocol's shapes.
+
+    A history makes the state JSON rather than text, and a described yes/no sends criteria, both on the span as
+    on the wire.
+    """
+    history = [
+        ModelRequest(parts=[UserPromptPart('The migration is reviewed.')]),
+        ModelResponse(parts=[TextPart('Noted.')]),
+    ]
+    agent = Agent(InMemoryDecisionModel(), output_type=Release, capabilities=[Instrumentation()])
+    result = await agent.run('And the tests pass.', message_history=history)
+
+    assert result.output == Release(ship=True)
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert {key: value for key, value in span['attributes'].items() if not key.startswith('logfire.')} == snapshot(
+        {
+            'gen_ai.operation.name': 'decide',
+            'gen_ai.provider.name': 'test-decisions',
+            'gen_ai.system': 'test-decisions',
+            'server.address': 'example.test',
+            'gen_ai.request.model': 'in-memory-decisions',
+            'pydantic_ai.decision.questions': {
+                'ship': {
+                    'type': 'noul',
+                    'instructions': {
+                        'field': 'ship',
+                        'question': 'Can this change ship?',
+                        'goal': 'Decide whether a change can ship.',
+                    },
+                    'criteria': {'true': 'It can go out today.', 'false': 'It has to wait.'},
+                }
+            },
+            'pydantic_ai.decision.thresholds': {'boolean': 0.5},
+            'pydantic_ai.decision.state': {
+                'history': [{'user': 'The migration is reviewed.'}, {'assistant': 'Noted.'}],
+                'text': 'And the tests pass.',
+            },
+            'gen_ai.agent.name': 'agent',
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.conversation.id': IsStr(),
+            'gen_ai.response.model': 'in-memory-decisions',
+            'pydantic_ai.decision.usage.input_tokens': 4,
+            'pydantic_ai.decision.usage.output_tokens': 2,
+            'pydantic_ai.decision.answers': {'ship': {'type': 'noul', 'noul': 0.8}},
+            'pydantic_ai.decision.confidence': {'ship': 0.6},
+        }
+    )
+
+
+class NotAnAnswerDecisionModel(InMemoryDecisionModel):
+    """Breaks the protocol's contract, answering a question with something that is not an answer."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['ship'] = cast(DecisionAnswer, None)
+        return response
+
+
+class SeverityReview(BaseModel):
+    """Rate a ticket's severity."""
+
+    severity: Annotated[
+        Literal[0, 1, 2],
+        WithJsonSchema(
+            {'type': 'integer', 'anyOf': [{'const': level, 'description': f'Level {level}'} for level in range(3)]}
+        ),
+    ] = Field(description='How severe is it?')
+
+
+def _cyclic() -> dict[str, Any]:
+    cycle: dict[str, Any] = {}
+    cycle['itself'] = cycle
+    return cycle
+
+
+class DeepLegendDecisionModel(InMemoryDecisionModel):
+    """Answers with a rubric legend that refers to itself, which nothing can copy or serialize, and the run never reads."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['severity'] = ScoreAnswer(
+            score=1.8,
+            confidence=0.7,
+            probabilities={0: 0.05, 1: 0.1, 2: 0.85},
+            legend={2: _cyclic()},
+        )
+        return response
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('instrumentation', ['uninstrumented', 'content', 'no-content', 'not-recording'])
+async def test_a_decide_span_never_changes_the_outcome(allow_model_requests: None, instrumentation: str):
+    """What a backend answers may not copy or serialize; the request comes out the same either way.
+
+    Not recording is a `decide` span a sampler drops under a `chat` span it keeps.
+    """
+
+    class DropDecideSpans(Sampler):
+        def should_sample(
+            self, parent_context: Any, trace_id: int, name: str, *args: Any, **kwargs: Any
+        ) -> SamplingResult:
+            return SamplingResult(Decision.DROP if name.startswith('decide ') else Decision.RECORD_AND_SAMPLE)
+
+        def get_description(self) -> str:  # pragma: no cover - only used in debug output
+            return 'drop decide spans'
+
+    settings = {
+        'uninstrumented': None,
+        'content': InstrumentationSettings(include_content=True),
+        'no-content': InstrumentationSettings(include_content=False),
+        'not-recording': InstrumentationSettings(tracer_provider=TracerProvider(sampler=DropDecideSpans())),
+    }[instrumentation]
+    agent = Agent(
+        DeepLegendDecisionModel(),
+        output_type=SeverityReview,
+        capabilities=[Instrumentation(settings=settings)] if settings else [],
+    )
+    result = await agent.run('The export has been failing all morning.')
+    assert result.output == SeverityReview(severity=2)
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_a_decide_span_leaves_out_answers_it_cant_serialize(allow_model_requests: None, capfire: CaptureLogfire):
+    """With content, the answers are recorded as received, so a legend that can't be serialized leaves them all out."""
+    agent = Agent(DeepLegendDecisionModel(), output_type=SeverityReview, capabilities=[Instrumentation()])
+    await agent.run('The export has been failing all morning.')
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert 'pydantic_ai.decision.answers' not in span['attributes']
+    assert span['attributes']['pydantic_ai.decision.usage.input_tokens'] == 4
+
+
+class StringsForNumbersDecisionModel(InMemoryDecisionModel):
+    """Answers with text where the protocol has numbers, which a span without content must not pass on."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['route'] = ChoiceAnswer(
+            choice='Triage', confidence=cast(float, 'SECRET'), probabilities={'Triage': 0.9, 'escalate_to_team': 0.1}
+        )
+        response.answers['Triage.action'] = ChoiceAnswer(
+            choice='review', confidence=cast(float, 'SECRET'), probabilities={'approve': 0.1, 'review': 0.9}
+        )
+        return response
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_a_decide_span_keeps_only_numbers_where_numbers_belong_without_content(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    """A backend's text where a number belongs is left out without content, and the run goes on as ever."""
+    agent = Agent(
+        StringsForNumbersDecisionModel(),
+        output_type=Triage,
+        tools=[escalate_to_team],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    result = await agent.run('The customer cannot sign in.')
+    assert result.output == Triage(urgent=True, action='review')
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    answers = span['attributes']['pydantic_ai.decision.answers']
+    assert answers['route'] == snapshot(
+        {'type': 'choice', 'choice': 'Triage', 'probabilities': {'Triage': 0.9, 'escalate_to_team': 0.1}}
+    )
+    assert answers['Triage.action'] == snapshot({'type': 'choice'})
+    assert 'SECRET' not in str(span)
+
+
+class OffTheMenuDecisionModel(InMemoryDecisionModel):
+    """Answers the route question with probability under a label it wasn't offered, and sometimes picks one."""
+
+    def __init__(self, choice: str):
+        super().__init__()
+        self.choice = choice
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['route'] = ChoiceAnswer(
+            choice=self.choice,
+            confidence=0.8,
+            probabilities={'Triage': 0.85, 'escalate_to_team': 0.05, 'SECRET_FROM_BACKEND': 0.1},
+        )
+        return response
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('choice', ['Triage', 'SECRET_FROM_BACKEND'])
+async def test_a_decide_span_keeps_only_offered_route_labels_without_content(
+    allow_model_requests: None, capfire: CaptureLogfire, choice: str
+):
+    """The route answer keeps its labels without content, but only the labels the request offered.
+
+    The request itself goes on as it would uninstrumented: an extra probability is ignored, and a pick that
+    wasn't offered is rejected.
+    """
+    agent = Agent(
+        OffTheMenuDecisionModel(choice),
+        output_type=Triage,
+        tools=[escalate_to_team],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    if choice == 'Triage':
+        result = await agent.run('The customer cannot sign in.')
+        assert result.output == Triage(urgent=True, action='review')
+    else:
+        with pytest.raises(UnexpectedModelBehavior, match="picked a route it was not offered: 'SECRET_FROM_BACKEND'"):
+            await agent.run('The customer cannot sign in.')
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    route = span['attributes']['pydantic_ai.decision.answers']['route']
+    assert 'SECRET_FROM_BACKEND' not in str(span)
+    assert route == (
+        {
+            'type': 'choice',
+            'choice': 'Triage',
+            'confidence': 0.8,
+            'probabilities': {'Triage': 0.85, 'escalate_to_team': 0.05},
+        }
+        if choice == 'Triage'
+        else {'type': 'choice', 'confidence': 0.8, 'probabilities': {'Triage': 0.85, 'escalate_to_team': 0.05}}
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_leaves_out_what_is_not_an_answer(allow_model_requests: None, capfire: CaptureLogfire):
+    """Instrumentation doesn't change how the run rejects a malformed answer, and the span records the error."""
+    agent = Agent(NotAnAnswerDecisionModel(), output_type=Release, capabilities=[Instrumentation()])
+    with pytest.raises(UnexpectedModelBehavior, match="Unexpected answer from the model for output field 'ship'"):
+        await agent.run('And the tests pass.')
+
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert span['attributes']['pydantic_ai.decision.answers'] == snapshot({})
+    assert [event['attributes']['exception.type'] for event in span['events']] == snapshot(
+        ['pydantic_ai.exceptions.UnexpectedModelBehavior']
+    )
+
+
+class MistypedDecisionModel(InMemoryDecisionModel):
+    """Answers with a `type` the protocol doesn't have, which the run reads by the answer's class regardless."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['ship'] = NoulAnswer(noul=0.8, type=cast(Literal['noul'], 'bogus'))
+        return response
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_without_content_keeps_only_an_unknown_type(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    """An answer the run accepts is never failed by its telemetry, even with a `type` the protocol doesn't have."""
+    agent = Agent(
+        MistypedDecisionModel(),
+        output_type=Release,
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    result = await agent.run('And the tests pass.')
+
+    assert result.output == Release(ship=True)
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert span['attributes']['pydantic_ai.decision.answers'] == snapshot({'ship': {'type': 'bogus'}})
+
+
+class UnsureDecisionModel(InMemoryDecisionModel):
+    """Picks the tool on the route question, less surely than the route threshold asks."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['route'] = ChoiceAnswer(
+            choice='escalate_to_team', confidence=0.1, probabilities={'Triage': 0.45, 'escalate_to_team': 0.55}
+        )
+        return response
+
+
+def escalate_to_team(team: Literal['billing', 'security']) -> str:
+    """Hand the ticket to a specialist team."""
+    return f'Escalated to {team}.'  # pragma: no cover - picked below the threshold, so never called
+
+
+def _span_tree(capfire: CaptureLogfire) -> list[dict[str, Any]]:
+    """Each span's name, status and exception events, nested under its parent, for the hand-off tests."""
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+
+    def node(span: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {'name': span['name']}
+        if level := span['attributes'].get('logfire.level_num'):
+            result['level'] = level
+        if events := span.get('events'):
+            # The stack trace repeats the message, and its frames are this test's own.
+            result['events'] = [
+                {
+                    'name': event['name'],
+                    **{key: value for key, value in event['attributes'].items() if key != 'exception.stacktrace'},
+                }
+                for event in events
+            ]
+        if children := [
+            child for child in spans if child['parent'] and child['parent']['span_id'] == span['context']['span_id']
+        ]:
+            result['children'] = [node(child) for child in children]
+        return result
+
+    return [node(span) for span in spans if not span['parent']]
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    """A pick below `decision_route_threshold` is recorded on the `decide` span that picked it, even without content.
+
+    The `FallbackModel` hands the step to the model behind the decision model, so the `chat` span ends without an
+    error: the `decide` span is the one place the hand-off shows, with the picked route's label on its exception.
+    """
+    fallback = FallbackModel(UnsureDecisionModel(), TestModel(call_tools=[]))
+    agent = Agent(
+        fallback,
+        output_type=Triage,
+        tools=[escalate_to_team],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.6),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    result = await agent.run('The customer cannot sign in.')
+
+    assert result.response.model_name == 'test'
+    assert _span_tree(capfire) == snapshot(
+        [
+            {
+                'name': 'invoke_agent agent',
+                'children': [
+                    {
+                        'name': 'chat test',
+                        'children': [
+                            {
+                                'name': 'decide in-memory-decisions',
+                                'level': 17,
+                                'events': [
+                                    {
+                                        'name': 'exception',
+                                        'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                                        'exception.escaped': 'False',
+                                        'pydantic_ai.decision.route': 'escalate_to_team',
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+    [decide] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert {key: value for key, value in decide['attributes'].items() if key.startswith('pydantic_ai.decision.')} == (
+        snapshot(
+            {
+                'pydantic_ai.decision.questions': {
+                    'Triage.urgent': {'type': 'noul'},
+                    'Triage.action': {'type': 'choice'},
+                    'escalate_to_team.team': {'type': 'choice'},
+                    'route': {'type': 'choice'},
+                },
+                'pydantic_ai.decision.thresholds': {'boolean': 0.5, 'route': 0.6},
+                'pydantic_ai.decision.route_question': 'route',
+                'pydantic_ai.decision.route_questions': {
+                    'Triage': ['Triage.urgent', 'Triage.action'],
+                    'escalate_to_team': ['escalate_to_team.team'],
+                },
+                'pydantic_ai.decision.route_options': ['Triage', 'escalate_to_team'],
+                'pydantic_ai.decision.usage.input_tokens': 4,
+                'pydantic_ai.decision.usage.output_tokens': 2,
+                'pydantic_ai.decision.answers': {
+                    'Triage.urgent': {'type': 'noul', 'noul': 0.8},
+                    'Triage.action': {'type': 'choice', 'confidence': 0.9},
+                    'escalate_to_team.team': {'type': 'choice', 'confidence': 0.9},
+                    'route': {
+                        'type': 'choice',
+                        'choice': 'escalate_to_team',
+                        'confidence': 0.1,
+                        'probabilities': {'Triage': 0.45, 'escalate_to_team': 0.55},
+                    },
+                },
+            }
+        )
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_records_an_unsure_route_without_a_fallback(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    """Without a model behind it, the unsure pick fails the run, and both the `decide` and `chat` spans record it."""
+    agent = Agent(
+        UnsureDecisionModel(),
+        output_type=Triage,
+        tools=[escalate_to_team],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.6),
+        capabilities=[Instrumentation()],
+    )
+    with pytest.raises(UnsureRoute):
+        await agent.run('The customer cannot sign in.')
+
+    assert _span_tree(capfire) == snapshot(
+        [
+            {
+                'name': 'invoke_agent agent',
+                'level': 17,
+                'events': [
+                    {
+                        'name': 'exception',
+                        'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                        'exception.message': "in-memory-decisions picked 'escalate_to_team' with probability 0.55, below `decision_route_threshold` (0.60). Put a model behind it to take the steps it is unsure of: `FallbackModel(decision_model, language_model)` hands `language_model` this step.",
+                        'exception.escaped': 'False',
+                    }
+                ],
+                'children': [
+                    {
+                        'name': 'chat in-memory-decisions',
+                        'level': 17,
+                        'events': [
+                            {
+                                'name': 'exception',
+                                'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                                'exception.message': "in-memory-decisions picked 'escalate_to_team' with probability 0.55, below `decision_route_threshold` (0.60). Put a model behind it to take the steps it is unsure of: `FallbackModel(decision_model, language_model)` hands `language_model` this step.",
+                                'exception.escaped': 'False',
+                            }
+                        ],
+                        'children': [
+                            {
+                                'name': 'decide in-memory-decisions',
+                                'level': 17,
+                                'events': [
+                                    {
+                                        'name': 'exception',
+                                        'exception.type': 'pydantic_ai.models.decision.UnsureRoute',
+                                        'exception.message': "in-memory-decisions picked 'escalate_to_team' with probability 0.55, below `decision_route_threshold` (0.60). Put a model behind it to take the steps it is unsure of: `FallbackModel(decision_model, language_model)` hands `language_model` this step.",
+                                        'exception.escaped': 'False',
+                                        'pydantic_ai.decision.route': 'escalate_to_team',
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+
+
+class TaggedReview(BaseModel):
+    """Review a support ticket."""
+
+    tags: list[Literal['billing', 'security']] = Field(description='Which teams does this concern?')
+    action: Literal['approve', 'review'] = Field(description='What should happen next?')
+    severity: Annotated[
+        Literal[0, 1, 2],
+        WithJsonSchema(
+            {'type': 'integer', 'anyOf': [{'const': level, 'description': f'Level {level}'} for level in range(3)]}
+        ),
+    ] = Field(description='How severe is it?')
+
+
+class TaggedReviewDecisionModel(InMemoryDecisionModel):
+    """Sure of one option of the list and unsure of the other, and answers the rubric near its top level."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        # The same fields asked about a route beside the route question are keyed under its label.
+        for key in request.questions:
+            if key.endswith('tags.billing'):
+                response.answers[key] = NoulAnswer(noul=0.95)
+            elif key.endswith('tags.security'):
+                response.answers[key] = NoulAnswer(noul=0.4)
+            elif key.endswith('severity'):
+                response.answers[key] = ScoreAnswer(
+                    score=1.8, confidence=0.7, probabilities={0: 0.05, 1: 0.1, 2: 0.85}, legend={2: 'Level 2'}
+                )
+        return response
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_groups_the_routes_asked_up_front(allow_model_requests: None, capfire: CaptureLogfire):
+    """Every route asked beside the route question is listed with its question keys, and only the pick's are read.
+
+    The keys are `'<label>.<field>'`, and one option of a list is one more dot, so only `route_questions` can say
+    which route a key belongs to. The pick's confidence is keyed the same way.
+    """
+    agent = Agent(
+        TaggedReviewDecisionModel(),
+        output_type=[TaggedReview, Triage],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    result = await agent.run('I was charged twice.')
+
+    assert isinstance(result.output, TaggedReview)
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    attributes = span['attributes']
+    assert attributes['pydantic_ai.decision.route_questions'] == snapshot(
+        {
+            'TaggedReview': [
+                'TaggedReview.tags.billing',
+                'TaggedReview.tags.security',
+                'TaggedReview.action',
+                'TaggedReview.severity',
+            ],
+            'Triage': ['Triage.urgent', 'Triage.action'],
+        }
+    )
+    assert attributes['pydantic_ai.decision.confidence'] == snapshot(
+        {
+            'TaggedReview.tags.billing': 0.9,
+            'TaggedReview.tags.security': 0.2,
+            'TaggedReview.action': 0.9,
+            'TaggedReview.severity': 0.7,
+        }
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_per_question_confidence_without_content(allow_model_requests: None, capfire: CaptureLogfire):
+    """Confidence is keyed like the questions, so each option of a list gets its own, not the field's least sure.
+
+    Without content, a score keeps its probabilities, which are keyed by level, but a choice does not, since its
+    are keyed by option label. With one output type and nothing to choose between, there is no `route`.
+    """
+    agent = Agent(
+        TaggedReviewDecisionModel(),
+        output_type=TaggedReview,
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+    result = await agent.run('I was charged twice.')
+
+    assert result.output == TaggedReview(tags=['billing'], action='review', severity=2)
+    assert result.response.provider_details is not None
+    assert result.response.provider_details['confidence'] == snapshot({'tags': 0.2, 'action': 0.9, 'severity': 0.7})
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert {
+        key: value for key, value in span['attributes'].items() if key.startswith('pydantic_ai.decision.')
+    } == snapshot(
+        {
+            'pydantic_ai.decision.questions': {
+                'tags.billing': {'type': 'noul'},
+                'tags.security': {'type': 'noul'},
+                'action': {'type': 'choice'},
+                'severity': {'type': 'score'},
+            },
+            'pydantic_ai.decision.thresholds': {'boolean': 0.5},
+            'pydantic_ai.decision.usage.input_tokens': 4,
+            'pydantic_ai.decision.usage.output_tokens': 2,
+            'pydantic_ai.decision.answers': {
+                'tags.billing': {'type': 'noul', 'noul': 0.95},
+                'tags.security': {'type': 'noul', 'noul': 0.4},
+                'action': {'type': 'choice', 'confidence': 0.9},
+                'severity': {
+                    'type': 'score',
+                    'score': 1.8,
+                    'confidence': 0.7,
+                    'probabilities': {'0': 0.05, '1': 0.1, '2': 0.85},
+                },
+            },
+            'pydantic_ai.decision.confidence': {
+                'tags.billing': 0.9,
+                'tags.security': 0.2,
+                'action': 0.9,
+                'severity': 0.7,
+            },
+        }
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_no_decide_span_without_instrumentation(allow_model_requests: None, capfire: CaptureLogfire):
+    """Outside an instrumented request there is no `chat` span to hang a `decide` span from, so none is made."""
+    result = await Agent(InMemoryDecisionModel(), output_type=Triage).run('The customer cannot sign in.')
+
+    assert result.output == Triage(urgent=True, action='review')
+    assert capfire.exporter.exported_spans_as_dict() == []
 
 
 @pytest.mark.anyio
