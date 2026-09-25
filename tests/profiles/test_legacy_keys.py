@@ -91,3 +91,11 @@ def test_current_provider_key_spelling_wins_over_legacy_in_the_same_profile():
             {'openai_supports_tool_choice_required': False, 'supports_forced_tool_choice': True}  # pyright: ignore[reportArgumentType]
         )
     assert profile == {'supports_forced_tool_choice': True}
+
+
+def test_legacy_provider_key_from_callable_profile_wins_over_carried_over_default():
+    """A callable profile starts from the resolved profile, which already carries the current spelling's default,
+    so a legacy key it adds has to win over that carried-over value."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='`openai_supports_tool_choice_required` is deprecated'):
+        model = TestModel(profile=lambda profile: {**profile, 'openai_supports_tool_choice_required': False})  # pyright: ignore[reportArgumentType]
+        assert model.profile.get('supports_forced_tool_choice') is False

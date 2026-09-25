@@ -636,6 +636,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_request_parameters
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether this request will think, judged from the unified `thinking` setting and the profile.
+
+        Reads `params.thinking`, falling back to `model_settings` for callers that run before
+        `prepare_request` moves the setting over. Adapters with provider-specific thinking settings
+        override this, since those take precedence.
+        """
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            thinking = (model_settings or {}).get('thinking')
+        if thinking is False and not self.profile.get('thinking_always_enabled', False):
+            return False
+        if thinking:
+            return True
+        return self.profile.get('thinking_always_enabled', False) or self.profile.get(
+            'thinking_enabled_by_default', False
+        )
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -953,8 +973,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             pass
         elif callable(user):
             # The callable form's result bypasses `merge_profile`, so translate deprecated key
-            # spellings here too.
-            resolved = _translate_legacy_profile_keys(user(resolved))
+            # spellings here too. It starts from `resolved`, so a current spelling it carries
+            # over unchanged doesn't count as set.
+            resolved = _translate_legacy_profile_keys(user(resolved), resolved)
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)

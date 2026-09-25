@@ -1485,14 +1485,16 @@ async def test_openrouter_forced_tool_choice_with_thinking(
             'required',
             "tool_choice='required' is not supported by model 'anthropic/claude-sonnet-4.6'. This model does not "
             'support forcing tool use while thinking is enabled. OpenRouter would silently drop reasoning. Disable '
-            "thinking with `thinking=False`, or use `tool_choice='auto'`.",
+            "thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`, or use "
+            "`tool_choice='auto'`.",
             id='required',
         ),
         pytest.param(
             ['get_weather'],
             "tool_choice=['get_weather'] is not supported by model 'anthropic/claude-sonnet-4.6'. This model does "
             'not support forcing tool use while thinking is enabled. OpenRouter would silently drop reasoning. '
-            "Disable thinking with `thinking=False`, or use `tool_choice='auto'`.",
+            "Disable thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`, or use "
+            "`tool_choice='auto'`.",
             id='list',
         ),
     ],

@@ -76,8 +76,12 @@ with try_import() as xai_imports:
 with try_import() as openai_imports:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
+    from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.vercel import VercelProvider
 
 with try_import() as openrouter_google_imports:
     # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
@@ -2456,3 +2460,35 @@ def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
 
     profile = openai_model_profile('gpt-5.6')
     assert profile.get('tool_addition_mode') is None
+
+
+@pytest.mark.skipif(not (anthropic_imports() and openai_imports() and bedrock_imports()), reason='extras not installed')
+@pytest.mark.parametrize(
+    ('provider_name', 'model_name'),
+    [
+        ('anthropic', 'claude-opus-5-5'),
+        ('bedrock', 'us.anthropic.claude-opus-5-5'),
+        ('openrouter', 'anthropic/claude-opus-5.5'),
+        ('vercel', 'anthropic/claude-opus-5-5'),
+        ('github-copilot', 'claude-opus-5.5'),
+        ('heroku', 'claude-opus-5-5'),
+        ('litellm', 'anthropic/claude-opus-5-5'),
+        ('snowflake', 'claude-opus-5-5'),
+    ],
+)
+def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: str, model_name: str):
+    """Claude Opus 5.5 rejects a forced `tool_choice` whichever provider serves it, so every provider that merges the
+    Anthropic profile carries `supports_forced_tool_choice=False` over."""
+    provider_classes = {
+        'anthropic': AnthropicProvider,
+        'bedrock': BedrockProvider,
+        'openrouter': OpenRouterProvider,
+        'vercel': VercelProvider,
+        'github-copilot': GitHubCopilotProvider,
+        'heroku': HerokuProvider,
+        'litellm': LiteLLMProvider,
+        'snowflake': SnowflakeProvider,
+    }
+    profile = provider_classes[provider_name].model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_forced_tool_choice') is False

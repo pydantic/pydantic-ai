@@ -153,18 +153,19 @@ class ModelProfile(TypedDict, total=False):
     supports_forced_tool_choice: bool
     """Whether the model accepts a forced tool choice: `tool_choice='required'` or a specific tool. Default: `True`.
 
-    Claude Opus 5.5, Claude Fable 5.1 and Claude Mythos 5.1 reject forcing on every request, for example, as do some
-    OpenAI-compatible providers such as Moonshot AI. When False, a forced tool choice that Pydantic AI resolved itself (such as an output tool's) falls back to
-    `'auto'`, with the tools filtered to the requested ones where the API can't restrict the choice. An
-    explicit forcing [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] raises a `UserError`.
+    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and Claude Mythos 5.1,
+    as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool choice that Pydantic AI
+    resolved itself (such as an output tool's) falls back to `'auto'`, with the tools filtered to the requested
+    ones where the API can't restrict the choice. An explicit forcing
+    [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] raises a `UserError`.
     """
 
     supports_forced_tool_choice_with_thinking: bool
     """Whether the model accepts a forced tool choice while it thinks. Default: `True`.
 
-    DeepSeek's V4 models, for example, accept forcing only while thinking is off. When False and the request thinks, a forced tool choice is handled as if `supports_forced_tool_choice`
-    were False. Unlike `supports_forced_tool_choice`, this is evaluated per request against whether the request
-    thinks, which accounts for `thinking_enabled_by_default`.
+    DeepSeek's V4 models, for example, only accept forcing while thinking is off. When False and the request
+    thinks, a forced tool choice is handled as if `supports_forced_tool_choice` were False. Whether the request
+    thinks accounts for `thinking_enabled_by_default`.
     """
 
     thinking_tags: tuple[str, str]
@@ -236,8 +237,12 @@ _LEGACY_PROVIDER_PROFILE_KEYS: dict[str, str] = {
 """Provider-prefixed profile keys that moved to `ModelProfile`, mapped to their current spelling."""
 
 
-def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
-    """Translate keys renamed after their release into their current spellings, warning."""
+def _translate_legacy_profile_keys(profile: ModelProfile, base: ModelProfile | None = None) -> ModelProfile:
+    """Translate keys renamed after their release into their current spellings, warning.
+
+    A current spelling in the same profile wins, unless `profile` was derived from `base` (as a callable
+    `ModelProfileSpec`'s result is) and it only carries `base`'s value over.
+    """
     if (
         'tool_additions' not in profile
         and 'deferred_tools_require_tool_search' not in profile
@@ -245,6 +250,11 @@ def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
     ):
         return profile
     translated: dict[str, object] = dict(profile)
+
+    def set_translated(key: str, value: object) -> None:
+        if key not in translated or (base is not None and translated[key] == base.get(key)):
+            translated[key] = value
+
     legacy_values: dict[str, bool] = {}
     for legacy_key, key in _LEGACY_PROVIDER_PROFILE_KEYS.items():
         if legacy_key in translated:
@@ -256,15 +266,14 @@ def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
             # Two legacy spellings of the same capability in one profile both have to allow it.
             legacy_values[key] = legacy_values.get(key, True) and bool(translated.pop(legacy_key))
     for key, value in legacy_values.items():
-        translated.setdefault(key, value)
+        set_translated(key, value)
     if 'tool_additions' in translated:
         warnings.warn(
             '`ModelProfile` key `tool_additions` is deprecated, use `tool_addition_mode` instead.',
             PydanticAIDeprecationWarning,
             stacklevel=3,
         )
-        value = translated.pop('tool_additions')
-        translated.setdefault('tool_addition_mode', value)
+        set_translated('tool_addition_mode', translated.pop('tool_additions'))
     if 'deferred_tools_require_tool_search' in translated:
         warnings.warn(
             '`ModelProfile` key `deferred_tools_require_tool_search` is deprecated, use '
@@ -273,7 +282,7 @@ def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
             stacklevel=3,
         )
         if translated.pop('deferred_tools_require_tool_search'):
-            translated.setdefault('tool_deferral_mode', 'with_tool_search')
+            set_translated('tool_deferral_mode', 'with_tool_search')
     return cast('ModelProfile', translated)
 
 

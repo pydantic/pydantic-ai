@@ -81,7 +81,12 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
-from pydantic_ai.models._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
+from pydantic_ai.models._tool_choice import (
+    FORCING_UNSUPPORTED_REASON,
+    resolve_tool_choice,
+    support_tool_forcing,
+    tool_forcing_unavailable_reason,
+)
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.profiles.anthropic import (
@@ -2046,7 +2051,7 @@ def _support_tool_forcing(
             profile, thinking=thinking_type is not None, thinking_remedy='Disable thinking with `thinking=False`'
         )
     else:
-        unavailable_reason = 'This model does not support forcing tool use.'
+        unavailable_reason = FORCING_UNSUPPORTED_REASON
     if unavailable_reason is None and thinking_type == 'enabled':
         if profile.get('bedrock_thinking_variant') != 'anthropic':
             unavailable_reason = (

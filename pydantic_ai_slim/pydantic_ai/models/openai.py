@@ -123,7 +123,6 @@ from . import (
     get_user_agent,
 )
 from ._tool_choice import (
-    ResolvedToolChoice,
     resolve_tool_choice,
     support_tool_forcing,
     tool_forcing_unavailable_reason,
@@ -1402,16 +1401,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            supports = self._supports_tool_forcing(
-                model_settings,
-                model_request_parameters,
-                resolved_tool_choice,
-                "tool_choice='required'",
-            )
+            supports = self._supports_tool_forcing(model_settings, model_request_parameters)
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = self._supports_tool_forcing(model_settings, model_request_parameters, resolved_tool_choice)
+            supports = self._supports_tool_forcing(model_settings, model_request_parameters)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
@@ -1435,18 +1429,26 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         return tools, tool_choice
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        return _reasoning_active(
+            self.profile, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
+        )
+
     def _supports_tool_forcing(
-        self,
-        model_settings: OpenAIChatModelSettings,
-        model_request_parameters: ModelRequestParameters,
-        resolved_tool_choice: ResolvedToolChoice,
-        context: str = 'forcing specific tools',
+        self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
         """Allow provider subclasses to express conditional forcing support.
 
         Overrides should raise `UserError` when the user explicitly requested forcing.
         """
-        return _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
+        return _support_tool_forcing(
+            self.model_name,
+            self.profile,
+            model_settings,
+            thinking=self._request_thinks(model_settings, model_request_parameters),
+        )
 
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
         """Build stream_options for the API request.
@@ -2990,6 +2992,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        return _reasoning_active(
+            self.profile, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+        )
+
     def _get_responses_tool_choice(
         self,
         model_settings: OpenAIResponsesModelSettings,
@@ -3009,11 +3018,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings, model_request_parameters)
+            supports = _support_tool_forcing(
+                self.model_name,
+                openai_profile,
+                model_settings,
+                thinking=self._request_thinks(model_settings, model_request_parameters),
+            )
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(self.model_name, openai_profile, model_settings, model_request_parameters)
+            supports = _support_tool_forcing(
+                self.model_name,
+                openai_profile,
+                model_settings,
+                thinking=self._request_thinks(model_settings, model_request_parameters),
+            )
             if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
                 tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
             else:
@@ -5106,7 +5125,8 @@ def _support_tool_forcing(
     model_name: str,
     openai_profile: OpenAIModelProfile,
     model_settings: OpenAIChatModelSettings | OpenAIResponsesModelSettings,
-    model_request_parameters: ModelRequestParameters,
+    *,
+    thinking: bool,
 ) -> bool:
     """Check if the model supports forced tool use, raising UserError if explicitly requested but unsupported."""
     return support_tool_forcing(
@@ -5114,7 +5134,7 @@ def _support_tool_forcing(
         model_settings,
         tool_forcing_unavailable_reason(
             openai_profile,
-            thinking=_reasoning_active(openai_profile, model_settings, model_request_parameters),
+            thinking=thinking,
             thinking_remedy="Disable thinking with `thinking=False` or `openai_reasoning_effort='none'`",
         ),
     )

@@ -186,15 +186,7 @@ def resolve_tool_choice(  # noqa: C901
         assert_never(function_tool_choice)
 
 
-def request_thinks(profile: ModelProfile, model_request_parameters: ModelRequestParameters) -> bool:
-    """Whether a request will think, judged from the unified `thinking` setting and the profile.
-
-    Adapters with provider-specific thinking settings resolve this themselves, since those take precedence.
-    """
-    thinking = model_request_parameters.thinking
-    if thinking is not None:
-        return thinking is not False
-    return profile.get('thinking_always_enabled', False) or profile.get('thinking_enabled_by_default', False)
+FORCING_UNSUPPORTED_REASON = "This model does not support forcing tool use. Use `tool_choice='auto'` instead."
 
 
 def tool_forcing_unavailable_reason(profile: ModelProfile, *, thinking: bool, thinking_remedy: str) -> str | None:
@@ -203,7 +195,7 @@ def tool_forcing_unavailable_reason(profile: ModelProfile, *, thinking: bool, th
     `thinking_remedy` tells the user how to turn thinking off with this model's settings.
     """
     if not profile.get('supports_forced_tool_choice', True):
-        return 'This model does not support forcing tool use.'
+        return FORCING_UNSUPPORTED_REASON
     if thinking and not profile.get('supports_forced_tool_choice_with_thinking', True):
         return (
             f'This model does not support forcing tool use while thinking is enabled. '
@@ -225,9 +217,9 @@ def support_tool_forcing(
     if unavailable_reason is None:
         return True
     explicit_choice = (model_settings or {}).get('tool_choice')
-    # `ToolOrOutput` only resolves to a forced choice when the output type rules out direct output, so like an
-    # output tool's forcing, it falls back rather than raising.
-    if explicit_choice == 'required' or isinstance(explicit_choice, list):
+    # `ToolOrOutput` and `[]` only resolve to a forced choice when the output type rules out direct output, so like
+    # an output tool's forcing, they fall back rather than raising.
+    if explicit_choice == 'required' or (isinstance(explicit_choice, list) and explicit_choice):
         raise UserError(
             f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. {unavailable_reason}'
         )

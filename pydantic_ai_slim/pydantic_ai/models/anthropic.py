@@ -4161,7 +4161,9 @@ def _support_tool_forcing(
         supports_adaptive_thinking=supports_adaptive_thinking,
     )
     unavailable_reason = tool_forcing_unavailable_reason(
-        profile, thinking=thinking_type is not None, thinking_remedy='Disable thinking with `thinking=False`'
+        profile,
+        thinking=thinking_type is not None,
+        thinking_remedy="Disable thinking with `thinking=False` or `anthropic_thinking={'type': 'disabled'}`",
     )
     if unavailable_reason is None and thinking_type == 'enabled':
         unavailable_reason = (
