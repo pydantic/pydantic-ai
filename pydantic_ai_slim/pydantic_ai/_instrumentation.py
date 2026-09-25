@@ -88,8 +88,9 @@ class ContentPolicy:
     reader can only honour a policy set for the span in front of it, and anything else fails closed.
 
     It also carries the tracer the span was opened with, so that a span opened inside the request
-    (a decision model's `decide`) goes to the same tracer provider as the request's own span, even
-    when that is not the global one. Such a span reads the policy through `open_request_policy`.
+    (a decision model's `decide`, or a `FallbackModel` attempt that failed) goes to the same tracer
+    provider as the request's own span, even when that is not the global one. Such a span reads the
+    policy through `open_request_policy`.
     """
 
     span: Span

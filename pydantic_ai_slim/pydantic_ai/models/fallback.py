@@ -6,17 +6,21 @@ from copy import copy
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from functools import cached_property
+from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
 import anyio
-from opentelemetry.trace import get_current_span
+from opentelemetry.trace import Span, Status, StatusCode, get_current_span, set_span_in_context
 from opentelemetry.util.types import AttributeValue
 from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import (
     model_attributes,
     model_request_parameters_attributes,
+    open_request_policy,
+    record_exception,
+    set_error_status,
     span_include_content,
 )
 from pydantic_ai._run_context import RunContext
@@ -259,6 +263,7 @@ class FallbackModel(Model):
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
             prepared_parameters = model_request_parameters
+            started_at = time_ns()
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
@@ -276,6 +281,7 @@ class FallbackModel(Model):
                 messages = _rewind_messages(messages)
                 rewound = True
                 exceptions.append(exc)
+                self._record_failed_attempt(pinned, 0, started_at, exc)
                 # Fall through to normal chain below
             else:
                 if response.state == 'suspended':
@@ -283,8 +289,10 @@ class FallbackModel(Model):
                 self._set_span_attributes(pinned, prepared_parameters)
                 return response
 
-        for model in self.models:
+        # A failed pinned continuation was attempt 0, so the chain's attempts count on from it.
+        for attempt, model in enumerate(self.models, start=int(rewound)):
             prepared_parameters = model_request_parameters
+            started_at = time_ns()
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
@@ -293,6 +301,7 @@ class FallbackModel(Model):
             except Exception as exc:
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
+                    self._record_failed_attempt(model, attempt, started_at, exc)
                     continue
                 self._set_span_attributes(model, prepared_parameters)
                 raise exc
@@ -302,6 +311,7 @@ class FallbackModel(Model):
                 if response.usage.cost is not None:
                     rejected_cost = (rejected_cost or Decimal()) + response.usage.cost
                 rejected_responses.append(response)
+                self._record_failed_attempt(model, attempt, started_at, response)
                 continue
 
             if rejected_cost is not None:
@@ -346,6 +356,7 @@ class FallbackModel(Model):
             assert isinstance(suspended_response, ModelResponse)
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
+                started_at = time_ns()
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
@@ -364,6 +375,7 @@ class FallbackModel(Model):
                     messages = _rewind_messages(messages)
                     rewound = True
                     exceptions.append(exc)
+                    self._record_failed_attempt(pinned, 0, started_at, exc)
                     # Fall through to normal chain below
                 else:
                     self._set_span_attributes(pinned, prepared_parameters)
@@ -375,9 +387,11 @@ class FallbackModel(Model):
                         _stamp_continuation(streamed_response, pinned)
                     return
 
-        for model in self.models:
+        # A failed pinned continuation was attempt 0, so the chain's attempts count on from it.
+        for attempt, model in enumerate(self.models, start=int(rewound)):
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
+                started_at = time_ns()
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
@@ -387,6 +401,7 @@ class FallbackModel(Model):
                 except Exception as exc:
                     if await self._should_fallback(exc):
                         exceptions.append(exc)
+                        self._record_failed_attempt(model, attempt, started_at, exc)
                         continue
                     self._set_span_attributes(model, prepared_parameters)
                     raise exc
@@ -489,30 +504,79 @@ class FallbackModel(Model):
             return next((m for m in self.models if m.model_id == model_id), None)
         return None
 
+    def _fallback_span(self) -> Span | None:
+        """The recording `chat` span instrumentation opened for this request, if any.
+
+        Matching the span's request model to this `FallbackModel` keeps attempts off an unrelated
+        ambient span, such as a user's own span around an uninstrumented model.
+        """
+        span = get_current_span()
+        if span.is_recording() and getattr(span, 'attributes', {}).get('gen_ai.request.model') == self.model_name:
+            return span
+        return None
+
     def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters) -> None:
         with suppress(Exception):
-            span = get_current_span()
-            if span.is_recording():
-                attributes = getattr(span, 'attributes', {})
-                if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
-                    span_attributes: dict[str, AttributeValue] = {**model_attributes(model)}
-                    # Only refresh `model_request_parameters` if it was emitted at span open; its absence
-                    # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
-                    # it here would leak the attribute the setting is meant to suppress.
-                    if 'model_request_parameters' in attributes:
-                        span_attributes.update(
-                            model_request_parameters_attributes(
-                                model_request_parameters,
-                                # The settings aren't reachable from here, so the span carries its
-                                # own `include_content` in a context variable, keyed by the span it
-                                # was set for. This refresh serializes the *selected* model's
-                                # parameters, whose instruction parts the outer request may not have
-                                # had at all, so it cannot be inferred from what is already
-                                # recorded. Fails closed on anything but this span's own policy.
-                                include_content=span_include_content(span),
-                            )
+            if span := self._fallback_span():
+                span_attributes: dict[str, AttributeValue] = {**model_attributes(model)}
+                # Only refresh `model_request_parameters` if it was emitted at span open; its absence
+                # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
+                # it here would leak the attribute the setting is meant to suppress.
+                if 'model_request_parameters' in getattr(span, 'attributes', {}):
+                    span_attributes.update(
+                        model_request_parameters_attributes(
+                            model_request_parameters,
+                            # The settings aren't reachable from here, so the span carries its
+                            # own `include_content` in a context variable, keyed by the span it
+                            # was set for. This refresh serializes the *selected* model's
+                            # parameters, whose instruction parts the outer request may not have
+                            # had at all, so it cannot be inferred from what is already
+                            # recorded. Fails closed on anything but this span's own policy.
+                            include_content=span_include_content(span),
                         )
-                    span.set_attributes(span_attributes)
+                    )
+                span.set_attributes(span_attributes)
+
+    def _record_failed_attempt(
+        self, model: Model, attempt: int, started_at: int, failure: Exception | ModelResponse
+    ) -> None:
+        """Record an attempt this request fell back from as an ERROR child span of the `chat` span.
+
+        The `chat` span keeps its own outcome, that of the model that answered, the way a failed
+        tool call gets its own ERROR span under an agent run that goes on to succeed. The span is
+        only opened once the attempt has failed, back-dated to when it started, so the winning
+        attempt, which `chat` already describes, gets none. Spans the tried model opened itself, like a
+        decision model's `decide`, were opened under `chat` while the attempt ran, so they sit beside
+        this span rather than inside it. It is deliberately not named `chat`,
+        so model-call views don't count it as a model call. An error's message and stack trace
+        follow the span's `include_content`, since a provider's error response can echo the request.
+        """
+        with suppress(Exception):
+            if (span := self._fallback_span()) and (policy := open_request_policy()):
+                attributes: dict[str, AttributeValue] = {
+                    **model_attributes(model),
+                    'pydantic_ai.fallback.attempt': attempt,
+                }
+                if isinstance(failure, ModelResponse) and failure.finish_reason is not None:
+                    attributes['gen_ai.response.finish_reasons'] = [failure.finish_reason]
+                attempt_span = policy.tracer.start_span(
+                    f'fallback attempt {model.model_name}',
+                    context=set_span_in_context(span),
+                    attributes=attributes,
+                    start_time=started_at,
+                )
+                # Ended even if describing the failure raises, or the span would never be exported.
+                try:
+                    if isinstance(failure, Exception):
+                        include_content = span_include_content(span)
+                        record_exception(attempt_span, failure, include_content=include_content)
+                        set_error_status(attempt_span, failure, include_content=include_content)
+                    else:
+                        attempt_span.set_status(
+                            Status(StatusCode.ERROR, 'Response rejected by a `fallback_on` response handler')
+                        )
+                finally:
+                    attempt_span.end(time_ns())
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
