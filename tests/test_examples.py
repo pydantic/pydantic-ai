@@ -56,7 +56,7 @@ from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
 from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
-from pydantic_ai.models.decision import DecisionModel, ToolCallProposed
+from pydantic_ai.models.decision import DecisionModel, ToolCallProposed, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -1006,6 +1006,20 @@ def _output_tool_named(info: AgentInfo, type_name: str) -> str:  # pragma: lax n
     return next(tool.name for tool in info.output_tools if tool.name.endswith(type_name))
 
 
+# docs/models/decision.md: Jev's route probabilities for the labelled texts the threshold is tuned on, from a live run
+_TUNING_ROUTES: dict[str, dict[str, float]] = {
+    'Someone else can see my invoices when they log in.': {'Ticket': 0.01, 'Escalation': 0.99},
+    'Our lawyer asked for a copy of your data processing agreement.': {'Ticket': 0.01, 'Escalation': 0.99},
+    'My colleague left the company last week. How do I remove her from our workspace?': {
+        'Ticket': 0.84,
+        'Escalation': 0.16,
+    },
+    'Two-factor codes stopped arriving on my phone.': {'Ticket': 0.88, 'Escalation': 0.12},
+    'I shared a board by mistake. How do I make it private again?': {'Ticket': 0.4, 'Escalation': 0.6},
+    'The CSV export includes columns I had hidden.': {'Ticket': 0.33, 'Escalation': 0.67},
+}
+
+
 async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
     """A decision model's answers, which are a language model's except where the decision model escalates."""
     last = messages[-1].parts[-1] if messages[-1].parts else None
@@ -1020,10 +1034,9 @@ async def decision_model_logic(messages: list[ModelMessage], info: AgentInfo) ->
         # The mocked `FallbackModel` does not carry the example's `unsure` handler, so an API error stands in for it.
         raise ModelAPIError('jev-latest', 'unsure')
     if isinstance(last, UserPromptPart) and last.content == 'Can you recommend a good restaurant near your office?':
-        # docs/models/decision.md: Jev splits the route pick almost evenly, so the language model behind it takes the
-        # step. The mocked `FallbackModel` does not carry the example's `unsure_route` handler, so an API error stands
-        # in for it.
-        raise ModelAPIError('jev-latest', 'unsure')
+        # docs/models/decision.md: Jev's route pick is below `decision_route_threshold`, so the language model behind
+        # it takes the step
+        raise UnsureRoute('jev-latest', 'Ticket', {'Ticket': 0.6, 'Escalation': 0.4}, 0.7)
     return await model_logic(messages, info)
 
 
@@ -1244,7 +1257,6 @@ async def model_logic(  # noqa: C901
                         'choice': 'None',
                         'probabilities': {'Ticket': 0.05, 'Escalation': 0.0, 'None': 0.95},
                         'offered': ['Ticket', 'Escalation', 'None'],
-                        'taken': 'None',
                     },
                 },
             )
@@ -1261,8 +1273,21 @@ async def model_logic(  # noqa: C901
                         'choice': 'Ticket',
                         'probabilities': {'Ticket': 1.0, 'Escalation': 0.0},
                         'offered': ['Ticket', 'Escalation'],
-                        'taken': 'Ticket',
                     },
+                },
+            )
+        elif route := _TUNING_ROUTES.get(m.content):
+            # docs/models/decision.md: a labelled text's route pick, recorded once and swept over thresholds offline
+            choice = max(route, key=lambda label: route[label])
+            args = {'urgent': False} if choice == 'Ticket' else {'security': True}
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_output_tool_named(info, choice), args=args)],
+                provider_details={
+                    'confidence': {},
+                    'probabilities': {},
+                    'scores': {},
+                    'requests': 2,
+                    'route': {'choice': choice, 'probabilities': route, 'offered': ['Ticket', 'Escalation']},
                 },
             )
         elif m.content == 'Can you recommend a good restaurant near your office?':

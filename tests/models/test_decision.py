@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 from enum import Enum
 from typing import Annotated, Any, Literal
 
@@ -9,7 +10,7 @@ from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
@@ -24,7 +25,10 @@ from pydantic_ai.models.decision import (
     ScoreAnswer,
     ScoreQuestion,
     ToolCallProposed,
+    UnsureRoute,
 )
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -396,7 +400,6 @@ async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_
             'choice': 'Escalation',
             'probabilities': {'Escalation': 1.0, 'Triage': 0.0},
             'offered': ['Escalation', 'Triage'],
-            'taken': 'Escalation',
         }
     )
 
@@ -470,8 +473,10 @@ class RoutingDecisionModel(InMemoryDecisionModel):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         response = await super().decide(request, model_settings)
-        question = request.questions['route']
-        assert isinstance(question, ChoiceQuestion)
+        question = request.questions.get('route')
+        if not isinstance(question, ChoiceQuestion):
+            # A fill, or a single output type left with nothing else on offer: there is no route to pick.
+            return response
         # A route that is no longer offered keeps its probability out of the answer, as a real model's would.
         probabilities = {label: self.route[label] for label in question.criteria}
         choice = max(probabilities, key=lambda label: probabilities[label])
@@ -492,10 +497,10 @@ def issue_refund() -> str:
 
 
 @pytest.mark.anyio
-async def test_the_lean_weighs_every_function_tool_together(allow_model_requests: None):
-    """Probability split between two tools still says a tool is wanted, though neither clears the bar alone."""
-    model = RoutingDecisionModel({'Triage': 0.0, 'look_up_order': 0.59, 'issue_refund': 0.41})
-    result = await Agent(model, output_type=Triage, tools=[look_up_order, issue_refund]).run('Where is my order?')
+async def test_the_likeliest_route_is_taken_however_unsure(allow_model_requests: None):
+    """With no `decision_route_threshold`, the pick is taken at any probability: here a tool at 0.46."""
+    model = RoutingDecisionModel({'Triage': 0.44, 'look_up_order': 0.46, 'issue_refund': 0.1})
+    result = await Agent(model, output_type=Triage, tools=[look_up_order]).run('Where is my order?')
 
     [first, *_] = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
     assert [part.tool_name for part in first.parts if isinstance(part, ToolCallPart)] == ['look_up_order']
@@ -507,34 +512,160 @@ async def test_the_lean_weighs_every_function_tool_together(allow_model_requests
             'scores': {},
             'route': {
                 'choice': 'look_up_order',
-                'probabilities': {'Triage': 0.0, 'look_up_order': 0.59, 'issue_refund': 0.41},
-                'offered': ['Triage', 'look_up_order', 'issue_refund'],
-                'taken': 'look_up_order',
+                'probabilities': {'Triage': 0.44, 'look_up_order': 0.46},
+                'offered': ['Triage', 'look_up_order'],
             },
         }
     )
 
 
 @pytest.mark.anyio
-async def test_the_function_tools_together_below_the_bar_are_a_lean(allow_model_requests: None):
-    """A tool is picked, but the tools together fall short of the bar, so the output is filled and the lean reported."""
-    model = RoutingDecisionModel({'Triage': 0.44, 'look_up_order': 0.46, 'issue_refund': 0.1})
-    result = await Agent(model, output_type=Triage, tools=[look_up_order, issue_refund]).run('Where is my order?')
+@pytest.mark.parametrize(
+    'output_type,route,picked',
+    [
+        pytest.param(Triage, {'Triage': 0.3, 'look_up_order': 0.45, 'issue_refund': 0.25}, 'look_up_order', id='tool'),
+        pytest.param(Triage, {'Triage': 0.6, 'look_up_order': 0.3, 'issue_refund': 0.1}, 'Triage', id='output'),
+        pytest.param(
+            [Triage, None], {'Triage': 0.3, 'None': 0.5, 'look_up_order': 0.2, 'issue_refund': 0.0}, 'None', id='None'
+        ),
+    ],
+)
+async def test_a_pick_below_the_route_threshold_is_unsure(
+    allow_model_requests: None, output_type: Any, route: dict[str, float], picked: str
+):
+    """Every kind of route is held to the bar, and the step is handed on before anything is filled."""
+    model = RoutingDecisionModel(route)
+    agent = Agent(
+        model,
+        output_type=output_type,
+        tools=[look_up_order, issue_refund],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.7),
+    )
+    with pytest.raises(UnsureRoute) as exc_info:
+        await agent.run('Where is my order?')
+
+    error = exc_info.value
+    assert (error.model_name, error.route, error.threshold) == ('in-memory-decisions', picked, 0.7)
+    assert error.probability == route[picked]
+    assert error.probabilities == route
+    assert len(model.requests) == 1
+
+
+@pytest.mark.anyio
+async def test_an_unsure_route_says_what_to_do_about_it(allow_model_requests: None):
+    model = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.7})
+    agent = Agent(
+        model,
+        output_type=Triage,
+        tools=[look_up_order],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.75),
+    )
+    with pytest.raises(UnsureRoute) as exc_info:
+        await agent.run('Where is my order?')
+    assert str(exc_info.value) == snapshot(
+        "in-memory-decisions picked 'look_up_order' with probability 0.70, below `decision_route_threshold` (0.75). "
+        'Put a model behind it to take the steps it is unsure of: `FallbackModel(decision_model, language_model)` '
+        'hands `language_model` this step.'
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('threshold', [0.7, 0.5])
+async def test_a_pick_at_or_above_the_route_threshold_is_taken(allow_model_requests: None, threshold: float):
+    model = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.7})
+    agent = Agent(
+        model,
+        output_type=Triage,
+        tools=[look_up_order],
+        model_settings=DecisionModelSettings(decision_route_threshold=threshold),
+    )
+    result = await agent.run('Where is my order?')
 
     assert result.output == Triage(urgent=True, action='review')
-    assert len(model.requests) == 1
-    assert result.response.provider_details == snapshot(
-        {
-            'confidence': {'urgent': 0.6, 'action': 0.9},
-            'probabilities': {'action': {'approve': 0.0, 'review': 1.0}},
-            'scores': {},
-            'route': {
-                'choice': 'look_up_order',
-                'probabilities': {'Triage': 0.44, 'look_up_order': 0.46, 'issue_refund': 0.1},
-                'offered': ['Triage', 'look_up_order', 'issue_refund'],
-                'taken': 'Triage',
-            },
-        }
+    [first, *_] = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    assert [part.tool_name for part in first.parts if isinstance(part, ToolCallPart)] == ['look_up_order']
+
+
+@pytest.mark.anyio
+async def test_a_fallback_model_takes_the_unsure_step(allow_model_requests: None):
+    """`UnsureRoute` is a `ModelAPIError`, so the default `FallbackModel` hands the whole step to the next model."""
+    decision_model = RoutingDecisionModel({'Triage': 0.55, 'look_up_order': 0.45})
+    model = FallbackModel(decision_model, TestModel(call_tools=[]))
+    agent = Agent(
+        model,
+        output_type=Triage,
+        tools=[look_up_order],
+        model_settings=DecisionModelSettings(decision_route_threshold=0.7),
+    )
+    result = await agent.run('Where is my order?')
+
+    assert result.response.model_name == 'test'
+    assert len(decision_model.requests) == 1
+
+
+def approve() -> str:
+    """Approve the request as it stands."""
+    return 'approved'  # pragma: no cover
+
+
+def set_urgency(urgent: bool) -> str:
+    """Set how urgent the ticket is."""
+    return f'urgent={urgent}'  # pragma: no cover
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    'tool',
+    [pytest.param(approve, id='with nothing to fill'), pytest.param(set_urgency, id='with arguments to fill')],
+)
+async def test_the_last_route_left_is_not_held_to_the_route_threshold(allow_model_requests: None, tool: Any):
+    """With every other route returned this turn, nothing was picked, so there is no pick to be unsure of."""
+    history = [
+        ModelRequest(parts=[UserPromptPart('Where is my order?')]),
+        ModelResponse(parts=[ToolCallPart('look_up_order', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('look_up_order', 'Order #1 shipped yesterday.', 'call_1')]),
+    ]
+    model = InMemoryDecisionModel()
+    response = await model.request(
+        history,
+        DecisionModelSettings(decision_route_threshold=1.0),
+        ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(name='look_up_order', description='Look up the customer order.'),
+                Tool(tool).tool_def,
+            ],
+            allow_text_output=False,
+        ),
+    )
+
+    assert [part.tool_name for part in response.parts if isinstance(part, ToolCallPart)] == [tool.__name__]
+    name = tool.__name__
+    assert (response.provider_details or {})['route'] == {
+        'choice': name,
+        'probabilities': {name: 1.0},
+        'offered': [name],
+    }
+
+
+@pytest.mark.anyio
+async def test_a_single_output_type_is_not_held_to_the_route_threshold(allow_model_requests: None):
+    """With nothing else on offer there is no route question, so no pick to be unsure of."""
+    model = InMemoryDecisionModel()
+    agent = Agent(model, output_type=Triage, model_settings=DecisionModelSettings(decision_route_threshold=1.0))
+    result = await agent.run('Where is my order?')
+
+    assert result.output == Triage(urgent=True, action='review')
+    assert 'route' not in model.requests[0].questions
+
+
+def test_unsure_route_pickles():
+    exc = pickle.loads(pickle.dumps(UnsureRoute('jev-latest', 'refund', {'refund': 0.4, 'Ticket': 0.6}, 0.7)))
+    assert (exc.model_name, exc.route, exc.probability, exc.probabilities, exc.threshold) == (
+        'jev-latest',
+        'refund',
+        0.4,
+        {'refund': 0.4, 'Ticket': 0.6},
+        0.7,
     )
 
 
