@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -35,38 +35,45 @@ it can load from here rather than from the `id` argument, which stays a plain st
 same for every run whatever capabilities it can load.
 """
 
-DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME = 'capability-catalog'
-"""The [`name`][pydantic_ai.messages.InstructionPart.name] of the instruction part listing the deferred capabilities.
-
-The loader has no `id` of its own, so the part has no `id` either and cannot be addressed or overridden; the name
-only says what it is, for a model that treats the catalog differently from the rest of the instructions.
-"""
-
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
 _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
 
 
-async def deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> dict[str, str | None]:
-    """Every deferred capability's id and description, in registration order.
+@dataclass
+class DeferredCapabilityCatalog:
+    """Every deferred capability's id and description, resolved once per run step.
 
-    The one source for what the catalog lists, whether rendered into the instructions or carried on the
-    `load_capability` tool's `metadata`. It includes capabilities already loaded, as the rendered catalog must.
+    The one source for what the catalog lists, both where it is rendered into the instructions and where it is
+    carried on the `load_capability` tool's `metadata`. Both read it in the same step, so a callable `description`
+    is resolved once per step, as it was before the tool carried it. It includes capabilities already loaded, as
+    the rendered catalog must.
     """
-    catalog: dict[str, str | None] = {}
-    for capability_id, capability in ctx.capabilities.items():
-        if capability.defer_loading is not True:
-            continue
-        description = capability.get_description()
-        if description is not None and not isinstance(description, str):
-            description = await SystemPromptRunner[AgentDepsT](description).run(ctx)
-        catalog[capability_id] = description
-    return catalog
+
+    _step: tuple[str | None, int] | None = field(default=None, init=False)
+    _entries: dict[str, str | None] = field(default_factory=dict[str, str | None], init=False)
+
+    async def get(self, ctx: RunContext[AgentDepsT]) -> dict[str, str | None]:
+        step = (ctx.run_id, ctx.run_step)
+        if step != self._step:
+            entries: dict[str, str | None] = {}
+            for capability_id, capability in ctx.capabilities.items():
+                if capability.defer_loading is not True:
+                    continue
+                description = capability.get_description()
+                if description is not None and not isinstance(description, str):
+                    description = await SystemPromptRunner[AgentDepsT](description).run(ctx)
+                entries[capability_id] = description
+            self._step, self._entries = step, entries
+        return self._entries
 
 
 @dataclass
 class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
     """Adds the framework-managed `load_capability` tool."""
+
+    catalog: DeferredCapabilityCatalog = field(default_factory=DeferredCapabilityCatalog)
+    """Shared with the `DeferredCapabilityLoader` that renders the same catalog into the instructions."""
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
@@ -82,7 +89,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             description=LOAD_CAPABILITY_TOOL_DESCRIPTION,
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
             tool_kind='capability-load',
-            metadata={LOAD_CAPABILITY_CATALOG_METADATA_KEY: await deferred_capability_catalog(ctx)},
+            metadata={LOAD_CAPABILITY_CATALOG_METADATA_KEY: await self.catalog.get(ctx)},
         )
 
         load_tool = ToolsetTool(

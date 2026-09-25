@@ -1479,6 +1479,12 @@ DECLARING_AUTHORS = [
             'agent',
             r"Instruction name 'agent' is reserved for the agent's own instructions; choose a different name\.",
         ),
+        (
+            # A decision model leaves the part with this name out of its framing.
+            'capability-catalog',
+            r"Instruction name 'capability-catalog' is reserved for the catalog of on-demand capabilities; "
+            r'choose a different name\.',
+        ),
     ],
 )
 async def test_no_author_can_declare_a_name_that_would_read_as_a_framework_key(

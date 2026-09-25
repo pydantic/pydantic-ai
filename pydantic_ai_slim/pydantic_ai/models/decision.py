@@ -15,6 +15,7 @@ from typing_extensions import assert_never, deprecated
 
 from .. import _utils, usage
 from .._deferred_capabilities import parse_loaded_capabilities
+from .._instructions import DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -47,10 +48,7 @@ from ..profiles import ModelProfile, merge_profile
 from ..providers import InterfaceClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..toolsets._deferred_capability_loader import (
-    DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME,
-    LOAD_CAPABILITY_CATALOG_METADATA_KEY,
-)
+from ..toolsets._deferred_capability_loader import LOAD_CAPABILITY_CATALOG_METADATA_KEY
 from ..usage import RequestUsage
 from . import (
     Model,
@@ -1025,9 +1023,9 @@ def _catalog(part: InstructionPart) -> bool:
 
     Sent as shared framing, it would repeat every capability's description on every question, fields included,
     whatever route is being asked about. The part has no `id`, since the loader that contributes it has none; its
-    name is how it is told apart, and a part with an `id` is some other source's, whatever it is named.
+    name, which no other part may take, is how it is told apart.
     """
-    return part.name == DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME and part.id is None
+    return part.name == DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME
 
 
 def _wrapped(tool: ToolDefinition) -> dict[str, Any] | None:

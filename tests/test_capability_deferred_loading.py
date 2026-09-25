@@ -2521,3 +2521,30 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
     ]
     assert len(load_returns) == 1
     assert load_returns[0].instructions == 'Deferred instructions.'
+
+
+async def test_a_callable_description_is_resolved_once_per_step():
+    """The catalog in the instructions and the one on the `load_capability` tool are the same resolution."""
+    resolved_on_steps: list[int] = []
+
+    def describe(ctx: RunContext[Any]) -> str:
+        resolved_on_steps.append(ctx.run_step)
+        return 'Refund things.'
+
+    refunds = Capability[Any](id='refunds', description=describe, defer_loading=True)
+
+    @refunds.tool_plain
+    def refund_status() -> str:
+        return 'Refunded.'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'})])
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('refund_status', {})])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    result = await Agent(FunctionModel(respond), capabilities=[refunds]).run('Refund me.')
+
+    assert result.output == 'Done.'
+    assert resolved_on_steps == [1, 2, 3]

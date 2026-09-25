@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
-from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
+from pydantic_ai._instructions import (
+    DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME,
+    AgentInstructions,
+    SourcedInstruction,
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import (
-    DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME,
+    DeferredCapabilityCatalog,
     DeferredCapabilityLoaderToolset,
-    deferred_capability_catalog,
 )
 
 from .abstract import (
@@ -29,7 +32,7 @@ DEFERRED_CAPABILITY_CATALOG_PREFIX_WITH_SEARCH = (
 )
 
 
-async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> str:
+async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT], catalog: dict[str, str | None]) -> str:
     # Deliberately lists EVERY deferred capability on every turn, including ones the model
     # has already loaded — do not filter by load state here.
     #
@@ -46,7 +49,6 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> st
     # instructions and tools it can already see, and if it does, the loader tool bounces the
     # redundant call with an "already active" ModelRetry. One occasional wasted retry is
     # far cheaper than busting the prefix cache on every load.
-    catalog = await deferred_capability_catalog(ctx)
     entries = '\n'.join(
         f'- {cap_id}: {description}' if description else f'- {cap_id}' for cap_id, description in catalog.items()
     )
@@ -72,8 +74,13 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> st
 class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
     """Internal capability that installs deferred capability catalog and loading support."""
 
+    _catalog: DeferredCapabilityCatalog = field(default_factory=DeferredCapabilityCatalog, init=False, repr=False)
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return _render_deferred_capability_catalog
+        return self._render_catalog
+
+    async def _render_catalog(self, ctx: RunContext[AgentDepsT]) -> str:
+        return await _render_deferred_capability_catalog(ctx, await self._catalog.get(ctx))
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         # Named so a model can tell the catalog from the rest of the instructions: a decision model offers
@@ -87,4 +94,4 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
         return CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        return DeferredCapabilityLoaderToolset(wrapped=toolset)
+        return DeferredCapabilityLoaderToolset(wrapped=toolset, catalog=self._catalog)
