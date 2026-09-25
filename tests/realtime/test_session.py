@@ -5124,6 +5124,43 @@ async def test_cancelling_a_parked_tool_result_keeps_a_later_sends_reservation()
         assert session._pending_response_requests == 1  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_a_typed_turn_is_resent_unless_the_replay_carried_it() -> None:
+    # A connection that rebuilds the conversation from local history on re-dial replays what was recorded
+    # when it read the history. A typed turn recorded before that read arrived with the replay, so only its
+    # reply is asked for; one recorded after it (queued behind a parked send while the replay was going
+    # out) did not, so it is sent whole.
+    class _ReplayingConnection(_DroppingConnection):
+        history: Callable[[], Sequence[ModelMessage]] | None = None
+
+        @property
+        def reconnect_restores_in_flight_state(self) -> bool:
+            return False
+
+        def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+            self.history = message_history
+
+    conn = _ReplayingConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        await session.send_audio(b'\x01')
+        conn.dropped = True
+        parked = asyncio.create_task(session.send_audio(b'\x02'))
+        await _parked(parked)
+        replayed = asyncio.create_task(session.send('in the replay'))
+        await _parked(replayed)
+        assert conn.history is not None
+        conn.history()  # the re-dial reads the history to replay it
+        missed = asyncio.create_task(session.send('after the replay'))
+        await _parked(missed)
+        conn.dropped = False
+        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
+        await asyncio.wait_for(asyncio.gather(parked, replayed, missed), _LIVENESS_TIMEOUT)
+    assert [content for content in conn.sent if not isinstance(content, BinaryAudio)] == [
+        CreateResponse(),
+        'after the replay',
+    ]
+
+
 async def test_parked_send_fails_when_receiving_ends_right_after_the_reconnect() -> None:
     # The pump can handle the reconnect and then end before the parked send resumes. Nothing would read
     # the reply to a frame sent then, so the send fails instead of going out.

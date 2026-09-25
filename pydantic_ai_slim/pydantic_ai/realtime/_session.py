@@ -912,6 +912,8 @@ class RealtimeSession:
         # Sends waiting out a reconnect, in the order they were made (see `_send_frame`), and the transport
         # error that parked the first of them.
         self._parked_sends: deque[object] = deque()
+        # The history as last read for a replay on re-dial (see `_history_for_replay`).
+        self._last_replay: list[ModelMessage] = []
         self._link_error: BaseException | None = None
         self._pump_error: Exception | None = None
         self._pump_finished = False
@@ -940,7 +942,7 @@ class RealtimeSession:
             # Offer the conversation for replay, so a provider that keeps no state across sessions can
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
             # support because that is the mechanism, and a no-op where the provider resumes natively.
-            self._connection.set_message_history(self.all_messages)
+            self._connection.set_message_history(self._history_for_replay)
 
         self._session_instrumentation.start_session_span()
 
@@ -1962,15 +1964,14 @@ class RealtimeSession:
         made meanwhile queue behind the parked one, so the provider still sees them in order. Delivery
         is at least once: a frame the transport flushed just before failing is sent again.
 
-        `replayed` is what to send instead once a reconnect has happened, on a connection that rebuilds
-        the conversation from local history on re-dial: an input already recorded in that history (a
-        text turn) arrived with the replay, so sending it again would duplicate it.
+        `replayed` is what to send instead when a connection that rebuilds the conversation from local
+        history on re-dial replayed `request` (a text turn recorded before the re-dial read the history):
+        it arrived with the replay, so sending it again would duplicate it.
         """
         self._ensure_not_closed()
         self._start_pump()
         first = contents[0] if contents else None
         remaining = list(contents)
-        reconnects_at_start = self._reconnects_handled
         # Our place in the queue of sends waiting out a reconnect, once we have one, and the reconnect
         # count when our own attempt failed (`None` while queued behind another send's failure).
         ticket: object | None = None
@@ -1997,9 +1998,10 @@ class RealtimeSession:
                         continue
                     if (
                         replayed is not None
-                        and self._reconnects_handled != reconnects_at_start
                         and not self._connection.reconnect_restores_in_flight_state
+                        and any(message is request for message in self._last_replay)
                     ):
+                        # A re-dial replayed the history after this input was recorded in it.
                         remaining = list(replayed)
                         replayed = None
                     attempt = self._reconnects_handled
@@ -2038,6 +2040,11 @@ class RealtimeSession:
             ticket = object()
             self._parked_sends.append(ticket)
         return ticket
+
+    def _history_for_replay(self) -> list[ModelMessage]:
+        """The history a connection replays on re-dial, remembered so a send can tell what it carried."""
+        self._last_replay = self.all_messages()
+        return self._last_replay
 
     def _sending_from_pump(self) -> bool:
         return asyncio.current_task() is self._pump_task
