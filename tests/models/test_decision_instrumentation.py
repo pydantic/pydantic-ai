@@ -801,7 +801,7 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
 ):
     """A picked route whose fields Jev cannot express is handed off before any fill request is sent.
 
-    The route span records the `ToolCallProposed` with the picked route's label, and the step goes to the model
+    The route span records the `UnfillableRoute` with the picked route's label, and the step goes to the model
     behind Jev, so the `chat` span above it ends without an error.
     """
     agent = Agent(
@@ -877,9 +877,9 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
                                 'events': [
                                     {
                                         'name': 'exception',
-                                        'exception.type': 'pydantic_ai.models.decision.ToolCallProposed',
-                                        'exception.message': "jev-latest proposed calling 'final_result_Reply' (probability 1.00) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step.",
-                                        'exception.stacktrace': "pydantic_ai.models.decision.ToolCallProposed: jev-latest proposed calling 'final_result_Reply' (probability 1.00) but cannot fill its arguments. Put a model that can behind it: `FallbackModel(decision_model, llm)` hands `llm` this step.",
+                                        'exception.type': 'pydantic_ai.models.decision.UnfillableRoute',
+                                        'exception.message': "jev-latest picked 'Reply' (probability 1.00) but cannot fill it. Put a model that can behind it: `FallbackModel(decision_model, language_model)` hands `language_model` this step.",
+                                        'exception.stacktrace': "pydantic_ai.models.decision.UnfillableRoute: jev-latest picked 'Reply' (probability 1.00) but cannot fill it. Put a model that can behind it: `FallbackModel(decision_model, language_model)` hands `language_model` this step.",
                                         'exception.escaped': 'False',
                                         'pydantic_ai.decision.route': 'Reply',
                                     }
