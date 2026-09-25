@@ -202,8 +202,10 @@ below).
 strip references from client-supplied history by default, so a client can't choose the environment
 the agent works in.
 
-A sandbox keeps running after the run until its provider's lifetime settings stop it. Clean it up
-through the provider or in an `after_run` hook.
+A sandbox keeps running after the run until its provider's lifetime settings stop it. A successful run
+returns `result.workspace` and its ref, so you can continue in it later; a failed run returns no result,
+so there is no ref to store. To remove a failed run's environment, clean it up in an `on_run_error`
+hook: `after_run` doesn't run when a run fails.
 
 ## Choosing a run's workspace
 
