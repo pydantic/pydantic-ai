@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -538,32 +539,59 @@ def test_untimed_cassette_round_trips_without_timing(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_replay_clock_reads_when_the_last_replayed_interaction_happened() -> None:
-    """`now()` moves to each replayed interaction's recorded time, however fast replay runs."""
+async def test_replay_clock_reads_when_the_frame_being_handled_was_recorded() -> None:
+    """`now()` moves to each inbound frame's recorded time as it is taken up, however fast replay runs."""
     replay = ReplayWebSocket(
         RealtimeCassette(
             interactions=[
-                CassetteMessage(direction='sent', data={'type': 'client.event'}, at=0.5),
                 CassetteMessage(direction='received', data={'type': 'server.one'}, at=1.25),
-                # Stamps only ever move the clock forward, and an unstamped interaction leaves it be.
+                # Stamps only ever move the clock forward, and an unstamped frame leaves it be.
                 CassetteMessage(direction='received', data={'type': 'server.two'}, at=1.0),
                 CassetteMessage(direction='received', data={'type': 'server.three'}),
-                CassetteClose(code=1000, reason='', ok=True, at=9.0),
+                CassetteMessage(direction='received', data={'type': 'server.four'}, at=2.5),
             ]
         )
     )
     assert replay.timed
+    # Reading ahead doesn't move the clock: only taking a frame up does, in the order they were read.
+    for _ in range(4):
+        await replay.recv()
     assert replay.now() == 0.0
-    await replay.send(json.dumps({'type': 'client.event'}))
-    assert replay.now() == 0.5
+    clock: list[float] = []
+    for _ in range(4):
+        replay.begin_handling_frame()
+        clock.append(replay.now())
+    assert clock == [1.25, 1.25, 1.25, 2.5]
+
+
+@pytest.mark.anyio
+async def test_replay_clock_ignores_sends_that_overtake_the_frame_being_handled() -> None:
+    """A send waiting on an inbound frame can go out before that frame is handled; the clock must not follow it.
+
+    Otherwise the frame would be handled at the send's time rather than its own, and a silence measured
+    from it would depend on which task asyncio happened to run first.
+    """
+    replay = ReplayWebSocket(
+        RealtimeCassette(
+            interactions=[
+                CassetteMessage(direction='received', data={'type': 'server.one'}, at=0.0),
+                CassetteMessage(direction='sent', data={'type': 'client.event'}, at=0.7),
+                CassetteMessage(direction='received', data={'type': 'server.two'}, at=1.1),
+                CassetteClose(code=1000, reason='', ok=True, at=9.0),
+            ]
+        )
+    )
+    send = asyncio.ensure_future(replay.send(json.dumps({'type': 'client.event'})))
+    await asyncio.sleep(0)
     await replay.recv()
-    assert replay.now() == 1.25
+    await send  # the waiting send goes out before the frame it waited on is handled
+    replay.begin_handling_frame()
+    assert replay.now() == 0.0
     await replay.recv()
-    await replay.recv()
-    assert replay.now() == 1.25
     with pytest.raises(ConnectionClosedOK):
         await replay.recv()
-    assert replay.now() == 9.0
+    replay.begin_handling_frame()
+    assert replay.now() == 1.1
 
 
 def test_timed_live_replay_runs_the_turn_clock_on_recorded_time() -> None:
@@ -572,11 +600,13 @@ def test_timed_live_replay_runs_the_turn_clock_on_recorded_time() -> None:
     timed = RealtimeCassette(interactions=[CassetteMessage(direction='received', data={'type': 'x'}, at=3.0)])
     untimed = RealtimeCassette(interactions=[CassetteMessage(direction='received', data={'type': 'x'})])
 
+    real_map_frame = openai_live.OpenAILiveConnection._map_frame  # pyright: ignore[reportPrivateUsage]
     with patched_ws_connect('openai_live', timed, 'replay'):
         replay = timed._replay  # pyright: ignore[reportPrivateUsage]
         assert replay is not None
         assert openai_live._now == replay.now  # pyright: ignore[reportPrivateUsage]
     assert openai_live._now is real_clock  # pyright: ignore[reportPrivateUsage]
+    assert openai_live.OpenAILiveConnection._map_frame is real_map_frame  # pyright: ignore[reportPrivateUsage]
 
     # An untimed Live cassette, another provider's timed one, and a recording all keep the real clock.
     cases: list[tuple[ProviderName, RealtimeCassette, CassettePlan]] = [
@@ -587,3 +617,25 @@ def test_timed_live_replay_runs_the_turn_clock_on_recorded_time() -> None:
     for provider, cassette, plan in cases:
         with patched_ws_connect(provider, cassette, plan):
             assert openai_live._now is real_clock  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_live_turn_clock_moves_as_each_frame_is_mapped_not_read() -> None:
+    """GPT-Live keeps its next read in flight while it handles a frame, so that read must not move the clock."""
+    first = {'type': 'session.unknown_event', 'n': 1}
+    second = {'type': 'session.unknown_event', 'n': 2}
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data=first, at=0.5),
+            CassetteMessage(direction='received', data=second, at=3.0),
+        ]
+    )
+    with patched_ws_connect('openai_live', cassette, 'replay'):
+        replay = cassette._replay  # pyright: ignore[reportPrivateUsage]
+        assert replay is not None
+        connection = openai_live.OpenAILiveConnection(cast(Any, replay))
+        raw_first, raw_second = await replay.recv(), await replay.recv()
+        assert connection._map_frame(raw_first) == []  # pyright: ignore[reportPrivateUsage]
+        assert openai_live._now() == 0.5  # pyright: ignore[reportPrivateUsage]
+        assert connection._map_frame(raw_second) == []  # pyright: ignore[reportPrivateUsage]
+        assert openai_live._now() == 3.0  # pyright: ignore[reportPrivateUsage]

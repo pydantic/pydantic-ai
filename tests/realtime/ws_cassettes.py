@@ -19,7 +19,7 @@ payloads so cassettes stay small.
 
 Each interaction also records when it happened, in seconds since the recording's first interaction.
 Replay still delivers frames back to back, but exposes that recorded time as a clock
-(`ReplayWebSocket.now`) reading the time of the last interaction replayed. An adapter that infers a turn
+(`ReplayWebSocket.now`) reading when the inbound frame being handled was recorded. An adapter that infers a turn
 boundary from wall-clock silence (GPT-Live) reads that clock instead of the real one, so a replayed
 silence lasts as long as the recorded one did, without the suite waiting it out. Cassettes recorded
 before timing was captured replay as before, against the real clock.
@@ -28,6 +28,7 @@ before timing was captured replay as before, against the real clock.
 from __future__ import annotations as _annotations
 
 import asyncio
+import collections
 import json
 import os
 import re
@@ -355,6 +356,8 @@ class ReplayWebSocket:
         self._readers = 0
         self._closed = False
         self._now = 0.0
+        # When each inbound frame handed out and not yet taken up by `begin_handling_frame()` was recorded.
+        self._delivered: collections.deque[float | None] = collections.deque()
         # Mirrors the `websockets` attributes a connection exposes once closed, so code that inspects
         # the close after iteration ends (a normal close doesn't raise) sees what was recorded.
         self.close_code: int | None = None
@@ -446,6 +449,7 @@ class ReplayWebSocket:
                 raise (ConnectionClosedOK if interaction.ok else ConnectionClosedError)(close, None)
             if interaction.direction == 'received':
                 self._advance()
+                self._delivered.append(interaction.at)
                 return interaction.data
             await self._condition.wait()
 
@@ -478,19 +482,30 @@ class ReplayWebSocket:
         return any(interaction.at is not None for interaction in self._interactions)
 
     def now(self) -> float:
-        """The recorded time of the last interaction replayed: a clock that runs at the recording's pace.
+        """When the inbound frame being handled was recorded: a clock that runs at the recording's pace.
 
         Replay delivers frames as fast as the session takes them, so the real clock barely moves between
         frames that were seconds apart on the wire. Anything that measures time on the wire (GPT-Live's
         turn clock, see `_patched_turn_clock`) reads this instead, and sees each gap as recorded.
+
+        It moves only in `begin_handling_frame()`, never as a side effect of replay making progress: a
+        read the consumer started early, or a send that was waiting on an inbound frame, would otherwise
+        move it past the frame still being handled, and what the consumer measured would depend on how
+        asyncio happened to schedule those tasks.
         """
         return self._now
 
+    def begin_handling_frame(self) -> None:
+        """Move the clock to when the next delivered inbound frame was recorded, as its consumer takes it up.
+
+        Delivered frames are taken up in the order they were read, so no frame needs to be named.
+        """
+        at = self._delivered.popleft()
+        if at is not None:
+            self._now = max(self._now, at)
+
     def _advance(self) -> None:
-        """Consume the next interaction, moving the clock to when it was recorded. Call with the condition held."""
-        interaction = self._interactions[self._position]
-        if interaction.at is not None:
-            self._now = max(self._now, interaction.at)
+        """Consume the next interaction. Call with the condition held."""
         self._position += 1
         self._condition.notify_all()
 
@@ -621,17 +636,31 @@ def _patched_turn_clock(provider: ProviderName, replay: ReplayWebSocket | None) 
     delivers frames back to back, so against the real clock no silence ever lasts long enough and the
     turns of a multi-turn conversation run together. Against `ReplayWebSocket.now` every gap lasts as
     long as it did on the wire, so the turn ends where it did while recording, however fast (or slowly,
-    on a loaded CI runner) the replay runs. The clock only moves as frames are replayed, so a turn that
-    ended in the gap between two frames ends as the second one arrives; Live's audio track keeps frames
-    coming ten times a second, so that is at most 100 ms late. A cassette without timing keeps the real
-    clock, which is what it was written against.
+    on a loaded CI runner) the replay runs.
+
+    The clock moves as the connection starts mapping each frame, which is where it reads the clock (on
+    the frame, and at the silence check after it). That's not when the frame was read: the connection
+    keeps its next read in flight while it handles the current frame. A turn that ended in the gap
+    between two frames ends as the second one is handled; Live's audio track keeps frames coming ten
+    times a second, so that is at most 100 ms late. A cassette without timing keeps the real clock,
+    which is what it was written against.
     """
     if replay is None or provider != 'openai_live' or not replay.timed:
         yield
         return
     from pydantic_ai.realtime import openai_live as rt_openai_live
 
-    with mock.patch.object(rt_openai_live, '_now', replay.now):
+    connection = rt_openai_live.OpenAILiveConnection
+    map_frame = connection._map_frame  # pyright: ignore[reportPrivateUsage]
+
+    def map_frame_on_recorded_time(self: rt_openai_live.OpenAILiveConnection, raw: str | bytes) -> Any:
+        replay.begin_handling_frame()
+        return map_frame(self, raw)
+
+    with (
+        mock.patch.object(rt_openai_live, '_now', replay.now),
+        mock.patch.object(connection, '_map_frame', map_frame_on_recorded_time),
+    ):
         yield
 
 
