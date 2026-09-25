@@ -676,7 +676,7 @@ async def test_async_tool_speech_stays_before_its_result(
     assert isinstance(calling, ModelResponse)
     assert calling.state == 'interrupted'
     assert (calling.usage.input_tokens, calling.usage.output_tokens) == snapshot((1453, 89))
-    assert session.usage.requests == 2
+    assert session.usage.requests == 3
 
 
 async def test_extended_thinking_async_tool_round(
