@@ -85,7 +85,12 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     TranscriptUpdate,
 )
-from pydantic_ai.realtime._session import _pending_message_text, _TapView  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.realtime._session import (
+    _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
+    _AUDIO_TAP_SECONDS,  # pyright: ignore[reportPrivateUsage]
+    _pending_message_text,  # pyright: ignore[reportPrivateUsage]
+    _TapView,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.realtime._utils import resolve_advertised_tools, seed_pcm_audio, seed_speech_content
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -95,6 +100,7 @@ from pydantic_ai.realtime.codec import (
     ConversationCreated,
     ConversationItemCreated,
     CreateResponse,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -565,13 +571,72 @@ async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
     assert deltas == [TranscriptUpdate(index=0, speaker='user', delta='Hello', transcript='Hello')]
 
 
+# One second of the default 24 kHz mono PCM16 output.
+_SECOND = 48000
+_MINUTE = 60 * _SECOND
+# How much audio a `stream_audio()` view buffers before it drops the oldest chunk.
+_AUDIO_TAP_BYTES = _AUDIO_TAP_SECONDS * _SECOND
+
+
 async def test_audio_view_drops_oldest_chunk_on_overflow_without_instrumentation() -> None:
-    chunks = [bytes([index]) for index in range(40)]
+    # Minute-long chunks, so seven of them overflow the five-minute window by two.
+    chunks = [bytes([index]) * _MINUTE for index in range(7)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
 
     async with session:
-        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
-        assert len(await drain_events(session)) == 41
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-5:]
+        assert len(await drain_events(session)) == 8
+        assert session._audio_tap_drops == 2  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_audio_view_caps_the_number_of_tiny_chunks_it_buffers() -> None:
+    # A byte budget alone would let tiny deltas queue without bound, so the chunk count is capped too.
+    chunks = [index.to_bytes(2, 'big') for index in range(_AUDIO_TAP_MAX_CHUNKS + 5)]
+    session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
+
+    async with session:
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-_AUDIO_TAP_MAX_CHUNKS:]
+        assert session._audio_tap_drops == 5  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    'chunk_bytes',
+    [
+        pytest.param(1920, id='40ms-chunks'),  # Gemini native audio
+        pytest.param(19200, id='400ms-chunks'),  # OpenAI Realtime
+    ],
+)
+async def test_audio_view_keeps_a_whole_reply_generated_ahead_of_playback(chunk_bytes: int) -> None:
+    # Providers generate speech several times faster than it plays, so a device-paced consumer has most
+    # of a long reply queued before it has heard the start of it. A minute-long reply arriving in one
+    # burst, ahead of a consumer that plays each chunk before pulling the next, must reach it whole.
+    chunks = [bytes([index % 256]) * chunk_bytes for index in range(60 * _SECOND // chunk_bytes)]
+    session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(chunk) for chunk in chunks]), _noop_runner)
+    played: list[bytes] = []
+
+    async with session:
+        stream = session.stream_audio()
+
+        async def play() -> None:
+            async for chunk in stream:
+                await asyncio.sleep(0)
+                played.append(chunk)
+
+        playback = asyncio.create_task(play())
+        # The whole reply has been generated before the wait starts.
+        deltas = 0
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartDeltaEvent):
+                deltas += 1
+                if deltas == len(chunks):
+                    break
+        await session.wait_for_playback()
+        assert played == chunks
+        assert session.played_audio_bytes == 60 * _SECOND
+        assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
+        playback.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await playback
 
 
 async def test_final_transcripts_survive_a_flood_of_deltas() -> None:
@@ -1832,9 +1897,10 @@ async def test_interrupt_played_bytes_counts_overflow_drops_as_played_ground() -
     The consumer never saw the dropped chunks, so the device position undercounts the session's
     byte offsets by exactly their size; the mapping adds them back.
     """
-    # One chunk more than the 32-chunk buffer, published in one burst before the consumer runs (the
-    # replay has no suspension points), so exactly the oldest chunk is overflow-dropped.
-    conn = _GatedRealtimeConnection([AudioDelta(bytes([i]) * _CHUNK) for i in range(33)], [])
+    # Published in one burst before the consumer runs (the replay has no suspension points): the last
+    # chunk tops the buffer up past its bound by exactly the first, which is overflow-dropped.
+    chunks = [bytes([0]) * _CHUNK, bytes([1]) * _CHUNK, bytes([2]) * (_AUDIO_TAP_BYTES - _CHUNK)]
+    conn = _GatedRealtimeConnection([AudioDelta(chunk) for chunk in chunks], [])
     session = RealtimeSession(conn, _noop_runner)
 
     async with session:
@@ -2056,9 +2122,13 @@ async def test_interrupt_played_bytes_leaves_drops_ahead_of_the_device_out_of_th
     """
     conn = _GatedRealtimeConnection(
         [AudioDelta(b'a' * _CHUNK)],
-        # One chunk more than the 32-chunk buffer, so the burst that lands while `a` is playing
-        # overflows by exactly one.
-        [AudioDelta(bytes([i]) * _CHUNK) for i in range(1, 34)],
+        # The burst that lands while `a` is playing fills the buffer exactly, then overflows it by
+        # exactly its first chunk.
+        [
+            AudioDelta(bytes([1]) * _CHUNK),
+            AudioDelta(bytes([2]) * (_AUDIO_TAP_BYTES - _CHUNK)),
+            AudioDelta(bytes([3]) * _CHUNK),
+        ],
     )
     session = RealtimeSession(conn, _noop_runner)
 
@@ -2071,7 +2141,7 @@ async def test_interrupt_played_bytes_leaves_drops_ahead_of_the_device_out_of_th
             if (
                 isinstance(event, PartDeltaEvent)
                 and isinstance(delta := event.delta, SpeechPartDelta)
-                and delta.audio_chunk == bytes([33]) * _CHUNK
+                and delta.audio_chunk == bytes([3]) * _CHUNK
             ):
                 break
 
@@ -5600,7 +5670,8 @@ async def test_unconsumed_session_queue_keeps_structural_events_and_latest_delta
     )
 
     async with RealtimeSession(connection) as session:
-        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+        # Two thousand 2-byte chunks are far inside the audio view's windows, so it keeps them all.
+        assert [chunk async for chunk in session.stream_audio()] == chunks
 
         queued = _queued_realtime_events(session)
         assert sum(isinstance(event, PartDeltaEvent) for event in queued) == 512
@@ -9745,6 +9816,185 @@ async def test_wait_for_reply_wakes_when_a_concurrent_send_fails() -> None:
             await waiting
         with pytest.raises(RuntimeError, match='send failed'):
             await sending
+
+
+class _AnswersEachInput(FakeRealtimeConnection):
+    """Answers every input as it is sent with the events `answer` gives for it, numbered as `send()` is called."""
+
+    def __init__(self, answer: Callable[[int, RealtimeInput], list[RealtimeCodecEvent]]) -> None:
+        super().__init__([])
+        self._answer = answer
+        self._events: asyncio.Queue[RealtimeCodecEvent] = asyncio.Queue()
+
+    async def send(self, content: RealtimeInput) -> None:
+        index = len(self.sent)
+        await super().send(content)
+        for event in self._answer(index, content):
+            self._events.put_nowait(event)
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        while True:
+            yield await self._events.get()
+
+
+_REFUSAL = RealtimeSessionErrorEvent('Refused.', type='invalid_request_error', code='invalid_value')
+
+
+async def test_wait_for_reply_returns_when_the_provider_refuses_the_response() -> None:
+    """A refused request for a response releases its reservation, since no response will ever come."""
+    conn = _AnswersEachInput(lambda index, _: [InputRejected(index, refused='response'), _REFUSAL])
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Say hello.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        # Only the request for a response was refused: the text itself joined the conversation.
+        assert session.all_messages() == snapshot(
+            [ModelRequest(parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())], timestamp=IsDatetime())]
+        )
+
+
+async def test_refused_content_is_taken_out_of_history() -> None:
+    """Content the provider refused never reached the model, so history must not claim it did."""
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        if content == TextContext('refused'):
+            return [InputRejected(index, refused='content'), _REFUSAL]
+        return []
+
+    session = RealtimeSession(_AnswersEachInput(answer))
+    async with session:
+        await session.send('refused', respond=False)
+        await session.send('kept', respond=False)
+        for _ in range(20):  # let the pump read the refusal
+            await asyncio.sleep(0)
+        assert session.all_messages() == snapshot(
+            [ModelRequest(parts=[UserPromptPart(content='kept', timestamp=IsDatetime())], timestamp=IsDatetime())]
+        )
+
+
+async def test_refused_image_frees_its_place_under_the_retention_cap() -> None:
+    """A refused image is no longer retained, so it doesn't evict a real one to make room for itself."""
+    refused = BinaryImage(data=b'refused', media_type='image/png')
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        return [InputRejected(index, refused='content'), _REFUSAL] if content == refused else []
+
+    images = [BinaryImage(data=f'image-{index}'.encode(), media_type='image/png') for index in range(3)]
+    session = RealtimeSession(_AnswersEachInput(answer), _noop_runner, retain_images_max=3)
+    async with session:
+        await session.send(images[0])
+        await session.send(images[1])
+        await session.send(refused)
+        for _ in range(20):  # let the pump read the refusal
+            await asyncio.sleep(0)
+        await session.send(images[2])
+        assert session.all_messages() == [
+            ModelRequest(parts=[UserPromptPart(content=[image], timestamp=IsDatetime())], timestamp=IsDatetime())
+            for image in images
+        ]
+
+
+async def test_image_refused_while_still_sending_is_not_retained() -> None:
+    """A refusal read before the image's send returns must not leave the refused image counted under the cap."""
+    refused = BinaryImage(data=b'refused', media_type='image/png')
+
+    class _RefusesMidSend(_AnswersEachInput):
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            if content == refused:
+                for _ in range(20):  # the pump reads the refusal before this send returns
+                    await asyncio.sleep(0)
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        return [InputRejected(index, refused='content'), _REFUSAL] if content == refused else []
+
+    images = [BinaryImage(data=f'image-{index}'.encode(), media_type='image/png') for index in range(3)]
+    session = RealtimeSession(_RefusesMidSend(answer), _noop_runner, retain_images_max=2)
+    async with session:
+        await session.send(images[0])
+        await session.send(images[1])
+        await session.send(refused)
+        await session.send(images[2])
+        assert session.all_messages() == [
+            ModelRequest(parts=[UserPromptPart(content=[image], timestamp=IsDatetime())], timestamp=IsDatetime())
+            for image in images[1:]
+        ]
+
+
+async def test_refused_content_without_a_recorded_request_changes_nothing() -> None:
+    """Refused content the session recorded nothing for (a bare response request) has nothing to take back."""
+    conn = _AnswersEachInput(lambda index, _: [InputRejected(index, refused='content'), _REFUSAL])
+    session = RealtimeSession(conn, _noop_runner)
+    async with session:
+        await session.create_response()
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        # The request for a response wasn't what was refused, so the reply is still owed.
+        assert not waiting.done()
+        await session.close()
+        with anyio.fail_after(5):
+            await waiting
+
+
+async def test_refused_response_request_already_answered_releases_nothing() -> None:
+    """A refusal arriving after a response took the reservation must not release another caller's.
+
+    A response the provider started on its own (server VAD) takes whichever reservation is pending, so
+    that is the reply the caller gets; releasing again would leave the next send's reply unwaited for.
+    """
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        if index == 0:
+            return [
+                OutputTranscript(text='hi', is_final=True),
+                InputRejected(index, refused='response'),
+                _REFUSAL,
+                ResponseDone(),
+            ]
+        return []
+
+    class _GatedSecondReply(_AnswersEachInput):
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            if len(self.sent) == 2:
+                self._events.put_nowait(OutputTranscript(text='again', is_final=True))
+
+    conn = _GatedSecondReply(answer)
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Hi.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        await session.send('Again.')
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'the refusal released the reservation of the reply still owed'
+        conn._events.put_nowait(ResponseDone())  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(5):
+            await waiting
+
+
+async def test_error_naming_no_input_leaves_the_reply_owed() -> None:
+    """An error that doesn't say which input it refused doesn't cancel the reply.
+
+    Checked live: an OpenAI or xAI error that names no client event (an unsupported image format, an
+    invalid event on xAI) still leaves the `response.create` after it to be answered.
+    """
+    conn = _AnswersEachInput(lambda index, _: [_REFUSAL])
+    session = RealtimeSession(conn)
+    async with session:
+        await session.send('Say hello.')
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not waiting.done(), 'an unattributed error released the reply'
+        conn._events.put_nowait(OutputTranscript(text='hello', is_final=True))  # pyright: ignore[reportPrivateUsage]
+        conn._events.put_nowait(ResponseDone())  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(5):
+            await waiting
 
 
 async def test_wait_for_reply_returns_when_a_reconnect_discards_the_reply() -> None:

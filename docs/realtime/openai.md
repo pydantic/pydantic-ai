@@ -74,8 +74,8 @@ Input transcription defaults to `'auto'`; set a supported transcription model ID
 The shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting (see
 [Thinking](../capabilities/thinking.md)) applies to models whose profile reports
 `supports_thinking`, including the `gpt-realtime-2` family. `True` uses the provider default and an
-effort string selects a level. `False` omits `reasoning`, because OpenAI realtime does not accept a
-disabled effort. The GA `gpt-realtime` ignores the setting.
+effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning off. The
+GA `gpt-realtime` ignores the setting.
 
 Reasoning traces are not surfaced as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s; the API
 exposes effort as input only.
@@ -137,3 +137,10 @@ that expose the realtime protocol can also be supplied through an `OpenAIProvide
 
 - The provider connection has no resumable server handle. Automatic reconnect restores completed
   history by [replaying local messages](lifecycle.md#state-restoration) into a new session.
+- A response the server can't generate, for example because its safety system rejected an image in
+  the conversation, arrives as a recoverable
+  [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] carrying the
+  provider's `code` (such as `input_image_safety_violation`), followed by an empty response with
+  `finish_reason='error'` and the error in `provider_details['error']`. The rejected content stays in
+  the server's conversation, so every later response fails the same way:
+  [seed a new session](history.md#seeding-a-session) with history that leaves it out.

@@ -318,6 +318,35 @@ async def test_text_context_waits_for_next_turn(openai_ws_cassette: tuple[Provid
     assert 'ada' in (part.transcript or '').lower()
 
 
+async def test_refused_text_is_taken_out_of_history(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    # OpenAI caps an input text at 256,000 characters and refuses a longer one with an `error` naming
+    # the item's `event_id`, so the refused text is taken back out of history rather than recorded as
+    # something the model saw.
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime-mini', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    errors: list[RealtimeSessionErrorEvent] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('a' * 256_001, respond=False)
+        await session.send('Say hello.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeSessionErrorEvent):
+                    errors.append(event)
+                elif isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert [(error.code, error.recoverable) for error in errors] == snapshot([('string_above_max_length', True)])
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == [UserPromptPart(content='Say hello.', timestamp=IsDatetime())]
+
+
 async def test_image_can_solicit_one_response(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
@@ -335,6 +364,60 @@ async def test_image_can_solicit_one_response(
 
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
     assert len(responses) == 1
+
+
+async def test_failed_response_surfaces_its_error(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """A response the server fails reports its error, which OpenAI sends only inside `response.done`."""
+    provider, _ = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime-2.1-mini', provider=provider, settings=OpenAIRealtimeModelSettings(output_modality='text')
+    )
+    agent = Agent(instructions='Reply in at most five words.')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send(BinaryContent(data=b'this is not a png', media_type='image/png'))
+        await session.send('What is in the image?')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == snapshot(
+        [
+            RealtimeSessionErrorEvent(
+                message='Input image was rejected by the safety system. If you believe this is an error, contact us at help.openai.com and include the request ID sess_ERrGMIS70H4J8DcCl7sFe',
+                type='invalid_request_error',
+                code='input_image_safety_violation',
+            )
+        ]
+    )
+    assert session.all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[],
+            usage=RequestUsage(
+                details={'input_text_tokens': 0, 'input_image_tokens': 0, 'output_text_tokens': 0, 'audio_tokens': 0},
+                cost=Decimal('0.00'),
+            ),
+            model_name='gpt-realtime-2.1-mini',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={
+                'status': 'failed',
+                'error': {
+                    'code': 'input_image_safety_violation',
+                    'type': 'invalid_request_error',
+                    'message': 'Input image was rejected by the safety system. If you believe this is an error, contact us at help.openai.com and include the request ID sess_ERrGMIS70H4J8DcCl7sFe',
+                },
+            },
+            provider_response_id='resp_ERrGMce4TS5sXXTRnSOkR',
+            finish_reason='error',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
 
 
 @pytest.mark.realtime_ws_hold_open
@@ -493,6 +576,39 @@ async def test_dated_ga_snapshot_ignores_thinking(
     assert 'reasoning' not in session_updates[0]['session']
     assert any(isinstance(event, PartEndEvent) for event in events)
     assert isinstance(events[-1], RealtimeTurnCompleteEvent)
+
+
+async def test_thinking_false_turns_reasoning_off(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`thinking=False` sends `reasoning.effort: 'none'`, which a reasoning model accepts and honors."""
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime-2.1-mini',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(thinking=False, output_modality='text'),
+    )
+
+    events: list[Any] = []
+    async with Agent(instructions='Answer with the number only.').realtime(model).session() as session:
+        await session.send(
+            'A bat and a ball cost 1.10 total; the bat costs 1 more than the ball. What does the ball cost?'
+        )
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    session_updates = sent_frames_containing(cassette, 'session.update')
+    assert len(session_updates) == 1
+    assert session_updates[0]['session']['reasoning'] == {'effort': 'none'}
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.usage.output_tokens > 0
+    # Left at its default effort, this model spends tens of reasoning tokens on this question.
+    assert 'reasoning_tokens' not in response.usage.details
 
 
 async def test_audio_in_server_vad_turn(
