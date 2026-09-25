@@ -94,6 +94,7 @@ from .codec import (
     ConversationCreated,
     ConversationItemCreated,
     CreateResponse,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -238,10 +239,17 @@ _FULL_PROFILE = RealtimeModelProfile(
     audio_output_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
 )
 
-# Audio chunks are kilobytes apiece, so a slow player is bounded tightly. Transcript items are short
-# strings, and dropping one silently corrupts the text a user is reading rather than causing an
-# audible glitch, so they get a far deeper window for the same trivial cost.
-_AUDIO_TAP_SIZE = 32
+# Providers generate speech several times faster than it plays (OpenAI 6-9x, Gemini 3-4x), so a
+# device-paced player routinely has most of a reply queued before it has heard the first seconds of it.
+# The audio window is therefore measured in playback time rather than chunks (whose size varies from
+# ~40 ms on Gemini to 400 ms on OpenAI) and sized to hold any realistic reply generated ahead of
+# playback; drop-oldest is only a memory cap for a view that stopped being consumed. Five minutes of
+# 24 kHz PCM16 is about 14 MB. Transcript items are short strings, and dropping one silently corrupts
+# the text a user is reading, so they get a deep window for a trivial cost.
+_AUDIO_TAP_SECONDS = 300
+# The byte budget alone would let a stream of tiny deltas queue millions of objects, so the window is
+# also capped in chunks: five minutes at 10 ms apiece, well below any provider's real chunk size.
+_AUDIO_TAP_MAX_CHUNKS = 30_000
 _TRANSCRIPT_TAP_SIZE = 512
 _SESSION_DELTA_QUEUE_SIZE = 512
 # Structural events are some five per turn against one delta per audio frame, so they are not what
@@ -310,6 +318,10 @@ class _AudioTap:
 
     queue: asyncio.Queue[bytes | object]
     subscribed_at_bytes: int
+    max_buffered_bytes: int
+    """How much audio the queue may hold before the oldest chunks are dropped to make room."""
+    buffered_bytes: int = 0
+    """Audio currently queued for the consumer."""
     dropped_bytes: int = 0
     """Gaps the consumer has already moved past, which its playback position no longer accounts for."""
     pending_dropped_bytes: int = 0
@@ -324,6 +336,27 @@ class _AudioTap:
     progress: asyncio.Event = field(default_factory=asyncio.Event)
     """Set when playback advances or the view ends, waking `wait_for_playback()`."""
     ended: bool = False
+
+    def put(self, chunk: bytes) -> int:
+        """Queue a chunk without blocking the pump, dropping the oldest to stay within the byte and chunk budgets.
+
+        The newest chunk is always kept, even on its own over budget. Returns how many chunks were
+        dropped; their bytes become a gap ahead of the consumer.
+        """
+        dropped = 0
+        while self.buffered_bytes and (
+            self.buffered_bytes + len(chunk) > self.max_buffered_bytes or self.queue.qsize() >= _AUDIO_TAP_MAX_CHUNKS
+        ):
+            # The sentinel can't be dropped: it is only enqueued once the pump has finished, after
+            # which nothing publishes.
+            oldest = self.queue.get_nowait()
+            assert isinstance(oldest, bytes)
+            self.buffered_bytes -= len(oldest)
+            self.pending_dropped_bytes += len(oldest)
+            dropped += 1
+        self.queue.put_nowait(chunk)
+        self.buffered_bytes += len(chunk)
+        return dropped
 
     def finish(self) -> None:
         self.ended = True
@@ -685,6 +718,11 @@ class RealtimeSession:
         # `_record_sent_request` stores these same objects in the pending list or the history.
         self._retained_image_requests: list[ModelRequest] = []
         self._sent_image_count = 0
+        # Every `send()` made on the connection is numbered, the same way the connection numbers the
+        # inputs it receives, so an `InputRejected` can name the request whose content the provider
+        # refused. Weak, so an image evicted from history by the retention cap isn't kept alive here.
+        self._inputs_sent = 0
+        self._input_requests: weakref.WeakValueDictionary[int, ModelRequest] = weakref.WeakValueDictionary()
         # Whether the connection transcribes the user's audio. When it doesn't, no `InputTranscript`
         # arrives to finalize a user turn, so its retained audio or content-less placeholder is finalized
         # at the turn boundary (see `_finalize_untranscribed_user`).
@@ -1163,8 +1201,10 @@ class RealtimeSession:
         The subscription starts when this method is called, so audio the model produces between
         the call and the consumer's first iteration is buffered rather than missed. A view handed
         to `asyncio.create_task` therefore misses nothing while waiting for its first turn on the
-        event loop. Each iterator has a 32-chunk buffer. If its consumer falls behind (or never
-        starts), the oldest chunk is dropped so audio playback cannot stall tool execution, turn
+        event loop. Models generate speech several times faster than it plays, so each iterator
+        buffers up to five minutes of audio: a consumer that plays each chunk before pulling the next
+        receives a long reply in full. Past that bound (a consumer that stopped iterating, or never
+        started), the oldest chunk is dropped so audio playback cannot stall tool execution, turn
         tracking, or the main event stream; an unconsumed view keeps that bounded buffer until it
         is collected. A device-paced consumer also feeds
         [`played_audio_bytes`][pydantic_ai.realtime.RealtimeSession.played_audio_bytes], and on
@@ -1176,10 +1216,14 @@ class RealtimeSession:
         """
         self._require_media_ownership('stream_audio')
         self._ensure_streamable()
-        # The extra slot is reserved for the completion sentinel, so ending a full tap does not
-        # discard one of its 32 data items or block the pump during teardown.
-        queue: asyncio.Queue[bytes | object] = asyncio.Queue(maxsize=_AUDIO_TAP_SIZE + 1)
-        tap = _AudioTap(queue=queue, subscribed_at_bytes=self._emitted_audio_bytes)
+        # The queue itself is unbounded: `_AudioTap.put` bounds it by bytes, and the completion
+        # sentinel always fits behind a full buffer without discarding audio or blocking teardown.
+        queue: asyncio.Queue[bytes | object] = asyncio.Queue()
+        tap = _AudioTap(
+            queue=queue,
+            subscribed_at_bytes=self._emitted_audio_bytes,
+            max_buffered_bytes=_AUDIO_TAP_SECONDS * self.audio_output_sample_rate * 2,
+        )
         self._audio_taps.add(tap)
         if self._pump_finished:
             queue.put_nowait(self._tap_finished)
@@ -1190,6 +1234,7 @@ class RealtimeSession:
             try:
                 while (item := await queue.get()) is not self._tap_finished:
                     assert isinstance(item, bytes)
+                    tap.buffered_bytes -= len(item)
                     # Taking this chunk steps over every gap that opened before it, so those now sit
                     # behind the playback position and belong in the mapping.
                     tap.dropped_bytes += tap.pending_dropped_bytes
@@ -1238,7 +1283,8 @@ class RealtimeSession:
         tool-calling turn, that is the answer that follows the tool results, not the response that
         called them. Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
-        over; it also returns if the session closes.
+        over; it also returns if the session closes, or if the provider refuses the request for the
+        reply (reported as a [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
         unlike that loop it can run while something else is iterating the session, so a caller that
@@ -1459,7 +1505,9 @@ class RealtimeSession:
         try:
             # A connection that replays local history on re-dial carries this recorded turn over itself.
             await self._send_frame(
-                content if respond else TextContext(content), replayed=[CreateResponse()] if respond else []
+                content if respond else TextContext(content),
+                request=request,
+                replayed=[CreateResponse()] if respond else [],
             )
         except BaseException:
             if respond:
@@ -1550,9 +1598,9 @@ class RealtimeSession:
             image = BinaryContent.narrow_type(content)
             assert isinstance(image, BinaryImage)
             if respond:
-                await self._send_frame(image, CreateResponse())
+                await self._send_frame(image, CreateResponse(), request=request)
             else:
-                await self._send_frame(image)
+                await self._send_frame(image, request=request)
         except BaseException:
             if respond:
                 self._release_response_reservation()
@@ -1562,7 +1610,10 @@ class RealtimeSession:
                 self._remove_sent_request(request)
             raise
         self._sent_image_count += 1
-        if request is not None:
+        # The provider can refuse the image while the send is still in progress, and the refusal then
+        # took the request out of history before it got here: retaining it anyway would let a request
+        # that isn't in history count against the cap and evict one that is.
+        if request is not None and self._is_recorded(request):
             self._retained_image_requests.append(request)
             # `retain_images_every_n` only slows history growth; the cap bounds it, so a long-running
             # frame stream can't grow the host's memory without limit. Providers hold their own
@@ -1587,6 +1638,12 @@ class RealtimeSession:
             or self._pending_finish_reason is not None
             or self._pending_response_usage != RequestUsage()
             or self._session_instrumentation.chat_span is not None
+        )
+
+    def _is_recorded(self, request: ModelRequest) -> bool:
+        """Whether a sent request is still in history or waiting to join it. Searched newest first."""
+        return any(message is request for message in self._pending_sent_requests) or any(
+            message is request for message in reversed(self._history)
         )
 
     def _remove_sent_request(self, request: ModelRequest) -> None:
@@ -1837,6 +1894,7 @@ class RealtimeSession:
                 break
             assert isinstance(item, bytes)
             tap.dropped_bytes += len(item)
+        tap.buffered_bytes = 0
         # Every change to the playback accounting wakes `wait_for_playback()`, so it re-checks against
         # the flushed queue rather than waiting for audio that will never come.
         tap.progress.set()
@@ -1864,13 +1922,21 @@ class RealtimeSession:
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index
 
-    async def _send_frame(self, *contents: RealtimeInput, replayed: Sequence[RealtimeInput] | None = None) -> None:
+    async def _send_frame(
+        self,
+        *contents: RealtimeInput,
+        request: ModelRequest | None = None,
+        replayed: Sequence[RealtimeInput] | None = None,
+    ) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
 
         A single input can expand to several protocol frames (a `ToolResult` creates the conversation
         item and then asks for a response), so the lock is what makes each input indivisible on the
         wire, not just ordered. Passing several inputs extends that indivisibility across them, for
         the cases where an interleaved frame would change what they mean.
+
+        `request` is the history entry recording the first input, taken back if the provider later
+        reports that input's content as refused (see `_handle_input_rejected`).
 
         A send that hits a dropped connection waits for the connection's reconnect policy to replace it
         and then goes out on the new one, so the caller (an always-on microphone task, a tool delivering
@@ -1881,6 +1947,7 @@ class RealtimeSession:
         """
         self._ensure_not_closed()
         self._start_pump()
+        first = contents[0] if contents else None
         remaining = list(contents)
         while True:
             reconnects = self._reconnects_handled
@@ -1893,6 +1960,13 @@ class RealtimeSession:
             async with self._send_lock:
                 try:
                     while remaining:
+                        # Numbered before the call, and whether or not it raises, matching how
+                        # `InputRejected.input_index` counts. Registered before the frame goes out, since
+                        # the pump can read the refusal while a later input of this group is still sending.
+                        input_index = self._inputs_sent
+                        self._inputs_sent += 1
+                        if request is not None and remaining[0] is first:
+                            self._input_requests[input_index] = request
                         await self._connection.send(remaining[0])
                         del remaining[0]
                     return
@@ -2814,6 +2888,18 @@ class RealtimeSession:
         self._server_cancelled_the_response_on_speech = self._connection.interrupts_response_on_speech
         return [event]
 
+    def _handle_input_rejected(self, event: InputRejected) -> None:
+        """Take back what a send assumed, now that the provider refused it: the same rollback a failed send gets."""
+        if event.refused == 'response':
+            # Reservations are a count, not tied to a particular response, so the one to release is
+            # whichever is still pending. None is when a response the provider started on its own
+            # (server VAD) already took it: that response is then what the caller is waiting for.
+            if self._pending_response_requests:
+                self._release_response_reservation()
+        elif (request := self._input_requests.pop(event.input_index, None)) is not None:
+            self._remove_sent_request(request)
+            self._retained_image_requests = [kept for kept in self._retained_image_requests if kept is not request]
+
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
         """Remember IDs assigned to xAI's replay burst so related events are suppressed."""
         if event.replayed:
@@ -3366,6 +3452,9 @@ class RealtimeSession:
         if isinstance(event, ConversationItemCreated):
             self._handle_conversation_item(event)
             return False
+        if isinstance(event, InputRejected):
+            self._handle_input_rejected(event)
+            return False
         if isinstance(event, ToolCallCancelled):
             for tool_call_id in event.tool_call_ids:
                 if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
@@ -3451,12 +3540,7 @@ class RealtimeSession:
                         self._turn_audio_start_bytes = self._emitted_audio_bytes
                     self._emitted_audio_bytes += len(delta.audio_chunk)
                     for tap in self._audio_taps:
-                        if (dropped := _put_tap(tap.queue, delta.audio_chunk)) is not None:
-                            # The sentinel can't be dropped: it is only enqueued once the pump has
-                            # finished, after which nothing publishes.
-                            assert isinstance(dropped, bytes)
-                            self._audio_tap_drops += 1
-                            tap.pending_dropped_bytes += len(dropped)
+                        self._audio_tap_drops += tap.put(delta.audio_chunk)
             if delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
                 # gating on that would drop the very correction a caption UI needs.

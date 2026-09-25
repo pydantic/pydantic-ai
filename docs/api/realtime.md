@@ -122,6 +122,7 @@ vocabulary yielded by a connection:
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent],
 [`ConversationCreated`][pydantic_ai.realtime.codec.ConversationCreated],
 [`ConversationItemCreated`][pydantic_ai.realtime.codec.ConversationItemCreated],
+[`InputRejected`][pydantic_ai.realtime.codec.InputRejected],
 [`PartStartEvent`][pydantic_ai.messages.PartStartEvent],
 [`PartEndEvent`][pydantic_ai.messages.PartEndEvent],
 [`SessionUsage`][pydantic_ai.realtime.codec.SessionUsage],
