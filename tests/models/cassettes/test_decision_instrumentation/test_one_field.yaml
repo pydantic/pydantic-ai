@@ -1,0 +1,57 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '397'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        priority:
+          criteria:
+            low: null
+            normal: null
+            urgent: null
+          instructions:
+            field: priority
+            goal: Triage an incoming support ticket.
+            question: How quickly does this ticket need a response?
+          type: choice
+      state: Our whole team has been locked out of the dashboard since this morning, and we have a client demo in an hour.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '221'
+      content-type:
+      - application/json
+      x-typesafe-request-id:
+      - req_01a0d6b2978c777cbf98f5e8d96e22f3
+    parsed_body:
+      answers:
+        priority:
+          choice: urgent
+          confidence: 1.0
+          probabilities:
+            low: 0.0
+            normal: 0.0
+            urgent: 1.0
+          type: choice
+      model: jev-1.13.0
+      usage:
+        input_tokens: 349
+        output_tokens: 38
+    status:
+      code: 200
+      message: OK
+version: 1
