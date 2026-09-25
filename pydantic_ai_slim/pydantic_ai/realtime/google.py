@@ -645,6 +645,24 @@ def _tool_def_to_genai(
     )
 
 
+def _non_blocking_function_names(
+    config: genai_types.LiveConnectConfig, *, unset_is_non_blocking: bool
+) -> frozenset[str]:
+    """The functions `config` declares `NON_BLOCKING`, which the model keeps talking through.
+
+    Read off the config actually sent, so a declaration from `google_config_overrides` counts too, and a
+    declaration with no `behavior` gets the model's own default.
+    """
+    return frozenset(
+        declaration.name or ''
+        for tool in config.tools or []
+        if isinstance(tool, genai_types.Tool)
+        for declaration in tool.function_declarations or []
+        if declaration.behavior == genai_types.Behavior.NON_BLOCKING
+        or (declaration.behavior is None and unset_is_non_blocking)
+    )
+
+
 def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
     """Map a supported Gemini built-in native tool to a genai `Tool`.
 
@@ -1144,9 +1162,10 @@ class GoogleRealtimeModel(RealtimeModel):
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.
         cm: AbstractAsyncContextManager[AsyncSession] | None = None
+        non_blocking_tools: frozenset[str] = frozenset()
 
         async def dial(handle: str | None) -> AsyncSession:
-            nonlocal cm
+            nonlocal cm, non_blocking_tools
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
@@ -1156,6 +1175,9 @@ class GoogleRealtimeModel(RealtimeModel):
                 model_settings=settings,
                 native_tools=model_request_parameters.native_tools,
                 resumption_handle=handle,
+            )
+            non_blocking_tools = _non_blocking_function_names(
+                config, unset_is_non_blocking=self._google_profile.get('google_async_tool_calls_by_default', False)
             )
             opening = client.aio.live.connect(model=self.model, config=config)
             async with _ws_connect_lock():
@@ -1221,6 +1243,8 @@ class GoogleRealtimeModel(RealtimeModel):
                 reconnect=reconnect,
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
+                # Read at each tool call, so a reconnect's re-dialed config is the one that counts.
+                non_blocking_tools=lambda: non_blocking_tools,
             )
         finally:
             if cm is not None:
@@ -1247,12 +1271,16 @@ class GoogleRealtimeConnection(RealtimeConnection):
         input_transcription_enabled: bool = True,
         async_tool_calls: bool = False,
         provider_url: str = '',
+        non_blocking_tools: Callable[[], frozenset[str]] | None = None,
     ) -> None:
         self._session = session
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
         self._async_tool_calls_enabled = async_tool_calls
+        # The functions the current config declares `NON_BLOCKING`: a tool-call batch with one of them in it
+        # is flagged `runs_asynchronously`.
+        self._non_blocking_tools = non_blocking_tools
         # Whether the model takes a `scheduling` field at all: extended thinking paces results against its
         # own reasoning and closes the session if one is sent. A connection built without a profile keeps
         # sending it, as it did before the flag existed; `GoogleRealtimeModel.connect` always passes one.
@@ -1541,7 +1569,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         if message.server_content is not None:
             events.extend(self._map_server_content(message.server_content))
         if message.tool_call is not None:
-            for call in message.tool_call.function_calls or []:
+            calls = message.tool_call.function_calls or []
+            non_blocking = self._non_blocking_tools() if self._non_blocking_tools is not None else frozenset[str]()
+            # Classified as a batch: the model keeps talking in the response that made these calls if any
+            # of them is asynchronous, so all of them are held with it, whatever order they're listed in.
+            runs_asynchronously = any((call.name or '') in non_blocking for call in calls)
+            for call in calls:
                 name = call.name or ''
                 # Gemini usually assigns an id, but fall back to the same synthetic id a standard
                 # request builds for an id-less call, so parallel calls don't collide on one key and
@@ -1553,7 +1586,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # A tool call opens the turn like audio output does: the session holds a partial
                 # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
                 self._turn_open = True
-                events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=to_json(call.args or {}).decode()))
+                events.append(
+                    ToolCall(
+                        tool_call_id=call_id,
+                        tool_name=name,
+                        args=to_json(call.args or {}).decode(),
+                        runs_asynchronously=runs_asynchronously,
+                    )
+                )
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
             # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
             # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).

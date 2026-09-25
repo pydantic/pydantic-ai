@@ -425,6 +425,139 @@ def test_tool_def_rejects_a_recursive_schema() -> None:
         )
 
 
+@pytest.mark.parametrize('order', ['blocking_first', 'non_blocking_first'])
+async def test_a_tool_call_batch_with_an_asynchronous_call_runs_asynchronously(order: str) -> None:
+    """Every call of a `tool_call` message is flagged when any is `NON_BLOCKING`, whatever their order.
+
+    The model keeps talking in that response for the asynchronous call's sake, so the session must hold it
+    for the whole batch; flagged one by one, a blocking call listed first would record it before the
+    asynchronous call arrived.
+    """
+    tools = [ToolDefinition(name='blocking_one'), ToolDefinition(name='async_one')]
+    model = _model(_RecordingSession())
+    settings = GoogleRealtimeModelSettings(
+        google_async_tool_calls=True,
+        google_config_overrides={
+            'tools': [
+                genai_types.Tool(
+                    function_declarations=[
+                        genai_types.FunctionDeclaration(name='blocking_one', behavior=genai_types.Behavior.BLOCKING),
+                        genai_types.FunctionDeclaration(name='async_one', behavior=genai_types.Behavior.NON_BLOCKING),
+                    ]
+                )
+            ]
+        },
+    )
+    names = ['blocking_one', 'async_one'] if order == 'blocking_first' else ['async_one', 'blocking_one']
+    async with model.connect(
+        messages=[ModelRequest(parts=[], instructions='x')],
+        model_settings=settings,
+        model_request_parameters=ModelRequestParameters(function_tools=tools),
+    ) as conn:
+        events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id=name, name=name, args={}) for name in names]
+                )
+            )
+        )
+        blocking_only = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id='b2', name='blocking_one', args={})]
+                )
+            )
+        )
+    assert [(e.tool_name, e.runs_asynchronously) for e in events if isinstance(e, ToolCall)] == [
+        (name, True) for name in names
+    ]
+    assert [(e.tool_name, e.runs_asynchronously) for e in blocking_only if isinstance(e, ToolCall)] == [
+        ('blocking_one', False)
+    ]
+
+
+async def test_reconnect_reads_the_redialed_config_for_asynchronous_calls() -> None:
+    """A reconnect builds its config afresh, and the calls it declares `NON_BLOCKING` are what count."""
+    tools = [ToolDefinition(name='first')]
+    params = ModelRequestParameters(function_tools=tools)
+    model = _model(_RecordingSession())
+    async with model.connect(
+        messages=[ModelRequest(parts=[], instructions='x')],
+        model_settings=GoogleRealtimeModelSettings(google_async_tool_calls=True, reconnect={}),
+        model_request_parameters=params,
+    ) as conn:
+        tools.append(ToolDefinition(name='second'))
+        assert await conn._attempt_reconnect()  # pyright: ignore[reportPrivateUsage]
+        events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id='c', name='second', args={})]
+                )
+            )
+        )
+    assert [(e.tool_name, e.runs_asynchronously) for e in events if isinstance(e, ToolCall)] == [('second', True)]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'runs_asynchronously'),
+    [
+        # `gemini-3.8-live` treats a declaration without a `behavior` as `NON_BLOCKING`.
+        ('gemini-3.8-live', True),
+        ('gemini-2.5-flash-native-audio-latest', False),
+    ],
+)
+async def test_an_unset_declaration_follows_the_model_default(model_name: str, runs_asynchronously: bool) -> None:
+    """A declaration left without a `behavior` runs as the model's own default says, read off its profile."""
+    model = GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession())))
+    settings = GoogleRealtimeModelSettings(
+        google_config_overrides={
+            'tools': [genai_types.Tool(function_declarations=[genai_types.FunctionDeclaration(name='unset_one')])]
+        },
+    )
+    async with model.connect(
+        messages=[ModelRequest(parts=[], instructions='x')],
+        model_settings=settings,
+        model_request_parameters=ModelRequestParameters(),
+    ) as conn:
+        events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+            genai_types.LiveServerMessage(
+                tool_call=genai_types.LiveServerToolCall(
+                    function_calls=[genai_types.FunctionCall(id='c', name='unset_one', args={})]
+                )
+            )
+        )
+    assert [(e.tool_name, e.runs_asynchronously) for e in events if isinstance(e, ToolCall)] == [
+        ('unset_one', runs_asynchronously)
+    ]
+
+
+@pytest.mark.parametrize('unset_is_non_blocking', [False, True])
+def test_non_blocking_function_names_follow_each_declaration(unset_is_non_blocking: bool) -> None:
+    """Only a call to a function declared `NON_BLOCKING` (or left unset where that's the default) runs asynchronously."""
+
+    def some_callable() -> None:  # pragma: no cover - only its presence in the list matters
+        pass
+
+    config = genai_types.LiveConnectConfig(
+        tools=[
+            genai_types.Tool(
+                function_declarations=[
+                    genai_types.FunctionDeclaration(name='async_one', behavior=genai_types.Behavior.NON_BLOCKING),
+                    genai_types.FunctionDeclaration(name='blocking_one', behavior=genai_types.Behavior.BLOCKING),
+                    genai_types.FunctionDeclaration(name='unset_one'),
+                ]
+            ),
+            genai_types.Tool(google_search=genai_types.GoogleSearch()),
+            some_callable,
+        ]
+    )
+
+    names = rt_google._non_blocking_function_names(  # pyright: ignore[reportPrivateUsage]
+        config, unset_is_non_blocking=unset_is_non_blocking
+    )
+    assert names == ({'async_one', 'unset_one'} if unset_is_non_blocking else {'async_one'})
+
+
 @pytest.mark.parametrize('async_tool_calls', [False, True])
 def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
     # The expected enum is resolved in the body, not the `parametrize` decorator: decorators are

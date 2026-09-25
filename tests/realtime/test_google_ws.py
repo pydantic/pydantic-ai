@@ -718,6 +718,62 @@ async def test_handle_barge_in_over_live_speech(
     assert 'interrupted' in [response.state for response in responses]
 
 
+async def test_async_tool_speech_stays_before_its_result(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """What the model says while an asynchronous tool runs is recorded before the tool's result.
+
+    With `NON_BLOCKING` tools, Gemini 2.5 keeps talking in the same turn after the `toolCall` frame
+    ("I'm searching…"), and the result goes back while it is still streaming. Recorded at the `toolCall`
+    frame, the calling response would leave that speech to a response of its own — recorded after the
+    result, since the result stays adjacent to its call. Held open until the result, it keeps the speech.
+    """
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(
+        instructions=(
+            'Before calling a tool, briefly tell the user what you are doing, '
+            'and keep them company while it runs. Keep replies short.'
+        )
+    )
+
+    @agent.tool_plain
+    async def search_flights(destination: str) -> str:
+        """Search for flights to a destination. Takes a while."""
+        await anyio.sleep(3)
+        return f'Cheapest flight to {destination}: KLM 1234 at 09:15 for 180 euros.'
+
+    settings = GoogleRealtimeModelSettings(google_async_tool_calls=True)
+    async with agent.realtime(model, model_settings=settings).session() as session:
+        await session.send('Find me a flight to Lisbon please.')
+        with anyio.fail_after(60):
+            await session.wait_for_reply()
+
+    assert [
+        (
+            type(message).__name__,
+            [part.transcript if isinstance(part, SpeechPart) else type(part).__name__ for part in message.parts],
+        )
+        for message in session.all_messages()
+    ] == snapshot(
+        [
+            ('ModelRequest', ['UserPromptPart']),
+            ('ModelResponse', ['ToolCallPart', "I'm now searching for flights to Lisbon. It might take a moment."]),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelResponse', ['The cheapest flight is KLM 1234 at 9:15 for 180 euros.']),
+        ]
+    )
+    # The result went back while the filler was still streaming, so the held response was recorded right
+    # then, and Gemini cut the rest of that turn short to take it (`scheduling: INTERRUPT`). That cut
+    # adds nothing to history: the turn's usage, reported only at its end, rides on to the answer.
+    calling, answer = session.all_messages()[1], session.all_messages()[3]
+    assert isinstance(calling, ModelResponse) and isinstance(answer, ModelResponse)
+    assert calling.state == 'complete'
+    assert calling.usage.input_tokens == 0
+    assert (answer.usage.input_tokens, answer.usage.output_tokens) == snapshot((3076, 250))
+    assert session.usage.requests == 2
+
+
 async def test_extended_thinking_async_tool_round(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:

@@ -70,7 +70,9 @@ with a [filtered toolset](../toolsets.md#filtering-tools) or
 
 Every tool runs in the background, so a slow tool does not block session events, other tools, or
 turn tracking. [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps each
-result adjacent to its call even when calls finish out of order.
+result adjacent to its call even when calls finish out of order. See
+[Tool calls in history](history.md#tool-calls-in-history) for where speech and user turns that happen
+during a tool run are recorded.
 
 Whether the model continues speaking while it waits is provider-specific. Inspect the
 [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]

@@ -917,6 +917,13 @@ class RealtimeSession:
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
+        # Asynchronous calls in the response still being assembled: the model keeps talking after them,
+        # so the response stays open until a result has to follow it in history (see
+        # `_record_held_tool_call_response`) or the provider ends it. A user turn starting meanwhile
+        # follows it, as it follows any response being produced when it starts.
+        self._held_tool_call_ids: set[str] = set()
+        # Set once a held response has been recorded mid-turn, until the next response is finalized.
+        self._held_response_split = False
         # Set while a response the provider said isn't the last of its exchange is held open for the
         # tool call it was stalling for; the finish reason it will be recorded with if something else
         # arrives first. See `_handle_turn_complete`.
@@ -2252,7 +2259,10 @@ class RealtimeSession:
         if (
             response_occurred
             and not parts
-            and not interrupted
+            # After a held response was recorded mid-turn, an interruption with nothing new in it is the
+            # provider cutting what was already recorded (Gemini drops the rest of a turn to take a tool
+            # result), not a response of its own.
+            and (not interrupted or self._held_response_split)
             and provider_details is None
             and reason in (None, 'stop')
             and not self._closed
@@ -2272,6 +2282,7 @@ class RealtimeSession:
             self._response_parts = []
             self._native_tool_parts = []
             self._response_limit_checked = False
+            self._held_response_split = False
             return
         if response_occurred:
             response = ModelResponse(
@@ -2326,6 +2337,8 @@ class RealtimeSession:
         self._session_instrumentation.end_chat_span(input_messages, response)
         self._response_parts = []
         self._native_tool_parts = []
+        self._held_tool_call_ids.clear()
+        self._held_response_split = False
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id = None
         self._content_response_id = None
@@ -2418,7 +2431,7 @@ class RealtimeSession:
             and self._pending_finish_reason is None
             and self._pending_response_usage == RequestUsage()
         )
-        if not already_finalized:
+        if not already_finalized and not self._held_response_split:
             self._begin_response()
         # Whether the model will speak again: it always responds to a tool's result, so a response that
         # called one, that left one still running, or whose content was already recorded (making this the
@@ -2495,13 +2508,17 @@ class RealtimeSession:
             )
         return events
 
-    def _handle_tool_call_part(self, call_part: ToolCallPart, *, response_usage_follows: bool) -> list[RealtimeEvent]:
+    def _handle_tool_call_part(
+        self, call_part: ToolCallPart, *, response_usage_follows: bool, runs_asynchronously: bool = False
+    ) -> list[RealtimeEvent]:
         """Fold a tool call into the current response, deferring finalization when its usage follows.
 
         OpenAI-protocol providers report each call before the `response.done` frame carrying that
         response's usage, so finalization waits for the ensuing `SessionUsage`. Gemini's tool-call
         frame has no per-response usage to wait for; it is finalized immediately with zero usage, while
-        the later completed turn keeps the usage Gemini reports for that turn.
+        the later completed turn keeps the usage Gemini reports for that turn. An asynchronous call is the
+        exception: the model keeps talking in the same response, so it stays open (see
+        `_record_held_tool_call_response`).
         """
         events = self._finalize_anonymous_user_before_output()
         self._ensure_chat_span()
@@ -2512,9 +2529,54 @@ class RealtimeSession:
         self._response_parts.append(call_part)
         if response_usage_follows:
             self._tool_calls_awaiting_usage.add(call_part.tool_call_id)
+        elif runs_asynchronously or self._held_tool_call_ids:
+            # A blocking call in a response already held for an asynchronous one joins the hold rather
+            # than ending it: the model is still talking in that response.
+            self._held_tool_call_ids.add(call_part.tool_call_id)
         else:
             self._finalize_response()
         return events
+
+    def _record_held_tool_call_response(self, *, interrupted: bool = False) -> None:
+        """Record the response held open for an asynchronous call, as far as it has got.
+
+        History is append-only, so a response is recorded once, whole. The one carrying an asynchronous
+        call stays open while the model keeps talking, and is recorded as soon as the call's result has to
+        follow it (or the provider ends the turn). Speech in progress is split there — what was said
+        so far belongs to the response with the call, and the rest becomes the next response — so history
+        keeps the order things happened in and each result still directly follows its call.
+
+        `interrupted` records it cut off: the model abandoned the call, and with it what it was saying.
+        Only called while a response is held.
+        """
+        events = self._finalize_assistant_part()
+        first_call = next(
+            index
+            for index, part in enumerate(self._response_parts)
+            if isinstance(part, ToolCallPart) and part.tool_call_id in self._held_tool_call_ids
+        )
+        spoke_after_call = any(not isinstance(part, ToolCallPart) for part in self._response_parts[first_call + 1 :])
+        try:
+            self._finalize_response(interrupted=interrupted)
+        except UsageLimitExceeded as exceeded:
+            # The response is recorded by then; only the limit check after it failed. Raised here, the
+            # tool task would lose the result the call needs next in history, so the error reaches the
+            # caller the way a failing tool's does.
+            self._park_error(exceeded)
+        # What's left of the provider's turn after this is its own response. Until it says something, its
+        # boundaries (a usage report, the turn's end) don't start one: they belong to the turn already
+        # checked against the request limit, and must leave the result's reservation to the reply.
+        self._held_response_split = True
+        # Whether what it says then is the reply the result reserved. If the model was already talking
+        # after the call, the rest of that speech was under way before the result went out, and the reply
+        # comes after it — as it would with the call recorded at its own frame, where that speech opened a
+        # response of its own. If it wasn't (a filler, then the call), what it says next is the reply.
+        self._response_limit_checked = spoke_after_call and not interrupted
+        for event in events:
+            # Queued directly, whatever triggered this: the tool task that finished, or a user turn
+            # starting, so the part ends before the result or the user's speech that cut it.
+            self._publish_taps(event)
+            self._queue_put(event)
 
     def _complete_tool_call(
         self,
@@ -2525,6 +2587,14 @@ class RealtimeSession:
         request_parts: list[ModelRequestPart] = [result_part]
         if content:
             request_parts.append(UserPromptPart(content=content))
+        if call_part.tool_call_id in self._held_tool_call_ids:
+            # Cut off only when the model abandoned everything it was waiting on in that response: a
+            # sibling call still running means it only dropped this one.
+            self._record_held_tool_call_response(
+                interrupted=isinstance(result_part, ToolReturnPart)
+                and result_part.outcome == 'interrupted'
+                and not any(tool_call_id in self._pending_tool_calls for tool_call_id in self._held_tool_call_ids)
+            )
         self._insert_tool_return(call_part, self._new_request(request_parts))
         return [FunctionToolResultEvent(part=result_part, content=content)]
 
@@ -3213,10 +3283,18 @@ class RealtimeSession:
             # `CancelledError`. Its call already has an interrupted return in history and there is no
             # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
             return result_part, user_content
-        if not response_usage_follows:
-            await self._drain_pending_messages('asap')
+        await self._prepare_to_send_tool_result(call_part, response_usage_follows=response_usage_follows)
         await self._send_tool_result(call_part, output, wire_content)
         return result_part, user_content
+
+    async def _prepare_to_send_tool_result(self, call_part: ToolCallPart, *, response_usage_follows: bool) -> None:
+        """Settle what has to come before a tool's result on the wire."""
+        if call_part.tool_call_id in self._held_tool_call_ids:
+            # Recorded before the result goes out, as a call recorded at its own frame would be, so the
+            # model's own words stay ahead of it and a message enqueued `asap` can still precede it.
+            self._record_held_tool_call_response()
+        if not response_usage_follows:
+            await self._drain_pending_messages('asap')
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
         self._reserve_response_request()
@@ -3349,7 +3427,8 @@ class RealtimeSession:
         if event.context_window_used is not None:
             self._reported_context_window_used = event.context_window_used
         if event.response_scoped:
-            self._begin_response()
+            if not self._held_response_split:
+                self._begin_response()
             if not self._responses_are_requests:
                 # Each report is a request the model has already made: it is recorded in full, and the
                 # one past the limit ends the session below, once it is.
@@ -3500,6 +3579,7 @@ class RealtimeSession:
         for out in self._handle_tool_call_part(
             call_part,
             response_usage_follows=event.response_usage_follows,
+            runs_asynchronously=event.runs_asynchronously,
         ):
             # Published as well as queued: folding the call in first ends the in-flight assistant part,
             # so a turn that speaks *and* calls a tool ("let me look that up") emits its
@@ -3576,10 +3656,14 @@ class RealtimeSession:
             self._handle_input_rejected(event)
             return False
         if isinstance(event, ToolCallCancelled):
-            for tool_call_id in event.tool_call_ids:
-                if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
-                    continue
-                task, call_part = pending
+            # All taken off the running set before any is settled, so each one's settlement sees the whole
+            # batch the model abandoned.
+            cancelled = [
+                pending
+                for tool_call_id in event.tool_call_ids
+                if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is not None
+            ]
+            for task, call_part in cancelled:
                 task.cancel()
                 # Record a cancelled result so the call still has a matching return in history (kept
                 # valid for a handoff), and deliberately don't send a `ToolResult` back to the model —

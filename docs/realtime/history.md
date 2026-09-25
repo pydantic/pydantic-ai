@@ -22,6 +22,31 @@ The session exposes copy-on-read snapshots:
 | [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | Seeded history plus messages recorded during this session. |
 | [`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only messages recorded during this session. |
 
+## Tool calls in history
+
+A tool round is recorded as in a standard run: a
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] with the
+[`ToolCallPart`][pydantic_ai.messages.ToolCallPart], then a
+[`ModelRequest`][pydantic_ai.messages.ModelRequest] with its
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. Realtime tools
+[run in the background](tools.md#concurrent-tool-execution), so the conversation can move on before
+a result arrives. History still records each result directly after its call, because request-response
+APIs such as OpenAI Chat Completions and Anthropic reject a tool call whose result isn't in the next
+message:
+
+- During a Gemini [asynchronous tool call](gemini.md#asynchronous-tool-calls), the model keeps
+  talking in the turn that called the tool. The calling `ModelResponse` stays open, so that speech is
+  recorded in it after the `ToolCallPart` and before the result, where it happened. It still hands
+  off to every provider. The response is recorded, and never changed afterwards, as soon as the
+  result must follow it or the model's turn ends. Speech still in progress when the result goes out
+  is split: what came after is recorded as the next response. A user turn that starts while the model
+  is still talking follows the response, as it does any response in progress. With several asynchronous calls in one response, their
+  results are recorded together after it, so speech between two of them follows both.
+- A user turn during the tool run can't keep its real position. Neither can the reply to it or any
+  later response. The result is recorded directly after its call, ahead of all of them.
+  [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] streams in the real
+  completion order, and the `ToolReturnPart`'s `timestamp` records when the tool finished.
+
 ## Seeding a session
 
 Pass `message_history=` to seed a new session. Replayable text, speech transcripts, thinking text,
