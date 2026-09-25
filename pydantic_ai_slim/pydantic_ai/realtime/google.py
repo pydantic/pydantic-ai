@@ -1241,6 +1241,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # verified live), so when this is set at reconnect time the turn's boundary would otherwise
         # never arrive — see `__aiter__`, which closes the orphaned turn before the reconnect event.
         self._turn_open = False
+        # Whether the turn's latest output is a tool-call frame, with nothing said since. Some models
+        # (Vertex `gemini-live-2.5-flash`, verified live) close the tool-call turn with its own
+        # `turn_complete` once they take the results, before speaking the answer; see `_map_message`.
+        self._tool_call_turn_unanswered = False
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -1366,6 +1370,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         # ending the turn or delivering messages queued behind it.
                         self._turn_open = False
                         self._turn_interrupted = False
+                        self._tool_call_turn_unanswered = False
                         self._native_part_index = 0
                         yield ResponseDone(interrupted=True)
                     yield RealtimeSessionReconnectEvent(state_restored=state_restored)
@@ -1469,6 +1474,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # "opened" by one would close as an empty interrupted response if the connection then dropped.
         if native_tool_parts or any(isinstance(event, (AudioDelta, OutputTranscript)) for event in events):
             self._turn_open = True
+            self._tool_call_turn_unanswered = False
         # `turn_complete` is emitted by `_map_message` *after* the message's `usage_metadata`, not here:
         # Gemini packs `turnComplete` and `usageMetadata` into the same message, and the session
         # finalizes the response's usage on `ResponseDone`, so the usage must be accounted first
@@ -1526,6 +1532,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # `turn_complete`), but the calls above were promised some: an empty report closes their
             # response now, since Gemini answers only once it has their results.
             events.append(SessionUsage(usage=RequestUsage()))
+        if message.tool_call is not None and message.tool_call.function_calls:
+            self._tool_call_turn_unanswered = True
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's
         # tokens into the finalized `ModelResponse` / `chat` span before `ResponseDone` closes it.
         if message.server_content is not None and message.server_content.turn_complete:
@@ -1539,14 +1547,24 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 message.server_content.interaction_status == genai_types.InteractionStatus.IN_PROGRESS
                 and not interrupted
             )
-            events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
-            self._turn_interrupted = False
-            # A stalled exchange's response is still open — the model will add a tool call and an answer
-            # to it — so the turn stays open too. Closing it here would leave a drop between the filler
-            # and the tool call with no synthetic terminal, and the partial response in flight forever.
-            self._turn_open = more_expected
-            if not more_expected:
-                self._native_part_index = 0
+            closes_answered_tool_call_turn = (
+                self._tool_call_turn_unanswered and not interrupted and not more_expected and not self._tool_calls
+            )
+            self._tool_call_turn_unanswered = False
+            # The model said nothing after its tool calls and has all their results: this closes the
+            # tool-call turn, not the answer, which is still to come. Like the OpenAI protocol's
+            # function-call-only `response.done`, it reports only its usage (emitted above, folded into
+            # the answer's response), and the turn stays open for the answer.
+            if not closes_answered_tool_call_turn:
+                events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
+                self._turn_interrupted = False
+                # A stalled exchange's response is still open — the model will add a tool call and an
+                # answer to it — so the turn stays open too. Closing it here would leave a drop between
+                # the filler and the tool call with no synthetic terminal, and the partial response in
+                # flight forever.
+                self._turn_open = more_expected
+                if not more_expected:
+                    self._native_part_index = 0
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
         if update is not None and update.new_handle:

@@ -2769,3 +2769,80 @@ async def test_parallel_tool_calls_are_one_response_answered_once() -> None:
         ['SpeechPart'],
     ]
     assert session.usage.requests == 2
+
+
+def _tool_call_message() -> genai_types.LiveServerMessage:
+    return genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(
+            function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+        )
+    )
+
+
+def _turn_complete_message() -> genai_types.LiveServerMessage:
+    return genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(turn_complete=True),
+        usage_metadata=genai_types.UsageMetadata(prompt_token_count=7, response_token_count=2),
+    )
+
+
+async def test_turn_complete_closing_an_answered_tool_call_turn_is_not_a_response_boundary() -> None:
+    """Vertex `gemini-live-2.5-flash` closes the tool-call turn once it takes the results, before answering.
+
+    That boundary reports its usage but no `ResponseDone`, which would end the exchange (and
+    `wait_for_reply()`) before the answer; the answer's own `turn_complete` does.
+    """
+    conn = _conn(_RecordingSession())
+    conn._map_message(_tool_call_message())  # pyright: ignore[reportPrivateUsage]
+    await conn.send(ToolResult(tool_call_id='c1', output='sunny'))
+    assert conn._map_message(_turn_complete_message()) == [  # pyright: ignore[reportPrivateUsage]
+        SessionUsage(usage=RequestUsage(input_tokens=7, output_tokens=2))
+    ]
+    assert conn._turn_open  # pyright: ignore[reportPrivateUsage]
+
+    conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Sunny.'))
+        )
+    )
+    assert conn._map_message(_turn_complete_message())[-1] == ResponseDone()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_turn_complete_with_a_tool_call_still_unanswered_stays_a_response_boundary() -> None:
+    """A tool-call turn that ends before its results are sent (a non-blocking call) is closed as usual."""
+    conn = _conn(_RecordingSession())
+    conn._map_message(_tool_call_message())  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(_turn_complete_message())[-1] == ResponseDone()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_reconnect_forgets_an_unanswered_tool_call_turn() -> None:
+    """The synthetic boundary a drop gives a tool-call turn closes it: the next turn's boundary is its own."""
+
+    class _AnswersThenDrops(_RecordingSession):
+        async def receive(self) -> AsyncIterator[Any]:
+            if self._turn:
+                raise self._close_exc
+            self._turn += 1
+            yield _tool_call_message()
+            # The result goes out before the drop, so nothing is left unanswered.
+            await conn.send(ToolResult(tool_call_id='c1', output='sunny'))
+
+    dial, _ = _dialer(_RecordingSession([[_turn_complete_message()]]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _AnswersThenDrops()),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False},
+    )
+    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+
+    assert [type(event).__name__ for event in events] == [
+        'ToolCall',
+        'SessionUsage',
+        'ResponseDone',  # the dropped tool-call turn's synthetic boundary
+        'RealtimeSessionReconnectEvent',
+        'SessionUsage',
+        'ResponseDone',
+        'RealtimeSessionErrorEvent',
+    ]
