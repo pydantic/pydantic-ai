@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
 from typing import Any, ClassVar, Literal, TypeAlias, cast
@@ -12,6 +12,7 @@ from pydantic import JsonValue
 from typing_extensions import assert_never, deprecated
 
 from .. import _utils, usage
+from .._deferred_capabilities import parse_loaded_capabilities
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -21,6 +22,7 @@ from ..messages import (
     CachePoint,
     CompactionPart,
     FilePart,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -42,6 +44,10 @@ from ..profiles import ModelProfile, merge_profile
 from ..providers import InterfaceClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
+from ..toolsets._deferred_capability_loader import (
+    DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME,
+    LOAD_CAPABILITY_CATALOG_METADATA_KEY,
+)
 from ..usage import RequestUsage
 from . import (
     Model,
@@ -364,6 +370,9 @@ class DecisionModel(Model[InterfaceClient]):
       [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand to a language model. A pick below
       `decision_route_threshold`, when set, is raised as [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute]
       the same way.
+    - An [on-demand capability](https://pydantic.dev/docs/ai/capabilities/on-demand/) is a route of its own, under
+      its `id` and described by its `description`, and picking it loads it. The catalog that lists them for a
+      language model is left out of the framing.
     - Each field's confidence, the full distribution of each pick-one and rubric, and the route pick are reported
       in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details].
 
@@ -430,23 +439,24 @@ class DecisionModel(Model[InterfaceClient]):
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         output_tools, hand_offs = _output_tools(model_request_parameters)
         # A withheld tool is not on any wire; one revealed through the history is, and the model sees the history.
-        function_tools = [
-            tool
-            for tool in model_request_parameters.function_tools
-            if model_request_parameters.visibility_of(tool.name) != 'withheld'
-        ]
+        function_tools = _capability_routes(
+            [
+                tool
+                for tool in model_request_parameters.function_tools
+                if model_request_parameters.visibility_of(tool.name) != 'withheld'
+            ],
+            messages,
+        )
         offered = [*hand_offs, *function_tools]
         tools = _tools_left(messages, offered)
         routes = _route_labels(output_tools, tools, output_name)
         forced_tool = tools[0] if not output_tools and len(tools) == 1 and len(offered) > 1 else None
-        if forced_tool is not None and (
-            _none_route(forced_tool) or not _properties(forced_tool.parameters_json_schema)
-        ):
+        if forced_tool is not None and _fixed_args(forced_tool) is not None:
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool, next(iter(routes)))
         state = _map_messages(messages)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
-        instructions = '\n\n'.join(part.content for part in instruction_parts) or None
+        instructions = '\n\n'.join(part.content for part in instruction_parts if not _catalog(part)) or None
         settings = cast(DecisionModelSettings, model_settings or {})
         # The bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding
         # out from a rejected answer would mean paying for the request that carried the prompt and history.
@@ -463,7 +473,7 @@ class DecisionModel(Model[InterfaceClient]):
         if (
             output_tools
             and not fillable
-            and not any(_none_route(tool) or _expressible(tool, instructions, limits) for tool in offered)
+            and not any(_fixed_args(tool) is not None or _expressible(tool, instructions, limits) for tool in offered)
         ):
             # A route the model cannot fill is a hand-off, but only while some other route is a real alternative:
             # an output type it can fill, a route with nothing to fill, or a tool whose arguments it can. With
@@ -507,7 +517,7 @@ class DecisionModel(Model[InterfaceClient]):
                 # The fields were asked beside the route question, speculatively, and are only read now that the
                 # output is what was taken: answers to a route not taken describe nothing in this response.
                 args, provider_details = ask.answers(response, boolean_threshold)
-            elif not _none_route(route) and _properties(route.parameters_json_schema):
+            elif (args := _fixed_args(route)) is None:
                 response, args, provider_details = await self._fill(
                     route, label, probability, state, instructions, settings, boolean_threshold, limits
                 )
@@ -518,7 +528,7 @@ class DecisionModel(Model[InterfaceClient]):
                 provider_details['requests'] = 2
             else:
                 # Nothing to write, so the call is made on the pick alone, and no answer built it.
-                args, provider_details = _route_args(route), _unanswered()
+                provider_details = _unanswered()
             parts = [ToolCallPart(route.name, args, _utils.generate_tool_call_id())]
             provider_details['route'] = route_details
 
@@ -601,8 +611,10 @@ class DecisionModel(Model[InterfaceClient]):
     def _forced(self, tool: ToolDefinition, label: str) -> ModelResponse:
         """Call the one argumentless route left, without asking the model."""
         details = {**_unanswered(), 'route': _forced_route(label)}
+        args = _fixed_args(tool)
+        assert args is not None  # `request` only forces a route this way when there is nothing to fill
         return ModelResponse(
-            parts=[ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())],
+            parts=[ToolCallPart(tool.name, args, _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(),
             model_name=self.model_name,
             provider_name=self.system,
@@ -844,9 +856,72 @@ def _none_route(tool: ToolDefinition) -> bool:
     return tool.kind == 'output' and len(properties) == 1 and _null(properties[0])
 
 
-def _route_args(tool: ToolDefinition) -> dict[str, Any]:
-    """The arguments to call a route with when nothing is filled: none, or the `None` a `None` route wraps."""
-    return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
+def _fixed_args(tool: ToolDefinition) -> dict[str, Any] | None:
+    """The arguments of a route taken on the pick alone, or `None` when the route has fields to fill.
+
+    That is a route with no arguments, a `None` route with the `None` it wraps, or a capability to load, whose
+    `id` is fixed by `_capability_routes`.
+    """
+    properties = _properties(tool.parameters_json_schema)
+    if _none_route(tool):
+        return {name: None for name in properties}
+    if (capability_id := _capability_id(tool)) is not None:
+        return {'id': capability_id}
+    return None if properties else {}
+
+
+def _capability_routes(tools: list[ToolDefinition], messages: list[ModelMessage]) -> list[ToolDefinition]:
+    """The tools on offer, with `load_capability` as one route per capability it can still load.
+
+    `load_capability` takes a plain string `id`, which a decision model cannot fill, so offered as it is the tool
+    could only hand off. Its `metadata` carries the ids it can load and what each is for, and each becomes a route
+    of its own, described by the capability's description and taken on the pick alone. The route question then
+    weighs each capability against the tools and output types directly, instead of a generic "load a capability"
+    followed by a second request asking which. A capability already loaded, as the history shows, is not offered
+    again, since loading it twice is refused. A language model's `load_capability` is unchanged: the ids stay out of
+    its schema so the tools it is sent, and the prompt cache behind them, do not depend on what can be loaded.
+    """
+    if not any(tool.tool_kind == 'capability-load' for tool in tools):
+        return tools
+    loaded = parse_loaded_capabilities(messages)
+    routes: list[ToolDefinition] = []
+    for tool in tools:
+        catalog = (tool.metadata or {}).get(LOAD_CAPABILITY_CATALOG_METADATA_KEY)
+        if tool.tool_kind != 'capability-load' or not isinstance(catalog, dict):
+            routes.append(tool)
+            continue
+        routes.extend(
+            replace(
+                tool,
+                description=description,
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'id': {'const': capability_id}},
+                    'required': ['id'],
+                },
+            )
+            for capability_id, description in cast('dict[str, str | None]', catalog).items()
+            if capability_id not in loaded
+        )
+    return routes
+
+
+def _capability_id(tool: ToolDefinition) -> str | None:
+    """The capability a route from `_capability_routes` loads, or `None` for any other route."""
+    if tool.tool_kind != 'capability-load':
+        return None
+    capability_id = _properties(tool.parameters_json_schema).get('id', {}).get('const')
+    return capability_id if isinstance(capability_id, str) else None
+
+
+def _catalog(part: InstructionPart) -> bool:
+    """Whether an instruction part is the deferred capability catalog, which `_capability_routes` offers as routes.
+
+    Sent as shared framing, it would repeat every capability's description on every question, fields included,
+    whatever route is being asked about. The part has no `id`, since the loader that contributes it has none; its
+    name is how it is told apart, and a part with an `id` is some other source's, whatever it is named.
+    """
+    return part.name == DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME and part.id is None
 
 
 def _wrapped(tool: ToolDefinition) -> dict[str, Any] | None:
@@ -1330,6 +1405,8 @@ _OUTPUT_ROUTE_LABEL = 'output'
 
 _OUTPUT_LABEL_SUFFIX = ' (output)'
 
+_CAPABILITY_LABEL_SUFFIX = ' (capability)'
+
 
 def _output_route_label(tool: ToolDefinition, output_name: str | None) -> str:
     """The name an output route goes by on the route question, before collisions with other routes are settled.
@@ -1365,25 +1442,31 @@ def _route_labels(
     The label is the option key on the route question and the `chosen` of the fill that follows, so one route has
     one name across both requests. A function tool is labelled by its own name. An output route, including an
     output function that takes no arguments and the `None` member of a union, is labelled by
-    `_output_route_label`. Two routes can come out with the same label, as a tool named `Refund` beside an output
-    type `Refund` does: the function tool keeps its name, and the output route gets ` (output)` appended until the
-    label is free. Function tool names are unique among themselves, so only output routes are ever renamed, and
-    in the order they are offered, so the same routes always get the same labels.
+    `_output_route_label`, and a capability to load by its id. Two routes can come out with the same label, as a
+    tool named `Refund` beside an output type `Refund` does: the function tool keeps its name, and the output route
+    gets ` (output)` appended until the label is free, as a capability gets ` (capability)`. Function tool names are
+    unique among themselves, so only the other routes are ever renamed, and in the order they are offered, so the
+    same routes always get the same labels.
 
     The model's answer is read back through this mapping, never by parsing a label.
     """
     routes = [*output_tools, *tools]
-    labels = {tool.name: tool.name for tool in routes if tool.kind != 'output'}
-    taken = set(labels.values())
+    taken = {tool.name for tool in routes if tool.kind != 'output' and _capability_id(tool) is None}
+    labels: list[str] = []
     for tool in routes:
-        if tool.kind != 'output':
+        capability_id = _capability_id(tool)
+        if tool.kind == 'output':
+            label, suffix = _output_route_label(tool, output_name), _OUTPUT_LABEL_SUFFIX
+        elif capability_id is not None:
+            label, suffix = capability_id, _CAPABILITY_LABEL_SUFFIX
+        else:
+            labels.append(tool.name)
             continue
-        label = _output_route_label(tool, output_name)
         while label in taken:
-            label += _OUTPUT_LABEL_SUFFIX
+            label += suffix
         taken.add(label)
-        labels[tool.name] = label
-    return {labels[tool.name]: tool for tool in routes}
+        labels.append(label)
+    return dict(zip(labels, routes))
 
 
 def _described(tool: ToolDefinition) -> str | None:
@@ -1404,6 +1487,9 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> li
     everything since the last user prompt, which is the nearest thing to a run boundary the history has: a result
     from an earlier turn does not withhold the tool, but a judged history that ends in another agent's call to a
     tool of the same name does.
+
+    A capability to load is exempt: `_capability_routes` already leaves out the ones the history shows loaded, and
+    loading one is no reason to withhold the others.
     """
     returned: set[str] = set()
     for message in messages:
@@ -1416,7 +1502,7 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> li
                 returned.clear()
             elif isinstance(part, ToolReturnPart):
                 returned.add(part.tool_name)
-    return [tool for tool in tools if tool.name not in returned]
+    return [tool for tool in tools if tool.name not in returned or _capability_id(tool) is not None]
 
 
 _ROUTE_QUESTION = 'Which of these does this call for?'

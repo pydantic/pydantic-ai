@@ -44,7 +44,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
@@ -899,6 +899,82 @@ async def test_a_selected_tool_fill_failure_does_not_fall_back_to_another_route(
     with pytest.raises(UnexpectedModelBehavior, match=r"selected 'set_direction'.*failed while filling"):
         await agent.run('Go left.')
     assert seen == 2
+
+
+class Resolution(BaseModel):
+    """Close the conversation once the customer's question has been answered."""
+
+    resolved: bool = Field(description="Has the customer's question been answered?")
+
+
+@pytest.mark.vcr
+async def test_a_deferred_capability_is_loaded_then_its_tool_called(
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
+):
+    """Jev picks the capability the message calls for, which loads it without a hand-off, then calls its tool."""
+    refunds = Capability[Any](
+        id='refunds',
+        description='Use for refund eligibility, refund status, or processing a refund.',
+        instructions='Confirm the order ID before issuing a refund.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def refund_status() -> str:
+        """Look up the status of the customer's latest refund."""
+        return 'Refund of $40 issued on 2026-05-01.'
+
+    shipping = Capability[Any](
+        id='shipping', description='Use for where an order is, delivery dates, and tracking.', defer_loading=True
+    )
+    agent = Agent(
+        typesafe_model,
+        output_type=Resolution,
+        instructions='You are a customer support assistant for an online store.',
+        capabilities=[refunds, shipping],
+    )
+    result = await agent.run('Has the refund for my returned blender gone through?')
+
+    assert [
+        (part.tool_name, part.args)
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ] == snapshot([('load_capability', {'id': 'refunds'}), ('refund_status', {}), ('final_result', {'resolved': True})])
+    # The capabilities are routes of their own, and the catalog listing them is not in any question's framing.
+    first, *_ = request_capture.bodies('/v1/systemone')
+    assert first['questions'] == snapshot(
+        {
+            'resolved': {
+                'type': 'noul',
+                'instructions': {
+                    'field': 'resolved',
+                    'question': "Has the customer's question been answered?",
+                    'goal': "Close the conversation once the customer's question has been answered.",
+                    'instructions': 'You are a customer support assistant for an online store.',
+                },
+            },
+            'route': {
+                'type': 'choice',
+                'criteria': {
+                    'Resolution': "Close the conversation once the customer's question has been answered.",
+                    'refunds': 'Use for refund eligibility, refund status, or processing a refund.',
+                    'shipping': 'Use for where an order is, delivery dates, and tracking.',
+                },
+                'instructions': {
+                    'question': 'Which of these does this call for?',
+                    'instructions': 'You are a customer support assistant for an online store.',
+                },
+            },
+        }
+    )
+    assert [
+        list(cast(dict[str, Any], cast(dict[str, Any], body['questions'])['route']['criteria']))
+        for body in request_capture.bodies('/v1/systemone')
+    ] == snapshot(
+        [['Resolution', 'refunds', 'shipping'], ['Resolution', 'shipping', 'refund_status'], ['Resolution', 'shipping']]
+    )
 
 
 @pytest.mark.vcr

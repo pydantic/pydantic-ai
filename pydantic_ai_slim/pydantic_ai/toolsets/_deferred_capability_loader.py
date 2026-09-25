@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 from pydantic_ai._deferred_capabilities import LoadCapabilityArgs, LoadCapabilityReturn
 from pydantic_ai._instructions import resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn
 from pydantic_ai.tools import ToolDefinition
@@ -26,9 +27,41 @@ LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE = (
     'Use its existing instructions and any tools it provides; do not call `load_capability` for it again.'
 )
 
+LOAD_CAPABILITY_CATALOG_METADATA_KEY = 'capabilities'
+"""The `load_capability` tool's `metadata` key for the catalog: each deferred capability's id and description.
+
+Not sent to the model. A model that builds its own request from the tools, as a decision model does, reads the ids
+it can load from here rather than from the `id` argument, which stays a plain string so the tool's schema is the
+same for every run whatever capabilities it can load.
+"""
+
+DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME = 'capability-catalog'
+"""The [`name`][pydantic_ai.messages.InstructionPart.name] of the instruction part listing the deferred capabilities.
+
+The loader has no `id` of its own, so the part has no `id` either and cannot be addressed or overridden; the name
+only says what it is, for a model that treats the catalog differently from the rest of the instructions.
+"""
+
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
 _LOAD_CAPABILITY_SCHEMA['title'] = 'LoadCapabilityArgs'
+
+
+async def deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> dict[str, str | None]:
+    """Every deferred capability's id and description, in registration order.
+
+    The one source for what the catalog lists, whether rendered into the instructions or carried on the
+    `load_capability` tool's `metadata`. It includes capabilities already loaded, as the rendered catalog must.
+    """
+    catalog: dict[str, str | None] = {}
+    for capability_id, capability in ctx.capabilities.items():
+        if capability.defer_loading is not True:
+            continue
+        description = capability.get_description()
+        if description is not None and not isinstance(description, str):
+            description = await SystemPromptRunner[AgentDepsT](description).run(ctx)
+        catalog[capability_id] = description
+    return catalog
 
 
 @dataclass
@@ -49,6 +82,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             description=LOAD_CAPABILITY_TOOL_DESCRIPTION,
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
             tool_kind='capability-load',
+            metadata={LOAD_CAPABILITY_CATALOG_METADATA_KEY: await deferred_capability_catalog(ctx)},
         )
 
         load_tool = ToolsetTool(

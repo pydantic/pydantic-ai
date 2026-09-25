@@ -11,6 +11,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -1269,3 +1270,136 @@ async def test_a_fallback_on_decision_hand_offs_takes_only_those(allow_model_req
     with pytest.raises(ModelAPIError, match='The backend is down') as exc_info:
         await run(UnavailableDecisionModel())
     assert not isinstance(exc_info.value, DecisionHandOff)
+
+
+def deferred_capabilities() -> list[Capability[Any]]:
+    refunds = Capability[Any](
+        id='refunds',
+        description='Use for refund eligibility or status.',
+        instructions='Confirm the order ID first.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def refund_status() -> str:
+        """Look up the status of the customer's refund."""
+        return 'Refund issued on 2026-05-01.'
+
+    shipping = Capability[Any](id='shipping', description='Use for where an order is.', defer_loading=True)
+    return [refunds, shipping]
+
+
+@pytest.mark.anyio
+async def test_a_deferred_capability_is_a_route_of_its_own(allow_model_requests: None):
+    """Each capability `load_capability` can load is offered as a route, described by its description, and picking
+    one loads it without a hand-off. The catalog listing them is left out of the framing every question carries."""
+    model = RoutingDecisionModel({'Triage': 0.1, 'refunds': 0.8, 'shipping': 0.05, 'refund_status': 0.9})
+    agent = Agent(
+        model, output_type=Triage, instructions='You triage support tickets.', capabilities=deferred_capabilities()
+    )
+    result = await agent.run('Has my refund gone through?')
+
+    assert [
+        (part.tool_name, part.args)
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ] == snapshot(
+        [
+            ('load_capability', {'id': 'refunds'}),
+            ('refund_status', {}),
+            ('final_result', {'urgent': True, 'action': 'review'}),
+        ]
+    )
+    assert model.requests[0] == snapshot(
+        DecisionRequest(
+            state='Has my refund gone through?',
+            questions={
+                'urgent': NoulQuestion(
+                    instructions={
+                        'field': 'urgent',
+                        'question': 'Does this need an immediate response?',
+                        'goal': 'Triage a support ticket.',
+                        'instructions': 'You triage support tickets.',
+                    }
+                ),
+                'action': ChoiceQuestion(
+                    criteria={'approve': None, 'review': None},
+                    instructions={
+                        'field': 'action',
+                        'question': 'What should happen next?',
+                        'goal': 'Triage a support ticket.',
+                        'instructions': 'You triage support tickets.',
+                    },
+                ),
+                'route': ChoiceQuestion(
+                    criteria={
+                        'Triage': 'Triage a support ticket.',
+                        'refunds': 'Use for refund eligibility or status.',
+                        'shipping': 'Use for where an order is.',
+                    },
+                    instructions={
+                        'question': 'Which of these does this call for?',
+                        'instructions': 'You triage support tickets.',
+                    },
+                ),
+            },
+        )
+    )
+    # A loaded capability is not offered again, and loading one does not withhold the others.
+    assert [list(route_question.criteria) for route_question in route_questions(model)] == snapshot(
+        [['Triage', 'refunds', 'shipping'], ['Triage', 'shipping', 'refund_status'], ['Triage', 'shipping']]
+    )
+
+
+def route_questions(model: InMemoryDecisionModel) -> list[ChoiceQuestion]:
+    questions: list[ChoiceQuestion] = []
+    for request in model.requests:
+        question = request.questions['route']
+        assert isinstance(question, ChoiceQuestion)
+        questions.append(question)
+    return questions
+
+
+@pytest.mark.anyio
+async def test_a_capability_route_label_collision_renames_the_capability(allow_model_requests: None):
+    """A capability goes by its id, unless a tool already has that name; one with no description says nothing."""
+    model = RoutingDecisionModel({'Triage': 0.1, 'refund (capability)': 0.8, 'refund': 0.0})
+    agent = Agent(
+        model, output_type=Triage, tools=[refund], capabilities=[Capability[Any](id='refund', defer_loading=True)]
+    )
+    result = await agent.run('Refund me.')
+
+    first = result.all_messages()[1]
+    assert isinstance(first, ModelResponse)
+    assert [(part.tool_name, part.args) for part in first.parts if isinstance(part, ToolCallPart)] == [
+        ('load_capability', {'id': 'refund'})
+    ]
+    assert route_question(model).criteria == snapshot(
+        {
+            'Triage': 'Triage a support ticket.',
+            'refund (capability)': None,
+            'refund': 'Return a payment to the customer.',
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_a_load_capability_tool_without_its_catalog_hands_off(allow_model_requests: None):
+    """Without the ids it can load, `load_capability` is offered as it is, and its free-form `id` hands off."""
+    load_capability = ToolDefinition(
+        name='load_capability',
+        parameters_json_schema={'type': 'object', 'properties': {'id': {'type': 'string'}}, 'required': ['id']},
+        tool_kind='capability-load',
+    )
+    model = RoutingDecisionModel({'load_capability': 0.9, 'look_up_order': 0.1})
+    with pytest.raises(UnfillableRoute) as exc_info:
+        await model.request(
+            [ModelRequest(parts=[UserPromptPart('Load something.')])],
+            None,
+            ModelRequestParameters(
+                function_tools=[load_capability, ToolDefinition(name='look_up_order')], allow_text_output=False
+            ),
+        )
+    assert exc_info.value.route == 'load_capability'

@@ -41,6 +41,7 @@ from pydantic_ai import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -779,6 +780,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
     'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
+        tool_name='load_capability', args={'id': 'refunds'}
+    ),
+    # docs/models/decision.md: the decision model picks the `refunds` capability
+    'Has the refund for my returned blender gone through?': ToolCallPart(
         tool_name='load_capability', args={'id': 'refunds'}
     ),
     'I just lost my card!': ToolCallPart(
@@ -1537,6 +1542,15 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolAvailabilityDeltaPart) and 'refund_status' in m.tools_added:
         return ModelResponse(
             parts=[ToolCallPart(tool_name='refund_status', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, SystemPromptPart) and m.content == 'The following tool(s) are now available: `latest_refund`':
+        # docs/models/decision.md: with `refunds` loaded, the decision model picks its tool
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='latest_refund', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'latest_refund':
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'resolved': True}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'recent_reviews':
         return ModelResponse(
