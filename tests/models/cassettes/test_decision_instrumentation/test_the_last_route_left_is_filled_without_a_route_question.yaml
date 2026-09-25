@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '558'
+      - '576'
       content-type:
       - application/json
       host:
@@ -23,20 +23,19 @@ interactions:
             duplicate_charge: null
             service_outage: null
           instructions:
-            chosen: issue_refund
             field: reason
-            goal: Refund the customer for the order.
+            premise: 'If the user''s request calls for issue_refund: Refund the customer for the order.'
             question: Why is the refund due?
           type: choice
       state:
-        history:
-        - user: I was charged twice for order 1042. Please refund the second charge.
+        done:
         - tool_call:
             args: {}
             name: lookup_order
         - tool_return:
             content: 'Order 1042: charged twice on March 3.'
             name: lookup_order
+        text: I was charged twice for order 1042. Please refund the second charge.
     uri: https://api.typesafe.ai/v1/systemone
   response:
     headers:
@@ -45,7 +44,7 @@ interactions:
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d552434c77ceb6711d6cb7b7a16f
+      - req_01a0d6b2a13f709da37f474f49ca4b97
     parsed_body:
       answers:
         reason:

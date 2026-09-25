@@ -36,15 +36,15 @@ interactions:
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d06d1faa7b7c91b00b759eeb9bdd
+      - req_01a0d6b29bb87849b640d1e3d494db71
     parsed_body:
       answers:
         priority:
           choice: normal
-          confidence: 0.32
+          confidence: 0.39
           probabilities:
-            low: 0.45
-            normal: 0.55
+            low: 0.41
+            normal: 0.59
             urgent: 0.0
           type: choice
       model: jev-1.13.0

@@ -1,7 +1,8 @@
 """Canonical cross-provider parity matrix for the realtime abstraction.
 
 Each case is a provider route and concrete model generation. The same public-API scenarios run
-unchanged for every case: a tool round and a history-seeded follow-up. WebSocket cassettes preserve
+unchanged for every case: a tool round, a history-seeded follow-up, and a spoken multi-turn
+conversation over a microphone that never stops streaming. WebSocket cassettes preserve
 the real provider conversations while keeping the default suite offline.
 
 Provider-specific wire shapes belong in the provider cassette tests. This matrix deliberately asserts
@@ -11,6 +12,7 @@ only the normalized event, message, part, usage, and profile contracts users can
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import anyio
@@ -32,6 +34,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.realtime import RealtimeModel, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
+from .conversation import Utterance, assert_conversation_invariants, load_utterance, speak_continuously
 from .ws_cassettes import RealtimeCassette
 
 with try_import() as imports_successful:
@@ -299,3 +302,69 @@ async def test_history_seeding_parity(
     answer = part.transcript if isinstance(part, SpeechPart) else part.content
     assert answer is not None
     assert 'alice' in answer.lower() and 'teal' in answer.lower()
+
+
+# Our Azure realtime resource answers 401, so this scenario could not be recorded for it. The row is
+# skipped rather than dropped, so the hole stays visible: record it (and delete this mark) once the
+# Azure key works again.
+_CONVERSATION_CASES = [
+    pytest.param(
+        (case, case.route),
+        id=case.id,
+        marks=pytest.mark.skip(reason='Azure realtime credentials return 401; cassette cannot be recorded')
+        if case.route == 'azure'
+        else (),
+    )
+    for case in REALTIME_PARITY_CASES
+]
+_CONVERSATION = [
+    Utterance('my_name_is_alice', keyword='alice'),
+    Utterance('weather_in_paris', keyword='paris'),
+    Utterance('remind_me_my_name', keyword='remind'),
+]
+# Long enough for the reply, and the tool round, to finish before the next utterance starts.
+_SILENCE_BETWEEN_TURNS = 8.0
+
+
+@pytest.mark.parametrize('parity_ws_cassette', _CONVERSATION_CASES, indirect=True)
+async def test_continuous_microphone_conversation_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """Three spoken turns over an always-on microphone record one user request per utterance, in order.
+
+    Real voice apps stream silence between utterances rather than stopping the microphone, so the
+    session has to find turn boundaries while audio keeps flowing, including through a tool round.
+    """
+    case, provider, cassette = parity_ws_cassette
+    model = _model(case, provider)
+    rate = case.audio_input_sample_rate
+    agent = Agent(
+        instructions='You are a voice assistant. Always call get_weather for a weather question. '
+        'Answer in one short sentence.'
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f'It is foggy and 12 degrees in {city}.'
+
+    utterances = [load_utterance(assets_path, utterance, rate) for utterance in _CONVERSATION]
+    async with agent.realtime(model).session() as session:
+        await speak_continuously(
+            session,
+            utterances,
+            sample_rate=rate,
+            silence_after=_SILENCE_BETWEEN_TURNS,
+            before_send=cassette.before_audio_send,
+            pace=realtime_recording,
+        )
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    assert_conversation_invariants(session, [utterance.keyword for utterance in _CONVERSATION])
+    tool_calls = [
+        part for message in session.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
+    ]
+    assert [call.tool_name for call in tool_calls] == ['get_weather']

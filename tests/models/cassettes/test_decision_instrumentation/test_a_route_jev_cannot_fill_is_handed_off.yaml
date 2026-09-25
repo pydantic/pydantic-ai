@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - '605'
       content-type:
       - application/json
       host:
@@ -17,6 +17,16 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
+        Escalation.team:
+          criteria:
+            billing: null
+            engineering: null
+            security: null
+          instructions:
+            field: team
+            premise: 'If the user''s request calls for Escalation: Hand the ticket to a specialist team.'
+            question: Which team should handle it?
+          type: choice
         route:
           criteria:
             Escalation: Hand the ticket to a specialist team.
@@ -28,13 +38,21 @@ interactions:
   response:
     headers:
       content-length:
-      - '208'
+      - '367'
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d5dd0ec07202943c468e1fbb3ffc
+      - req_01a0d6b29fc379bb8a4453ed126a8a6e
     parsed_body:
       answers:
+        Escalation.team:
+          choice: engineering
+          confidence: 0.72
+          probabilities:
+            billing: 0.17
+            engineering: 0.81
+            security: 0.02
+          type: choice
         route:
           choice: Reply
           confidence: 1.0
@@ -44,8 +62,8 @@ interactions:
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 337
-        output_tokens: 33
+        input_tokens: 413
+        output_tokens: 71
     status:
       code: 200
       message: OK

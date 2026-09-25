@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '589'
+      - '900'
       content-type:
       - application/json
       host:
@@ -17,14 +17,14 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        priority:
+        TicketPriority.priority:
           criteria:
             low: null
             normal: null
             urgent: null
           instructions:
             field: priority
-            goal: Triage an incoming support ticket.
+            premise: 'If the user''s request calls for TicketPriority: Triage an incoming support ticket.'
             question: How quickly does this ticket need a response?
           type: choice
         route:
@@ -33,90 +33,52 @@ interactions:
             send_sign_in_link: Send the customer a one-time link to sign in with.
           instructions: Which of these does this call for?
           type: choice
-      state: I can't sign in. Can you text me a sign-in link? My email is not working.
-    uri: https://api.typesafe.ai/v1/systemone
-  response:
-    headers:
-      content-length:
-      - '372'
-      content-type:
-      - application/json
-      x-typesafe-request-id:
-      - req_01a0d5dd0c4d7bc7ae7fccda85c2c007
-    parsed_body:
-      answers:
-        priority:
-          choice: urgent
-          confidence: 0.65
-          probabilities:
-            low: 0.01
-            normal: 0.23
-            urgent: 0.76
-          type: choice
-        route:
-          choice: send_sign_in_link
-          confidence: 0.8
-          probabilities:
-            TicketPriority: 0.1
-            send_sign_in_link: 0.9
-          type: choice
-      model: jev-1.13.0
-      usage:
-        input_tokens: 419
-        output_tokens: 76
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '328'
-      content-type:
-      - application/json
-      host:
-      - api.typesafe.ai
-    method: POST
-    parsed_body:
-      model: jev-latest
-      questions:
-        channel:
+        send_sign_in_link.channel:
           criteria:
             email: null
             sms: null
           instructions:
-            chosen: send_sign_in_link
             field: channel
-            goal: Send the customer a one-time link to sign in with.
+            premise: 'If the user''s request calls for send_sign_in_link: Send the customer a one-time link to sign in with.'
           type: choice
       state: I can't sign in. Can you text me a sign-in link? My email is not working.
     uri: https://api.typesafe.ai/v1/systemone
   response:
     headers:
       content-length:
-      - '204'
+      - '524'
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d5dd0ce473e1b9f93b7601f4a8db
+      - req_01a0d6b29e07710ca66594f3f7a9bbd0
     parsed_body:
       answers:
-        channel:
-          choice: sms
-          confidence: 0.95
+        TicketPriority.priority:
+          choice: urgent
+          confidence: 0.39
           probabilities:
-            email: 0.02
-            sms: 0.98
+            low: 0.02
+            normal: 0.39
+            urgent: 0.59
+          type: choice
+        route:
+          choice: send_sign_in_link
+          confidence: 0.82
+          probabilities:
+            TicketPriority: 0.09
+            send_sign_in_link: 0.91
+          type: choice
+        send_sign_in_link.channel:
+          choice: sms
+          confidence: 0.94
+          probabilities:
+            email: 0.03
+            sms: 0.97
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 340
-        output_tokens: 31
+        input_tokens: 495
+        output_tokens: 113
     status:
       code: 200
       message: OK
@@ -129,7 +91,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '548'
+      - '543'
       content-type:
       - application/json
       host:
@@ -149,8 +111,7 @@ interactions:
             question: How quickly does this ticket need a response?
           type: choice
       state:
-        history:
-        - user: I can't sign in. Can you text me a sign-in link? My email is not working.
+        done:
         - tool_call:
             args:
               channel: sms
@@ -158,6 +119,7 @@ interactions:
         - tool_return:
             content: Sign-in link sent by sms.
             name: send_sign_in_link
+        text: I can't sign in. Can you text me a sign-in link? My email is not working.
     uri: https://api.typesafe.ai/v1/systemone
   response:
     headers:
@@ -166,20 +128,20 @@ interactions:
       content-type:
       - application/json
       x-typesafe-request-id:
-      - req_01a0d5dd0d9472dd92651347f3493f12
+      - req_01a0d6b29e8372b285d875b46f18c49b
     parsed_body:
       answers:
         priority:
-          choice: urgent
-          confidence: 0.49
+          choice: normal
+          confidence: 0.29
           probabilities:
             low: 0.01
-            normal: 0.33
-            urgent: 0.66
+            normal: 0.53
+            urgent: 0.46
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 428
+        input_tokens: 426
         output_tokens: 38
     status:
       code: 200
