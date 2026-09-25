@@ -4358,95 +4358,11 @@ class _GatedConnectSequence:
 
 
 @pytest.mark.anyio
-async def test_sends_during_a_reconnect_go_out_on_the_new_connection(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A send landing while the socket is re-dialed waits for the new one instead of failing.
-
-    It used to write to the dead socket and raise `RealtimeError`, which killed an always-on microphone
-    task on every reconnect. Audio goes out on the new socket. A typed turn is already in the history
-    the re-dial replays, so only its response is asked for again: sending the text too would give the
-    model the question twice.
-    """
-    first, second = _DroppableWebSocket(), _DroppableWebSocket()
-    connect = _GatedConnectSequence([first, second])
-    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
-    model = OpenAIRealtimeModel(
-        'gpt-realtime',
-        provider=OpenAIProvider(api_key='k'),
-        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
-    )
-    agent: Agent[None, str] = Agent()
-    async with agent.realtime(model).session() as session:
-        await session.send_audio(b'\x00\x01')
-        first.drop()
-        await connect.redialing.wait()
-        microphone = asyncio.create_task(session.send_audio(b'\x02\x03'))
-        typed = asyncio.create_task(session.send('still there?'))
-        await _settle()
-        assert not microphone.done() and not typed.done()
-
-        connect.release.set()
-        await asyncio.wait_for(asyncio.gather(microphone, typed), 5)
-
-    assert [frame['type'] for frame in first.sent] == ['session.update', 'input_audio_buffer.append']
-    assert second.sent[1:] == snapshot(
-        [
-            {
-                'type': 'conversation.item.create',
-                'item': {
-                    'type': 'message',
-                    'role': 'user',
-                    'content': [{'type': 'input_text', 'text': 'still there?'}],
-                },
-            },
-            {'type': 'input_audio_buffer.append', 'audio': 'AgM='},
-            {'type': 'response.create', 'event_id': 'pydantic_ai.response.3'},
-        ]
-    )
-
-
-@pytest.mark.anyio
-async def test_an_image_sent_during_a_reconnect_arrives_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The re-dial replays only the words of the recorded history, so a retained image isn't in it.
-
-    The image send waiting out the reconnect therefore goes out whole on the new socket, and the model
-    sees the image exactly once, rather than a reply request with no image.
-    """
-    first, second = _DroppableWebSocket(), _DroppableWebSocket()
-    connect = _GatedConnectSequence([first, second])
-    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
-    model = OpenAIRealtimeModel(
-        'gpt-realtime',
-        provider=OpenAIProvider(api_key='k'),
-        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
-    )
-    agent: Agent[None, str] = Agent()
-    async with agent.realtime(model).session() as session:
-        await session.send_audio(b'\x00\x01')
-        first.drop()
-        await connect.redialing.wait()
-        sending = asyncio.create_task(
-            session.send(BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'), respond=True)
-        )
-        await _settle()
-        connect.release.set()
-        await asyncio.wait_for(sending, 5)
-
-    images = [
-        frame
-        for frame in second.sent
-        if frame['type'] == 'conversation.item.create'
-        and any(part.get('type') == 'input_image' for part in frame['item'].get('content', []))
-    ]
-    assert len(images) == 1
-    assert second.sent[-1]['type'] == 'response.create'
-
-
-@pytest.mark.anyio
-async def test_a_response_request_lost_to_a_drop_is_asked_for_once(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypatch: pytest.MonkeyPatch) -> None:
     """A `response.create` that hit the dead socket never reached the server, so it isn't left active.
 
-    Left active, the reconnect would re-ask for it as an unstarted response while the session retried
-    the failed send too, and the model would answer twice.
+    Left active, the reconnect would re-ask for it as an unstarted response, although the caller was
+    told the request failed.
     """
     first, second = _DroppableWebSocket(), _DroppableWebSocket()
     connect = _GatedConnectSequence([first, second])
@@ -4456,18 +4372,14 @@ async def test_a_response_request_lost_to_a_drop_is_asked_for_once(monkeypatch: 
         provider=OpenAIProvider(api_key='k'),
         settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
     )
-    agent: Agent[None, str] = Agent()
-    async with agent.realtime(model).session() as session:
-        await session.send_audio(b'\x00\x01')
+    async with _connect(model, 'be brief') as conn:
         first.drop()
-        await connect.redialing.wait()
-        solicit = asyncio.create_task(session.create_response())
-        await _settle()
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await conn.send(CreateResponse())
+        assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
         connect.release.set()
-        await asyncio.wait_for(solicit, 5)
-        connection = session._connection  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(connection, OpenAIRealtimeConnection)
-        # Nothing is deferred to ask for a second answer once this one is done.
-        assert connection._pending_response is False  # pyright: ignore[reportPrivateUsage]
+        async for event in conn:  # pragma: no branch
+            assert event == RealtimeSessionReconnectEvent(state_restored=False)
+            break
 
-    assert [frame['type'] for frame in second.sent] == ['session.update', 'response.create']
+    assert [frame['type'] for frame in second.sent] == ['session.update']

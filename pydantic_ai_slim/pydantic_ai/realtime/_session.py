@@ -575,11 +575,6 @@ class _RealtimePendingMessages(PendingMessageQueue):
             return any(pending.priority == priority for pending in self)
 
 
-def _is_playback_control(contents: Sequence[RealtimeInput]) -> bool:
-    """Whether a send group only stops or trims the model's playback (a barge-in's cancel and truncate)."""
-    return all(isinstance(content, (CancelResponse, TruncateOutput)) for content in contents)
-
-
 class RealtimeSession:
     """Wraps a [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection], building message history and auto-executing tools.
 
@@ -910,16 +905,6 @@ class RealtimeSession:
         self._asap_drain_deferred = False
         self._asap_drain_ready = False
         self._pump_task: asyncio.Task[None] | None = None
-        # Counts reconnects the pump has handled, and wakes a send parked on a dropped connection (see
-        # `_send_frame`) once the replacement is ready, receiving has ended, or the session closed.
-        self._reconnects_handled = 0
-        self._link_changed = asyncio.Event()
-        # Sends waiting out a reconnect, in the order they were made (see `_send_frame`), and the transport
-        # error that parked the first of them.
-        self._parked_sends: deque[object] = deque()
-        # The history as last read for a replay on re-dial (see `_history_for_replay`).
-        self._last_replay: list[ModelMessage] = []
-        self._link_error: BaseException | None = None
         self._pump_error: Exception | None = None
         self._pump_finished = False
         self._receive_ending = False
@@ -947,7 +932,7 @@ class RealtimeSession:
             # Offer the conversation for replay, so a provider that keeps no state across sessions can
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
             # support because that is the mechanism, and a no-op where the provider resumes natively.
-            self._connection.set_message_history(self._history_for_replay)
+            self._connection.set_message_history(self.all_messages)
 
         self._session_instrumentation.start_session_span()
 
@@ -989,7 +974,6 @@ class RealtimeSession:
         if self._teardown is None:
             self._pending_messages.close()
             self._closed = True
-            self._link_changed.set()
             self._finish_taps(discard_pending=True)
             self._release_exchange()
             # A session closed without ever sending, subscribing, or iterating never started one.
@@ -1517,12 +1501,7 @@ class RealtimeSession:
         request = self._new_request([UserPromptPart(content=content)])
         self._record_sent_request(request)
         try:
-            # A connection that replays local history on re-dial carries this recorded turn over itself.
-            await self._send_frame(
-                content if respond else TextContext(content),
-                request=request,
-                replayed=[CreateResponse()] if respond else [],
-            )
+            await self._send_frame(content if respond else TextContext(content), request=request)
         except BaseException:
             if respond:
                 self._release_response_reservation()
@@ -1945,12 +1924,7 @@ class RealtimeSession:
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index
 
-    async def _send_frame(
-        self,
-        *contents: RealtimeInput,
-        request: ModelRequest | None = None,
-        replayed: Sequence[RealtimeInput] | None = None,
-    ) -> None:
+    async def _send_frame(self, *contents: RealtimeInput, request: ModelRequest | None = None) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
 
         A single input can expand to several protocol frames (a `ToolResult` creates the conversation
@@ -1960,134 +1934,34 @@ class RealtimeSession:
 
         `request` is the history entry recording the first input, taken back if the provider later
         reports that input's content as refused (see `_handle_input_rejected`).
-
-        A send that hits a dropped connection waits for the connection's reconnect policy to replace it
-        and then goes out on the new one, so the caller (an always-on microphone task, a tool delivering
-        its result) outlives a reconnect instead of failing on the dead socket. The wait is bounded by the
-        policy: the send fails once receiving ends without a replacement, or the session closes. Sends
-        made meanwhile queue behind the parked one, so the provider still sees them in order. Delivery
-        is at least once: a frame the transport flushed just before failing is sent again.
-
-        `replayed` is what to send instead when a connection that rebuilds the conversation from local
-        history on re-dial replayed `request` (a text turn recorded before the re-dial read the history):
-        it arrived with the replay, so sending it again would duplicate it.
         """
         self._ensure_not_closed()
         self._start_pump()
-        first = contents[0] if contents else None
-        remaining = list(contents)
-        # Our place in the queue of sends waiting out a reconnect, once we have one, and the reconnect
-        # count when our own attempt failed (`None` while queued behind another send's failure).
-        ticket: object | None = None
-        failed_at: int | None = None
-        try:
-            while True:
-                if ticket is not None and not await self._await_send_turn(ticket, failed_at):
-                    raise self._link_lost_error()
-                # Only the closed check is re-taken here, not `_ensure_can_send`: a frame already waiting on
-                # the lock when a background failure ends receiving is one already underway, not the "next
-                # outbound method" that contract speaks of, and it costs a single frame nobody reads on a
-                # session that is ending anyway. Re-taking the full guard under the lock would also raise
-                # that parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither
-                # of which is a caller that asked to send.
-                async with self._send_lock:
-                    if ticket is not None and not self._link_usable():
-                        # Closed or finished between the wake-up and taking the lock.
-                        raise self._link_lost_error()
-                    if (
-                        self._parked_sends
-                        and self._parked_sends[0] is not ticket
-                        and not (self._sending_from_pump() and _is_playback_control(contents))
-                    ):
-                        # An earlier send is still waiting out a reconnect: queue behind it. The one
-                        # exception is the pump's barge-in, which can't wait for a reconnect only the pump
-                        # can deliver: it only stops playback, so it goes straight out (the pump hands its
-                        # other sends, queued messages, to a background drain; see `_drain_from_pump`).
-                        ticket = self._park_send(ticket)
-                        continue
-                    if (
-                        replayed is not None
-                        and not self._connection.reconnect_restores_in_flight_state
-                        and any(message is request for message in self._last_replay)
-                    ):
-                        # A re-dial replayed the history after this input was recorded in it.
-                        remaining = list(replayed)
-                        replayed = None
-                    attempt = self._reconnects_handled
-                    try:
-                        while remaining:
-                            # Numbered before the call, and whether or not it raises, matching how
-                            # `InputRejected.input_index` counts. Registered before the frame goes out, since
-                            # the pump can read the refusal while a later input of this group is still
-                            # sending.
-                            input_index = self._inputs_sent
-                            self._inputs_sent += 1
-                            if request is not None and remaining[0] is first:
-                                self._input_requests[input_index] = request
-                            await self._connection.send(remaining[0])
-                            del remaining[0]
-                        return
-                    except self._connection.transport_errors as e:
-                        self._link_error = e
-                        # What went out before the failure went down with the old link, and the group is
-                        # meant to arrive whole (an image and the reply it asks for), so it is all resent.
-                        remaining = list(contents)
-                        ticket = self._park_send(ticket)
-                        failed_at = attempt
-        finally:
-            if ticket is not None:
-                self._parked_sends.remove(ticket)
-                self._link_changed.set()
-
-    def _park_send(self, ticket: object | None) -> object:
-        """Take (or keep) a place in the queue of sends waiting out a reconnect.
-
-        Only a connection that reconnects, through a running pump, can deliver a reconnect, and the pump
-        can't wait on its own, so without a reconnect policy, without a pump (a session never entered),
-        or from the pump itself a send fails as it always has.
-        """
-        if self._pump_task is None or self._sending_from_pump() or not self._connection.reconnects:
-            raise self._link_lost_error()
-        if ticket is None:
-            ticket = object()
-            self._parked_sends.append(ticket)
-        return ticket
-
-    def _history_for_replay(self) -> list[ModelMessage]:
-        """The history a connection replays on re-dial, remembered so a send can tell what it carried."""
-        self._last_replay = self.all_messages()
-        return self._last_replay
-
-    def _sending_from_pump(self) -> bool:
-        return asyncio.current_task() is self._pump_task
-
-    def _link_usable(self) -> bool:
-        return not (self._closed or self._pump_finished)
-
-    async def _await_send_turn(self, ticket: object, failed_at: int | None) -> bool:
-        """Wait until `ticket` heads the queue and, if its own send failed, a reconnect has been handled.
-
-        Parked outside the send lock, since the pump that handles the reconnect may itself need the lock.
-        `False` once no reconnect can come: receiving ended or the session closed.
-        """
-        while self._link_usable():
-            if self._parked_sends[0] is ticket and (failed_at is None or self._reconnects_handled != failed_at):
-                return True
-            self._link_changed.clear()
-            await self._link_changed.wait()
-        return False
-
-    def _link_lost_error(self) -> RealtimeError:
-        # A send that fails because the link is gone is the same failure the receive side reports;
-        # surface it as the same typed error rather than leaking a `websockets` or provider-SDK exception
-        # from what looks like an ordinary method call.
-        error = self._link_error
-        error_ = RealtimeError(
-            model_name=self._error_model_name,
-            message=f'Realtime connection failed while sending: {error}',
-        )
-        error_.__cause__ = error
-        return error_
+        # Only the closed check is re-taken here, not `_ensure_can_send`: a frame already waiting on
+        # the lock when a background failure ends receiving is one already underway, not the "next
+        # outbound method" that contract speaks of, and it costs a single frame nobody reads on a
+        # session that is ending anyway. Re-taking the full guard under the lock would also raise that
+        # parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither of
+        # which is a caller that asked to send.
+        async with self._send_lock:
+            try:
+                for position, content in enumerate(contents):
+                    # Numbered before the call, and whether or not it raises, matching how
+                    # `InputRejected.input_index` counts. Registered before the frame goes out, since
+                    # the pump can read the refusal while a later input of this group is still sending.
+                    input_index = self._inputs_sent
+                    self._inputs_sent += 1
+                    if position == 0 and request is not None:
+                        self._input_requests[input_index] = request
+                    await self._connection.send(content)
+            except self._connection.transport_errors as e:
+                # A send that fails because the link is gone is the same failure the receive side
+                # reports; surface it as the same typed error rather than leaking a `websockets` or
+                # provider-SDK exception from what looks like an ordinary method call.
+                raise RealtimeError(
+                    model_name=self._error_model_name,
+                    message=f'Realtime connection failed while sending: {e}',
+                ) from e
 
     @property
     def _error_model_name(self) -> str:
@@ -2898,11 +2772,6 @@ class RealtimeSession:
         nothing and stays `True`. Whether the settlement *emitted* events is not the test: an in-flight
         response carried only by pending provider metadata is finalized into history without any.
         """
-        # Wake any send parked on the dropped connection (see `_send_frame`). It resumes only after this
-        # handling returns, so a tool still running for a call the reconnect lost is cancelled below
-        # before its result could go out.
-        self._reconnects_handled += 1
-        self._link_changed.set()
         if event.state_restored and self._connection.reconnect_restores_in_flight_state:
             return [event]
         lost_in_flight = self._response_in_flight or bool(self._pending_tool_calls)
@@ -3364,7 +3233,7 @@ class RealtimeSession:
             )
         if self._asap_drain_ready:
             self._asap_drain_ready = False
-            await self._drain_from_pump('asap')
+            await self._drain_pending_messages('asap')
         return events
 
     async def _run_tool(
@@ -3596,20 +3465,9 @@ class RealtimeSession:
                 await self._auto_barge_in(out)
             self._queue_put(out)
         if isinstance(event, ResponseDone):
-            await self._drain_from_pump('asap')
-            await self._drain_from_pump('when_idle')
+            await self._drain_pending_messages('asap')
+            await self._drain_pending_messages('when_idle')
         return False
-
-    async def _drain_from_pump(self, priority: PendingMessagePriority) -> None:
-        """Deliver queued messages at a boundary the pump reached, without making the pump wait on itself.
-
-        While a send is parked waiting out a reconnect, the messages would have to queue behind it for a
-        reconnect only the pump can deliver, so they are handed to a background drain instead.
-        """
-        if self._parked_sends:
-            self._start_pending_message_drain(priority)
-        else:
-            await self._drain_pending_messages(priority)
 
     async def _pump(self, context: Context | None) -> None:
         """Drain the connection into the session queue under the explicit session-span context."""
@@ -3623,7 +3481,6 @@ class RealtimeSession:
         finally:
             self._pump_finished = True
             self._exchange_progress.set()
-            self._link_changed.set()
             if not self._closed:
                 self._finish_taps()
             self._queue_put(self._queue_changed)

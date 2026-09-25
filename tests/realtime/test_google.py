@@ -2668,9 +2668,6 @@ class _DroppableSession:
             raise ConnectionClosed(None, None)
         self.sent.append((kind, payload))
 
-    async def send_realtime_input(self, **kwargs: Any) -> None:
-        self._record('realtime', kwargs)
-
     async def send_client_content(self, *, turns: Any = None, turn_complete: bool = True) -> None:
         self._record('client_content', turns)
 
@@ -2721,81 +2718,6 @@ def _reconnecting_session(first: _DroppableSession, dial: Any, runner: Any = Non
 async def _settle() -> None:
     for _ in range(20):
         await asyncio.sleep(0)
-
-
-async def test_sends_during_a_reconnect_go_out_on_the_new_connection() -> None:
-    # A send that lands while the connection is re-dialing used to write to the dead socket and raise
-    # `RealtimeError`, killing an always-on microphone task on every reconnect (seen live: a 100 ms mic
-    # cadence always hits the backoff window) and a typed turn with it. It now waits for the
-    # replacement and goes out there, in the order it was sent.
-    first, second = _DroppableSession(), _DroppableSession()
-    dial, dialing, release = _gated_dialer(second)
-    session = _reconnecting_session(first, dial)
-    async with session:
-        first.push(_handle_update('h1'))
-        await session.send_audio(b'\x00\x01')
-        first.drop()
-        await dialing.wait()
-        microphone = asyncio.create_task(session.send_audio(b'\x02\x03'))
-        await _settle()
-        typed = asyncio.create_task(session.send('still there?'))
-        await _settle()
-        assert not microphone.done() and not typed.done()
-
-        release.set()
-        await asyncio.wait_for(asyncio.gather(microphone, typed), 5)
-
-    assert first.kinds() == ['realtime']
-    assert second.kinds() == ['realtime', 'client_content']
-    assert second.sent[0][1]['audio'].data == b'\x02\x03'
-
-
-async def test_tool_result_for_a_call_the_reconnect_lost_is_not_sent() -> None:
-    # The resumption handle predates the call, so the resumed session doesn't know it: a result sent
-    # there is never answered (seen live on 2.5). The call is cancelled instead — including a result
-    # already parked on the dead socket — and recorded as interrupted, and later turns still go out.
-    first, second = _DroppableSession(), _DroppableSession()
-    dial, dialing, release = _gated_dialer(second)
-    finish = asyncio.Event()
-
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        await finish.wait()
-        return 'sunny'
-
-    session = _reconnecting_session(first, dial, runner)
-    async with session:
-        await session.wait_for_reply()  # starts receiving; nothing is owed yet
-        first.push(_handle_update('h1'))
-        first.push(
-            genai_types.LiveServerMessage(
-                tool_call=genai_types.LiveServerToolCall(
-                    function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
-                )
-            )
-        )
-        await _settle()
-        first.drop()
-        await dialing.wait()
-        finish.set()
-        await _settle()
-        release.set()
-        with anyio.fail_after(5):
-            while not second.sent:
-                await asyncio.sleep(0)
-        await _settle()
-        await session.send('Anything else?')
-
-    # Only the interrupted answer for the lost call reaches the resumed session, never the tool's result.
-    assert second.kinds() == ['tool_response', 'client_content']
-    assert second.sent[0][1][0].response == {'error': 'The tool call was interrupted before a result was produced.'}
-    returns = [
-        part
-        for message in session.all_messages()
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    ]
-    assert [(part.tool_call_id, part.outcome) for part in returns] == [('c1', 'interrupted')]
 
 
 async def test_a_lost_call_finishing_while_the_resumed_session_is_told_stays_cancelled() -> None:

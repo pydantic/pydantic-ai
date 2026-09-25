@@ -447,10 +447,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         return self._message_history
 
     @property
-    def reconnects(self) -> bool:
-        return self._dial is not None and self._reconnect is not None
-
-    @property
     def reconnect_restores_in_flight_state(self) -> bool:
         # Local replay restores only the finalized turns; the response and tool calls in flight when
         # the socket dropped are gone, so the session settles them. (The xAI clone resumes natively and
@@ -604,7 +600,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             await self._send_event(event)
         except self.transport_errors:
             # The request never reached the server, so no response is active. Left set, a reconnect
-            # would re-ask for it while the session also retries the failed send: two responses.
+            # would re-ask for a response the caller was told had failed (and may ask for again).
             self._response_active = False
             raise
 
