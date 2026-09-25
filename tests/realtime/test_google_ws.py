@@ -11,6 +11,7 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 from __future__ import annotations as _annotations
 
 import asyncio
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RequestUsage, RunContext
+from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.messages import (
     BinaryContent,
     FunctionToolCallEvent,
@@ -39,7 +41,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import CassetteMessage, RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
@@ -161,6 +163,38 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
     # Reasoning (`thoughtsTokenCount`) is billed but left out of Gemini's response/total counts, so the
     # session captures it in `details` rather than dropping it.
     assert response.usage.details.get('thoughts_tokens') == snapshot(24)
+
+
+async def test_web_search_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """A Google Search turn on a native-audio model completes, with the search in history.
+
+    Native-audio models announce a search with a `codeExecutionResult` part that no `executableCode`
+    part precedes (the recording has it); that status line must not end the session. The search itself
+    arrives as grounding metadata and lands as a `web_search` native tool call/return pair.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.', capabilities=[WebSearch()])
+
+    async with agent.realtime(model).session() as session:
+        await session.send('Search the web: who won the most recent Formula 1 race?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    received = [
+        json.dumps(message.data)
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'received'
+    ]
+    assert any('codeExecutionResult' in frame for frame in received)
+    assert not any('executableCode' in frame for frame in received)
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [(type(part).__name__, getattr(part, 'tool_name', None)) for part in response.parts] == snapshot(
+        [('NativeToolCallPart', 'web_search'), ('NativeToolReturnPart', 'web_search'), ('SpeechPart', None)]
+    )
 
 
 async def test_text_context_waits_for_next_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
