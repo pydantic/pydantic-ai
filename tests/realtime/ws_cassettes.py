@@ -16,14 +16,23 @@ provider behaviour *and* the exact wire messages the library sends. Recording sc
 secret-looking, redacts internal provider backend config a provider may echo back (e.g. xAI's
 `session.updated` carries VAD/ASR tuning and an internal service address), and truncates inbound audio
 payloads so cassettes stay small.
+
+Each interaction also records when it happened, in seconds since the recording's first interaction.
+Replay still delivers frames back to back, but exposes that recorded time as a clock
+(`ReplayWebSocket.now`) reading when the inbound frame being handled was recorded. An adapter that infers a turn
+boundary from wall-clock silence (GPT-Live) reads that clock instead of the real one, so a replayed
+silence lasts as long as the recorded one did, without the suite waiting it out. Cassettes recorded
+before timing was captured replay as before, against the real clock.
 """
 
 from __future__ import annotations as _annotations
 
 import asyncio
+import collections
 import json
 import os
 import re
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field
@@ -126,6 +135,11 @@ class CassetteMessage:
     direction: _Direction
     data: dict[str, Any]
     kind: _MessageKind = 'message'
+    at: float | None = field(default=None, compare=False)
+    """Seconds since the recording's first interaction; `None` in a cassette recorded before timing was captured.
+
+    Left out of equality: the same frames in the same order are the same conversation, whenever they arrived.
+    """
 
 
 @dataclass
@@ -136,6 +150,11 @@ class CassetteClose:
     reason: str
     ok: bool
     kind: _CloseKind = 'close'
+    at: float | None = field(default=None, compare=False)
+    """Seconds since the recording's first interaction; `None` in a cassette recorded before timing was captured.
+
+    Left out of equality: the same frames in the same order are the same conversation, whenever they arrived.
+    """
 
 
 RealtimeCassetteInteraction = CassetteMessage | CassetteClose
@@ -149,6 +168,14 @@ class RealtimeCassette:
     interactions: list[RealtimeCassetteInteraction] = field(default_factory=list['RealtimeCassetteInteraction'])
     _disconnect: Callable[[], Awaitable[None]] | None = field(default=None, init=False, repr=False, compare=False)
     _replay: ReplayWebSocket | None = field(default=None, init=False, repr=False, compare=False)
+    _origin: float | None = field(default=None, init=False, repr=False, compare=False)
+
+    def elapsed(self) -> float:
+        """Seconds since this recording's first interaction, to the millisecond. Used while recording."""
+        now = time.monotonic()
+        if self._origin is None:
+            self._origin = now
+        return round(now - self._origin, 3)
 
     async def disconnect(self) -> None:
         """Force the active recorded connection to drop; replay consumes the recorded close next."""
@@ -174,18 +201,28 @@ class RealtimeCassette:
         raw = cast('dict[str, Any]', yaml.safe_load(path.read_text(encoding='utf-8')))
         interactions: list[RealtimeCassetteInteraction] = []
         for item in cast('list[dict[str, Any]]', raw.get('interactions', [])):
+            at = item.get('at')
             if item.get('kind') == 'close':
-                interactions.append(CassetteClose(code=item['code'], reason=item.get('reason', ''), ok=item['ok']))
+                interactions.append(
+                    CassetteClose(code=item['code'], reason=item.get('reason', ''), ok=item['ok'], at=at)
+                )
             else:
-                interactions.append(CassetteMessage(direction=item['direction'], data=item['data']))
+                interactions.append(CassetteMessage(direction=item['direction'], data=item['data'], at=at))
         return cls(version=raw.get('version', 1), interactions=interactions)
 
     def dump(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         interactions: list[dict[str, Any]] = [
-            {'kind': 'message', 'direction': i.direction, 'data': i.data}
-            if isinstance(i, CassetteMessage)
-            else {'kind': 'close', 'code': i.code, 'reason': i.reason, 'ok': i.ok}
+            {
+                **(
+                    {'kind': 'message', 'direction': i.direction}
+                    if isinstance(i, CassetteMessage)
+                    else {'kind': 'close', 'code': i.code, 'reason': i.reason, 'ok': i.ok}
+                ),
+                # Before the payload, so a reader scanning a cassette sees when each frame happened.
+                **({'at': i.at} if i.at is not None else {}),
+                **({'data': i.data} if isinstance(i, CassetteMessage) else {}),
+            }
             for i in self.interactions
         ]
         path.write_text(
@@ -318,6 +355,9 @@ class ReplayWebSocket:
         self._condition = asyncio.Condition()
         self._readers = 0
         self._closed = False
+        self._now = 0.0
+        # When each inbound frame handed out and not yet taken up by `begin_handling_frame()` was recorded.
+        self._delivered: collections.deque[float | None] = collections.deque()
         # Mirrors the `websockets` attributes a connection exposes once closed, so code that inspects
         # the close after iteration ends (a normal close doesn't raise) sees what was recorded.
         self.close_code: int | None = None
@@ -345,8 +385,7 @@ class ReplayWebSocket:
                     f'Outbound WebSocket frame had no matching recorded send (position {self._position}).\n'
                     f'sent={actual!r}'
                 )
-            self._position += 1
-            self._condition.notify_all()
+            self._advance()
         # Truncated on this side too: cassettes recorded before Gemini's microphone frames were
         # truncated hold them in full.
         expected = _truncate_audio(interaction.data)
@@ -404,14 +443,13 @@ class ReplayWebSocket:
                 self.close_code, self.close_reason = 1000, ''
                 raise ConnectionClosedOK(None, None)
             if isinstance(interaction, CassetteClose):
-                self._position += 1
-                self._condition.notify_all()
+                self._advance()
                 self.close_code, self.close_reason = interaction.code, interaction.reason
                 close = Close(interaction.code, interaction.reason)
                 raise (ConnectionClosedOK if interaction.ok else ConnectionClosedError)(close, None)
             if interaction.direction == 'received':
-                self._position += 1
-                self._condition.notify_all()
+                self._advance()
+                self._delivered.append(interaction.at)
                 return interaction.data
             await self._condition.wait()
 
@@ -438,6 +476,39 @@ class ReplayWebSocket:
             self._closed = True
             self._condition.notify_all()
 
+    @property
+    def timed(self) -> bool:
+        """Whether the replayed recording captured when each interaction happened."""
+        return any(interaction.at is not None for interaction in self._interactions)
+
+    def now(self) -> float:
+        """When the inbound frame being handled was recorded: a clock that runs at the recording's pace.
+
+        Replay delivers frames as fast as the session takes them, so the real clock barely moves between
+        frames that were seconds apart on the wire. Anything that measures time on the wire (GPT-Live's
+        turn clock, see `_patched_turn_clock`) reads this instead, and sees each gap as recorded.
+
+        It moves only in `begin_handling_frame()`, never as a side effect of replay making progress: a
+        read the consumer started early, or a send that was waiting on an inbound frame, would otherwise
+        move it past the frame still being handled, and what the consumer measured would depend on how
+        asyncio happened to schedule those tasks.
+        """
+        return self._now
+
+    def begin_handling_frame(self) -> None:
+        """Move the clock to when the next delivered inbound frame was recorded, as its consumer takes it up.
+
+        Delivered frames are taken up in the order they were read, so no frame needs to be named.
+        """
+        at = self._delivered.popleft()
+        if at is not None:
+            self._now = max(self._now, at)
+
+    def _advance(self) -> None:
+        """Consume the next interaction. Call with the condition held."""
+        self._position += 1
+        self._condition.notify_all()
+
     def _peek(self) -> RealtimeCassetteInteraction | None:
         if self._position >= len(self._interactions):
             return None
@@ -455,7 +526,7 @@ class RecordingWebSocket:
     async def send(self, message: str | bytes) -> None:
         text = message.decode('utf-8') if isinstance(message, bytes) else message
         data = _truncate_audio(self._normalizer.normalize(_scrub(json.loads(text))))
-        self._cassette.interactions.append(CassetteMessage(direction='sent', data=data))
+        self._cassette.interactions.append(CassetteMessage(direction='sent', data=data, at=self._cassette.elapsed()))
         await self._ws.send(message)
 
     async def recv(self, **kwargs: Any) -> str | bytes:
@@ -469,7 +540,9 @@ class RecordingWebSocket:
             raise
         text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
         data = _truncate_audio(_scrub(json.loads(text)))
-        self._cassette.interactions.append(CassetteMessage(direction='received', data=data))
+        self._cassette.interactions.append(
+            CassetteMessage(direction='received', data=data, at=self._cassette.elapsed())
+        )
         return raw
 
     def __aiter__(self) -> RecordingWebSocket:
@@ -494,6 +567,7 @@ class RecordingWebSocket:
                 code=close.code if close is not None else 1000,
                 reason=close.reason if close is not None else '',
                 ok=ok,
+                at=self._cassette.elapsed(),
             )
         )
 
@@ -550,7 +624,43 @@ def patched_ws_connect(
                 cassette.bind_disconnect(disconnect)
                 yield recording
 
-    with mock.patch.object(target, attr, connect):
+    with mock.patch.object(target, attr, connect), _patched_turn_clock(provider, replay):
+        yield
+
+
+@contextmanager
+def _patched_turn_clock(provider: ProviderName, replay: ReplayWebSocket | None) -> Generator[None]:
+    """Point GPT-Live's turn clock at the replay's recorded time, when the cassette recorded it.
+
+    GPT-Live ends a turn after a stretch of wall-clock silence rather than on a server event, and replay
+    delivers frames back to back, so against the real clock no silence ever lasts long enough and the
+    turns of a multi-turn conversation run together. Against `ReplayWebSocket.now` every gap lasts as
+    long as it did on the wire, so the turn ends where it did while recording, however fast (or slowly,
+    on a loaded CI runner) the replay runs.
+
+    The clock moves as the connection starts mapping each frame, which is where it reads the clock (on
+    the frame, and at the silence check after it). That's not when the frame was read: the connection
+    keeps its next read in flight while it handles the current frame. A turn that ended in the gap
+    between two frames ends as the second one is handled; Live's audio track keeps frames coming ten
+    times a second, so that is at most 100 ms late. A cassette without timing keeps the real clock,
+    which is what it was written against.
+    """
+    if replay is None or provider != 'openai_live' or not replay.timed:
+        yield
+        return
+    from pydantic_ai.realtime import openai_live as rt_openai_live
+
+    connection = rt_openai_live.OpenAILiveConnection
+    map_frame = connection._map_frame  # pyright: ignore[reportPrivateUsage]
+
+    def map_frame_on_recorded_time(self: rt_openai_live.OpenAILiveConnection, raw: str | bytes) -> Any:
+        replay.begin_handling_frame()
+        return map_frame(self, raw)
+
+    with (
+        mock.patch.object(rt_openai_live, '_now', replay.now),
+        mock.patch.object(connection, '_map_frame', map_frame_on_recorded_time),
+    ):
         yield
 
 
