@@ -1416,14 +1416,20 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         )
                     )
                 elif part.code_execution_result is not None:
-                    # The result always follows its `executable_code` part, so the id is set (mirrors the
-                    # classic streaming path's assertion).
-                    assert self._code_execution_tool_call_id is not None
+                    if self._code_execution_tool_call_id is None:
+                        # No code ran: native-audio models announce a Google Search with a bare
+                        # `code_execution_result` ("Looking up information on Google Search.") and no
+                        # `executable_code` before it (verified live). The search itself arrives as
+                        # grounding metadata, mapped below, so this status line has nothing to pair with.
+                        continue
                     native_tool_parts.append(
                         _map_code_execution_result(
                             part.code_execution_result, self._provider_name, self._code_execution_tool_call_id
                         )
                     )
+                    # Each `executable_code` has exactly one result, as the classic path assumes, so the
+                    # pairing ends here: a search status line later in the session must not pair with it.
+                    self._code_execution_tool_call_id = None
                 elif part.text and not part.thought:
                     # Skip thinking parts: native-audio models stream their reasoning as `thought`
                     # text alongside the spoken answer, and it must not leak into the transcript. A

@@ -14,10 +14,10 @@ def typesafe_model_profile(model_name: str) -> ModelProfile | None:
     the model refuses itself.
     """
     return ModelProfile(
-        # `jev-1.13` takes 64k tokens for the state and the questions together, and 32k for the state plus
-        # the longest question; only the combined budget has a field.
-        # https://docs.typesafe.ai/model-jaggedness/jev-1.13
-        context_window=64_000,
+        # No `context_window`: it comes from genai-prices, whose Jev entry records the 32k tokens `jev-1.13` takes
+        # for the state plus the longest question. That is the limit a growing conversation hits, since the state
+        # is counted once per request; the 64k for the state and all the questions together only binds when the
+        # questions themselves are very large. https://docs.typesafe.ai/model-jaggedness/jev-1.13
         supports_tools=True,
         supports_text_output=False,
         supports_inline_system_prompts=True,

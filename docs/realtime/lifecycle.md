@@ -192,6 +192,15 @@ for provider operations and
 [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] for one failed
 user transcription. The session remains usable after either event.
 
+A `RealtimeSessionErrorEvent` can be the provider refusing something you sent: OpenAI Realtime refuses
+a text longer than 256,000 characters, for example. When the error identifies the refused input, as
+OpenAI-protocol providers do by echoing the client event's id for a malformed or oversized one, the
+session takes back what the send assumed, the way it does when the send itself raises: refused content
+is removed from history, and a refused request for a response stops
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] waiting for it. An error
+that doesn't identify an input changes neither, because the reply can still come: on OpenAI and xAI,
+a request for a response sent after a refused item is still answered.
+
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
 Receive-loop and tool failures are raised from `async for` while the event stream is being
 iterated. Otherwise the audio and transcript views end, and the failure is raised when the `async

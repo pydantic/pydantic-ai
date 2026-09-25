@@ -74,8 +74,8 @@ Input transcription defaults to `'auto'`; set a supported transcription model ID
 The shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting (see
 [Thinking](../capabilities/thinking.md)) applies to models whose profile reports
 `supports_thinking`, including the `gpt-realtime-2` family. `True` uses the provider default and an
-effort string selects a level. `False` omits `reasoning`, because OpenAI realtime does not accept a
-disabled effort. The GA `gpt-realtime` ignores the setting.
+effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning off. The
+GA `gpt-realtime` ignores the setting.
 
 Reasoning traces are not surfaced as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s; the API
 exposes effort as input only.

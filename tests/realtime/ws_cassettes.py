@@ -340,6 +340,10 @@ class ReplayWebSocket:
         # Truncated on this side too: cassettes recorded before Gemini's microphone frames were
         # truncated hold them in full.
         expected = _truncate_audio(interaction.data)
+        if 'event_id' not in expected:
+            # Recorded before OpenAI-protocol client frames carried an `event_id` (the id a refusal
+            # echoes, see `client_event_id`); the rest of the frame is still pinned.
+            actual.pop('event_id', None)
         assert actual == expected, (
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
             f'expected={expected!r}\nactual={actual!r}'
