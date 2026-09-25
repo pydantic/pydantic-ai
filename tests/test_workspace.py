@@ -392,6 +392,30 @@ async def test_shell_stat_rejects_an_invalid_size(tmp_path: Path) -> None:
         await workspace.stat('data.bin')
 
 
+async def test_shell_read_rejects_output_lost_in_transit(tmp_path: Path) -> None:
+    """A backend that drops the start of a command's output must not turn into a shorter file."""
+
+    class TruncatingBackend(RunOnlyWorkspaceBackend):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeWorkspaceResult:
+            result = await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+            stdout = result.stdout
+            if isinstance(command, str) and 'base64 <' in command:
+                stdout = stdout[stdout.index('\n') + 1 :]  # only the tail of the output arrives
+            return FakeWorkspaceResult(exit_code=result.exit_code, stdout=stdout, stderr=result.stderr)
+
+    (tmp_path / 'data.bin').write_bytes(bytes(range(256)) * 100)
+    with pytest.raises(WorkspaceError, match='incomplete output while reading'):
+        await Workspace(TruncatingBackend(LocalWorkspaceBackend(tmp_path))).read_bytes('data.bin')
+
+
 async def test_shell_list_dir_rejects_invalid_encoded_output(tmp_path: Path) -> None:
     class InvalidListingBackend(RunOnlyWorkspaceBackend):
         async def run(
