@@ -814,7 +814,7 @@ def _truncation_notice(window: FileWindow) -> str:
     return f'[truncated: showing {shown}{remaining_note} ({cap}). {next_step.format(next_offset)}]'
 
 
-def policy_chain(workspace: Workspace) -> list[tuple[type[Workspace], dict[str, object]]]:
+def _policy_chain(workspace: Workspace) -> list[tuple[type[Workspace], dict[str, object]]]:
     """Each facade layer from the outside in, with its own state, which is where workspace policy lives.
 
     A layer's state is its instance attributes other than the wrapped workspace, compared with
@@ -831,10 +831,10 @@ def policy_chain(workspace: Workspace) -> list[tuple[type[Workspace], dict[str, 
         workspace = workspace.wrapped
 
 
-def same_workspace(a: Workspace, b: Workspace) -> bool:
+def _same_workspace(a: Workspace, b: Workspace) -> bool:
     """Whether two selections name the same environment under the same policy.
 
     Compares the facade layers' state, the innermost backend's type, and the ref; a backend's
     own configuration has no general comparison.
     """
-    return policy_chain(a) == policy_chain(b) and type(a.backend) is type(b.backend) and a.ref == b.ref
+    return _policy_chain(a) == _policy_chain(b) and type(a.backend) is type(b.backend) and a.ref == b.ref
