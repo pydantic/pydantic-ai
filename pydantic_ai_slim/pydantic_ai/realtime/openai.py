@@ -609,7 +609,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         batch = self._tool_call_batches[response_id]
         if batch.done and not batch.unanswered:
             del self._tool_call_batches[response_id]
-            await self._request_response(tuple(batch.inputs))
+            # One input names the request: the session counts one reply for the batch, so counting each
+            # output's input would release more reservations than this request holds when it's merged or
+            # refused.
+            await self._request_response((batch.inputs[-1],))
 
     async def _send_text(self, text: str, *, respond: bool, input_index: int) -> None:
         await self._send_event(
@@ -916,10 +919,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # The response the user's barge-in starts answers them instead, and takes one of their
                 # requests; the others are merged into it.
                 self._merged_response_requests += max(0, len(deferred_inputs) - 1)
-        if isinstance(response_id, str) and response_id in self._tool_call_batches:
+        if isinstance(response_id, str) and (batch := self._tool_call_batches.get(response_id)) is not None:
             # No more calls can join the response: its tool results are answered once all are in.
-            self._tool_call_batches[response_id].done = True
-            await self._answer_tool_call_batch_if_complete(response_id)
+            batch.done = True
+            if response.status == 'cancelled' and not was_client_cancel and not batch.unanswered:
+                # As for a deferred request above: the user barged in, and the response their speech
+                # starts answers the results already sent, rather than one talking over them.
+                del self._tool_call_batches[response_id]
+            else:
+                await self._answer_tool_call_batch_if_complete(response_id)
         # Validated only now that all the response state above is settled: a malformed usage payload
         # raises `ValueError`, which `__aiter__` surfaces as a recoverable frame error and keeps reading
         # — but this `response.done` was still the terminal for its response, and bailing before the
@@ -1000,11 +1008,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 tuple(self._deferred_response_inputs) if self._pending_response else self._response_request_inputs
             )
             self._clear_active_response()
-            # A fresh socket also drops anything the old one was still holding for us, and the session
-            # settles the tool calls in flight rather than sending their results.
+            # A fresh socket also drops anything the old one was still holding for us. Where the provider
+            # doesn't restore the calls in flight, the session settles them rather than sending their
+            # results, so their batches go too; where it does (xAI), their results still get answered.
             self._cancelled_response_id = None
-            self._tool_call_batches.clear()
-            self._tool_call_responses.clear()
+            if not self.reconnect_restores_in_flight_state:
+                self._tool_call_batches.clear()
+                self._tool_call_responses.clear()
             if replay_response:
                 await self._create_response(replay_inputs)
             # Cleared only once the replay is on the wire, so a send that failed above leaves the

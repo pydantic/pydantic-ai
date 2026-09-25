@@ -4499,11 +4499,14 @@ async def test_parallel_tool_calls_get_one_response_create() -> None:
 
 
 @pytest.mark.anyio
-async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching() -> None:
+@pytest.mark.parametrize('status', ['completed', 'cancelled'])
+async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(status: str) -> None:
     """One call's result goes out as soon as it settles, and its `response.create` at the `response.done`.
 
     The same frames at the same moments as before tool results were batched: the connection already held
-    an early result's `response.create` back until the calling response's `response.done`.
+    an early result's `response.create` back until the calling response's `response.done`, and dropped it
+    when the server cancelled that response (the user barged in), leaving the answer to the response the
+    user's speech starts.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -4549,10 +4552,82 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching() ->
         # The result is out while the calling response is still active; nothing more until it's done.
         assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
 
-        ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': [call]}})
-        await ws.wait_for_creates(2)
-        assert sent_types()[1:] == ['response.create', 'conversation.item.create/output', 'response.create']
+        ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': status, 'output': [call]}})
+        if status == 'cancelled':
+            for _ in range(50):
+                await asyncio.sleep(0)
+            assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
+            # Server VAD starts the response to the user's speech, which answers the result too.
+            ws.push({'type': 'input_audio_buffer.speech_stopped', 'audio_end_ms': 1000, 'item_id': 'item-user-2'})
+        else:
+            await ws.wait_for_creates(2)
+            assert sent_types()[1:] == ['response.create', 'conversation.item.create/output', 'response.create']
         for frame in _response_frames('resp-2', 'Sunny.'):
             ws.push(frame)
         with anyio.fail_after(5):
             await session.wait_for_reply()
+
+
+@pytest.mark.anyio
+async def test_tool_batch_response_create_counts_as_one_request() -> None:
+    """A batch's `response.create` is one request, however many outputs it follows.
+
+    Counted once per output, a turn sent before the answer started had its own reply taken as merged
+    into the batch's, so `wait_for_reply()` returned before that turn was answered.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    release = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return f'{name} result'
+
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager(runner)
+    )
+    async with session:
+        await session.send('Look both up.')
+        ws.push({'type': 'response.created', 'response': {'id': 'resp-1', 'status': 'in_progress', 'output': []}})
+        calls: list[dict[str, Any]] = []
+        for call_id in ('call-1', 'call-2'):
+            ws.push(
+                {
+                    'type': 'response.function_call_arguments.done',
+                    'response_id': 'resp-1',
+                    'item_id': f'item-{call_id}',
+                    'output_index': 0,
+                    'call_id': call_id,
+                    'name': 'get_weather',
+                    'arguments': '{}',
+                }
+            )
+            calls.append(
+                {
+                    'id': f'item-{call_id}',
+                    'type': 'function_call',
+                    'call_id': call_id,
+                    'name': 'get_weather',
+                    'arguments': '{}',
+                    'status': 'completed',
+                }
+            )
+        ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': calls}})
+        for _ in range(100):
+            await asyncio.sleep(0)
+        release.set()
+        await ws.wait_for_creates(2)
+        await session.send('And also Spain?')  # before the batch's answer starts: deferred behind it
+        for frame in _response_frames('resp-2', 'Both sunny.'):
+            ws.push(frame)
+        await ws.wait_for_creates(3)
+        for _ in range(100):
+            await asyncio.sleep(0)
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(50):
+            await asyncio.sleep(0)
+        assert not waiting.done(), "returned before the second turn's answer started"
+        for frame in _response_frames('resp-3', 'Madrid.'):
+            ws.push(frame)
+        with anyio.fail_after(5):
+            await waiting

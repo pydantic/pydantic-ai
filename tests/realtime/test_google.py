@@ -3162,3 +3162,10 @@ async def test_reconnect_forgets_an_unanswered_tool_call_turn() -> None:
         'ResponseDone',
         'RealtimeSessionErrorEvent',
     ]
+
+
+@pytest.mark.parametrize('async_tool_calls', [False, True])
+def test_non_blocking_tool_results_are_answered_one_by_one(async_tool_calls: bool) -> None:
+    """A blocking tool-call frame is answered once; a non-blocking call's result may get its own answer."""
+    conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), async_tool_calls=async_tool_calls)
+    assert conn._answers_tool_calls_per_response is not async_tool_calls  # pyright: ignore[reportPrivateUsage]

@@ -10119,6 +10119,39 @@ async def test_provider_cancelled_call_leaves_no_reply_owed() -> None:
         events.cancel()
 
 
+async def test_result_after_a_sibling_was_cancelled_is_sent_without_counting_a_reply() -> None:
+    """A result that lands after the provider cancelled a sibling still goes out, but no reply is owed for it."""
+    release_slow = asyncio.Event()
+    conn = _ToolBatchConnection(
+        [
+            ToolCall(tool_call_id='c1', tool_name='slow', args='{}', response_usage_follows=True),
+            ToolCall(tool_call_id='c2', tool_name='f', args='{}', response_usage_follows=True),
+        ]
+    )
+    conn.close_response.set()
+    conn.after_close = [ToolCallCancelled(tool_call_ids=['c2'])]
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await (release_slow.wait() if name == 'slow' else asyncio.Event().wait())
+        return f'{name} result'
+
+    session = RealtimeSession(conn, runner)
+    async with session:
+        events = asyncio.create_task(drain_events(session))
+        await _until(
+            lambda: session._tool_call_batches.get('c1') is not None and session._tool_call_batches['c1'].abandoned
+        )  # pyright: ignore[reportPrivateUsage]
+        assert 'c1' in session._pending_tool_calls  # pyright: ignore[reportPrivateUsage]
+        release_slow.set()
+        await _until(lambda: bool(conn.results()))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert conn.results() == [ToolResult(tool_call_id='c1', output='slow result')]
+        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        await session.close()
+        events.cancel()
+
+
 async def test_lost_conversation_leaves_no_tool_batch_reply_owed() -> None:
     """A reconnect that lost the conversation doesn't count a reply for results it may not have."""
 
@@ -10146,15 +10179,18 @@ async def test_lost_conversation_leaves_no_tool_batch_reply_owed() -> None:
 
 
 async def test_tool_batch_reply_that_would_exceed_the_request_limit_ends_the_session() -> None:
-    """The reply a complete batch is owed is a request like any other, checked against `request_limit`."""
+    """The reply a batch may be owed is a request like any other, checked against `request_limit`.
+
+    Checked before a result goes out even when it isn't known to be the last: once out, the connection
+    would ask for the reply as soon as the calling response is done, before the session could refuse it.
+    """
     conn = _ToolBatchConnection([ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True)])
     session = RealtimeSession(conn, _slow_until(asyncio.Event()), usage_limits=UsageLimits(request_limit=1))
     with pytest.raises(UsageLimitExceeded):
         async with session:
             events = asyncio.create_task(drain_events(session))
-            await _until(lambda: bool(conn.results()))
-            conn.close_response.set()
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
+    assert conn.results() == []
 
 
 async def test_tool_batch_reply_is_not_counted_when_the_calling_response_trips_a_usage_limit() -> None:
