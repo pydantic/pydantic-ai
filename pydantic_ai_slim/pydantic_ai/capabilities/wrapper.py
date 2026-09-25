@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -69,7 +69,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     wrapped: AbstractCapability[AgentDepsT]
 
+    # Whether this wrapper adopted the wrapped capability's `id`/`defer_loading` rather than being
+    # given an explicit `id`. Recorded in `__post_init__` and carried over verbatim by rebinds, so
+    # only an adopted identity is re-resolved against the new wrapped instance.
+    _adopted_identity: bool = field(default=False, init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
+        # Record whether the identity was adopted now: `__post_init__` is not re-run on rebinds.
+        self._adopted_identity = self.id is None
         self.__adopt_wrapped_identity()
 
     # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
@@ -78,10 +85,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
         # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
         # over a deferred capability without losing its deferral or its place in the load
-        # catalog. `for_agent`/`for_run` re-run this on the rebound copy, so it re-resolves
-        # against the new wrapped instance — e.g. one a `DynamicCapability` produced at run
-        # time, whose `id` only becomes known once the factory has run.
-        if self.id is None:
+        # catalog. `for_agent`/`for_run`/`visit_and_replace` re-run this on the rebound copy,
+        # so an adopted identity re-resolves against the new wrapped instance — e.g. one a
+        # `DynamicCapability` produced at run time, whose `id` and `defer_loading` only become
+        # known once the factory has run. A wrapper given an explicit `id` keeps it untouched.
+        if self._adopted_identity:
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
 
