@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Any, Literal, cast, get_args, get_origin
 from unittest.mock import patch
 
+import anyio
 import pytest
 from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
@@ -4301,3 +4302,332 @@ async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.M
 
     assert events[0] == RealtimeSessionReconnectEvent(state_restored=False)
     assert not [frame for frame in fresh.sent if 'conversation.item.create' in frame]
+
+
+@pytest.mark.anyio
+async def test_requests_merged_into_a_deferred_response_create_are_reported() -> None:
+    """Requests joining one already deferred get no `response.create` of their own, and the session is told.
+
+    The connection keeps a single deferred `response.create`, which answers everything added before it
+    goes out. The session reserves one response per request, so each merged request is reported for
+    it to release.
+    """
+    done = json.dumps({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': []}})
+    created = json.dumps(
+        {'type': 'response.created', 'response': {'id': 'resp-2', 'status': 'in_progress', 'output': []}}
+    )
+    ws = FakeWebSocket([done, created])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send('first')
+    await conn.send('second')  # deferred behind the first response
+    await conn.send('third')  # joins the deferred request
+    await conn.send(ToolResult(tool_call_id='call_1', output='42'))  # joins it too
+
+    events = await collect_codec_events(conn)
+    # Reported once the shared response has started, not when the requests joined: a refused
+    # `response.create` takes back every request it carried instead.
+    assert [type(event).__name__ for event in events] == ['ResponseDone']
+    assert conn._take_merged_response_requests() == 2  # pyright: ignore[reportPrivateUsage]
+    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
+    assert [json.loads(frame)['type'] for frame in ws.sent].count('response.create') == 2
+
+
+@pytest.mark.anyio
+async def test_response_started_by_the_server_reports_no_merged_requests() -> None:
+    """Only the start of the response a `response.create` asked for settles the requests it carried."""
+    created = [
+        json.dumps({'type': 'response.created', 'response': {'id': rid, 'status': 'in_progress', 'output': []}})
+        for rid in ('resp-1', 'resp-2')
+    ]
+    conn = OpenAIRealtimeConnection(FakeWebSocket(created))  # type: ignore[arg-type]
+    await conn.send('first')
+    await conn.send('second')  # deferred behind the first
+    await conn.send('third')  # joins the deferred request
+    # A second `response.created` while the first response is still active (a server-started response)
+    # is not the deferred request starting.
+    await collect_codec_events(conn)
+    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
+
+
+class _QueuedWebSocket(FakeWebSocket):
+    """A fake socket fed frame by frame, so a test can interleave server frames with the session's sends."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.frames: asyncio.Queue[str] = asyncio.Queue()
+        self.sent_changed = asyncio.Event()
+
+    def push(self, frame: dict[str, Any]) -> None:
+        self.frames.put_nowait(cast(str, self._normalize_frame(json.dumps(frame))))
+
+    async def send(self, data: str) -> None:
+        await super().send(data)
+        self.sent_changed.set()
+
+    async def wait_for_creates(self, count: int) -> None:
+        with anyio.fail_after(5):
+            while [json.loads(frame)['type'] for frame in self.sent].count('response.create') < count:
+                self.sent_changed.clear()
+                await self.sent_changed.wait()
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while True:
+            yield await self.frames.get()
+
+
+def _response_frames(response_id: str, transcript: str) -> list[dict[str, Any]]:
+    common = {'response_id': response_id, 'item_id': f'item-{response_id}', 'output_index': 0, 'content_index': 0}
+    return [
+        {'type': 'response.created', 'response': {'id': response_id, 'status': 'in_progress', 'output': []}},
+        {'type': 'response.output_audio_transcript.done', **common, 'transcript': transcript},
+        {
+            'type': 'response.done',
+            'response': {'id': response_id, 'status': 'completed', 'output': [], 'usage': {'output_tokens': 1}},
+        },
+    ]
+
+
+@pytest.mark.anyio
+async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for_once() -> None:
+    """Turns sent while a reply is in flight share one deferred response, and `wait_for_reply()` returns after it.
+
+    Each turn reserved a response of its own, so without the merge report one reservation leaked and
+    every later `wait_for_reply()` hung for the rest of the session.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        await session.send('France?')
+        created, transcript, done = _response_frames('resp-1', 'Paris.')
+        ws.push(created)
+        await session.send('Spain?')
+        await session.send('Italy?')
+        ws.push(transcript)
+        ws.push(done)
+        await ws.wait_for_creates(2)
+        for frame in _response_frames('resp-2', 'Madrid. Rome.'):
+            ws.push(frame)
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+
+    transcripts = [
+        part.transcript
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ]
+    assert transcripts == ['Paris.', 'Madrid. Rome.']
+
+
+@pytest.mark.anyio
+async def test_parallel_tool_calls_get_one_response_create() -> None:
+    """Results for one response's parallel calls go out together, with a single `response.create`.
+
+    Asking for a response after each result had the model answer the first one while its siblings were
+    still unanswered: it called them again and then spoke the answer twice.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    release = {name: asyncio.Event() for name in ('fast', 'slow')}
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release[name].wait()
+        return f'{name} result'
+
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager(runner)
+    )
+    async with session:
+        await session.send('Look both up.')
+        ws.push({'type': 'response.created', 'response': {'id': 'resp-1', 'status': 'in_progress', 'output': []}})
+        calls: list[dict[str, Any]] = []
+        for call_id, name in (('call-1', 'fast'), ('call-2', 'slow')):
+            ws.push(
+                {
+                    'type': 'response.function_call_arguments.done',
+                    'response_id': 'resp-1',
+                    'item_id': f'item-{call_id}',
+                    'output_index': 0,
+                    'call_id': call_id,
+                    'name': name,
+                    'arguments': '{}',
+                }
+            )
+            calls.append(
+                {
+                    'id': f'item-{call_id}',
+                    'type': 'function_call',
+                    'call_id': call_id,
+                    'name': name,
+                    'arguments': '{}',
+                    'status': 'completed',
+                }
+            )
+        ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': calls}})
+        release['fast'].set()
+        for _ in range(50):
+            await asyncio.sleep(0)
+        # The fast result is out, but asks for nothing: its sibling is still running. The only
+        # `response.create` so far is the one the user's turn asked for.
+        await ws.wait_for_creates(1)
+        assert [json.loads(frame)['type'] for frame in ws.sent].count('response.create') == 1
+        assert [json.loads(frame)['item']['call_id'] for frame in ws.sent if 'function_call_output' in frame] == [
+            'call-1'
+        ]
+
+        release['slow'].set()
+        await ws.wait_for_creates(2)
+        for frame in _response_frames('resp-2', 'Both done.'):
+            ws.push(frame)
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+
+    sent = [json.loads(frame) for frame in ws.sent]
+    assert [frame['type'] for frame in sent[-2:]] == ['conversation.item.create', 'response.create']
+    assert sent[-2]['item']['call_id'] == 'call-2'
+    assert [frame['type'] for frame in sent].count('response.create') == 2
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [[type(part).__name__ for part in response.parts] for response in responses] == [
+        ['ToolCallPart', 'ToolCallPart'],
+        ['SpeechPart'],
+    ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('status', ['completed', 'cancelled'])
+async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(status: str) -> None:
+    """One call's result goes out as soon as it settles, and its `response.create` at the `response.done`.
+
+    The same frames at the same moments as before tool results were batched: the connection already held
+    an early result's `response.create` back until the calling response's `response.done`, and dropped it
+    when the server cancelled that response (the user barged in), leaving the answer to the response the
+    user's speech starts.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'sunny'
+
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager(runner)
+    )
+
+    def sent_types() -> list[str]:
+        return [json.loads(frame)['type'] + ('/output' if 'function_call_output' in frame else '') for frame in ws.sent]
+
+    async with session:
+        await session.send('Weather?')
+        ws.push({'type': 'response.created', 'response': {'id': 'resp-1', 'status': 'in_progress', 'output': []}})
+        call = {
+            'id': 'item-call-1',
+            'type': 'function_call',
+            'call_id': 'call-1',
+            'name': 'get_weather',
+            'arguments': '{}',
+            'status': 'completed',
+        }
+        ws.push(
+            {
+                'type': 'response.function_call_arguments.done',
+                'response_id': 'resp-1',
+                'item_id': 'item-call-1',
+                'output_index': 0,
+                'call_id': 'call-1',
+                'name': 'get_weather',
+                'arguments': '{}',
+            }
+        )
+        with anyio.fail_after(5):
+            while 'conversation.item.create/output' not in sent_types():
+                ws.sent_changed.clear()
+                await ws.sent_changed.wait()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        # The result is out while the calling response is still active; nothing more until it's done.
+        assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
+
+        ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': status, 'output': [call]}})
+        if status == 'cancelled':
+            for _ in range(50):
+                await asyncio.sleep(0)
+            assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
+            # Server VAD starts the response to the user's speech, which answers the result too.
+            ws.push({'type': 'input_audio_buffer.speech_stopped', 'audio_end_ms': 1000, 'item_id': 'item-user-2'})
+        else:
+            await ws.wait_for_creates(2)
+            assert sent_types()[1:] == ['response.create', 'conversation.item.create/output', 'response.create']
+        for frame in _response_frames('resp-2', 'Sunny.'):
+            ws.push(frame)
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+
+
+@pytest.mark.anyio
+async def test_tool_batch_response_create_counts_as_one_request() -> None:
+    """A batch's `response.create` is one request, however many outputs it follows.
+
+    Counted once per output, a turn sent before the answer started had its own reply taken as merged
+    into the batch's, so `wait_for_reply()` returned before that turn was answered.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    release = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return f'{name} result'
+
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager(runner)
+    )
+    async with session:
+        await session.send('Look both up.')
+        ws.push({'type': 'response.created', 'response': {'id': 'resp-1', 'status': 'in_progress', 'output': []}})
+        calls: list[dict[str, Any]] = []
+        for call_id in ('call-1', 'call-2'):
+            ws.push(
+                {
+                    'type': 'response.function_call_arguments.done',
+                    'response_id': 'resp-1',
+                    'item_id': f'item-{call_id}',
+                    'output_index': 0,
+                    'call_id': call_id,
+                    'name': 'get_weather',
+                    'arguments': '{}',
+                }
+            )
+            calls.append(
+                {
+                    'id': f'item-{call_id}',
+                    'type': 'function_call',
+                    'call_id': call_id,
+                    'name': 'get_weather',
+                    'arguments': '{}',
+                    'status': 'completed',
+                }
+            )
+        ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': calls}})
+        for _ in range(100):
+            await asyncio.sleep(0)
+        release.set()
+        await ws.wait_for_creates(2)
+        await session.send('And also Spain?')  # before the batch's answer starts: deferred behind it
+        for frame in _response_frames('resp-2', 'Both sunny.'):
+            ws.push(frame)
+        await ws.wait_for_creates(3)
+        for _ in range(100):
+            await asyncio.sleep(0)
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(50):
+            await asyncio.sleep(0)
+        assert not waiting.done(), "returned before the second turn's answer started"
+        for frame in _response_frames('resp-3', 'Madrid.'):
+            ws.push(frame)
+        with anyio.fail_after(5):
+            await waiting
