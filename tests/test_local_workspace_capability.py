@@ -16,7 +16,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
-    UnavailableWorkspace,
     WorkspaceReadOnlyError,
     WorkspaceRef,
 )
@@ -106,7 +105,7 @@ async def test_explicit_workspace_overrides_the_capability(tmp_path: Path) -> No
 async def test_foreign_ref_without_another_capability_raises(tmp_path: Path) -> None:
     agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path)])
 
-    with pytest.raises(UserError, match="No capability can supply workspace 'remote'"):
+    with pytest.raises(UserError, match="none of the agent's workspace capabilities recognized it"):
         await agent.run('go', workspace=WorkspaceRef(provider='fake', id='remote'))
 
 
@@ -139,26 +138,27 @@ async def test_local_ref_for_another_directory_is_never_followed(tmp_path: Path)
     historical = ModelResponse(parts=[TextPart('old')], workspace_ref=elsewhere)
     agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path / 'configured')])
 
-    with pytest.raises(UserError, match='No capability can supply workspace'):
+    with pytest.raises(UserError, match="none of the agent's workspace capabilities recognized it"):
         await agent.run('go', workspace=elsewhere)
-
-    continued = await agent.run('go', message_history=[historical])
-    assert isinstance(continued.workspace.backend, UnavailableWorkspace)
+    with pytest.raises(UserError, match='The message history continues in workspace `local:'):
+        await agent.run('go', message_history=[historical])
 
     fresh = await agent.run('go', message_history=[historical], workspace='new')
     assert fresh.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path / 'configured'))
 
 
 async def test_a_repeated_local_workspace_resolves_to_the_later_one(tmp_path: Path) -> None:
-    """The default `id` makes a repeat one configuration stated twice; a distinct `id` is a second workspace."""
+    """The default `id` makes a repeat one configuration stated twice; a distinct `id` keeps both, and the first answers."""
     first, second = tmp_path / 'first', tmp_path / 'second'
     first.mkdir()
     second.mkdir()
     merged = Agent(TestModel(), capabilities=[LocalWorkspace(first), LocalWorkspace(second)])
+    both = Agent(TestModel(), capabilities=[LocalWorkspace(first), LocalWorkspace(second, id='scratch')])
 
     assert await (await merged.run('go')).workspace.working_dir() == str(second.resolve())
-    with pytest.raises(UserError, match='A run has one workspace'):
-        Agent(TestModel(), capabilities=[LocalWorkspace(first), LocalWorkspace(second, id='scratch')])
+    assert await (await both.run('go')).workspace.working_dir() == str(first.resolve())
+    continued = await both.run('go', workspace=WorkspaceRef(provider='local', id=str(second.resolve())))
+    assert await continued.workspace.working_dir() == str(second.resolve())
 
 
 async def test_agent_spec_builds_a_local_workspace(tmp_path: Path) -> None:

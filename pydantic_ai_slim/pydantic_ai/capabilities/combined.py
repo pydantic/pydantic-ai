@@ -442,6 +442,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 native_tools.append(deferred_native_tool)
         return native_tools
 
+    @property
+    def has_get_workspace(self) -> bool:
+        return any(
+            capability.defer_loading is not True and capability.has_get_workspace for capability in self.capabilities
+        )
+
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         for capability in self.capabilities:
             if capability.defer_loading is True:

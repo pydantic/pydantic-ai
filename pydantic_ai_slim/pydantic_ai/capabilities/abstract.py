@@ -580,13 +580,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
+    @property
+    def has_get_workspace(self) -> bool:
+        """Whether this capability or a wrapped capability overrides `get_workspace`."""
+        return type(self).get_workspace is not AbstractCapability.get_workspace
+
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Supply the run's workspace backend, or `None` if this capability does not provide one.
 
         Called synchronously on each run, before `for_run`, so `for_run` can read from the workspace.
         A capability that exists only after `for_run` (one a capability function returns) is asked
-        afterwards. An agent has one workspace capability: a second one raises `UserError`. Return
-        `None` for a `ref` this capability does not own.
+        afterwards. Several workspace capabilities may be attached: they are asked in order and the
+        first that returns a workspace wins. Return `None` for a `ref` this capability does not own.
 
         It must have no side effects, including bookkeeping: return a backend configured from this
         capability's own settings, carrying `ref` when one was recovered or passed in. The backend

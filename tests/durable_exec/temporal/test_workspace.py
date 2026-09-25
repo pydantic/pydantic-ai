@@ -699,8 +699,7 @@ async def test_explicit_workspace_that_a_capability_recognizes_attaches(client: 
         ),
         (
             'foreign_ref',
-            "No capability can supply workspace 'x': every `get_workspace` returned `None`. Attach a capability "
-            'whose `get_workspace` recognizes it.',
+            "Workspace `other:x` was passed to the run, but none of the agent's workspace capabilities recognized it.",
         ),
     ],
 )

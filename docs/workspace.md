@@ -49,9 +49,8 @@ To run code the model writes in isolation, attach a sandbox capability from the
 [harness](https://pydantic.dev/docs/ai/harness/) instead, such as Modal, E2B, Daytona or Sprites.
 Nothing else about the agent changes: tools keep using `ctx.workspace`.
 
-An agent has one workspace capability. Two different ones raise `UserError`, and a second
-`LocalWorkspace` replaces the first. To use a different workspace for one run, pass it to the run as
-`workspace=`, as shown [below](#choosing-a-runs-workspace).
+A second `LocalWorkspace` replaces the first. To use a different workspace for one run, pass it to
+the run as `workspace=`, as shown [below](#choosing-a-runs-workspace).
 
 Commands in a `LocalWorkspace` get your `PATH` and `HOME`, so they find your tools and your git and
 package-manager configuration. Nothing else from your environment reaches them. Pass other variables
@@ -189,11 +188,10 @@ starting over in an empty one. Pass `workspace='new'` to start over on purpose.
 
 A capability only attaches to references it recognizes. `LocalWorkspace` accepts a reference to its
 own directory and no other, so message history can't point the agent at another directory on your
-machine. A reference from history that the capability declines, from another provider or for another
-directory, is ignored: the run has no workspace, tools that use it raise `UserError`, and later runs
-of that conversation lose the old reference. You hit this when you switch providers, or when
-`LocalWorkspace('.')` starts in a different directory. Pass `workspace='new'` to continue old
-conversations in a fresh workspace, or run them on an agent that still has the old capability.
+machine. If no capability recognizes the reference in the history, for example after you switch
+providers or when `LocalWorkspace('.')` starts in a different directory, the run raises `UserError`.
+Pass `workspace='new'` to continue in a fresh workspace, or keep the old capability on the agent (see
+below).
 
 [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] and the [UI adapters](ui/overview.md)
 strip references from client-supplied history by default, so a client can't choose the environment
@@ -208,15 +206,40 @@ A run picks its workspace from the first of these that applies:
 
 1. The `workspace=` argument.
 2. The reference on the latest response in `message_history`.
-3. The agent's workspace capability: its directory for `LocalWorkspace`, a new sandbox for a sandbox
+3. The agent's workspace capabilities: its directory for `LocalWorkspace`, a new sandbox for a sandbox
    provider.
+
+An agent can have several workspace capabilities, asked in order. With a reference, the first that
+recognizes it supplies the workspace; without one, the first that returns a workspace does. This is
+how you move to a new provider without breaking old conversations: list the new capability first, so
+new conversations use it, and keep the old one, so conversations that started there continue in it.
+
+```python {title="two_workspaces.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    capabilities=[
+        LocalWorkspace('~/projects/current', id='current'),  # new conversations
+        LocalWorkspace('~/projects/archive', id='archive'),  # conversations that started here
+    ],
+)
+```
+
+When no capability supplies a workspace:
+
+- A reference from `message_history` raises `UserError`. An agent with no workspace capability, such
+  as one that summarizes the conversation, ignores it instead.
+- A `WorkspaceRef` passed as `workspace=` raises `UserError`.
+- `workspace='new'` raises `UserError`.
+- Without a reference, the run has no workspace, and tools that use it raise `UserError`.
 
 `workspace=` takes:
 
 - `'new'`, to start a fresh environment and ignore the one in the history.
-- A [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], such as a saved `result.workspace.ref`. The
-  agent's capability attaches to it, and the run raises `UserError` if the capability doesn't
-  recognize it.
+- A [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], such as a saved `result.workspace.ref`, for
+  the agent's capabilities to attach to.
 - A workspace or backend, used as is: `result.workspace` to keep working where an earlier run did,
   `ctx.workspace` to have a subagent work where its parent does, or a backend such as
   `LocalWorkspaceBackend('/tmp/scratch')`.
@@ -430,7 +453,7 @@ fixtures to enable the reattachment rules.
 
 - `LocalWorkspace` isolates nothing, never creates its directory, and runs only on POSIX systems
   (macOS and Linux).
-- A run has one workspace, and an agent one workspace capability.
+- A run has one workspace.
 - Pydantic AI never creates or deletes a sandbox at run boundaries: cleanup is yours.
 - How a timed-out command is stopped depends on the provider.
 - Under durable execution, `workspace=` passes on only a reference: per-run wrappers such as

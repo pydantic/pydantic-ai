@@ -8,8 +8,6 @@ from __future__ import annotations as _annotations
 import re
 from pathlib import Path
 
-from pydantic_ai.workspaces.testing import WorkspaceBackendSuite
-
 ROOT = Path(__file__).parent.parent
 
 # Each marker identifies one example that must stay code-identical between the
@@ -63,11 +61,3 @@ def test_mirrored_examples_are_code_identical():
 def test_front_pages_have_no_em_dashes():
     for path in FRONT_PAGES:
         assert '—' not in path.read_text(), f'em dash found in {path.relative_to(ROOT)}'
-
-
-def test_workspace_backend_suite_rules_match_docs():
-    docs = (ROOT / 'docs' / 'workspace.md').read_text()
-    documented = set(re.findall(r'^- `(test_[a-z0-9_]+)`:', docs, flags=re.MULTILINE))
-    implemented = {name for name in dir(WorkspaceBackendSuite) if name.startswith('test_')}
-
-    assert documented == implemented

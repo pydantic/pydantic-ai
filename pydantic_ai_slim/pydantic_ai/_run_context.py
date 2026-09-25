@@ -241,10 +241,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     workspace: Workspace = field(default_factory=unattached_workspace)
     """The [`Workspace`][pydantic_ai.workspaces.Workspace] attached to this run.
 
-    An explicit backend or facade passed through `workspace=` is available during `for_run`. Otherwise,
-    capability selection after `for_run` uses the first capability whose
-    [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace] returned a backend;
-    if none does, a placeholder explains how to attach one. Never the host by default.
+    Selected before `for_run`, so `for_run` can use it: an explicit backend or facade passed through
+    `workspace=`, else the first capability whose
+    [`get_workspace`][pydantic_ai.capabilities.AbstractCapability.get_workspace] returns one. If none
+    does, a placeholder explains how to attach one. Never the host by default.
 
     Choosing it does no I/O: the backend creates or attaches on its first operation, and the run
     never tears it down. See the [workspace docs](../workspace.md).

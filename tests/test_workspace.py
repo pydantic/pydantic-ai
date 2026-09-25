@@ -701,15 +701,90 @@ class ProviderWorkspaceCapability(AbstractCapability[Any]):
         return backend
 
 
-async def test_an_agent_has_one_workspace_capability() -> None:
-    with pytest.raises(
-        UserError, match='A run has one workspace, but `ProviderWorkspaceCapability`, `ProviderWorkspaceCapability`'
-    ):
-        Agent(TestModel(), capabilities=[ProviderWorkspaceCapability('first'), ProviderWorkspaceCapability('second')])
+async def test_the_first_workspace_capability_that_answers_wins() -> None:
+    first, second = ProviderWorkspaceCapability('first'), ProviderWorkspaceCapability('second')
+    agent = Agent(TestModel(), capabilities=[first, second])
 
+    fresh = await agent.run('go')
+    assert [fresh.workspace.backend] == first.supplied
+    assert second.refs == []
+
+    # A ref the first capability declines falls through to the one that owns it.
+    ref = WorkspaceRef(provider='second', id='existing')
+    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=ref)
+    continued = await agent.run('go', message_history=[historical])
+    assert [continued.workspace.backend] == second.supplied
+    assert first.refs == [None, ref]
+
+
+async def test_a_run_workspace_capability_joins_the_agents() -> None:
     agent = Agent(TestModel(), capabilities=[ProviderWorkspaceCapability('first')])
-    with pytest.raises(UserError, match='A run has one workspace'):
-        await agent.run('go', capabilities=[ProviderWorkspaceCapability('second')])
+    second = ProviderWorkspaceCapability('second')
+
+    result = await agent.run('go', capabilities=[second], workspace=WorkspaceRef(provider='second', id='existing'))
+
+    assert [result.workspace.backend] == second.supplied
+
+
+async def test_an_unrecognized_history_ref_is_an_error_when_the_agent_has_workspace_capabilities() -> None:
+    """Silently dropping the ref would put the conversation in a different environment than it continued from."""
+    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='gone', id='sb-1'))
+    agent = Agent(TestModel(), capabilities=[ProviderWorkspaceCapability('first')])
+
+    with pytest.raises(
+        UserError,
+        match=(
+            r"The message history continues in workspace `gone:sb-1`, but none of the agent's workspace "
+            r"capabilities recognized it\. Pass `workspace='new'` to start a fresh workspace, or pass the "
+            r'workspace to continue in with `workspace=`\.'
+        ),
+    ):
+        await agent.run('go', message_history=[historical])
+
+    fresh = await agent.run('go', message_history=[historical], workspace='new')
+    assert fresh.workspace.attached
+
+
+async def test_a_history_ref_is_offered_to_a_workspace_capability_that_exists_only_after_for_run(
+    tmp_path: Path,
+) -> None:
+    ref = WorkspaceRef(provider='local', id=str(tmp_path))
+    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=ref)
+    agent = Agent(TestModel(), deps_type=Path, capabilities=[lambda ctx: LocalWorkspace(ctx.deps)])
+
+    continued = await agent.run('go', deps=tmp_path, message_history=[historical])
+    assert continued.workspace.ref == ref
+
+    with pytest.raises(UserError, match='The message history continues in workspace `local:'):
+        await agent.run('go', deps=tmp_path / 'other', message_history=[historical])
+
+
+async def test_an_explicit_ref_without_a_workspace_capability_is_an_error() -> None:
+    agent = Agent(TestModel())
+
+    with pytest.raises(
+        UserError,
+        match='Workspace `fake:remote` was passed to the run, but the agent has no workspace capability to resolve it',
+    ):
+        await agent.run('go', workspace=WorkspaceRef(provider='fake', id='remote'))
+
+
+def test_has_get_workspace_mirrors_the_capability_tree() -> None:
+    supplier = WorkspaceCapability()
+    deferred = WorkspaceCapability()
+    deferred.defer_loading = True
+
+    class Policy(WrapperCapability[Any]):
+        def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            return None  # pragma: no cover
+
+    assert supplier.has_get_workspace
+    assert not AbstractCapability[Any]().has_get_workspace
+    assert CombinedCapability([AbstractCapability[Any](), supplier]).has_get_workspace
+    assert not CombinedCapability([AbstractCapability[Any](), deferred]).has_get_workspace
+    assert WrapperCapability(supplier).has_get_workspace
+    assert not WrapperCapability(AbstractCapability[Any]()).has_get_workspace
+    assert Policy(AbstractCapability[Any]()).has_get_workspace
 
 
 async def test_new_workspace_ignores_the_ref_in_history() -> None:
@@ -853,7 +928,10 @@ async def test_declining_capability_leaves_the_run_workspace_unavailable() -> No
 async def test_unrecognized_workspace_ref_is_rejected() -> None:
     agent = Agent(_tool_call_model(), capabilities=[DecliningWorkspaceCapability()])
 
-    with pytest.raises(UserError, match="No capability can supply workspace 'missing'"):
+    with pytest.raises(
+        UserError,
+        match="Workspace `fake:missing` was passed to the run, but none of the agent's workspace capabilities recognized it",
+    ):
         await agent.run('go', workspace=WorkspaceRef(provider='fake', id='missing'))
 
 

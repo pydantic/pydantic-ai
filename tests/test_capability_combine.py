@@ -199,7 +199,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         _check_content_filter,
     ),
     'LocalWorkspace': Combines(
-        'a run has one workspace, and the later configuration replaces the earlier one whole',
+        'the later configuration replaces the earlier one whole',
         lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
         _check_local_workspace,
     ),

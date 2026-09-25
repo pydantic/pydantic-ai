@@ -34,7 +34,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     there is no reference to continue from, or when the reference names its own `working_dir`. It
     declines every other reference, including a local one for a different directory, so a reference
     in message history cannot point the agent at an arbitrary directory on the host. Other workspace
-    capabilities can be listed before or after it to continue in their providers' environments.
+    capabilities can be listed alongside it: the first one that returns a workspace supplies the run's.
     """
 
     working_dir: str | Path
@@ -65,11 +65,12 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     """
 
     id: str | None = 'local_workspace'
-    """One-off: a run has a single workspace, so the id is fixed by default.
+    """Fixed by default, so a second `LocalWorkspace` replaces the first rather than joining it.
 
     Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
-    which keeps the last one whole: none of the earlier one's settings, `env` included, carry over. Pass a distinct `id` to keep both, or `id=None` for derived ids; the first
-    one in capability order still supplies the workspace.
+    which keeps the last one whole: none of the earlier one's settings, `env` included, carry over.
+    Pass a distinct `id`, or `id=None` for derived ids, to keep both; the first one in capability
+    order that returns a workspace supplies it.
     """
 
     def __post_init__(self) -> None:
@@ -79,7 +80,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        # A workspace is one environment: the later configuration replaces the earlier one whole, so
+        # The later configuration replaces the earlier one whole, so
         # an `env` (and its secrets) or `read_only` stated only on the replaced one never carries over.
         return capabilities[-1]
 

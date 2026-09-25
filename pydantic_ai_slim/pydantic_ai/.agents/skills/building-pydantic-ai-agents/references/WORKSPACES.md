@@ -21,10 +21,9 @@ or a security boundary. Use it only for trusted work. `working_dir` is required;
 such as `'.'` resolves against the current directory at construction, and a leading `~` is
 expanded; the caller owns that directory. Commands inherit only `PATH` and
 `HOME` from the agent process, with `env` and then the per-call `env` layered on top. Never pass `os.environ` wholesale: it hands the
-model's commands every secret in the process, LLM API keys included. `read_only=True` wraps it in `ReadOnlyWorkspace`. An agent has one workspace capability: two
+model's commands every secret in the process, LLM API keys included. `read_only=True` wraps it in `ReadOnlyWorkspace`. Two
 `LocalWorkspace`s share the default id `local_workspace` and combine into the last one (none of
-the earlier one's settings carry over), and any two suppliers left after combining (different
-classes, or `LocalWorkspace`s with distinct `id`s) raise `UserError` at construction or run start.
+the earlier one's settings carry over); give one a distinct `id` to keep both.
 Its ref is `WorkspaceRef(provider='local', id=<absolute working_dir>)` from construction (the
 directory is not checked then; the first operation raises `WorkspaceUnavailableError` if it is
 missing), and the capability
@@ -52,14 +51,16 @@ kept as-is (inside one, see below). An explicit
 fresh workspace, raising if none supplies one. With `workspace=None`, capabilities receive the
 latest `ModelResponse.workspace_ref` from message history; a latest `None` suppresses older ones. History
 supplies identity, not provider configuration. Precedence is: explicit `workspace=`, then the
-history ref, then a fresh workspace from the capability. When nothing supplies a workspace (no
-capability, or a history ref the capability declines) the run gets an unattached placeholder
-instead of raising; its operations raise `UserError` explaining how to attach one. Moving a
-conversation to another provider therefore needs `workspace='new'`: the new provider's capability
-declines the old provider's ref. `get_workspace` runs before `for_run` (a capability that only a
-`for_run` contributes is asked afterwards, and `for_run` may not change a selection made before
-it), is synchronous, and must have no side effects or I/O. A capability should return `None` for
-references it does not own.
+history ref, then a fresh workspace from the capability. An agent may have several workspace
+capabilities, like `resolve_model_id`: they are asked in order and the first that returns a
+workspace wins, so listing a new provider's capability before the old one moves new conversations
+while old ones continue where they started. A history ref that no capability recognizes raises
+`UserError` (pass `workspace='new'` to start fresh), unless the agent has no workspace capability at
+all (a summarizer given the history), which ignores it. With no ref and no supplier the run gets an
+unattached placeholder whose operations raise `UserError` explaining how to attach one.
+`get_workspace` runs before `for_run` (a capability that only a `for_run` contributes is asked
+afterwards, and `for_run` may not change a selection made before it), is synchronous, and must have
+no side effects or I/O. A capability must return `None` for references it does not own.
 
 A `WorkspaceRef` names an environment that exists, and exists only once it does. A backend built
 without a ref reports `ref is None`, creates the environment on its first operation, and sets `ref`

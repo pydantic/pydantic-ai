@@ -542,7 +542,7 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
     assert provider.log == ['create:env-1']
 
     # A ref from another provider is declined, and a ref to a vanished environment cannot attach.
-    with pytest.raises(UserError, match="No capability can supply workspace 'x'"):
+    with pytest.raises(UserError, match="Workspace `other:x` was passed to the run, but none of the agent's"):
         await agent.run('go', workspace=WorkspaceRef(provider='other', id='x'))
     with pytest.raises(WorkspaceUnavailableError, match="environment 'expired' does not exist"):
         await agent.run('go', workspace=WorkspaceRef(provider='fake', id='expired'))
