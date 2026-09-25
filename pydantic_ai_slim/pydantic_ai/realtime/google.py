@@ -1235,6 +1235,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
+        self._gave_up = False
         self._async_tool_calls_enabled = async_tool_calls
         # Whether the model takes a `scheduling` field at all: extended thinking paces results against its
         # own reasoning and closes the session if one is sent. A connection built without a profile keeps
@@ -1271,9 +1272,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._turn_open = False
 
     @property
-    def reconnects(self) -> bool:
+    def _can_reconnect(self) -> bool:
         return (
-            self._dial is not None
+            not self._gave_up
+            and self._dial is not None
             and self._reconnect is not None
             and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
         )
@@ -1405,6 +1407,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         yield ResponseDone(interrupted=True)
                     yield RealtimeSessionReconnectEvent(state_restored=state_restored)
                     continue
+                # Out of attempts: no reconnect is coming any more.
+                self._gave_up = True
                 yield RealtimeSessionErrorEvent(
                     message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
                 )

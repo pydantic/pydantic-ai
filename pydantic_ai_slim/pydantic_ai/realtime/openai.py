@@ -400,6 +400,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
+        self._gave_up = False
         self._observes_output_audio = observes_output_audio
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
@@ -453,9 +454,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         return self._message_history
 
     @property
-    def reconnects(self) -> bool:
+    def _can_reconnect(self) -> bool:
         return (
-            self._dial is not None
+            not self._gave_up
+            and self._dial is not None
             and self._reconnect is not None
             and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
         )
@@ -670,6 +672,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if await self._try_reconnect():
                 yield RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
                 continue
+            # Out of attempts: no reconnect is coming any more.
+            self._gave_up = True
             yield RealtimeSessionErrorEvent(
                 message=f'{self._provider_label} connection closed; reconnect failed: {closed}', recoverable=False
             )

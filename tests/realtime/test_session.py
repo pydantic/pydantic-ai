@@ -4957,14 +4957,14 @@ class _ReconnectingDisconnectedConnection(FakeRealtimeConnection):
 
     transport_errors = (ConnectionResetError,)
 
-    def __init__(self, *, reconnects: bool = True) -> None:
+    def __init__(self, *, can_reconnect: bool = True) -> None:
         super().__init__([])
         self.dropped = False
-        self._reconnects = reconnects
+        self.can_reconnect = can_reconnect
 
     @property
-    def reconnects(self) -> bool:
-        return self._reconnects
+    def _can_reconnect(self) -> bool:
+        return self.can_reconnect
 
     async def send(self, content: RealtimeInput) -> None:
         if self.dropped:
@@ -4999,14 +4999,14 @@ async def test_audio_chunk_that_hits_a_reconnecting_link_is_dropped() -> None:
     with pytest.raises(RealtimeError, match='failed while sending'):
         await session.send('anyone there?')
 
-    without_policy = _ReconnectingDisconnectedConnection(reconnects=False)
+    without_policy = _ReconnectingDisconnectedConnection(can_reconnect=False)
     without_policy.dropped = True
     with pytest.raises(RealtimeError, match='failed while sending'):
         await RealtimeSession(without_policy, model_name='gpt-realtime').send_audio(b'\x01\x01')
 
 
 def test_a_connection_does_not_reconnect_by_default() -> None:
-    assert FakeRealtimeConnection([]).reconnects is False
+    assert FakeRealtimeConnection([])._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_undeclared_send_failure_is_left_alone() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import io
+import logging
 import wave
 import weakref
 from collections import deque
@@ -167,6 +168,9 @@ as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent]
 as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as realtime
 control-plane events.
 """
+
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, repr=False, kw_only=True)
@@ -1696,6 +1700,12 @@ class RealtimeSession:
         [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
         first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
         raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
+
+        With a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy, a chunk sent
+        while a dropped connection is being re-dialed is discarded (logged at debug level) rather than
+        raised, so a microphone task survives the reconnect. That includes a one-shot clip passed as a
+        single chunk: resend it after the
+        [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] if it matters.
         """
         self._require_media_ownership('send_audio')
         self._ensure_can_send()
@@ -1738,12 +1748,14 @@ class RealtimeSession:
             if (
                 isinstance(e, RealtimeError)
                 and isinstance(e.__cause__, self._connection.transport_errors)
-                and self._connection.reconnects
+                and self._connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+                and not (self._pump_finished or self._receive_ending)
             ):
-                # The link dropped and the connection's reconnect policy is replacing it. A chunk of live
-                # audio is worthless once late, so it is dropped rather than raised: the capture loop
-                # outlives the reconnect instead of dying on it. If the reconnect fails, the next chunk
-                # raises that failure.
+                # The link dropped and the connection's reconnect policy is replacing it, with receiving
+                # still live to deliver it. A chunk of live audio is worthless once late, so it is dropped
+                # rather than raised: the capture loop outlives the reconnect instead of dying on it. Once
+                # the reconnect fails, the next chunk raises that failure.
+                _logger.debug('Dropped a %d-byte audio chunk sent while the realtime connection re-dials.', len(data))
                 return
             raise
 

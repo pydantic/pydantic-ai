@@ -55,6 +55,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
+    RealtimeError,
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
@@ -2835,6 +2836,87 @@ class DroppingWebSocket(FakeWebSocket):
         yield  # pragma: no cover  (makes this an async generator)
 
 
+class _DroppableAfterHandshake(FakeWebSocket):
+    """Completes the handshake, then stays open until `drop()`, after which sends and reads fail."""
+
+    def __init__(self) -> None:
+        super().__init__([_created(), _updated()])
+        self.dropped = asyncio.Event()
+
+    async def send(self, data: str) -> None:
+        if self.dropped.is_set():
+            raise rt_openai.websockets.ConnectionClosed(None, None)
+        await super().send(data)
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        await self.dropped.wait()
+        raise rt_openai.websockets.ConnectionClosed(None, None)
+        yield  # pragma: no cover  (makes this an async generator)
+
+
+class _FailingRedial:
+    """Stand-in for `websockets.connect`: the first dial gets `ws`, every re-dial fails once `release` is set."""
+
+    def __init__(self, ws: FakeWebSocket) -> None:
+        self._ws: FakeWebSocket | None = ws
+        self.redialing = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> _FailingRedial:
+        return self
+
+    async def __aenter__(self) -> FakeWebSocket:
+        if (ws := self._ws) is not None:
+            self._ws = None
+            return ws
+        self.redialing.set()
+        await self.release.wait()
+        raise OSError('server is down')
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+@pytest.mark.anyio
+async def test_audio_is_dropped_only_while_a_reconnect_can_still_come(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mic chunk (or a one-shot clip) sent while the link is re-dialed is dropped, not raised.
+
+    Once the reconnect has failed and a consumer has already been handed that failure, nothing will
+    replace the link, so the next chunk raises instead of being dropped silently forever.
+    """
+    ws = _DroppableAfterHandshake()
+    connect = _FailingRedial(ws)
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(model).session() as session:
+        failures: list[RealtimeError] = []
+
+        async def consume() -> None:
+            try:
+                async for _ in session:
+                    pass  # pragma: no cover - nothing but the failure arrives
+            except RealtimeError as e:
+                failures.append(e)
+
+        consumer = asyncio.create_task(consume())
+        await session.send_audio(b'\x00\x01')
+        ws.dropped.set()
+        await connect.redialing.wait()
+        await session.send_audio(b'\x02\x03')  # a one-shot clip during the re-dial: dropped, not raised
+        connect.release.set()
+        await asyncio.wait_for(consumer, 5)
+        assert failures and 'reconnect failed' in str(failures[0])
+        with pytest.raises(RealtimeError, match='failed while sending'):
+            await session.send_audio(b'\x04\x05')
+
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['session.update', 'input_audio_buffer.append']
+
+
 @pytest.mark.anyio
 async def test_connection_closed_yields_fatal_error() -> None:
     ws = DroppingWebSocket([])
@@ -3172,15 +3254,15 @@ async def test_reconnect_replays_a_deferred_response_request() -> None:
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_openai_connection_reconnects_only_with_a_policy() -> None:
+async def test_openai_connection_can_reconnect_only_with_a_policy() -> None:
     async def dial() -> Any:
         raise NotImplementedError  # pragma: no cover
 
-    assert OpenAIRealtimeConnection(FakeWebSocket([])).reconnects is False  # type: ignore[arg-type]
-    assert OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect={}).reconnects  # type: ignore[arg-type]
+    assert OpenAIRealtimeConnection(FakeWebSocket([]))._can_reconnect is False  # type: ignore[arg-type]
+    assert OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect={})._can_reconnect  # type: ignore[arg-type]
     # A spent budget means no reconnect is coming, so a failed audio chunk raises rather than dropping.
     spent = OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect={'max_reconnects': 0})  # type: ignore[arg-type]
-    assert spent.reconnects is False
+    assert spent._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
 
 
 def test_openai_connection_does_not_restore_in_flight_state_on_reconnect() -> None:
