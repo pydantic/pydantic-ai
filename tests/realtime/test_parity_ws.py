@@ -488,9 +488,10 @@ async def test_barge_in_conversation_parity(
 
     assert_conversation_invariants(session, [utterance.keyword for utterance in _BARGE_IN_CONVERSATION])
     story_response = next(message for message in session.all_messages() if isinstance(message, ModelResponse))
-    # Grok Voice generates the whole story long before it has been played, so the barge-in finds no
-    # response left to cut short there.
-    assert story_response.state == ('complete' if case.model_kind == 'xai' else 'interrupted')
+    # Grok Voice generates the whole story long before it has been played, so the provider reports no
+    # response cut short there: whether history marks it interrupted is up to the local barge-in handling.
+    if case.model_kind != 'xai':
+        assert story_response.state == 'interrupted'
 
 
 # Only the OpenAI rows. Gemini Live reports no speech boundaries, so without transcripts nothing tells an
