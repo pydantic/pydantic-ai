@@ -2020,6 +2020,9 @@ class RealtimeSession:
                         return
                     except self._connection.transport_errors as e:
                         self._link_error = e
+                        # What went out before the failure went down with the old link, and the group is
+                        # meant to arrive whole (an image and the reply it asks for), so it is all resent.
+                        remaining = list(contents)
                         ticket = self._park_send(ticket)
                         failed_at = attempt
         finally:

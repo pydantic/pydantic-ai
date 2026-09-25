@@ -5161,6 +5161,32 @@ async def test_a_typed_turn_is_resent_unless_the_replay_carried_it() -> None:
     ]
 
 
+async def test_a_group_cut_off_part_way_is_resent_whole() -> None:
+    # An image and the response it asks for go out as one group. If the link drops between them, the
+    # image went down with the old connection, so the retry sends both, not a response without it.
+    class _DropsAfterFirstFrame(_DroppingConnection):
+        drop_next = True
+
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            if self.drop_next:
+                self.drop_next = False
+                self.dropped = True
+
+    conn = _DropsAfterFirstFrame()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    image = BinaryImage(data=b'\xff\xd8', media_type='image/jpeg')
+    async with session:
+        await session.wait_for_reply()
+        sending = asyncio.create_task(session.send(image, respond=True))
+        await _parked(sending)
+        conn.dropped = False
+        conn.sent.clear()
+        conn.inbox.put_nowait(RealtimeSessionReconnectEvent(state_restored=True))
+        await asyncio.wait_for(sending, _LIVENESS_TIMEOUT)
+        assert conn.sent[:2] == [image, CreateResponse()]
+
+
 async def test_parked_send_fails_when_receiving_ends_right_after_the_reconnect() -> None:
     # The pump can handle the reconnect and then end before the parked send resumes. Nothing would read
     # the reply to a frame sent then, so the send fails instead of going out.
