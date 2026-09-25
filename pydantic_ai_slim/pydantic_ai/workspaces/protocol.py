@@ -296,20 +296,13 @@ class SupportsFilesystem(Protocol):
 
 @runtime_checkable
 class SupportsRealpath(Protocol):
-    """Optional native symlink resolution implemented by a workspace backend.
+    """Optional native symlink resolution.
 
-    [`Workspace.realpath`][pydantic_ai.workspaces.Workspace.realpath] prefers this method and
-    derives the same answer through [`SupportsCommands.run`][pydantic_ai.workspaces.SupportsCommands.run]
-    when it is absent.
+    Without it, [`Workspace.realpath`][pydantic_ai.workspaces.Workspace.realpath] uses the backend's shell.
     """
 
     async def realpath(self, path: str) -> str:
-        """Resolve every symlink in an absolute POSIX path.
-
-        Returns the path with every symlink in its existing components resolved and `.`/`..`
-        segments normalized. Components that don't exist are kept as written, like
-        `os.path.realpath(path, strict=False)`.
-        """
+        """Resolve every symlink in an absolute POSIX path, like `os.path.realpath(path, strict=False)`."""
         ...
 
 
