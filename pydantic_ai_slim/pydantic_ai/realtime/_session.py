@@ -2401,7 +2401,9 @@ class RealtimeSession:
         self._response_parts.append(call_part)
         if response_usage_follows:
             self._tool_calls_awaiting_usage.add(call_part.tool_call_id)
-        elif runs_asynchronously:
+        elif runs_asynchronously or self._held_tool_call_ids:
+            # A blocking call in a response already held for an asynchronous one joins the hold rather
+            # than ending it: the model is still talking in that response.
             self._held_tool_call_ids.add(call_part.tool_call_id)
         else:
             self._finalize_response()

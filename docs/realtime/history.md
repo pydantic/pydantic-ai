@@ -39,7 +39,8 @@ message:
   recorded in it after the `ToolCallPart` and before the result, where it happened. It still hands
   off to every provider. The response is recorded, and never changed afterwards, as soon as the
   result or a user turn must follow it. Speech still in progress at that point is split: what came
-  after is recorded as the next response.
+  after is recorded as the next response. With several asynchronous calls in one response, their
+  results are recorded together after it, so speech between two of them follows both.
 - A user turn during the tool run can't keep its real position. Neither can the reply to it or any
   later response. The result is recorded directly after its call, ahead of all of them.
   [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] streams in the real

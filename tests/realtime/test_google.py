@@ -424,6 +424,33 @@ def test_tool_def_rejects_a_recursive_schema() -> None:
         )
 
 
+@pytest.mark.parametrize('unset_is_non_blocking', [False, True])
+def test_non_blocking_function_names_follow_each_declaration(unset_is_non_blocking: bool) -> None:
+    """Only a call to a function declared `NON_BLOCKING` (or left unset where that's the default) runs asynchronously."""
+
+    def some_callable() -> None:  # pragma: no cover - only its presence in the list matters
+        pass
+
+    config = genai_types.LiveConnectConfig(
+        tools=[
+            genai_types.Tool(
+                function_declarations=[
+                    genai_types.FunctionDeclaration(name='async_one', behavior=genai_types.Behavior.NON_BLOCKING),
+                    genai_types.FunctionDeclaration(name='blocking_one', behavior=genai_types.Behavior.BLOCKING),
+                    genai_types.FunctionDeclaration(name='unset_one'),
+                ]
+            ),
+            genai_types.Tool(google_search=genai_types.GoogleSearch()),
+            some_callable,
+        ]
+    )
+
+    names = rt_google._non_blocking_function_names(  # pyright: ignore[reportPrivateUsage]
+        config, unset_is_non_blocking=unset_is_non_blocking
+    )
+    assert names == ({'async_one', 'unset_one'} if unset_is_non_blocking else {'async_one'})
+
+
 @pytest.mark.parametrize('async_tool_calls', [False, True])
 def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
     # The expected enum is resolved in the body, not the `parametrize` decorator: decorators are

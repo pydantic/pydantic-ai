@@ -227,6 +227,8 @@ class ToolCall:
 
     OpenAI-protocol providers report calls before `response.done`, which carries usage; the session
     uses this signal to keep all calls and their usage on the same `ModelResponse`."""
+    item_id: str | None = None
+    """Provider conversation-item ID for this call, when available."""
     runs_asynchronously: bool = False
     """Whether the model can keep generating the same response while this call runs.
 
@@ -234,8 +236,6 @@ class ToolCall:
     the turn that called the tool. The session then keeps that response open instead of recording it at
     the call, so what the model says before the result goes back is recorded with the call, ahead of the
     result, rather than after it."""
-    item_id: str | None = None
-    """Provider conversation-item ID for this call, when available."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

@@ -612,6 +612,24 @@ def _tool_def_to_genai(
     )
 
 
+def _non_blocking_function_names(
+    config: genai_types.LiveConnectConfig, *, unset_is_non_blocking: bool
+) -> frozenset[str]:
+    """The functions `config` declares `NON_BLOCKING`, which the model keeps talking through.
+
+    Read off the config actually sent, so a declaration from `google_config_overrides` counts too, and a
+    declaration with no `behavior` gets the model's own default.
+    """
+    return frozenset(
+        declaration.name or ''
+        for tool in config.tools or []
+        if isinstance(tool, genai_types.Tool)
+        for declaration in tool.function_declarations or []
+        if declaration.behavior == genai_types.Behavior.NON_BLOCKING
+        or (declaration.behavior is None and unset_is_non_blocking)
+    )
+
+
 def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
     """Map a supported Gemini built-in native tool to a genai `Tool`.
 
@@ -1104,9 +1122,10 @@ class GoogleRealtimeModel(RealtimeModel):
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.
         cm: AbstractAsyncContextManager[AsyncSession] | None = None
+        non_blocking_tools: frozenset[str] = frozenset()
 
         async def dial(handle: str | None) -> AsyncSession:
-            nonlocal cm
+            nonlocal cm, non_blocking_tools
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
@@ -1116,6 +1135,9 @@ class GoogleRealtimeModel(RealtimeModel):
                 model_settings=settings,
                 native_tools=model_request_parameters.native_tools,
                 resumption_handle=handle,
+            )
+            non_blocking_tools = _non_blocking_function_names(
+                config, unset_is_non_blocking=self._google_profile.get('google_async_tool_calls_by_default', False)
             )
             opening = client.aio.live.connect(model=self.model, config=config)
             async with _ws_connect_lock():
@@ -1176,6 +1198,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 reconnect=reconnect,
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
+                non_blocking_tools=non_blocking_tools,
             )
         finally:
             if cm is not None:
@@ -1202,12 +1225,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
         input_transcription_enabled: bool = True,
         async_tool_calls: bool = False,
         provider_url: str = '',
+        non_blocking_tools: frozenset[str] = frozenset(),
     ) -> None:
         self._session = session
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
         self._async_tool_calls_enabled = async_tool_calls
+        # Functions declared `NON_BLOCKING`: their calls are flagged `runs_asynchronously`.
+        self._non_blocking_tools = non_blocking_tools
         # Whether the model takes a `scheduling` field at all: extended thinking paces results against its
         # own reasoning and closes the session if one is sent. A connection built without a profile keeps
         # sending it, as it did before the flag existed; `GoogleRealtimeModel.connect` always passes one.
@@ -1496,7 +1522,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         tool_call_id=call_id,
                         tool_name=name,
                         args=to_json(call.args or {}).decode(),
-                        runs_asynchronously=self._async_tool_calls_enabled,
+                        runs_asynchronously=name in self._non_blocking_tools,
                     )
                 )
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
