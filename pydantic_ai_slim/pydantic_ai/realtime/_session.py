@@ -2190,9 +2190,6 @@ class RealtimeSession:
             self._response_limit_checked = False
             return
         if response_occurred:
-            response_id = provider_response_id or self._pending_provider_response_id or self._started_response_id
-            if response_id == self._started_response_id:
-                self._started_response_id = None
             response = ModelResponse(
                 parts=parts,
                 usage=self._pending_response_usage,
@@ -2203,7 +2200,7 @@ class RealtimeSession:
                 provider_name=self._provider_name,
                 provider_url=self._provider_url,
                 provider_details=provider_details,
-                provider_response_id=response_id,
+                provider_response_id=self._take_response_id(provider_response_id),
                 finish_reason=finish_reason or self._pending_finish_reason,
                 conversation_id=self._conversation_id,
                 state='interrupted' if interrupted else 'complete',
@@ -2243,6 +2240,17 @@ class RealtimeSession:
         self._response_limit_checked = False
         if response is not None:
             self._check_response_boundary_limits()
+
+    def _take_response_id(self, provider_response_id: str | None) -> str | None:
+        """The provider id for the response being recorded, from its terminal, its usage, or its start.
+
+        The id from `ResponseStarted` is used up by the response it named, and only by that one: a late
+        terminal for an earlier response that arrives after the next one started leaves it in place.
+        """
+        response_id = provider_response_id or self._pending_provider_response_id or self._started_response_id
+        if response_id == self._started_response_id:
+            self._started_response_id = None
+        return response_id
 
     def _check_response_boundary_limits(self) -> None:
         """Check the usage limits against a response that has just been finalized.

@@ -5833,6 +5833,31 @@ async def test_response_cut_off_by_close_keeps_its_started_id() -> None:
     )
 
 
+async def test_late_terminal_for_an_earlier_response_leaves_the_started_id() -> None:
+    """A late terminal for the response before doesn't use up the id of the one that has since started."""
+    conn = BlockingRealtimeConnection(
+        [
+            ResponseStarted(provider_response_id='resp_a'),
+            OutputTranscript(text='first'),
+            ResponseStarted(provider_response_id='resp_b'),
+            ResponseDone(provider_response_id='resp_a', interrupted=True),
+            OutputTranscript(text='second'),
+        ]
+    )
+    async with RealtimeSession(conn) as session:
+        starts = 0
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartStartEvent):
+                starts += 1
+                if starts == 2:
+                    break
+    responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
+    assert [(r.state, r.provider_response_id) for r in responses] == [
+        ('interrupted', 'resp_a'),
+        ('interrupted', 'resp_b'),
+    ]
+
+
 async def test_reconnect_while_idle_on_replay_provider_keeps_state_restored() -> None:
     # A local-replay provider (OpenAI/Azure) that drops while Listening loses nothing: the replay
     # restores the finalized call and there is no in-flight turn to settle. The connection's
