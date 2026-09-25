@@ -3522,6 +3522,37 @@ async def test_cancelled_async_tool_call_records_its_held_response() -> None:
         await consumer
 
 
+@pytest.mark.parametrize(('cancelled_ids', 'state'), [(['a'], 'complete'), (['a', 'b'], 'interrupted')])
+async def test_cancelling_one_of_two_held_calls_does_not_mark_the_response_interrupted(
+    cancelled_ids: list[str], state: str
+) -> None:
+    """Only abandoning every call the response was waiting on means what the model was saying was cut off."""
+    conn = BlockingRealtimeConnection(
+        [
+            ToolCall(tool_call_id='a', tool_name='hang', args='{}', runs_asynchronously=True),
+            ToolCall(tool_call_id='b', tool_name='hang', args='{}', runs_asynchronously=True),
+            OutputTranscript(text='Checking both.', is_final=False),
+            ToolCallCancelled(tool_call_ids=cancelled_ids),
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    session = RealtimeSession(conn, runner, model_name='m')
+    async with session:
+        consumer = asyncio.create_task(drain_events(session))
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            while not session.all_messages():
+                await asyncio.sleep(0.01)
+        response = session.all_messages()[0]
+        assert isinstance(response, ModelResponse)
+        assert response.state == state
+        await session.close()
+        await consumer
+
+
 async def test_held_async_tool_call_response_is_recorded_when_the_upstream_fails() -> None:
     class _FailsWhileHeld(FakeRealtimeConnection):
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:

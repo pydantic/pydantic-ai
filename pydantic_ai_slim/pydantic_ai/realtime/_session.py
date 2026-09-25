@@ -2473,8 +2473,12 @@ class RealtimeSession:
         if content:
             request_parts.append(UserPromptPart(content=content))
         if call_part.tool_call_id in self._held_tool_call_ids:
+            # Cut off only when the model abandoned everything it was waiting on in that response: a
+            # sibling call still running means it only dropped this one.
             self._record_held_tool_call_response(
-                interrupted=isinstance(result_part, ToolReturnPart) and result_part.outcome == 'interrupted'
+                interrupted=isinstance(result_part, ToolReturnPart)
+                and result_part.outcome == 'interrupted'
+                and not any(tool_call_id in self._pending_tool_calls for tool_call_id in self._held_tool_call_ids)
             )
         self._insert_tool_return(call_part, self._new_request(request_parts))
         return [FunctionToolResultEvent(part=result_part, content=content)]
@@ -3502,10 +3506,14 @@ class RealtimeSession:
             self._handle_input_rejected(event)
             return False
         if isinstance(event, ToolCallCancelled):
-            for tool_call_id in event.tool_call_ids:
-                if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
-                    continue
-                task, call_part = pending
+            # All taken off the running set before any is settled, so each one's settlement sees the whole
+            # batch the model abandoned.
+            cancelled = [
+                pending
+                for tool_call_id in event.tool_call_ids
+                if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is not None
+            ]
+            for task, call_part in cancelled:
                 task.cancel()
                 # Record a cancelled result so the call still has a matching return in history (kept
                 # valid for a handoff), and deliberately don't send a `ToolResult` back to the model —
