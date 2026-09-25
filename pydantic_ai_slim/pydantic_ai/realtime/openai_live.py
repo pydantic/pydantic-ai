@@ -44,6 +44,7 @@ from typing_extensions import TypedDict
 
 # The delegated backend is an ordinary Responses call, so its usage is mapped by the same code that
 # maps a direct one — including the cache and reasoning breakdowns genai-prices reads.
+from .. import _utils
 from .._genai_prices import best_effort_price
 from .._instrumentation import get_instructions
 from .._run_context import get_current_run_context
@@ -64,9 +65,10 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..models import Model, ModelRequestParameters
+from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
 from ..models.openai import _map_usage as map_openai_usage  # pyright: ignore[reportPrivateUsage]
 from ..providers import Provider, infer_provider
+from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
@@ -74,9 +76,8 @@ from ._openai_protocol import (
     map_connect_errors,
     openai_websocket_auth_headers,
     realtime_websocket_url,
-    tool_choice_config,
 )
-from ._utils import inject_trace_context, resolve_advertised_tools
+from ._utils import inject_trace_context
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -100,6 +101,7 @@ from .profiles import RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings
 
 try:
+    import tiktoken
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import (
@@ -169,6 +171,20 @@ _SESSION_STARTED_EVENT = 'session.started'
 #: -54 dBFS). Live's idle track is not always exact zeros: every session opens with a frame or two of
 #: dither peaking around 20, and treating that as speech would open a reply nobody is giving.
 _VOICE_FLOOR = 64
+
+#: How long a quiet stretch inside a reply is still forwarded as a pause. Live's track never stops, so
+#: past this the quiet is treated as the gap between chunks every other provider leaves: otherwise each
+#: reply would end with the whole turn-silence wait of silence, and a tool call's quiet wait would
+#: arrive as a spoken part with nothing in it.
+_MAX_FORWARDED_PAUSE = 0.5
+
+#: The most tokens Live accepts in one `session.commentary.append` or `session.thinking.append`.
+_CONTEXT_TOKEN_LIMIT = 500
+#: The tokenizer Live counts that limit in. Checked live: 500 `o200k_base` tokens are accepted, 501 refused.
+_CONTEXT_ENCODING = 'o200k_base'
+
+#: The Responses model kinds whose `Model.system` is `'openai'`: the only agent models that can be a backend.
+_OPENAI_MODEL_KINDS = frozenset({'openai', 'openai-chat', 'openai-responses'})
 
 _server_event_adapter: TypeAdapter[ServerEvent] = TypeAdapter(ServerEvent)
 
@@ -422,12 +438,14 @@ class OpenAILiveConnection(RealtimeConnection):
         ws: ClientConnection,
         *,
         model_name: str | None = None,
+        backend_model: str | None = None,
         turn_silence_ms: int = DEFAULT_TURN_SILENCE_MS,
         provider_name: str = 'openai',
         provider_url: str = '',
     ) -> None:
         self._ws = ws
         self._model_name = model_name
+        self._backend_model = backend_model
         self._provider_name = provider_name
         self._provider_url = provider_url
         self._turn_silence = turn_silence_ms / 1000
@@ -436,6 +454,10 @@ class OpenAILiveConnection(RealtimeConnection):
         self._response_open = False
         self._input_open = False
         self._last_voice = 0.0
+        # When the model last made a sound, for how long a pause after it is still part of the reply.
+        self._last_voiced_audio: float | None = None
+        # The last transcript fragment in each direction, for the space Live leaves out between segments.
+        self._last_fragment: dict[Literal['input', 'output'], str] = {'input': '', 'output': ''}
         self._delegations: dict[str, _Delegation] = {}
         self._call_delegations: dict[str, str] = {}
         # Calls a delegation asked for before its backend gave up. The session still runs them and
@@ -444,7 +466,7 @@ class OpenAILiveConnection(RealtimeConnection):
         # Delegations whose results all came back before the response that asked for them ended. Their
         # continuations go out from the receive loop, which is where that terminal is seen.
         self._continuations_due: list[_Delegation] = []
-        self._reported_seconds = 0
+        self._reported_seconds = 0.0
 
     @property
     def model_name(self) -> str | None:
@@ -466,10 +488,13 @@ class OpenAILiveConnection(RealtimeConnection):
         if isinstance(content, str):
             # A soliciting text turn. Live has no user-message event, so this goes in as speakable
             # context: the model relays or answers it rather than hearing it as the user's own words.
+            await _check_context_length(content)
             await self._send_event({'type': 'session.commentary.append', 'delegation_id': None, 'content': content})
             return
         if isinstance(content, TextContext):
-            # Context that must not itself prompt speech — exactly what `thinking` is for.
+            # Context that `thinking` carries without prompting speech itself. The model may still
+            # choose to mention it.
+            await _check_context_length(content.text)
             await self._send_event({'type': 'session.thinking.append', 'delegation_id': None, 'content': content.text})
             return
         if isinstance(content, ToolResult):
@@ -630,6 +655,7 @@ class OpenAILiveConnection(RealtimeConnection):
         events = self._close_input_turn()
         if self._response_open:
             self._response_open = False
+            self._last_voiced_audio = None
             events.append(ResponseDone(interrupted=interrupted))
         return events
 
@@ -659,7 +685,7 @@ class OpenAILiveConnection(RealtimeConnection):
             except ValidationError:
                 # An event type this version of the SDK doesn't know is not a reason to end the session.
                 return []
-            return [RealtimeSessionErrorEvent(message=error['message'], code=error['code'])]
+            return self._map_error(error['message'], code=error['code'])
         try:
             return self._map_event(event)
         except ValueError as e:
@@ -679,11 +705,11 @@ class OpenAILiveConnection(RealtimeConnection):
         if isinstance(event, OutputAudioDeltaEvent):
             return self._map_output_audio(_b64decode(event.delta))
         if isinstance(event, OutputTranscriptDeltaEvent):
-            return [*self._open_response(), OutputTranscript(event.delta)]
+            return [*self._open_response(), OutputTranscript(self._fragment('output', event.delta))]
         if isinstance(event, InputTranscriptDeltaEvent):
             self._input_open = True
             self._heard_voice()
-            return [InputTranscript(event.delta)]
+            return [InputTranscript(self._fragment('input', event.delta))]
         if isinstance(event, DelegationCreatedEvent):
             return self._map_delegation(event)
         if isinstance(event, ResponseEvent):
@@ -693,8 +719,58 @@ class OpenAILiveConnection(RealtimeConnection):
         if isinstance(event, SessionClosedEvent):
             return self._map_session_closed(event)
         if isinstance(event, ErrorEvent):
-            return [RealtimeSessionErrorEvent(message=event.error.message, code=event.error.code)]
+            return self._map_error(event.error.message, code=event.error.code)
         return []
+
+    def _fragment(self, direction: Literal['input', 'output'], delta: str) -> str:
+        """One transcript fragment, with the space Live leaves out where a new segment starts.
+
+        Fragments normally carry their own leading space, but the first one of a new segment doesn't,
+        so a sentence that ends one segment runs into the next (`'up.'` then `"It's"`). Only a sentence
+        end followed by a capital is taken as that boundary, which a word can't be split across.
+        """
+        previous, self._last_fragment[direction] = self._last_fragment[direction], delta
+        if previous[-1:] in ('.', '!', '?') and delta[:1].isupper():
+            return f' {delta}'
+        return delta
+
+    def _map_error(self, message: str, *, code: str | None) -> list[RealtimeCodecEvent]:
+        """Report a top-level `error` frame, and settle whatever delegated work it ended.
+
+        Live reports some backend failures only this way, with no nested terminal for the delegation:
+        a backend that runs out of output tokens mid-handoff arrives as `Responses handoff incomplete.`,
+        and a backend model that can't be used as one saying the model does not exist. The frame
+        names no delegation, so every backend response still in flight is taken to be the one it ended:
+        leaving one open would suspend the turn clock for the rest of the session.
+        """
+        if self._backend_model is not None and f'`{self._backend_model}`' in message:
+            # Every delegation would fail the same way, so the session can't do the work it was set up
+            # for: end it with a reason rather than let each request fail on its own.
+            return [
+                RealtimeSessionErrorEvent(
+                    message=(
+                        f'The OpenAI GPT-Live session cannot delegate to its backend model '
+                        f'{self._backend_model!r}: {message} Name a Responses model this account can use '
+                        "in `openai_live_delegation={'model': ...}`."
+                    ),
+                    code='live_backend_model_unavailable',
+                    recoverable=False,
+                )
+            ]
+        in_flight = [delegation for delegation in self._delegations.values() if delegation.response_in_flight]
+        if not in_flight:
+            return [RealtimeSessionErrorEvent(message=message, code=code)]
+        events: list[RealtimeCodecEvent] = []
+        for delegation in in_flight:
+            events.extend(self._owed_usage(delegation))
+            self._settle_delegation(delegation, gave_up=True)
+        events.append(
+            RealtimeSessionErrorEvent(
+                message=f'The delegated OpenAI Responses backend did not finish ({code}: {message}).',
+                code='live_delegation_failed',
+            )
+        )
+        return events
 
     def _map_session_closed(self, event: SessionClosedEvent) -> list[RealtimeCodecEvent]:
         """Record the final usage, and say so when the session ended without anyone asking.
@@ -719,13 +795,21 @@ class OpenAILiveConnection(RealtimeConnection):
         """Forward model audio, ignoring the idle track between replies.
 
         Only a frame louder than the idle floor is evidence that the model is speaking. Quieter frames
-        inside a reply are still forwarded, which keeps a pause mid-sentence from arriving as a gap in
+        shortly after it are still forwarded, which keeps a pause mid-sentence from arriving as a gap in
         playback — but not while the user is talking, because an assistant frame marks the end of the
-        user's turn, and the idle track between their words would cut one utterance into many.
+        user's turn, and the idle track between their words would cut one utterance into many. A longer
+        quiet stretch is not forwarded: it is most likely the end of the reply, or a wait on delegated
+        work, and forwarding it would end every reply with seconds of silence.
         """
         if _is_voiced(pcm):
+            self._last_voiced_audio = _now()
             return [*self._open_response(), AudioDelta(data=pcm)]
-        if self._response_open and not self._input_open:
+        if (
+            self._response_open
+            and not self._input_open
+            and self._last_voiced_audio is not None
+            and _now() - self._last_voiced_audio < _MAX_FORWARDED_PAUSE
+        ):
             return [AudioDelta(data=pcm)]
         return []
 
@@ -766,9 +850,9 @@ class OpenAILiveConnection(RealtimeConnection):
         if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
             events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
             if delegation is not None:
-                if delegation.owes_usage and not events:
-                    events = [SessionUsage(RequestUsage())]
-                delegation.owes_usage = False
+                if events:
+                    delegation.owes_usage = False
+                events.extend(self._owed_usage(delegation))
                 self._settle_delegation(delegation, gave_up=not isinstance(event, ResponseCompletedEvent))
             if not isinstance(event, ResponseCompletedEvent):
                 events.append(_delegation_stopped(event))
@@ -780,8 +864,11 @@ class OpenAILiveConnection(RealtimeConnection):
             delegation.pending_tool_calls.add(call.call_id)
             delegation.owes_usage = True
             self._call_delegations[call.call_id] = delegation.id
+        events = self._open_response()
+        # The call ends the spoken part before it: a quiet stretch after it is a wait, not a pause.
+        self._last_voiced_audio = None
         return [
-            *self._open_response(),
+            *events,
             ToolCall(
                 call.call_id,
                 tool_name=call.name,
@@ -793,6 +880,14 @@ class OpenAILiveConnection(RealtimeConnection):
                 response_usage_follows=delegation is not None,
             ),
         ]
+
+    @staticmethod
+    def _owed_usage(delegation: _Delegation) -> list[RealtimeCodecEvent]:
+        """The empty usage report a finished backend response owes the calls it asked for, if any."""
+        if not delegation.owes_usage:
+            return []
+        delegation.owes_usage = False
+        return [SessionUsage(RequestUsage())]
 
     def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool) -> None:
         """Account for one finished backend response, closing the delegation once it owes nothing.
@@ -847,28 +942,39 @@ class OpenAILiveConnection(RealtimeConnection):
         # measured against: it is the only thing in a Live session that spends input tokens.
         # The response carries Live's name, so it records the backend model as well: without it the
         # tokens on `usage` could not be re-priced later, or even attributed to the model that spent them.
-        return [SessionUsage(mapped, provider_details={'delegated_model': response.model})]
-
-    def _map_usage(self, cumulative_seconds: float) -> list[RealtimeCodecEvent]:
-        """Emit the *increment* since the last report.
-
-        Live reports a running total and says explicitly not to sum successive values, while
-        `RunUsage` accumulates what it is given — so the connection does the subtraction. Seconds are
-        rounded because `RequestUsage.details` holds integers; diffing the rounded totals keeps the
-        running figure accurate rather than compounding a per-event rounding error.
-        """
-        total = round(cumulative_seconds)
-        increment, self._reported_seconds = total - self._reported_seconds, max(total, self._reported_seconds)
-        if increment <= 0:
-            return []
+        # Its id goes next to it rather than into `provider_response_id`, which is the id of the response
+        # the Live model spoke, and Live assigns none.
         return [
             SessionUsage(
-                RequestUsage(details={'billable_audio_seconds': increment}),
-                # Live bills the session, not a response: this belongs to the run, not to any one
-                # `ModelResponse`.
-                response_scoped=False,
+                mapped, provider_details={'delegated_model': response.model, 'delegated_response_id': response.id}
             )
         ]
+
+    def _map_usage(self, cumulative_seconds: float) -> list[RealtimeCodecEvent]:
+        """Emit the audio seconds billed since the last report, priced as the Live model.
+
+        Live reports a running total and says explicitly not to sum successive values, while
+        `RunUsage` accumulates what it is given — so the connection does the subtraction.
+
+        The price is resolved here because this usage belongs to no `ModelResponse`, and so is never
+        priced at a response boundary: without it, the session's cost would leave out the call itself.
+        """
+        increment = cumulative_seconds - self._reported_seconds
+        if increment <= 0:
+            return []
+        self._reported_seconds = cumulative_seconds
+        usage = RequestUsage(audio_seconds=increment)
+        if (
+            price := best_effort_price(
+                usage,
+                model_name=self._model_name,
+                provider_api_url=self._provider_url,
+                provider_name=self._provider_name,
+            )
+        ) is not None:
+            usage.cost = price.total_price
+        # Live bills the session, not a response: this belongs to the run, not to any one `ModelResponse`.
+        return [SessionUsage(usage, response_scoped=False)]
 
 
 def _now() -> float:
@@ -907,6 +1013,24 @@ def _tool_result_follow_up(result: ToolResult) -> dict[str, Any] | None:
     }
 
 
+async def _check_context_length(text: str) -> None:
+    """Refuse context text over Live's cap before it is sent, rather than after Live rejects it.
+
+    A rejected append arrives as a recoverable error well after `send()` has returned and the text has
+    been recorded as sent, so it is checked here, in the tokenizer Live counts with. A token spans at
+    least one byte, so text that short can't be over and skips loading it.
+    """
+    if len(text.encode()) <= _CONTEXT_TOKEN_LIMIT:
+        return
+    # Loading an encoding can download it on first use, so it stays off the event loop.
+    encoding = await _utils.run_in_executor(tiktoken.get_encoding, _CONTEXT_ENCODING)
+    if (tokens := len(encoding.encode(text))) > _CONTEXT_TOKEN_LIMIT:
+        raise UserError(
+            f'OpenAI GPT-Live accepts at most {_CONTEXT_TOKEN_LIMIT} tokens of text per `send()`, and this is '
+            f'{tokens}. Send it in shorter pieces, or give longer material to the agent as a tool result.'
+        )
+
+
 def _delegation_stopped(event: ResponseFailedEvent | ResponseIncompleteEvent) -> RealtimeSessionErrorEvent:
     """Report a delegated backend that failed or stopped short.
 
@@ -933,6 +1057,22 @@ def _is_voiced(pcm: bytes) -> bool:
     if sys.byteorder == 'big':  # pragma: no cover
         samples.byteswap()
     return any(abs(sample) > _VOICE_FLOOR for sample in samples)
+
+
+def _resolve_openai_model(model_id: str) -> Model | None:
+    """Resolve an agent's model name as its run would, when it names an OpenAI model at all.
+
+    Anything else can't be a backend, so it isn't resolved: that would build another provider's client
+    (and need its package and key) only to find it doesn't qualify. A name that can't be resolved (its
+    key isn't set, say) isn't one this session can use either.
+    """
+    provider_name, _ = parse_model_id(model_id)
+    if provider_name is None or normalize_gateway_provider(provider_name) not in _OPENAI_MODEL_KINDS:
+        return None
+    try:
+        return infer_model(model_id)
+    except UserError:
+        return None
 
 
 def _b64decode(data: str) -> bytes:
@@ -1005,14 +1145,22 @@ class OpenAILiveModel(RealtimeModel):
         Read from the current run context: a session opened with
         [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] is an agent run, so its run context is
         current while connecting, as it is around a standard run's model request. A connection
-        opened any other way has no agent to consult, and an agent whose model is still an unresolved
-        name (with `defer_model_check=True`) has no base URL to compare.
+        opened any other way has no agent to consult. An agent whose model is still a name (with
+        `defer_model_check=True`) is resolved the way its own run would resolve it.
         """
         run_context = get_current_run_context()
         agent_model = run_context.agent.model if run_context is not None and run_context.agent is not None else None
+        if isinstance(agent_model, str):
+            agent_model = _resolve_openai_model(agent_model)
         if isinstance(agent_model, Model) and agent_model.system == 'openai' and agent_model.base_url == self.base_url:
             return agent_model.model_name
         return None
+
+    def _resolve_backend_model(self, settings: OpenAILiveModelSettings) -> str:
+        """The Responses model this session delegates to, from the first source that names one."""
+        delegation_settings = settings.get('openai_live_delegation', OpenAILiveResponsesDelegation())
+        backend_model = delegation_settings.get('model') or self._backend_model or self._agent_model_name() or 'auto'
+        return AUTO_BACKEND_MODEL if backend_model == 'auto' else backend_model
 
     @property
     def model_name(self) -> OpenAILiveModelName:
@@ -1034,17 +1182,11 @@ class OpenAILiveModel(RealtimeModel):
         backend_instructions = '\n\n'.join(
             text for text in (instructions, delegation_settings.get('instructions')) if text
         )
-        backend_model = delegation_settings.get('model') or self._backend_model or self._agent_model_name() or 'auto'
-        responses: dict[str, Any] = {'model': AUTO_BACKEND_MODEL if backend_model == 'auto' else backend_model}
+        responses: dict[str, Any] = {'model': self._resolve_backend_model(settings)}
         if backend_instructions:
             responses['instructions'] = backend_instructions
-        advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
-        if advertised_tools:
-            responses['tools'] = [tool_def_to_live(tool) for tool in advertised_tools]
-        if tool_choice is not None:
-            # The backend takes the same forms as the Realtime API: a mode, or one named function. An
-            # allow-list is applied by trimming the advertised tools above, leaving its mode to send.
-            responses['tool_choice'] = tool_choice_config(tool_choice)
+        if tools:
+            responses['tools'] = [tool_def_to_live(tool) for tool in tools]
         for setting, key in (
             ('max_output_tokens', 'max_output_tokens'),
             ('parallel_tool_calls', 'parallel_tool_calls'),
@@ -1094,6 +1236,12 @@ class OpenAILiveModel(RealtimeModel):
             ('turn_detection', 'turn detection: Live owns turn-taking and exposes no VAD configuration'),
             ('max_tokens', 'a token limit on the spoken conversation'),
             ('input_transcription_model', 'choosing a transcription model'),
+            (
+                'tool_choice',
+                # The backend would apply it to every response of a delegation, including the one after
+                # the tool results, so `'required'` never lets a delegation finish.
+                'tool choice: the Live model decides when to delegate, and the backend which tools to call',
+            ),
         ):
             if setting in settings:
                 raise UserError(f'OpenAI GPT-Live does not support {feature}, so `{setting}` cannot be set.')
@@ -1136,6 +1284,7 @@ class OpenAILiveModel(RealtimeModel):
             connection = OpenAILiveConnection(
                 ws,
                 model_name=started.get('session', {}).get('model'),
+                backend_model=session_config['delegation']['responses']['model'],
                 turn_silence_ms=settings.get('openai_live_turn_silence_ms', DEFAULT_TURN_SILENCE_MS),
                 provider_name=self.system,
                 provider_url=self._provider.base_url,

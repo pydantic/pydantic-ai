@@ -125,7 +125,7 @@ async def test_audio_in_delegated_tool_round(
     # reports on a timer (see the caveat on `docs/realtime/openai-live.md`).
     assert session.usage.input_tokens > 0
     assert session.usage.output_tokens > 0
-    assert session.usage.details['billable_audio_seconds'] > 0
+    assert session.usage.audio_seconds > 0
     # Each backend response's tokens land on the `ModelResponse` it produced, as in a standard run: the
     # one that asked for the tool on the tool-call response, the continuation on the spoken answer.
     tool_call_response, spoken_reply = messages[1], messages[3]
@@ -136,8 +136,18 @@ async def test_audio_in_delegated_tool_round(
     # Both carry Live's name, so each also records the backend model that spent its tokens, which is
     # what lets the cost be recalculated from `usage` later without charging it at Live's rate.
     assert tool_call_response.model_name == spoken_reply.model_name == snapshot('gpt-live-1')
-    assert tool_call_response.provider_details == snapshot({'delegated_model': 'gpt-5.6-sol'})
-    assert spoken_reply.provider_details == snapshot({'delegated_model': 'gpt-5.6-sol'})
+    assert tool_call_response.provider_details == snapshot(
+        {
+            'delegated_model': 'gpt-5.6-sol',
+            'delegated_response_id': 'resp_0f173858b0a30685006ab4608a48e487d182bd7ed5d3cf7080',
+        }
+    )
+    assert spoken_reply.provider_details == snapshot(
+        {
+            'delegated_model': 'gpt-5.6-sol',
+            'delegated_response_id': 'resp_0f173858b0a30685006ab4608b987087d192b5641ad71a8236',
+        }
+    )
     for response in (tool_call_response, spoken_reply):
         assert response.provider_details is not None
         repriced = calc_price(response.usage, response.provider_details['delegated_model'], provider_id='openai')

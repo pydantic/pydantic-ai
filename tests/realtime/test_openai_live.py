@@ -10,10 +10,14 @@ from __future__ import annotations as _annotations
 
 import json
 from contextlib import contextmanager
+from dataclasses import replace
+from decimal import Decimal
 from typing import Any
 
 import anyio
 import pytest
+from genai_prices.data_snapshot import DataSnapshot, get_snapshot, set_custom_snapshot
+from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
@@ -221,7 +225,16 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
 
 @pytest.mark.parametrize(
     'setting,value',
-    [('turn_detection', False), ('max_tokens', 100), ('input_transcription_model', 'gpt-transcribe')],
+    [
+        ('turn_detection', False),
+        ('max_tokens', 100),
+        ('input_transcription_model', 'gpt-transcribe'),
+        # The backend applied it to every response of a delegation, including the one after the tool
+        # results, so `'required'` looped on tool calls (seven in ten seconds, live) and never answered.
+        ('tool_choice', 'required'),
+        ('tool_choice', ['lookup']),
+        ('tool_choice', 'auto'),
+    ],
 )
 async def test_unsupported_settings_raise_before_connecting(model: OpenAILiveModel, setting: str, value: Any) -> None:
     """A setting Live cannot honor is a stated requirement, so it fails rather than being ignored."""
@@ -423,15 +436,54 @@ def test_usage_is_reported_as_an_increment() -> None:
             _event({'type': 'session.usage.updated', 'event_id': 'e', 'usage': {'seconds': seconds}})
         )
 
-    assert usage(10.0) == [SessionUsage(_request_usage(10), response_scoped=False)]
+    assert usage(10.5) == [SessionUsage(_request_usage(10.5), response_scoped=False)]
     # The second report is a running total, so only the difference is new.
-    assert usage(25.0) == [SessionUsage(_request_usage(15), response_scoped=False)]
+    assert usage(25.0) == [SessionUsage(_request_usage(14.5), response_scoped=False)]
     # A repeat of the same total adds nothing.
     assert usage(25.0) == []
 
 
-def _request_usage(seconds: int) -> Any:
-    return RequestUsage(details={'billable_audio_seconds': seconds})
+def _request_usage(seconds: float) -> Any:
+    return RequestUsage(audio_seconds=seconds)
+
+
+def test_audio_seconds_are_priced_as_the_live_model() -> None:
+    """The seconds belong to no `ModelResponse`, so no response boundary prices them; the connection must.
+
+    Without it `session.usage.cost` left out the call itself, and a `cost_limit` could never stop it.
+    genai-prices ships `gpt-live-1` at $3 per audio hour; the snapshot here adds it in case the installed
+    data predates it.
+    """
+    snapshot_data = get_snapshot()
+    providers = [
+        replace(
+            provider,
+            models=[
+                ModelInfo(
+                    id='gpt-live-1',
+                    match=ClauseEquals(equals='gpt-live-1'),
+                    name='GPT-Live 1',
+                    prices=ModelPrice(audio_hours=Decimal('3')),
+                ),
+                *provider.models,
+            ],
+        )
+        if provider.id == 'openai'
+        else provider
+        for provider in snapshot_data.providers
+    ]
+    set_custom_snapshot(DataSnapshot(providers=providers, from_auto_update=False))
+    try:
+        connection = _connection(model_name='gpt-live-1', provider_url='https://api.openai.com/v1')
+        (reported,) = connection._map_event(  # pyright: ignore[reportPrivateUsage]
+            _event({'type': 'session.usage.updated', 'event_id': 'e', 'usage': {'seconds': 36.0}})
+        )
+    finally:
+        set_custom_snapshot(None)
+
+    assert isinstance(reported, SessionUsage)
+    assert reported.usage.audio_seconds == 36.0
+    assert reported.usage.cost == snapshot(Decimal('0.03'))
 
 
 async def test_text_is_sent_as_context_not_a_user_turn() -> None:
@@ -955,15 +1007,15 @@ def test_reconnect_does_not_restore_state() -> None:
     assert _connection().input_transcription_enabled is True
 
 
-def test_strict_tools_and_declarative_tool_choice(model: OpenAILiveModel) -> None:
+def test_strict_tools_reach_the_backend(model: OpenAILiveModel) -> None:
     tool = ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'}, strict=True)
-    config = _config(model, tools=[tool], settings=OpenAILiveModelSettings(tool_choice='required'))
-    responses = config['delegation']['responses']
+    responses = _config(model, tools=[tool])['delegation']['responses']
 
     assert responses['tools'] == snapshot(
         [{'type': 'function', 'name': 'lookup', 'parameters': {'type': 'object'}, 'strict': True}]
     )
-    assert responses['tool_choice'] == 'required'
+    # No tool choice is ever sent: the backend picks its tools, and a forced one never lets it answer.
+    assert 'tool_choice' not in responses
     # With no agent instructions there is no backend prompt to send.
     assert 'instructions' not in responses
 
@@ -1039,10 +1091,39 @@ async def test_an_agent_model_not_at_openai_is_not_a_backend(model: OpenAILiveMo
     assert await _session_backend(Agent(compatible), model) == AUTO_BACKEND_MODEL
 
 
-async def test_an_unresolved_agent_model_is_not_a_backend(model: OpenAILiveModel) -> None:
-    """With `defer_model_check=True` the agent's model is still a name, with no base URL to compare."""
+@pytest.mark.parametrize(
+    ('agent_model', 'backend'),
+    [
+        ('openai:gpt-6-luna', 'gpt-6-luna'),
+        ('openai-chat:gpt-6-luna', 'gpt-6-luna'),
+        # Reached through the gateway, it isn't where this directly connected session runs.
+        ('gateway/openai:gpt-6-luna', AUTO_BACKEND_MODEL),
+        # Not an OpenAI model, so it is never resolved: that would need Anthropic's package and key.
+        ('anthropic:claude-sonnet-5', AUTO_BACKEND_MODEL),
+        ('test', AUTO_BACKEND_MODEL),
+    ],
+)
+async def test_an_agent_model_named_but_not_yet_resolved_is_resolved_as_its_run_would(
+    env: Any, agent_model: str, backend: str
+) -> None:
+    """With `defer_model_check=True` the agent's model is still a name when the session connects.
+
+    Left unresolved, `Agent('openai:gpt-5.6-sol', defer_model_check=True)` delegated to `'auto'` rather
+    than to the model it names.
+    """
+    env.set('OPENAI_API_KEY', 'test-key')
+    env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'pylf_v1_us_x')
+    agent = Agent(agent_model, defer_model_check=True)
+    assert await _session_backend(agent, OpenAILiveModel('gpt-live-1', provider='openai')) == backend
+
+
+async def test_an_agent_model_that_cannot_be_resolved_is_not_a_backend(env: Any) -> None:
+    """Resolving it is what the agent's own run would do; a name that fails there can't be a backend."""
+    env.set('OPENAI_API_KEY', 'test-key')
+    live = OpenAILiveModel('gpt-live-1', provider='openai')
+    env.remove('OPENAI_API_KEY')
     agent = Agent('openai:gpt-6-luna', defer_model_check=True)
-    assert await _session_backend(agent, model) == AUTO_BACKEND_MODEL
+    assert await _session_backend(agent, live) == AUTO_BACKEND_MODEL
 
 
 async def test_a_named_backend_takes_precedence_over_the_agents_model() -> None:
@@ -1091,29 +1172,6 @@ def test_an_audio_rate_live_cannot_run_raises(input_rate: int, output_rate: int)
     )
     with pytest.raises(UserError, match='one PCM16 audio format for both directions'):
         _config(model)
-
-
-def test_tool_allow_list_trims_the_advertised_tools(model: OpenAILiveModel) -> None:
-    """The backend has no list form, so an allow-list is applied by trimming, and its mode still sent.
-
-    Dropping the mode lost what the allow-list says about whether a tool *must* be called: a
-    one-tool list is a named function choice, and the backend can express exactly that.
-    """
-    tools = [
-        ToolDefinition(name='kept', parameters_json_schema={'type': 'object'}),
-        ToolDefinition(name='also_kept', parameters_json_schema={'type': 'object'}),
-        ToolDefinition(name='dropped', parameters_json_schema={'type': 'object'}),
-    ]
-    one = _config(model, tools=tools, settings=OpenAILiveModelSettings(tool_choice=['kept']))
-    assert [tool['name'] for tool in one['delegation']['responses']['tools']] == ['kept']
-    assert one['delegation']['responses']['tool_choice'] == snapshot({'type': 'function', 'name': 'kept'})
-
-    two = _config(model, tools=tools, settings=OpenAILiveModelSettings(tool_choice=['kept', 'also_kept']))
-    assert [tool['name'] for tool in two['delegation']['responses']['tools']] == ['kept', 'also_kept']
-    assert two['delegation']['responses']['tool_choice'] == snapshot('required')
-    # Both are shapes the backend's own schema accepts.
-    TypeAdapter(SessionConfig).validate_python(one)
-    TypeAdapter(SessionConfig).validate_python(two)
 
 
 def test_user_prompt_text_parts_are_joined() -> None:
@@ -1419,3 +1477,197 @@ async def test_a_clean_close_finalizes_the_reply() -> None:
     # Iterated to exhaustion, not broken out of: the stream ends itself when the socket closes.
     events = [event async for event in connection]
     assert events == [OutputTranscript('all done'), ResponseDone()]
+
+
+# Recorded live: a backend with `max_output_tokens=16` ran out mid-handoff, and Live reported it with this
+# top-level frame and no nested terminal for the delegation.
+_HANDOFF_INCOMPLETE = {
+    'type': 'error',
+    'event_id': 'event_ERogN762PZ7dWVocvq7N2',
+    'error': {
+        'type': 'invalid_request_error',
+        'code': 'invalid_request_error',
+        'message': 'Responses handoff incomplete.',
+        'param': None,
+    },
+}
+
+
+def test_a_top_level_error_ends_the_delegation_it_interrupted() -> None:
+    """Live can end a delegation with a top-level `error` and no nested terminal.
+
+    The delegation stayed open, the turn clock stayed suspended, and the session never reported another
+    turn boundary, while the idle track kept arriving for the rest of the call.
+    """
+    connection = _connection()
+    _open_delegation(connection, call_ids=('c1',))
+    # The call was answered and its continuation is running when the handoff fails.
+    connection._call_delegations.pop('c1')  # pyright: ignore[reportPrivateUsage]
+    connection._delegations['d1'].pending_tool_calls.clear()  # pyright: ignore[reportPrivateUsage]
+
+    events = connection._map_frame(json.dumps(_HANDOFF_INCOMPLETE))  # pyright: ignore[reportPrivateUsage]
+
+    assert events == [
+        # The call's response waits for usage from a terminal that will never come.
+        SessionUsage(RequestUsage()),
+        RealtimeSessionErrorEvent(
+            message=(
+                'The delegated OpenAI Responses backend did not finish '
+                '(invalid_request_error: Responses handoff incomplete.).'
+            ),
+            code='live_delegation_failed',
+        ),
+    ]
+    assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+    assert connection._silence_timeout() is not None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_turn_completes_after_a_failed_handoff() -> None:
+    """End to end over a socket: the reply that promised a lookup still ends, and so does the next one."""
+    delegation = {
+        'type': 'session.delegation.created',
+        'event_id': 'e1',
+        'offset_ms': 0,
+        'delegation': {'id': 'd1', 'type': 'delegation', 'target': 'responses'},
+    }
+    ws = _FakeWebSocket(
+        [json.dumps(delegation), _transcript_frame("I'll check that for you."), json.dumps(_HANDOFF_INCOMPLETE)]
+    )
+    connection = OpenAILiveConnection(ws, turn_silence_ms=10)  # pyright: ignore[reportArgumentType]
+
+    events: list[Any] = []
+    with anyio.fail_after(5):
+        async for event in connection:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, ResponseDone):
+                break
+
+    assert [type(event).__name__ for event in events] == snapshot(
+        ['OutputTranscript', 'RealtimeSessionErrorEvent', 'ResponseDone']
+    )
+
+
+def test_an_error_leaves_a_delegation_waiting_on_its_tools_alone() -> None:
+    """A delegation whose backend is waiting on our tool results has no response for the error to end."""
+    connection = _connection()
+    _open_delegation(connection, call_ids=('c1',))
+    connection._map_response_event(_backend_terminal(), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+
+    events = connection._map_frame(json.dumps(_HANDOFF_INCOMPLETE))  # pyright: ignore[reportPrivateUsage]
+
+    assert events == [RealtimeSessionErrorEvent(message='Responses handoff incomplete.', code='invalid_request_error')]
+    assert 'd1' in connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+
+def test_an_unusable_backend_model_ends_the_session() -> None:
+    """Live accepts any backend name at startup and fails each delegation on it, so fail once, clearly."""
+    connection = _connection(backend_model='gpt-nonexistent-9')
+    # Recorded live, when the first question was delegated.
+    frame = {
+        'type': 'error',
+        'event_id': 'event_ERofKUO3MvYbjfL96XoLB',
+        'error': {
+            'type': 'invalid_request_error',
+            'code': 'invalid_request_error',
+            'message': 'The model `gpt-nonexistent-9` does not exist or you do not have access to it.',
+            'param': None,
+        },
+    }
+
+    events = connection._map_frame(json.dumps(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert events == snapshot(
+        [
+            RealtimeSessionErrorEvent(
+                message="The OpenAI GPT-Live session cannot delegate to its backend model 'gpt-nonexistent-9': The model `gpt-nonexistent-9` does not exist or you do not have access to it. Name a Responses model this account can use in `openai_live_delegation={'model': ...}`.",
+                code='live_backend_model_unavailable',
+                recoverable=False,
+            )
+        ]
+    )
+
+
+def _text_of(tokens: int) -> str:
+    """Text that is exactly `tokens` tokens long in the tokenizer Live counts its cap in."""
+    return ' '.join(['hello'] * tokens)
+
+
+@pytest.mark.parametrize('respond', [True, False])
+async def test_context_text_over_the_cap_is_refused_before_sending(respond: bool) -> None:
+    """Live rejects context over 500 tokens with an error that arrives after `send()` has returned.
+
+    By then the text was recorded as sent, and a `respond=True` send left `wait_for_reply()` waiting for
+    a reply that was never coming.
+    """
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    with _patched_connect(ws):
+        async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
+            with pytest.raises(UserError, match='at most 500 tokens of text per `send\\(\\)`, and this is 501'):
+                await session.send(_text_of(501), respond=respond)
+            with anyio.fail_after(1):
+                await session.wait_for_reply()
+            assert session.all_messages() == []
+            # 500 is within the cap, and goes out.
+            await session.send(_text_of(500), respond=respond)
+
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == [
+        'session.commentary.append' if respond else 'session.thinking.append'
+    ]
+
+
+def test_a_new_transcript_segment_is_spaced_from_the_last() -> None:
+    """A segment's first fragment carries no leading space, so sentences ran together (`'up.It's'`)."""
+    connection = _connection()
+
+    def fragment(delta: str, speaker: str = 'output') -> list[Any]:
+        return connection._map_event(  # pyright: ignore[reportPrivateUsage]
+            _event(
+                {
+                    'type': f'session.{speaker}_transcript.delta',
+                    'delta': delta,
+                    'start_ms': 0,
+                    'end_ms': 1,
+                    'event_id': 'e',
+                }
+            )
+        )
+
+    # Recorded live.
+    assert fragment(' look it up.') == [OutputTranscript(' look it up.')]
+    assert fragment("It's") == [OutputTranscript(" It's")]
+    # A fragment that continues a word or a number is left alone.
+    assert fragment('3.') == [OutputTranscript('3.')]
+    assert fragment('5') == [OutputTranscript('5')]
+    # Each direction has its own segments.
+    assert fragment('Sorry', speaker='input')[-1] == InputTranscript('Sorry')
+
+
+def test_a_quiet_stretch_after_speech_is_forwarded_only_as_a_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live's track never stops, so forwarding every quiet frame of a reply ended each with seconds of silence."""
+    clock = [100.0]
+    monkeypatch.setattr(live_module, '_now', lambda: clock[0])
+    connection = _connection()
+    silence = _event({'type': 'session.output_audio.delta', 'delta': 'AAAAAAAAAAA='})
+    voice = _event({'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='})
+
+    connection._map_event(voice)  # pyright: ignore[reportPrivateUsage]
+    clock[0] += 0.3
+    assert [type(e).__name__ for e in connection._map_event(silence)] == ['AudioDelta']  # pyright: ignore[reportPrivateUsage]
+    clock[0] += 0.3
+    assert connection._map_event(silence) == []  # pyright: ignore[reportPrivateUsage]
+    # Speech resuming is a pause after all, and the next one is timed from it.
+    connection._map_event(voice)  # pyright: ignore[reportPrivateUsage]
+    assert [type(e).__name__ for e in connection._map_event(silence)] == ['AudioDelta']  # pyright: ignore[reportPrivateUsage]
+
+
+def test_the_wait_after_a_delegated_call_is_not_spoken() -> None:
+    """The quiet track after a tool call reached the session as an empty assistant `SpeechPart`."""
+    connection = _connection()
+    silence = _event({'type': 'session.output_audio.delta', 'delta': 'AAAAAAAAAAA='})
+    voice = _event({'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='})
+
+    connection._map_event(voice)  # pyright: ignore[reportPrivateUsage]
+    _open_delegation(connection, call_ids=('c1',))
+
+    assert connection._map_event(silence) == []  # pyright: ignore[reportPrivateUsage]

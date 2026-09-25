@@ -92,6 +92,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     so `'required'` is ignored and allow-lists restrict availability without requiring a tool call.
 
     Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), and xAI.
+    OpenAI GPT-Live raises instead: its backend decides which tools to call.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None

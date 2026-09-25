@@ -291,7 +291,8 @@ Key facts for building realtime agents:
   image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
   A string sent during a reply queues on OpenAI/Azure/xAI and Gemini 2.5, but interrupts the active
   reply on Gemini 3.1. On OpenAI GPT-Live a string is never a user turn at all: it is context the model
-  relays or answers, and it only lands while audio is flowing. Gemini speech models reject text output before connect; the Vertex
+  relays or answers (even with `respond=False`, which only doesn't *request* speech), it only lands
+  while audio is flowing, and text over 500 tokens raises `UserError`. Gemini speech models reject text output before connect; the Vertex
   `gemini-live-2.5-flash` half-cascade can opt in with `profile={'supports_text_output': True}`.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
