@@ -116,6 +116,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsStr
+from .conversation import assert_conversation_invariants
 
 pytestmark = pytest.mark.anyio
 T = TypeVar('T')
@@ -2794,6 +2795,143 @@ async def test_idless_late_transcript_does_not_merge_with_next_audio_turn() -> N
             ),
         ]
     )
+
+
+class _Microphone:
+    """Marks where a scripted connection's always-on microphone sends another (silent) frame."""
+
+
+_MIC = _Microphone()
+
+
+class _ContinuousMicrophoneConnection(FakeRealtimeConnection):
+    """An id-less (Gemini-shaped) connection whose script interleaves the user's microphone with its events.
+
+    The microphone never stops, so a frame lands between most provider events, and each is sent only
+    after the session has handled every event before it.
+    """
+
+    def __init__(self, script: list[RealtimeCodecEvent | _Microphone]) -> None:
+        super().__init__([])
+        self._script = script
+        self.session: _RealtimeSession | None = None
+        self._tool_result_sent = asyncio.Event()
+
+    async def send(self, content: RealtimeInput) -> None:
+        await super().send(content)
+        if isinstance(content, ToolResult):
+            self._tool_result_sent.set()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        assert self.session is not None
+        for item in self._script:
+            if isinstance(item, _Microphone):
+                await self.session.send_audio(bytes(3200))
+                continue
+            yield item
+            if isinstance(item, ToolCall):
+                # Gemini closes the tool-call turn once it has the result, as the recording shows.
+                await self._tool_result_sent.wait()
+
+
+async def test_idless_continuous_microphone_keeps_one_user_request_per_turn() -> None:
+    """A microphone that streams silence between turns doesn't split or reorder id-less user turns.
+
+    Audio arriving while the model answers is not the user's next turn: it must neither reserve that
+    turn's place in history ahead of the answer, nor count as a turn the answer ended, which would close
+    the next real turn after its first transcript fragment. Covers a transcript that arrives before the
+    answer, one finalized ahead of a tool round, and one that lags behind the answer it prompted.
+    """
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _MIC,
+            _MIC,
+            InputTranscript(text='My'),
+            _MIC,
+            InputTranscript(text=' name is Alice.'),
+            _MIC,
+            AudioDelta(data=b'\x01\x00'),
+            _MIC,
+            OutputTranscript(text='Hi Alice.'),
+            _MIC,
+            AudioDelta(data=b'\x01\x00'),
+            _MIC,
+            ResponseDone(),
+            _MIC,
+            _MIC,
+            InputTranscript(text="What's the"),
+            _MIC,
+            InputTranscript(text=' weather in Paris?', is_final=True),
+            ToolCall(tool_call_id='tc-1', tool_name='get_weather', args='{"city": "Paris"}'),
+            ResponseDone(),
+            _MIC,
+            AudioDelta(data=b'\x01\x00'),
+            _MIC,
+            OutputTranscript(text='It is foggy.'),
+            _MIC,
+            ResponseDone(),
+            _MIC,
+            _MIC,
+            AudioDelta(data=b'\x01\x00'),
+            _MIC,
+            OutputTranscript(text='Your name is Alice.'),
+            _MIC,
+            InputTranscript(text='Can you remind'),
+            _MIC,
+            InputTranscript(text=' me of my name?'),
+            _MIC,
+            ResponseDone(),
+            _MIC,
+        ]
+    )
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'Foggy, 12C'
+
+    session = RealtimeSession(conn, runner)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert session.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='My name is Alice.')], timestamp=IsDatetime()),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='Hi Alice.')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript="What's the weather in Paris?")], timestamp=IsDatetime()
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='tc-1')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather', content='Foggy, 12C', tool_call_id='tc-1', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='It is foggy.')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='Can you remind me of my name?')], timestamp=IsDatetime()
+            ),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='Your name is Alice.')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+    assert_conversation_invariants(session, ['alice', 'paris', 'remind'])
 
 
 async def test_tool_response_finalized_on_usage_is_not_duplicated_at_terminal() -> None:

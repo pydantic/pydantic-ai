@@ -778,6 +778,11 @@ class RealtimeSession:
         # An id-less final can precede its matching speech-end frame, so remember it until audio or a
         # transcription event begins the next turn instead of letting that trailing frame open a blank one.
         self._anonymous_user_turn_finalized = False
+        # Set once an anonymous user turn has ended (its transcript finalized, or the model began replying),
+        # until a response answering it is recorded. A continuously open microphone keeps sending (silent)
+        # audio all the while; that audio is not a new turn, and must not reserve a place in history ahead
+        # of the answer it overlaps.
+        self._anonymous_user_turn_awaiting_answer = False
         # Insertion order is provider item order. `None` is the single anonymous turn used by
         # providers that do not identify input transcript items.
         self._user_turns: dict[str | None, _UserTurn] = {}
@@ -1612,16 +1617,17 @@ class RealtimeSession:
                     return
                 await self.send_audio(chunk)
             return
-        if (turn := self._user_turns.get(None)) is not None and turn.speech_ended:
-            for event in self._finalize_user():
-                self._publish_taps(event)
-                self._queue_put(event)
         user_turn_was_active = self._user_turn_active
-        if not user_turn_was_active:
-            # Audio starting is the earliest sign of a user turn, and the only one on a provider that
-            # reports no speech boundaries, so it's where the turn's place in history is reserved.
-            self._open_user_turn_anchor()
-        self._user_turn_active = True
+        if not self._anonymous_user_turn_awaiting_answer:
+            if (turn := self._user_turns.get(None)) is not None and turn.speech_ended:
+                for event in self._finalize_user():
+                    self._publish_taps(event)
+                    self._queue_put(event)
+            if not self._user_turn_active:
+                # Audio starting is the earliest sign of a user turn, and the only one on a provider that
+                # reports no speech boundaries, so it's where the turn's place in history is reserved.
+                self._open_user_turn_anchor()
+            self._user_turn_active = True
         previous_length: int | None = None
         if self._retain_input:
             # Buffer the raw input so the finalized user turn can retain it. A per-item speech-stopped
@@ -2153,6 +2159,10 @@ class RealtimeSession:
                 # at this response boundary. A provider-reported cost arrived in those events too.
                 self.usage.incr(RequestUsage(cost=response.usage.cost))  # usage-attribution: the session owns its spans
             self._history.append(response)
+            if not any(isinstance(part, ToolCallPart) for part in parts):
+                # The model has said what it had to say (a tool call means its answer is still to come),
+                # so audio from here on can be the user's next turn again.
+                self._anonymous_user_turn_awaiting_answer = False
             self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
             self._tool_run_step += 1
             for part in parts:
@@ -2445,6 +2455,7 @@ class RealtimeSession:
             # anonymous turn is already over so the next audio segment can close it after it arrives.
             self._anonymous_user_turns_ended += 1
             self._user_turn_active = False
+            self._anonymous_user_turn_awaiting_answer = True
         return events
 
     def _finalize_user(self, *, item_id: str | None = None) -> list[RealtimeEvent]:
@@ -2479,6 +2490,7 @@ class RealtimeSession:
                 )
         if item_id is None:
             self._anonymous_user_turn_finalized = True
+            self._anonymous_user_turn_awaiting_answer = True
             self._record_user_request(None, self._new_request([part]))
             self._user_turns.pop(None)
         else:
@@ -2622,6 +2634,7 @@ class RealtimeSession:
         self._pending_anonymous_user_turn_anchors.clear()
         self._anonymous_user_turns_ended = 0
         self._anonymous_user_turn_finalized = False
+        self._anonymous_user_turn_awaiting_answer = False
         self._pending_user_turn_anchors.clear()
         # Drop any input-audio segments whose transcript never arrived, so they can't leak across a
         # long-lived session (finalized items already popped their own segment above).
