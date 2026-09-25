@@ -3178,6 +3178,9 @@ async def test_openai_connection_reconnects_only_with_a_policy() -> None:
 
     assert OpenAIRealtimeConnection(FakeWebSocket([])).reconnects is False  # type: ignore[arg-type]
     assert OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect={}).reconnects  # type: ignore[arg-type]
+    # A spent budget means no reconnect is coming, so a failed audio chunk raises rather than dropping.
+    spent = OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect={'max_reconnects': 0})  # type: ignore[arg-type]
+    assert spent.reconnects is False
 
 
 def test_openai_connection_does_not_restore_in_flight_state_on_reconnect() -> None:

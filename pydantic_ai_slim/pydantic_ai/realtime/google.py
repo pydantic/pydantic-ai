@@ -100,6 +100,7 @@ from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._utils import (
+    DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
     reconnect_with_backoff,
     require_pcm_audio,
@@ -1271,7 +1272,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
 
     @property
     def reconnects(self) -> bool:
-        return self._dial is not None and self._reconnect is not None
+        return (
+            self._dial is not None
+            and self._reconnect is not None
+            and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
+        )
 
     @property
     def input_transcription_enabled(self) -> bool:

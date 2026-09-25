@@ -170,6 +170,11 @@ async def test_google_connection_reconnects_only_with_a_policy() -> None:
 
     assert _conn(_RecordingSession()).reconnects is False
     assert GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), dial=dial, reconnect={}).reconnects
+    # A spent budget means no reconnect is coming, so a failed audio chunk raises rather than dropping.
+    spent = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()), dial=dial, reconnect={'max_reconnects': 0}
+    )
+    assert spent.reconnects is False
 
 
 def test_google_connection_restores_in_flight_state_on_reconnect() -> None:

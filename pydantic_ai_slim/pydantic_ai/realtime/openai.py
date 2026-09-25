@@ -107,7 +107,13 @@ from ._openai_protocol import (
     with_realtime_query,
 )
 from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
-from ._utils import inject_trace_context, reconnect_with_backoff, require_pcm_audio, resolve_advertised_tools
+from ._utils import (
+    DEFAULT_MAX_RECONNECTS,
+    inject_trace_context,
+    reconnect_with_backoff,
+    require_pcm_audio,
+    resolve_advertised_tools,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -448,7 +454,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
     @property
     def reconnects(self) -> bool:
-        return self._dial is not None and self._reconnect is not None
+        return (
+            self._dial is not None
+            and self._reconnect is not None
+            and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
+        )
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
