@@ -356,7 +356,10 @@ class InputRejected:
     Yielded just ahead of the [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]
     that explains the refusal, and only when the provider's error identifies the frame it refused (the
     OpenAI protocol echoes the client `event_id`). A connection that can't tell which input an error was
-    about yields the error alone. The session uses it to take back what it assumed the input did: a
+    about yields the error alone. A reconnect whose new session no longer has an input (Gemini resumes
+    from a handle that can predate a typed turn) yields it too, ahead of the
+    [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent]. The session
+    uses it to take back what it assumed the input did: a
     refused request for a response releases the reply
     [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would otherwise wait for
     forever, and refused content is removed from history.

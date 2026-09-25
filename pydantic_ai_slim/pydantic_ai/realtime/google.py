@@ -110,6 +110,7 @@ from ._utils import (
 )
 from .codec import (
     AudioDelta,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -1233,6 +1234,17 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # (tool name, Gemini call id) of calls a resumed session lost but still waits on; see
         # `_answer_lost_tool_calls`.
         self._unanswered_lost_tool_calls: list[tuple[str, str | None]] = []
+        # Every `send()` call is numbered (see `InputRejected.input_index`); these are the typed turns sent
+        # since the last resumption handle whose reply hasn't started, oldest first. A resumed session is
+        # restored as of its handle, so a reconnect loses them (see `__aiter__`).
+        self._inputs_received = 0
+        self._typed_turns_since_handle: list[int] = []
+        # Whether the server withholds handles while it works on a turn. Gemini 2.5 takes up every typed
+        # turn with a resumption update carrying no handle, and a session resumed from the earlier handle
+        # doesn't have the turn; 3.8 never does, and (verified live) resumes with the turn still known.
+        # Learned from the first such update rather than from the latest one, which a drop right after a
+        # send can beat.
+        self._withholds_handles_mid_turn = False
         # Serializes this connection's own sends with the answers for lost calls, which the receive loop
         # sends too, so a user input never overtakes them.
         self._send_lock = Lock()
@@ -1266,11 +1278,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
         frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
         automatic VAD).
         """
+        input_index = self._inputs_received
+        self._inputs_received += 1
         async with self._send_lock:
             # Whatever reaches a resumed session first is consumed by an exchange stuck on calls it lost,
             # so those are answered ahead of any input (see `_answer_lost_tool_calls`).
             await self._answer_lost_tool_calls()
             await self._send(content)
+        if isinstance(content, str):
+            self._typed_turns_since_handle.append(input_index)
 
     async def _send(self, content: RealtimeInput) -> None:
         # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
@@ -1378,8 +1394,19 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     if self._resumption_handle is None or call_id in self._tool_calls_since_handle
                 ]
                 state_resumed = self._resumption_handle is not None
-                # Losing a call loses the exchange it belongs to, so that isn't a restored state either.
-                state_restored = state_resumed and not lost_tool_calls
+                # Likewise a typed turn sent since the handle, on a server that withholds handles mid-turn,
+                # unless its reply had already started (that reply took its response, and is closed as
+                # interrupted below).
+                lost_typed_turns = (
+                    []
+                    if state_resumed and not self._withholds_handles_mid_turn
+                    else self._typed_turns_since_handle[1:]
+                    if self._turn_open
+                    else self._typed_turns_since_handle
+                )
+                self._typed_turns_since_handle = []
+                # Losing a call or a turn loses the exchange it belongs to, so that isn't a restored state.
+                state_restored = state_resumed and not lost_tool_calls and not lost_typed_turns
                 if await self._try_reconnect():
                     if not state_resumed:
                         # A fresh session has no stale exchange left to answer.
@@ -1405,6 +1432,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         self._turn_interrupted = False
                         self._native_part_index = 0
                         yield ResponseDone(interrupted=True)
+                    for input_index in lost_typed_turns:
+                        # Nothing will answer it, so the reply it asked for is released rather than awaited
+                        # forever; the turn stays in history, and `state_restored=False` tells the app to
+                        # send it again.
+                        yield InputRejected(input_index=input_index, refused='response')
                     yield RealtimeSessionReconnectEvent(state_restored=state_restored)
                     if self._unanswered_lost_tool_calls:
                         # Answered right away rather than only ahead of the next input, so the resumed
@@ -1592,6 +1624,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 and not interrupted
             )
             events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
+            if not more_expected and self._typed_turns_since_handle:
+                # The exchange that answered the oldest typed turn is over; it is no longer at risk.
+                del self._typed_turns_since_handle[0]
             self._turn_interrupted = False
             # A stalled exchange's response is still open — the model will add a tool call and an answer
             # to it — so the turn stays open too. Closing it here would leave a drop between the filler
@@ -1601,7 +1636,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 self._native_part_index = 0
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update
-        if update is not None and update.new_handle:
-            self._resumption_handle = update.new_handle
-            self._tool_calls_since_handle.clear()
+        if update is not None:
+            if update.new_handle:
+                self._resumption_handle = update.new_handle
+                self._tool_calls_since_handle.clear()
+                self._typed_turns_since_handle.clear()
+            else:
+                self._withholds_handles_mid_turn = True
         return events

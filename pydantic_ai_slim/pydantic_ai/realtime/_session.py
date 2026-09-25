@@ -772,7 +772,10 @@ class RealtimeSession:
         self._provider_segments_input = False
         self._pending_response_usage = RequestUsage()
         self._response_limit_checked = False
-        self._pending_response_requests = 0
+        # Outstanding response reservations, oldest first. Each is owned by the send that made it, so a
+        # send can take back its own (and only its own) if the response it asked for won't come; a
+        # response that starts takes the oldest.
+        self._response_reservations: deque[object] = deque()
         # Whether a response has actually begun, cleared at the exchange boundary that
         # `RealtimeTurnCompleteEvent` marks. A tool-calling turn spans several responses, so the
         # per-response flags above would read as "done" in the gaps. Reads pair with
@@ -876,7 +879,7 @@ class RealtimeSession:
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
         # Calls whose result send holds a response reservation (see `_send_tool_result`), so cancelling
         # one can give its reservation back at once rather than when the task gets round to unwinding.
-        self._tool_result_reservations: set[str] = set()
+        self._tool_result_reservations: dict[str, object] = {}
         # Tool execution is gated inside each task so the receive pump remains free to deliver audio,
         # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
         # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
@@ -1321,14 +1324,25 @@ class RealtimeSession:
                 return
             await self._exchange_progress.wait()
 
-    def _release_response_reservation(self) -> None:
+    @property
+    def _pending_response_requests(self) -> int:
+        return len(self._response_reservations)
+
+    def _release_response_reservation(self, reservation: object | None = None) -> None:
         """Give back a reservation for a response that will never arrive, waking any waiter.
 
-        Rolled back by every outbound call that reserved a response and then failed to send it. The
-        decrement and the wake belong together: a caller parked in `wait_for_reply()` on that single
-        reservation has nothing else coming to wake it.
+        Rolled back by every outbound call that reserved a response and then failed to send it, which
+        passes the reservation it made: that one is released if it is still outstanding, and nothing if
+        a response has already taken it. Without one, the newest is released. The release and the wake
+        belong together: a caller parked in `wait_for_reply()` on that single reservation has nothing
+        else coming to wake it.
         """
-        self._pending_response_requests -= 1
+        if reservation is None:
+            self._response_reservations.pop()
+        elif reservation in self._response_reservations:
+            self._response_reservations.remove(reservation)
+        else:
+            return
         self._exchange_progress.set()
 
     def _reply_outstanding(self) -> bool:
@@ -1502,8 +1516,7 @@ class RealtimeSession:
             assert_never(content)
 
     async def _send_text(self, content: str, *, respond: bool) -> ModelRequest:
-        if respond:
-            self._reserve_response_request()
+        reservation = self._reserve_response_request() if respond else None
         request = self._new_request([UserPromptPart(content=content)])
         self._record_sent_request(request)
         try:
@@ -1514,8 +1527,8 @@ class RealtimeSession:
                 replayed=[CreateResponse()] if respond else [],
             )
         except BaseException:
-            if respond:
-                self._release_response_reservation()
+            if reservation is not None:
+                self._release_response_reservation(reservation)
             self._remove_sent_request(request)
             raise
         return request
@@ -1592,7 +1605,7 @@ class RealtimeSession:
         self._require_capability('supports_image_input', method='send', feature='image input')
         if respond:
             self._require_capability('supports_manual_turn_control', method='send', feature='manual turn-taking')
-            self._reserve_response_request()
+        reservation = self._reserve_response_request() if respond else None
         request: ModelRequest | None = None
         if self._retain_images_max != 0 and self._sent_image_count % self._retain_images_every_n == 0:
             request = self._new_request([UserPromptPart(content=[content])])
@@ -1606,8 +1619,8 @@ class RealtimeSession:
             else:
                 await self._send_frame(image, request=request)
         except BaseException:
-            if respond:
-                self._release_response_reservation()
+            if reservation is not None:
+                self._release_response_reservation(reservation)
             # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
             # so nothing to take back.
             if request is not None:
@@ -1743,11 +1756,11 @@ class RealtimeSession:
         """
         self._ensure_can_send()
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
-        self._reserve_response_request()
+        reservation = self._reserve_response_request()
         try:
             await self._send_frame(CreateResponse())
         except BaseException:
-            self._release_response_reservation()
+            self._release_response_reservation(reservation)
             raise
 
     @overload
@@ -1976,8 +1989,10 @@ class RealtimeSession:
                     if ticket is not None and not self._link_usable():
                         # Closed or finished between the wake-up and taking the lock.
                         raise self._link_lost_error()
-                    if self._parked_sends and self._parked_sends[0] is not ticket:
-                        # An earlier send is still waiting out a reconnect: queue behind it.
+                    if self._parked_sends and self._parked_sends[0] is not ticket and not self._sending_from_pump():
+                        # An earlier send is still waiting out a reconnect: queue behind it. Not the pump's
+                        # own sends (queued messages and barge-in frames at a boundary): the parked send
+                        # waits for a reconnect only the pump can deliver, so those go straight out.
                         ticket = self._park_send(ticket)
                         continue
                     if (
@@ -2017,13 +2032,15 @@ class RealtimeSession:
         session never entered) or from the pump itself (draining queued messages at a turn boundary) a
         send fails as it always has.
         """
-        pump = self._pump_task
-        if pump is None or asyncio.current_task() is pump:
+        if self._pump_task is None or self._sending_from_pump():
             raise self._link_lost_error()
         if ticket is None:
             ticket = object()
             self._parked_sends.append(ticket)
         return ticket
+
+    def _sending_from_pump(self) -> bool:
+        return asyncio.current_task() is self._pump_task
 
     def _link_usable(self) -> bool:
         return not (self._closed or self._pump_finished)
@@ -3165,29 +3182,24 @@ class RealtimeSession:
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
         tool_call_id = call_part.tool_call_id
-        self._reserve_response_request()
-        self._tool_result_reservations.add(tool_call_id)
+        self._tool_result_reservations[tool_call_id] = self._reserve_response_request()
         try:
             await self._send_frame(ToolResult(tool_call_id=tool_call_id, output=output, content=wire_content or None))
         except BaseException:
             self._release_tool_result_reservation(tool_call_id)
             raise
-        self._tool_result_reservations.discard(tool_call_id)
+        self._tool_result_reservations.pop(tool_call_id, None)
 
     def _release_tool_result_reservation(self, tool_call_id: str) -> None:
         """Give back the reservation of a tool result that won't be sent, if it still holds one.
 
         A result send parked on a dropped connection (see `_send_frame`) is cancelled when the reconnect
-        loses its call. The release happens right at that cancellation, not once the task unwinds: the
-        reconnect's own response boundary is processed in between and would otherwise claim the stale
-        reservation as its own, leaving the count one short when the task then gives it back.
+        loses its call. The release happens right at that cancellation, not once the task unwinds, and
+        only if a response hasn't already taken that reservation: the reconnect's own response boundary
+        is processed in between.
         """
-        if tool_call_id in self._tool_result_reservations:
-            self._tool_result_reservations.discard(tool_call_id)
-            # Reservations are a count, not tied to a request: a response that started while the send was
-            # parked has already taken this one, and there is nothing left to give back.
-            if self._pending_response_requests:
-                self._release_response_reservation()
+        if (reservation := self._tool_result_reservations.pop(tool_call_id, None)) is not None:
+            self._release_response_reservation(reservation)
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -3252,7 +3264,7 @@ class RealtimeSession:
         self._usage_limits.check_tokens(self.usage)
         self._usage_limits.check_cost(self.usage, warn_if_cost_unavailable=warn_if_cost_unavailable)
 
-    def _reserve_response_request(self) -> None:
+    def _reserve_response_request(self) -> object:
         """Claim the request budget for a response this session is about to solicit.
 
         `usage.requests` only counts responses already finalized, so a reservation covers the ones
@@ -3265,7 +3277,9 @@ class RealtimeSession:
                 self.usage, requests=self.usage.requests + self._pending_response_requests + in_flight
             )
             self._usage_limits.check_before_request(projected)
-        self._pending_response_requests += 1
+        reservation = object()
+        self._response_reservations.append(reservation)
+        return reservation
 
     def _begin_response(self) -> None:
         """Take the reservation for the response that's starting, or make the check now if it has none.
@@ -3276,8 +3290,8 @@ class RealtimeSession:
         """
         if self._response_limit_checked:
             return
-        if self._pending_response_requests:
-            self._pending_response_requests -= 1
+        if self._response_reservations:
+            self._response_reservations.popleft()
         elif self._usage_limits is not None:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True

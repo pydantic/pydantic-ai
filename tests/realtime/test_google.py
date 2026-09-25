@@ -59,6 +59,7 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     ResponseDone,
@@ -2466,6 +2467,137 @@ async def test_input_after_a_reconnect_goes_out_after_the_lost_calls_are_answere
 
 async def _record(order: list[str], kind: str) -> None:
     order.append(kind)
+
+
+async def test_a_typed_turn_sent_since_the_resumption_handle_is_reported_lost() -> None:
+    # A resumed session is restored as of its handle, and Gemini 2.5 only issues one after a turn
+    # completes, so a typed turn sent after it and cut off before its reply started is gone: nothing will
+    # answer it. The response it asked for is reported refused (so `wait_for_reply()` doesn't wait for it
+    # forever) and the reconnect as not restored, so the app knows to send it again. A turn whose reply
+    # had already finished isn't reported.
+    s1 = _DroppableSession()
+    s2 = _DroppableSession()
+    dial, dialing, release = _gated_dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                return
+
+    not_resumable = genai_types.LiveServerMessage(
+        session_resumption_update=genai_types.LiveServerSessionResumptionUpdate()
+    )
+    consumer = asyncio.create_task(consume())
+    s1.push(_handle_update('h1'))
+    await conn.send('answered')
+    s1.push(not_resumable)  # what Gemini 2.5 sends as it takes up a turn
+    s1.push(_turn('Sure.'))
+    s1.push(_handle_update('h2'))
+    await conn.send('lost')  # dropped before its own update arrives
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+
+    assert events[-2:] == [
+        InputRejected(input_index=1, refused='response'),
+        RealtimeSessionReconnectEvent(state_restored=False),
+    ]
+
+
+async def test_a_typed_turn_is_kept_on_a_server_that_never_withholds_handles() -> None:
+    # Gemini 3.8 never withholds a handle mid-turn, and a session resumed from one still has a typed turn
+    # sent after it (verified live: it answers the turn), so nothing is reported lost.
+    s1 = _DroppableSession()
+    dial, dialing, release = _gated_dialer(_DroppableSession())
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            return  # the reconnect is the first and only event here
+
+    consumer = asyncio.create_task(consume())
+    s1.push(_handle_update('h1'))
+    await conn.send('What is two plus two?')
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+
+    assert events == [RealtimeSessionReconnectEvent(state_restored=True)]
+
+
+async def test_a_typed_turn_whose_reply_was_cut_off_is_not_reported_lost() -> None:
+    # A reply that had started streaming already took the turn's response, and is closed as interrupted,
+    # so the turn itself isn't reported: resumption keeps a restored state as before.
+    s1 = _DroppableSession()
+    s2 = _DroppableSession()
+    dial, dialing, release = _gated_dialer(s2)
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+    )
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in conn:  # pragma: no branch
+            events.append(event)
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                return
+
+    consumer = asyncio.create_task(consume())
+    s1.push(_handle_update('h1'))
+    await conn.send('count to thirty')
+    s1.push(
+        genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(
+                output_transcription=genai_types.Transcription(text='One,', finished=False)
+            )
+        )
+    )
+    await _settle()
+    s1.drop()
+    await dialing.wait()
+    release.set()
+    await asyncio.wait_for(consumer, 5)
+
+    assert not any(isinstance(event, InputRejected) for event in events)
+    assert events[-2:] == [ResponseDone(interrupted=True), RealtimeSessionReconnectEvent(state_restored=True)]
+
+
+async def test_wait_for_reply_returns_when_a_resumed_session_lost_the_typed_turn() -> None:
+    first, second = _DroppableSession(), _DroppableSession()
+    dial, dialing, release = _gated_dialer(second)
+    session = _reconnecting_session(first, dial)
+    async with session:
+        first.push(
+            genai_types.LiveServerMessage(session_resumption_update=genai_types.LiveServerSessionResumptionUpdate())
+        )
+        first.push(_handle_update('h1'))
+        await session.send('Price of a teapot?')
+        await _settle()
+        first.drop()
+        await dialing.wait()
+        release.set()
+        await asyncio.wait_for(session.wait_for_reply(), 5)
+        reconnect = None
+        async for reconnect in session:  # pragma: no branch
+            break
+    assert reconnect == RealtimeSessionReconnectEvent(state_restored=False)
+    # The turn stays in history: the user did say it, and the app sends it again.
+    assert [
+        part.content for message in session.all_messages() for part in message.parts if isinstance(part, UserPromptPart)
+    ] == ['Price of a teapot?']
 
 
 class _DroppableSession:
