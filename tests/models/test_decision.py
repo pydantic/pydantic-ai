@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, BoolCriteria, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.decision import (
@@ -183,6 +183,34 @@ async def test_decide_span(allow_model_requests: None, capfire: CaptureLogfire):
             'pydantic_ai.decision.answers': {'ship': {'type': 'noul', 'noul': 0.8}},
             'pydantic_ai.decision.confidence': {'ship': 0.6},
         }
+    )
+
+
+class NotAnAnswerDecisionModel(InMemoryDecisionModel):
+    """Breaks the protocol's contract, answering a question with something that is not an answer."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        response = await super().decide(request, model_settings)
+        response.answers['ship'] = cast(DecisionAnswer, None)
+        return response
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_decide_span_leaves_out_what_is_not_an_answer(allow_model_requests: None, capfire: CaptureLogfire):
+    """Instrumentation doesn't change how the run rejects a malformed answer, and the span records the error."""
+    agent = Agent(NotAnAnswerDecisionModel(), output_type=Release, capabilities=[Instrumentation()])
+    with pytest.raises(UnexpectedModelBehavior, match="Unexpected answer from the model for output field 'ship'"):
+        await agent.run('And the tests pass.')
+
+    [span] = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'decide in-memory-decisions'
+    ]
+    assert span['attributes']['pydantic_ai.decision.answers'] == snapshot({})
+    assert [event['attributes']['exception.type'] for event in span['events']] == snapshot(
+        ['pydantic_ai.exceptions.UnexpectedModelBehavior']
     )
 
 

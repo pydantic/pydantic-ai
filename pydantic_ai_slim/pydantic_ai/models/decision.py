@@ -794,6 +794,10 @@ def _decide_response_attributes(
         attributes['gen_ai.response.id'] = response.provider_response_id
     answers: dict[str, dict[str, Any]] = {}
     for name, answer in response.answers.items():
+        if not isinstance(answer, NoulAnswer | ChoiceAnswer | ScoreAnswer):
+            # Not an answer at all, from a backend breaking its contract. The run rejects it as it would without
+            # instrumentation, with `UnexpectedModelBehavior`, which the span records, so it is left out here.
+            continue
         wire = _wire(answer)
         if not include_content and name != route_question:
             kept = _NUMERIC_ANSWER_FIELDS[answer.type]
