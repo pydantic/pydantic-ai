@@ -9,7 +9,7 @@ Run these commands from the repository root. For a correctness check without tim
 
 The [CodSpeed workflow](../../.github/workflows/benchmark.yml) measures wall time on CodSpeed's dedicated ARM64 Graviton runners, with Python 3.14. It runs on pull requests and pushes to `main`. Fixed hardware avoids the CPU differences of GitHub-hosted runners, while isolation reduces timing noise.
 
-You need [CodSpeed macro-runner access for public repositories](https://codspeed.io/docs/integrations/ci/github-actions/macro-runners#public-repositories). After changing the runner or measurement mode, record a fresh `main` baseline before comparing performance. Walltime results are not comparable to the previous CPU-simulation results. The job has a ten-minute timeout to bound runner usage.
+You need [CodSpeed macro-runner access for public repositories](https://codspeed.io/docs/integrations/ci/github-actions/macro-runners#public-repositories). After changing the runner or measurement mode, record a fresh `main` baseline before comparing performance. Walltime results are not comparable to the previous CPU-simulation results. The job has a ten-minute timeout to bound runner usage. Superseded PR runs are canceled; `main` baseline runs are kept.
 
 The agent benchmark uses `TestModel` to avoid network latency. Its fixture warms up a reused agent before measurement. BlockBuster is disabled for this benchmark because its blocking-call instrumentation changes the workload.
 
