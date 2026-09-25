@@ -1249,48 +1249,27 @@ class ProviderWorkspaceCapability(AbstractCapability[Any]):
         return backend
 
 
-async def test_first_capability_in_order_supplies_a_fresh_workspace() -> None:
-    """Without a ref every workspace capability could answer, so capability order decides and the rest are not asked."""
-    first, second = ProviderWorkspaceCapability('first'), ProviderWorkspaceCapability('second')
-    agent = Agent(TestModel(), capabilities=[first, second])
+async def test_an_agent_has_one_workspace_capability() -> None:
+    with pytest.raises(
+        UserError, match='A run has one workspace, but `ProviderWorkspaceCapability`, `ProviderWorkspaceCapability`'
+    ):
+        Agent(TestModel(), capabilities=[ProviderWorkspaceCapability('first'), ProviderWorkspaceCapability('second')])
 
-    result = await agent.run('go')
-
-    assert [result.workspace.backend] == first.supplied
-    assert first.refs == [None]
-    assert second.refs == []
-
-
-@pytest.mark.parametrize('source', ['explicit', 'history'])
-async def test_ref_routes_to_the_first_capability_that_recognizes_it(source: str) -> None:
-    """Several attached providers let one agent continue in an environment from any of them."""
-    first, second = ProviderWorkspaceCapability('first'), ProviderWorkspaceCapability('second')
-    agent = Agent(TestModel(), capabilities=[first, second])
-    ref = WorkspaceRef(provider='second', id='existing')
-
-    if source == 'explicit':
-        result = await agent.run('go', workspace=ref)
-    else:
-        result = await agent.run('go', message_history=[ModelResponse(parts=[TextPart('old')], workspace_ref=ref)])
-
-    assert [result.workspace.backend] == second.supplied
-    assert result.workspace.ref == ref
-    assert first.supplied == []
-    assert first.refs == [ref]
-    assert second.refs == [ref]
+    agent = Agent(TestModel(), capabilities=[ProviderWorkspaceCapability('first')])
+    with pytest.raises(UserError, match='A run has one workspace'):
+        await agent.run('go', capabilities=[ProviderWorkspaceCapability('second')])
 
 
 async def test_new_workspace_ignores_the_ref_in_history() -> None:
     """`workspace='new'` mirrors `conversation_id='new'`: history's ref is not offered, so a fresh one is created."""
-    first, second = ProviderWorkspaceCapability('first'), ProviderWorkspaceCapability('second')
-    agent = Agent(TestModel(), capabilities=[first, second])
-    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='second', id='existing'))
+    capability = ProviderWorkspaceCapability('provider')
+    agent = Agent(TestModel(), capabilities=[capability])
+    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='provider', id='existing'))
 
     result = await agent.run('go', message_history=[historical], workspace='new')
 
-    assert [result.workspace.backend] == first.supplied
-    assert first.refs == [None]
-    assert second.refs == []
+    assert [result.workspace.backend] == capability.supplied
+    assert capability.refs == [None]
 
 
 async def test_new_workspace_without_a_supplier_raises() -> None:
@@ -1320,14 +1299,13 @@ async def test_deferred_capability_never_contributes_a_backend() -> None:
 
 async def test_wrapper_composes_workspace_policy_over_combined_capability() -> None:
     provider = WorkspaceCapability()
-    other = DecliningWorkspaceCapability()
 
     class Policy(WrapperCapability[Any]):
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
             backend = super().get_workspace(ctx, ref=ref)
             return ReadOnlyWorkspace(Workspace(backend)) if backend is not None else None
 
-    capability = Policy(CombinedCapability([other, provider]))
+    capability = Policy(CombinedCapability([provider]))
     agent = Agent(TestModel(call_tools=['probe']), capabilities=[capability])
 
     @agent.tool

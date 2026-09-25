@@ -585,12 +585,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Called synchronously on each run, before `for_run`, so `for_run` can read from the workspace.
         A capability that exists only after `for_run` (one a capability function returns) is asked
-        afterwards if no other capability supplied one. The first non-deferred capability, in capability order,
-        that returns a backend supplies the run's workspace, and the capabilities after it are not
-        asked. Attaching several workspace capabilities is therefore how an agent stays able to
-        continue in an environment from any of their providers: each returns `None` for a `ref` it
-        does not own, so the capability that recognizes the `ref` answers, and without a `ref` the
-        first one creates the fresh environment.
+        afterwards. An agent has one workspace capability: a second one raises `UserError`. Return
+        `None` for a `ref` this capability does not own.
 
         It must have no side effects, including bookkeeping: return a backend configured from this
         capability's own settings, carrying `ref` when one was recovered or passed in. The backend

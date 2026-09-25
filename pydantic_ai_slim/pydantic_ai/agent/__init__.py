@@ -841,6 +841,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._root_capability.apply(static_capabilities.append)
         _validate_capability_ids(static_capabilities)
         _validate_instruction_source_ids([self._root_capability])
+        _validate_single_workspace_supplier(self._root_capability)
 
         # Extract capability-contributed configuration (after for_agent so caps can provide instructions etc.)
         self._cap_instructions = self._root_capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
@@ -1733,6 +1734,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             explicit_workspace = True
         # Composed like the run's tree, so a run's workspace capability overrides the agent's namesake.
         _, workspace_capability = _compose_layers([base_capability], extra_capabilities)
+        _validate_single_workspace_supplier(workspace_capability)
         bootstrap_selection = (
             None
             if explicit_workspace
@@ -3220,6 +3222,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # checked even when no additional layer was composed. Reads the *combined* tree, so a
         # duplicate `combine` has already resolved is not reported twice over.
         _validate_instruction_source_ids([run_capability])
+        # Again on the resolved tree: a capability function's capability exists only now.
+        _validate_single_workspace_supplier(run_capability)
 
         # Re-extract get_*() from the resolved capability if anything is contributed per-run.
         capabilities = _build_run_capabilities(run_capability)
@@ -4587,6 +4591,26 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
                 raise exceptions.UserError(_repeated_id_message(cap.id))
         owners.setdefault(cap.id, type(cap))
     return set(owners)
+
+
+def _supplies_workspace(capability: AbstractCapability[Any]) -> bool:
+    # A wrapper forwards `get_workspace` to what it wraps, which is visited as a leaf of its own.
+    return (
+        not capability.defer_loading
+        and not isinstance(capability, WrapperCapability)
+        and type(capability).get_workspace is not AbstractCapability.get_workspace
+    )
+
+
+def _validate_single_workspace_supplier(capability: AbstractCapability[Any]) -> None:
+    """Reject a second capability that can supply the workspace: a run has one."""
+    suppliers = [leaf for leaf in leaf_capabilities(capability) if _supplies_workspace(leaf)]
+    if len(suppliers) > 1:
+        names = ', '.join(f'`{type(leaf).__name__}`' for leaf in suppliers)
+        raise exceptions.UserError(
+            f'A run has one workspace, but {names} can each supply one. Attach one workspace capability; '
+            'to use a different workspace for one run, pass it to the run with `workspace=`.'
+        )
 
 
 def _validate_instruction_source_ids(capabilities: Sequence[AbstractCapability[Any]]) -> None:

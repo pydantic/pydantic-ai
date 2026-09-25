@@ -21,7 +21,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
 )
 
-from .workspace_fakes import ConnectOnlyWorkspaceCapability, FakeWorkspace, WorkspaceCapability
+from .workspace_fakes import FakeWorkspace
 
 pytestmark = [
     pytest.mark.anyio,
@@ -103,33 +103,6 @@ async def test_explicit_workspace_overrides_the_capability(tmp_path: Path) -> No
     assert result.workspace.backend is explicit
 
 
-@pytest.mark.parametrize('local_first', [True, False])
-async def test_first_workspace_capability_wins(tmp_path: Path, local_first: bool) -> None:
-    other = WorkspaceCapability()
-    local = LocalWorkspace[Any](tmp_path)
-    agent = Agent(TestModel(), capabilities=[local, other] if local_first else [other, local])
-
-    result = await agent.run('go')
-
-    assert isinstance(result.workspace.backend, LocalWorkspaceBackend) is local_first
-    assert other.refs == ([] if local_first else [None])
-
-
-@pytest.mark.parametrize('source', ['explicit', 'history'])
-async def test_foreign_ref_is_declined_so_a_later_capability_can_claim_it(tmp_path: Path, source: str) -> None:
-    provider = ConnectOnlyWorkspaceCapability()
-    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path), provider])
-    ref = WorkspaceRef(provider='fake', id='remote')
-
-    if source == 'explicit':
-        result = await agent.run('go', workspace=ref)
-    else:
-        result = await agent.run('go', message_history=[ModelResponse(parts=[TextPart('old')], workspace_ref=ref)])
-
-    assert result.workspace.ref == ref
-    assert provider.ids == ['remote']
-
-
 async def test_foreign_ref_without_another_capability_raises(tmp_path: Path) -> None:
     agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path)])
 
@@ -176,27 +149,16 @@ async def test_local_ref_for_another_directory_is_never_followed(tmp_path: Path)
     assert fresh.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path / 'configured'))
 
 
-async def test_new_workspace_ignores_a_foreign_ref_in_history(tmp_path: Path) -> None:
-    provider = ConnectOnlyWorkspaceCapability()
-    agent = Agent(TestModel(), capabilities=[provider, LocalWorkspace(tmp_path)])
-    historical = ModelResponse(parts=[TextPart('old')], workspace_ref=WorkspaceRef(provider='fake', id='remote'))
-
-    result = await agent.run('go', message_history=[historical], workspace='new')
-
-    assert isinstance(result.workspace.backend, LocalWorkspaceBackend)
-    assert provider.ids == []
-
-
 async def test_a_repeated_local_workspace_resolves_to_the_later_one(tmp_path: Path) -> None:
-    """The default `id` makes a repeat one configuration stated twice; a distinct `id` keeps both."""
+    """The default `id` makes a repeat one configuration stated twice; a distinct `id` is a second workspace."""
     first, second = tmp_path / 'first', tmp_path / 'second'
     first.mkdir()
     second.mkdir()
     merged = Agent(TestModel(), capabilities=[LocalWorkspace(first), LocalWorkspace(second)])
-    distinct = Agent(TestModel(), capabilities=[LocalWorkspace(first), LocalWorkspace(second, id='scratch')])
 
     assert await (await merged.run('go')).workspace.working_dir() == str(second.resolve())
-    assert await (await distinct.run('go')).workspace.working_dir() == str(first.resolve())
+    with pytest.raises(UserError, match='A run has one workspace'):
+        Agent(TestModel(), capabilities=[LocalWorkspace(first), LocalWorkspace(second, id='scratch')])
 
 
 async def test_agent_spec_builds_a_local_workspace(tmp_path: Path) -> None:
