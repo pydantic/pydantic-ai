@@ -1,3 +1,7 @@
+---
+description: "Track tokens, cost, API calls and custom metrics per case in Pydantic Evals, check them in evaluators, and tag experiments with model and prompt metadata."
+---
+
 # Metrics & Attributes
 
 Track custom metrics and attributes during task execution for richer evaluation insights.

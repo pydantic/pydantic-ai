@@ -1,3 +1,7 @@
+---
+description: "Treat any model response stopped by a provider content filter as a ContentFilterError in Pydantic AI, even when partial or refusal text comes back."
+---
+
 # Raise Content Filter Error
 
 [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] is a [capability](overview.md) that opts into treating any model response with `finish_reason='content_filter'` as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], even when the provider returns partial text or refusal text:

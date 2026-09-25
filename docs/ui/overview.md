@@ -1,3 +1,7 @@
+---
+description: "Connect a Pydantic AI agent to a chat frontend with UI event stream protocols such as AG-UI and the Vercel AI SDK, served from Starlette or FastAPI."
+---
+
 # UI Event Streams
 
 If you're building a chat app or other interactive frontend for an AI agent, your backend will need to receive agent run input (like a chat message or complete [message history](../message-history.md)) from the frontend, and will need to stream the [agent's events](../agent.md#streaming-all-events) (like text, thinking, and tool calls) to the frontend so that the user knows what's happening in real time.

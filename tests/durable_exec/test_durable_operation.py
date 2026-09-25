@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
@@ -22,6 +23,7 @@ from pydantic_ai import (
     Tool,
     ToolsetTool,
 )
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     JournalCallableOperationBackend,
@@ -232,6 +234,51 @@ def test_prepare_run_context_without_agent() -> None:
     durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
 
     assert ctx._durable_operations == {}  # pyright: ignore[reportPrivateUsage]
+
+
+@dataclass
+class _RecordInDurableContext(AbstractCapability[Any]):
+    seen: list[bool]
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        self.seen.append(ctx.in_durable_context)
+
+
+@pytest.mark.parametrize('in_durable_context', [True, False])
+async def test_run_context_in_durable_context_follows_durability(in_durable_context: bool) -> None:
+    class ToggledJournalDurability(JournalDurability):
+        @property
+        def in_durable_context(self) -> bool:
+            return in_durable_context
+
+    seen: list[bool] = []
+    agent = Agent(
+        TestModel(), name='in_durable', capabilities=[_RecordInDurableContext(seen), ToggledJournalDurability()]
+    )
+
+    await agent.run('Hello')
+
+    assert seen == [in_durable_context]
+
+
+async def test_run_context_in_durable_context_without_durability() -> None:
+    seen: list[bool] = []
+    agent = Agent(TestModel(), capabilities=[_RecordInDurableContext(seen)])
+
+    await agent.run('Hello')
+
+    assert seen == [False]
+
+
+def test_run_context_in_durable_context_without_agent_or_durable_exec(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = Agent(TestModel(), name='in_durable', capabilities=[JournalDurability()])
+    assert RunContext[None](deps=None, model=TestModel(), usage=RunUsage()).in_durable_context is False
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    assert ctx.in_durable_context is True
+
+    monkeypatch.delitem(sys.modules, 'pydantic_ai.durable_exec._base')
+
+    assert ctx.in_durable_context is False
 
 
 def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:

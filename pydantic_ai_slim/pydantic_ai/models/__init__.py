@@ -66,6 +66,7 @@ from ..messages import (
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
@@ -379,8 +380,28 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     run_step: int
     """The request step being selected, starting at `1`."""
 
+    prompt: str | Sequence[UserContent] | None = None
+    """The run's user prompt, as [`RunContext.prompt`][pydantic_ai.tools.RunContext.prompt] holds it.
+
+    When a run resumes from a history ending in a request, without a new prompt, this is that request's prompt.
+    """
+
     messages: list[ModelMessage]
-    """The message history available before this request step."""
+    """The messages the selected model will be sent for this step, ending with the request being routed.
+
+    This is what [`RunContext.messages`][pydantic_ai.tools.RunContext.messages] holds for the step, minus
+    what is only added once the model is selected: the request's
+    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] and, on a fresh run's first step,
+    its system prompt parts. Earlier requests keep the instructions they were sent with.
+
+    When a run resumes from a response with tool calls still to run, the step's request is their
+    results, which don't exist before the model is selected, so the messages end with that response.
+    They also end with the response when it's a suspended one being continued, as no request is sent.
+
+    It's a new list, so adding or removing messages doesn't change the run's. Don't change the
+    messages in it: they're the run's own, except for the request being routed on a run's first
+    step, which is built for selection, so changing it has no effect on what's sent.
+    """
 
     usage: RunUsage
     """Usage accumulated by the run before this request step."""

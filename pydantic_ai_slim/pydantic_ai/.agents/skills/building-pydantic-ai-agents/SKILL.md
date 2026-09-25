@@ -330,8 +330,12 @@ Key facts for building realtime agents:
   Under manual turn control, stop sending and call `clear_audio()` instead.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
-  `google_async_tool_calls=True` on a native-audio model). An unhandled tool exception is raised
-  from session iteration while it is active; otherwise it ends `stream_audio()` and
+  `google_async_tool_calls=True` on a native-audio model, and does it unconditionally on
+  `gemini-3.8-live-extended-thinking`, which has no blocking mode and reasons in the background —
+  it speaks a filler, runs the tool, and speaks again inside one exchange, so read
+  `RealtimeTurnCompleteEvent` or await `session.wait_for_reply()` rather than watching each response
+  to know it's done). An unhandled tool
+  exception is raised from session iteration while it is active; otherwise it ends `stream_audio()` and
   `stream_transcripts()` and is raised when the session context closes. The next outbound method
   raises an already-ended receive side's failure instead, and every failure is delivered only once.
   Its call is recorded with `outcome='failed'`, leaving history valid for a standard-agent handoff.
