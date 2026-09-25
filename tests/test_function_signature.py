@@ -153,6 +153,260 @@ def test_render_type_definitions_with_conflicts():
     assert any('class Address(TypedDict):' in r for r in rendered)
 
 
+# Names generated signatures may reference without defining: the JSON-type builtins
+# the renderer emits, plus its annotation helpers.
+_ANNOTATION_BUILTINS = frozenset(
+    {'TypedDict', 'Any', 'NotRequired', 'Literal', 'str', 'int', 'float', 'bool', 'list', 'dict', 'tuple'}
+)
+
+
+def _assert_annotations_resolve(source: str) -> None:
+    """Assert every name the generated code references is defined by it.
+
+    A definition may reference a class emitted later in the same source, so this is a
+    set check on the parsed tree, not an execution.
+    """
+    tree = ast.parse(source)
+    defined = {
+        node.name for node in tree.body if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    # Only Load-context names are references; annotation targets (field names) are Store.
+    referenced = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+    assert referenced <= defined | _ANNOTATION_BUILTINS
+
+
+def test_render_type_definitions_param_return_name_collision():
+    """A tool whose parameter and return schemas each define a `User` renders unambiguously.
+
+    The two `$def`s have the same name but different structures, so both need the tool-name
+    prefix — which must still tell them apart, and `RetWrap.user` must resolve to a class
+    that is actually emitted.
+    """
+    sig = FunctionSignature.from_schema(
+        name='sync_user',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'user': {'$ref': '#/$defs/User'}},
+            'required': ['user'],
+            '$defs': {
+                'User': {
+                    'type': 'object',
+                    'properties': {'name': {'type': 'string'}},
+                    'required': ['name'],
+                },
+            },
+        },
+        return_schema={
+            '$ref': '#/$defs/RetWrap',
+            '$defs': {
+                'User': {
+                    'type': 'object',
+                    'properties': {'id': {'type': 'integer'}, 'email': {'type': 'string'}},
+                    'required': ['id', 'email'],
+                },
+                'RetWrap': {
+                    'type': 'object',
+                    'properties': {'user': {'$ref': '#/$defs/User'}},
+                    'required': ['user'],
+                },
+            },
+        },
+    )
+    conflicting = FunctionSignature.get_conflicting_type_names([sig])
+    assert conflicting == frozenset({'User'})
+
+    definitions = FunctionSignature.render_type_definitions([sig], conflicting)
+    rendered = sig.render('...', name='sync_user', conflicting_type_names=conflicting)
+
+    # Every emitted class name is unique — a duplicate would make the second definition
+    # silently shadow the first, rebinding the `user` parameter to the return type's shape.
+    headers = [d.splitlines()[0] for d in definitions]
+    assert len(headers) == len(set(headers))
+
+    # Every annotation resolves to an emitted class — `RetWrap.user` must reference the
+    # return-side `User` under its prefixed name, not a plain `User` nothing defines.
+    _assert_annotations_resolve('\n\n'.join([*definitions, rendered]))
+
+    assert rendered == snapshot("""\
+def sync_user(*, user: sync_user_User) -> RetWrap:
+    ...\
+""")
+    assert definitions == snapshot(
+        [
+            """\
+class sync_user_User(TypedDict):
+    name: str\
+""",
+            """\
+class sync_user_User_2(TypedDict):
+    id: int
+    email: str\
+""",
+            """\
+class RetWrap(TypedDict):
+    user: sync_user_User_2\
+""",
+        ]
+    )
+
+
+def test_render_type_definitions_non_conflicting_type_references_conflict():
+    """A non-conflicting type's field references the prefixed conflicting definition.
+
+    `Wrapper` itself doesn't conflict, but its `user` field references a `User` that does,
+    so the field must render that `User` under its prefixed name instead of a plain `User`
+    that no emitted definition provides.
+    """
+    sig1 = FunctionSignature.from_schema(
+        name='tool_a',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'wrap': {'$ref': '#/$defs/Wrapper'}},
+            'required': ['wrap'],
+            '$defs': {
+                'Wrapper': {
+                    'type': 'object',
+                    'properties': {'user': {'$ref': '#/$defs/User'}},
+                    'required': ['user'],
+                },
+                'User': {
+                    'type': 'object',
+                    'properties': {'name': {'type': 'string'}},
+                    'required': ['name'],
+                },
+            },
+        },
+    )
+    sig2 = FunctionSignature.from_schema(
+        name='tool_b',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'user': {'$ref': '#/$defs/User'}},
+            'required': ['user'],
+            '$defs': {
+                'User': {
+                    'type': 'object',
+                    'properties': {'id': {'type': 'integer'}},
+                    'required': ['id'],
+                },
+            },
+        },
+    )
+    conflicting = FunctionSignature.get_conflicting_type_names([sig1, sig2])
+    assert conflicting == frozenset({'User'})
+
+    definitions = FunctionSignature.render_type_definitions([sig1, sig2], conflicting)
+    rendered = [
+        sig1.render('...', name='tool_a', conflicting_type_names=conflicting),
+        sig2.render('...', name='tool_b', conflicting_type_names=conflicting),
+    ]
+
+    # Every annotation must resolve to an emitted class — `Wrapper.user` references a
+    # conflicting `User`, so it must render that `User`'s prefixed name, not a plain
+    # `User` nothing defines.
+    _assert_annotations_resolve('\n\n'.join([*definitions, *rendered]))
+
+    assert definitions == snapshot(
+        [
+            """\
+class Wrapper(TypedDict):
+    user: tool_a_User\
+""",
+            """\
+class tool_a_User(TypedDict):
+    name: str\
+""",
+            """\
+class tool_b_User(TypedDict):
+    id: int\
+""",
+        ]
+    )
+
+
+def test_render_type_definitions_shared_type_references_conflict():
+    """A type shared by several tools references the prefixed conflicting definition.
+
+    `tool_a` and `tool_b` define a structurally identical `User`, which
+    `get_conflicting_type_names` unifies to one object, and `tool_c` defines a
+    conflicting one. The shared `User` still conflicts by name, so it needs a prefix
+    too — and `Wrapper.user` must resolve to the prefixed name the shared definition
+    actually renders under, not a plain `User` nothing defines.
+    """
+    shared_user_def = {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}},
+        'required': ['name'],
+    }
+    sig1 = FunctionSignature.from_schema(
+        name='tool_a',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'user': {'$ref': '#/$defs/User'}},
+            'required': ['user'],
+            '$defs': {'User': shared_user_def},
+        },
+    )
+    sig2 = FunctionSignature.from_schema(
+        name='tool_b',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'wrap': {'$ref': '#/$defs/Wrapper'}},
+            'required': ['wrap'],
+            '$defs': {
+                'Wrapper': {
+                    'type': 'object',
+                    'properties': {'user': {'$ref': '#/$defs/User'}},
+                    'required': ['user'],
+                },
+                'User': shared_user_def,
+            },
+        },
+    )
+    sig3 = FunctionSignature.from_schema(
+        name='tool_c',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'user': {'$ref': '#/$defs/User'}},
+            'required': ['user'],
+            '$defs': {
+                'User': {
+                    'type': 'object',
+                    'properties': {'id': {'type': 'integer'}},
+                    'required': ['id'],
+                },
+            },
+        },
+    )
+    conflicting = FunctionSignature.get_conflicting_type_names([sig1, sig2, sig3])
+    assert conflicting == frozenset({'User'})
+
+    definitions = FunctionSignature.render_type_definitions([sig1, sig2, sig3], conflicting)
+    rendered = [sig.render('...', name=sig.name, conflicting_type_names=conflicting) for sig in (sig1, sig2, sig3)]
+
+    # Every annotation must resolve to an emitted class — `Wrapper.user` references the
+    # shared conflicting `User`, so it must render that `User`'s prefixed name, not a
+    # plain `User` nothing defines.
+    _assert_annotations_resolve('\n\n'.join([*definitions, *rendered]))
+
+    assert definitions == snapshot(
+        [
+            """\
+class tool_a_User(TypedDict):
+    name: str\
+""",
+            """\
+class Wrapper(TypedDict):
+    user: tool_a_User\
+""",
+            """\
+class tool_c_User(TypedDict):
+    id: int\
+""",
+        ]
+    )
+
+
 def test_render_type_definitions_empty():
     """render_type_definitions returns empty list when no referenced types."""
     sig = FunctionSignature(

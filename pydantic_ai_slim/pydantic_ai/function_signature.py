@@ -25,10 +25,11 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, cast
 
-# Set during rendering to map original type names to prefixed names for
-# dedup conflict resolution (e.g. {'User': 'tool_a_User'}).
-# Populated by FunctionSignature.render(), consulted by TypeSignature.display_name.
-_type_name_overrides: ContextVar[dict[str, str]] = ContextVar('_type_name_overrides', default={})
+# Set during rendering to map type objects (by id) to prefixed names for
+# dedup conflict resolution (e.g. {id(user): 'tool_a_User'}).
+# Populated by FunctionSignature.render() and render_type_definitions(),
+# consulted by TypeSignature.display_name.
+_type_name_overrides: ContextVar[dict[int, str]] = ContextVar('_type_name_overrides', default={})
 
 
 # =============================================================================
@@ -150,7 +151,7 @@ class TypeSignature:
     @property
     def display_name(self) -> str:
         """The type name, with tool-name prefix applied if rendering context is set."""
-        return _type_name_overrides.get().get(self.name, self.name)
+        return _type_name_overrides.get().get(id(self), self.name)
 
     def __str__(self) -> str:
         """Return the type name (for use in type expressions like `def foo(x: User)`)."""
@@ -162,14 +163,14 @@ class TypeSignature:
         """Render the full TypedDict class definition.
 
         Args:
-            owner_name: The owning tool name, used to build prefixed type names
-                for conflicting types (e.g. `get_user_Address`).
+            owner_name: The owning tool name, used to build this type's prefixed name
+                when it conflicts with another type (e.g. `get_user_Address`).
             conflicting_type_names: Set of type names that need tool-name prefixes
                 (from `get_conflicting_type_names`). Only effective when `owner_name`
                 is also provided.
         """
-        if owner_name and conflicting_type_names:
-            overrides = {n: f'{owner_name}_{n}' for n in conflicting_type_names}
+        if owner_name and self.name in conflicting_type_names:
+            overrides = {id(self): f'{owner_name}_{self.name}'}
             token = _type_name_overrides.set(overrides)
             try:
                 return self._render_definition()
@@ -269,7 +270,7 @@ class FunctionSignature:
         """
         render_name = name or self.name
         description = description if description is not None else self.description
-        overrides = {n: f'{render_name}_{n}' for n in conflicting_type_names}
+        overrides = _prefixed_type_names(self.referenced_types, render_name, conflicting_type_names)
         token = _type_name_overrides.set(overrides)
         try:
             return self._render(body, name=render_name, description=description, is_async=is_async)
@@ -424,7 +425,9 @@ class FunctionSignature:
 
         For types whose names conflict across signatures (as identified by
         `get_conflicting_type_names`), each definition is rendered with a
-        tool-name prefix (e.g. `get_user_Address`).
+        tool-name prefix (e.g. `get_user_Address`). References to conflicting
+        types — from any definition's fields as well as from signatures —
+        resolve to those prefixed names.
 
         Args:
             signatures: The function signatures (after `get_conflicting_type_names`).
@@ -437,17 +440,20 @@ class FunctionSignature:
         if not unique_types:
             return []
 
-        owner_for: dict[int, str] = {}
+        overrides: dict[int, str] = {}
         for sig in signatures:
-            for tsig in sig.referenced_types:
-                if tsig.name in conflicting_type_names and id(tsig) not in owner_for:
-                    owner_for[id(tsig)] = sig.name
+            # A type shared by several signatures (unified to one object by
+            # `get_conflicting_type_names`) takes its first owner's prefix.
+            for type_id, prefixed in _prefixed_type_names(
+                sig.referenced_types, sig.name, conflicting_type_names
+            ).items():
+                overrides.setdefault(type_id, prefixed)
 
-        rendered: list[str] = []
-        for tsig in unique_types:
-            owner = owner_for.get(id(tsig))
-            rendered.append(tsig.render_definition(owner_name=owner, conflicting_type_names=conflicting_type_names))
-        return rendered
+        token = _type_name_overrides.set(overrides)
+        try:
+            return [tsig.render_definition() for tsig in unique_types]
+        finally:
+            _type_name_overrides.reset(token)
 
 
 # Shared singletons
@@ -837,6 +843,34 @@ def _build_type_signature(
 # =============================================================================
 # Deduplication helpers
 # =============================================================================
+
+
+def _prefixed_type_names(
+    referenced: list[TypeSignature],
+    owner_name: str,
+    conflicting_type_names: frozenset[str],
+) -> dict[int, str]:
+    """Map conflicting type objects to the prefixed names they render as.
+
+    Each conflicting type is prefixed with `owner_name` (its tool's name). One
+    signature can own several same-named conflicting types — e.g. a tool whose
+    parameter and return schemas each define a different `User` `$def` — so a name
+    repeated under the same owner gets a numeric suffix, keeping every rendered
+    class name unique.
+    """
+    overrides: dict[int, str] = {}
+    used: set[str] = set()
+    for tsig in referenced:
+        if tsig.name not in conflicting_type_names or id(tsig) in overrides:
+            continue
+        prefixed = f'{owner_name}_{tsig.name}'
+        suffix = 2
+        while prefixed in used:
+            prefixed = f'{owner_name}_{tsig.name}_{suffix}'
+            suffix += 1
+        used.add(prefixed)
+        overrides[id(tsig)] = prefixed
+    return overrides
 
 
 def _replace_type_refs(sig: FunctionSignature, old_ref: TypeSignature, canonical: TypeSignature) -> None:
