@@ -138,15 +138,21 @@ To make a single run read-only, wrap its workspace in
 [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] and pass it to the run (not under
 [durable execution](#durable-execution)):
 
-```python {requires="workspace_agent.py,file_tools.py"}
+```python
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 
-from file_tools import agent  # with the `read_source` tool from above
+reader = Agent('anthropic:claude-opus-5-5')
+
+
+@reader.tool
+async def read_file(ctx: RunContext, path: str) -> str:
+    return await ctx.workspace.read_text(path)
 
 
 async def main() -> None:
     workspace = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))
-    await agent.run('Explain what fizzbuzz.py does.', workspace=workspace)
+    await reader.run('Explain what fizzbuzz.py does.', workspace=workspace)
 ```
 
 `LocalWorkspaceBackend('.')` is the [backend](#writing-a-backend) behind `LocalWorkspace('.')`: the
