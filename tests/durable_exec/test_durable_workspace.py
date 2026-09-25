@@ -165,7 +165,8 @@ async def test_ensure_runs_once_before_hooks_and_every_side_shares_one_environme
     assert _workspace_units(durability) == snapshot(['ensure', 'write_bytes', 'exists'])
     # `ensure` created one environment on the live backend an in-process unit shares with the
     # container, so nothing was rebuilt or reattached.
-    assert [(backend.name, backend.create_calls, backend.attach_calls) for backend in supplier.backends] == snapshot(
+    used = [backend for backend in supplier.backends if backend.create_calls or backend.attach_calls]
+    assert [(backend.name, backend.create_calls, backend.attach_calls) for backend in used] == snapshot(
         [('fresh', 1, 0)]
     )
 
@@ -220,6 +221,14 @@ async def test_policy_wrapper_is_enforced_inside_the_unit(tmp_path: Path) -> Non
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await result.workspace.write_text('x.txt', 'x')
     assert _workspace_units(durability) == ['ensure', 'write_bytes']
+
+
+async def test_a_run_level_workspace_policy_is_rejected(tmp_path: Path) -> None:
+    """Units rebuild the workspace from the agent's capabilities, so a run-level read-only flag would be lost."""
+    agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path), FakeDurability()])
+
+    with pytest.raises(UserError, match='the workspace comes from the capabilities the agent is built with'):
+        await agent.run('go', capabilities=[LocalWorkspace(tmp_path, read_only=True)])
 
 
 async def test_expected_errors_cross_as_data_and_re_raise(tmp_path: Path) -> None:

@@ -55,7 +55,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces import Workspace, WrapperWorkspace
 
 from .. import _usage_attribution
 from ._capability_operation import (
@@ -438,7 +438,24 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         assert run_capability is not None
         if explicit:
             workspace = self._claim_explicit_workspace(run_capability, ctx, workspace)
+        else:
+            self._check_construction_workspace(ctx, workspace)
         return DurableWorkspace(workspace, durability=self, ctx=ctx)
+
+    def _check_construction_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace) -> None:
+        """Reject a run-level workspace a unit on another worker would not rebuild.
+
+        Units rebuild the workspace from the agent's construction-time capabilities, so a policy that
+        only a run-level capability adds (say `read_only=True`) would be silently lost inside them.
+        """
+        assert self._agent is not None
+        construction = select_workspace(self._agent.root_capability, ctx, workspace.ref)
+        if construction is None or _workspace_layers(construction) != _workspace_layers(workspace):
+            raise UserError(
+                f'Under {self.engine_name}, the workspace comes from the capabilities the agent is built with, '
+                'because each durable unit rebuilds it from them. This run selected a different workspace; '
+                'configure it on the agent instead of passing it to the run.'
+            )
 
     def _claim_explicit_workspace(
         self, run_capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], workspace: Workspace
@@ -1979,3 +1996,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             '(or pass the registered instance), or pass a model-name string and build the instance '
             'from it with a `ResolveModelId` capability.'
         )
+
+
+def _workspace_layers(workspace: Workspace) -> list[type[object]]:
+    """The policy wrappers around a workspace and its backend type, outermost first."""
+    layers: list[type[object]] = []
+    while isinstance(workspace, WrapperWorkspace):
+        layers.append(type(workspace))
+        workspace = workspace.wrapped
+    return [*layers, type(workspace), type(workspace.backend)]
