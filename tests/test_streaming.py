@@ -42,6 +42,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     OutputToolCallEvent,
     OutputToolResultEvent,
@@ -6844,6 +6845,109 @@ async def test_completed_streamed_response_replay_events(
         replay_events=replayed_events,
     )
     assert [event async for event in buffered_stream] == replayed_events
+
+
+@pytest.mark.parametrize('read_each', [False, True])
+@pytest.mark.parametrize('details', [None, {}, {'initial': 1}], ids=['no-details', 'empty-details', 'details'])
+async def test_replay_text_preserves_snapshots(read_each: bool, details: dict[str, Any] | None) -> None:
+    start = TextPart('a', id='part', provider_name='first', provider_details=details)
+    response = ModelResponse(
+        parts=[TextPart('abc', id='part', provider_name='second', provider_details={**(details or {}), 'added': 2})]
+    )
+    events: list[ModelResponseStreamEvent] = [
+        PartStartEvent(index=7, part=start),
+        PartDeltaEvent(index=7, delta=TextPartDelta('b')),
+        PartDeltaEvent(index=7, delta=TextPartDelta('c')),
+        PartDeltaEvent(index=7, delta=TextPartDelta('', provider_name='second', provider_details={'added': 2})),
+    ]
+    stream = CompletedStreamedResponse(
+        response, model_request_parameters=models.ModelRequestParameters(), replay_events=events
+    )
+    observed: list[ModelResponseStreamEvent] = []
+    snapshots: list[ModelResponse] = []
+    async for event in stream:
+        observed.append(event)
+        if event is events[1]:
+            start.provider_details = {'changed_after_delta': True}
+        if read_each:
+            snapshots.append(stream.get())
+    assert all(actual is expected for actual, expected in zip(observed, events, strict=True))
+    assert stream.get() == response
+    assert start.content == 'a'
+    if read_each:
+        assert [snapshot.text for snapshot in snapshots] == ['a', 'ab', 'abc', 'abc']
+        part = snapshots[1].parts[0]
+        assert isinstance(part, TextPart)
+        part.provider_details = {'changed_after_replay': True}
+        assert stream.get() == response
+
+
+@pytest.mark.parametrize('custom_part', [False, True])
+async def test_replay_text_preserves_subclasses(custom_part: bool) -> None:
+    seen_lengths: list[int] = []
+
+    @dataclass
+    class CheckedPart(TextPart):
+        def __post_init__(self) -> None:
+            seen_lengths.append(len(self.content))
+
+    class CheckedDelta(TextPartDelta):
+        def apply(self, part: ModelResponsePart) -> TextPart:
+            assert isinstance(part, TextPart)
+            assert part.content == 'ab'
+            return replace(part, content=part.content.upper() + self.content_delta)
+
+    start = CheckedPart('a') if custom_part else TextPart('a')
+    expected = CheckedPart('abc') if custom_part else TextPart('ABc')
+    seen_lengths.clear()
+    events: list[ModelResponseStreamEvent] = [
+        PartStartEvent(index=0, part=start),
+        PartDeltaEvent(index=0, delta=TextPartDelta('b')),
+        PartDeltaEvent(index=0, delta=TextPartDelta('c') if custom_part else CheckedDelta('c')),
+    ]
+    response = ModelResponse(parts=[expected])
+    stream = CompletedStreamedResponse(
+        response, model_request_parameters=models.ModelRequestParameters(), replay_events=events
+    )
+    async for _ in stream:
+        pass
+    assert stream.get() == response
+    assert start.content == 'a'
+    assert seen_lengths == ([2, 3] if custom_part else [])
+
+
+async def test_replay_text_requires_start() -> None:
+    stream = CompletedStreamedResponse(
+        ModelResponse(parts=[]),
+        model_request_parameters=models.ModelRequestParameters(),
+        replay_events=[PartDeltaEvent(index=7, delta=TextPartDelta('text'))],
+    )
+    with pytest.raises(AssertionError):
+        async for _ in stream:
+            pass
+
+
+async def test_replay_text_cancel_preserves_buffered_content() -> None:
+    events: list[ModelResponseStreamEvent] = [
+        PartStartEvent(index=0, part=TextPart('a')),
+        PartDeltaEvent(index=0, delta=TextPartDelta('b')),
+        PartDeltaEvent(index=0, delta=TextPartDelta('c')),
+    ]
+    stream = CompletedStreamedResponse(
+        ModelResponse(parts=[TextPart('abc')]),
+        model_request_parameters=models.ModelRequestParameters(),
+        replay_events=events,
+    )
+    iterator = aiter(stream)
+    await anext(iterator)
+    await anext(iterator)
+    await stream.cancel()
+    await stream.cancel()
+    assert stream.get().text == 'ab'
+    assert stream.get().state == 'interrupted'
+    assert [event async for event in iterator] == events[2:]
+    assert stream.get().text == 'abc'
+    assert stream.get().state == 'complete'
 
 
 @pytest.mark.parametrize('events', [True, [PartStartEvent(index=0, part=TextPart(content='hi'))]])
