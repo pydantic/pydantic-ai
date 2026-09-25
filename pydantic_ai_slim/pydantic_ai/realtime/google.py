@@ -345,6 +345,14 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     `1007 BLOCKING function calls are not supported for this model`.
     """
 
+    google_closes_tool_call_turn_separately: bool
+    """Whether the model closes a tool-call turn with a `turn_complete` of its own. Default: `False`.
+
+    Vertex's half-cascade `gemini-live-2.5-flash` sends one once it has taken the tool results and
+    another after speaking the answer (verified live); other Live models send only the answer's. With
+    this set, the first of the two is reported as the tool-call response's usage rather than a turn
+    boundary, so the exchange isn't reported complete before the answer is spoken.
+    """
     google_supports_async_tool_call_scheduling: bool
     """Whether the model takes a `scheduling` field on an async tool call's result. Default: `False`.
 
@@ -1241,6 +1249,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._async_tool_call_scheduling_enabled = profile is None or cast('GoogleRealtimeModelProfile', profile).get(
             'google_supports_async_tool_call_scheduling', False
         )
+        self._closes_tool_call_turn_separately = profile is not None and cast(
+            'GoogleRealtimeModelProfile', profile
+        ).get('google_closes_tool_call_turn_separately', False)
         # Provider name stamped onto native-tool history parts (grounding / code execution), matching the
         # classic `GoogleModel` (`NativeToolCallPart.provider_name`), so a turn's history is provider-tagged
         # identically whether it came from a realtime session or a classic run.
@@ -1268,9 +1279,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # verified live), so when this is set at reconnect time the turn's boundary would otherwise
         # never arrive — see `__aiter__`, which closes the orphaned turn before the reconnect event.
         self._turn_open = False
-        # Whether the turn's latest output is a tool-call frame, with nothing said since. Some models
-        # (Vertex `gemini-live-2.5-flash`, verified live) close the tool-call turn with its own
-        # `turn_complete` once they take the results, before speaking the answer; see `_map_message`.
+        # Whether the turn's latest output is a tool-call frame, with nothing said since. A model that
+        # `google_closes_tool_call_turn_separately` closes that turn with its own `turn_complete` once it
+        # takes the results, before speaking the answer; see `_map_message`. Only the first boundary after
+        # the results is taken for that: the next one always ends the turn, so an empty answer completes.
         self._tool_call_turn_unanswered = False
 
     @property
@@ -1580,7 +1592,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 and not interrupted
             )
             closes_answered_tool_call_turn = (
-                self._tool_call_turn_unanswered and not interrupted and not more_expected and not self._tool_calls
+                self._closes_tool_call_turn_separately
+                and self._tool_call_turn_unanswered
+                and not interrupted
+                and not more_expected
+                and not self._tool_calls
             )
             self._tool_call_turn_unanswered = False
             # The model said nothing after its tool calls and has all their results: this closes the

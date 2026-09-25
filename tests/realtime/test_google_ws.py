@@ -599,6 +599,7 @@ def test_profile_allow_seeding() -> None:
         google_requires_async_tool_calls=False,
         google_supports_async_tool_call_scheduling=True,
         google_supports_affective_dialog=True,
+        google_closes_tool_call_turn_separately=False,
     )
 
 

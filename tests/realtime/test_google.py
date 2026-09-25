@@ -2855,13 +2855,26 @@ def _turn_complete_message() -> genai_types.LiveServerMessage:
     )
 
 
+def _separate_boundary_conn() -> GoogleRealtimeConnection:
+    return GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()),
+        profile=GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True),
+    )
+
+
+def _spoken(text: str) -> genai_types.LiveServerMessage:
+    return genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text=text))
+    )
+
+
 async def test_turn_complete_closing_an_answered_tool_call_turn_is_not_a_response_boundary() -> None:
     """Vertex `gemini-live-2.5-flash` closes the tool-call turn once it takes the results, before answering.
 
     That boundary reports its usage but no `ResponseDone`, which would end the exchange (and
     `wait_for_reply()`) before the answer; the answer's own `turn_complete` does.
     """
-    conn = _conn(_RecordingSession())
+    conn = _separate_boundary_conn()
     conn._map_message(_tool_call_message())  # pyright: ignore[reportPrivateUsage]
     await conn.send(ToolResult(tool_call_id='c1', output='sunny'))
     assert conn._map_message(_turn_complete_message()) == [  # pyright: ignore[reportPrivateUsage]
@@ -2869,12 +2882,48 @@ async def test_turn_complete_closing_an_answered_tool_call_turn_is_not_a_respons
     ]
     assert conn._turn_open  # pyright: ignore[reportPrivateUsage]
 
-    conn._map_message(  # pyright: ignore[reportPrivateUsage]
-        genai_types.LiveServerMessage(
-            server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Sunny.'))
-        )
-    )
+    conn._map_message(_spoken('Sunny.'))  # pyright: ignore[reportPrivateUsage]
     assert conn._map_message(_turn_complete_message())[-1] == ResponseDone()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_empty_answer_after_the_tool_call_turn_boundary_still_ends_the_turn() -> None:
+    """Only the first boundary after the results is the tool-call turn's: the next ends the turn, even empty."""
+    conn = _separate_boundary_conn()
+    conn._map_message(_tool_call_message())  # pyright: ignore[reportPrivateUsage]
+    await conn.send(ToolResult(tool_call_id='c1', output='sunny'))
+    conn._map_message(_turn_complete_message())  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(_turn_complete_message())[-1] == ResponseDone()  # pyright: ignore[reportPrivateUsage]
+    assert not conn._turn_open  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_model_without_a_separate_tool_call_boundary_keeps_every_turn_complete() -> None:
+    """Other Gemini models send only the answer's boundary, so one after the results is always the turn's end.
+
+    Deciding by whether the results had been sent would make an empty answer hang, and would depend on
+    how fast the tool ran relative to a boundary already on its way.
+    """
+    conn = _conn(_RecordingSession())
+    conn._map_message(_tool_call_message())  # pyright: ignore[reportPrivateUsage]
+    await conn.send(ToolResult(tool_call_id='c1', output='sunny'))
+    assert conn._map_message(_turn_complete_message())[-1] == ResponseDone()  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'separate'),
+    [
+        ('gemini-live-2.5-flash', True),
+        ('gemini-live-2.5-flash-preview-native-audio-09-2025', False),
+        ('gemini-2.5-flash-native-audio-latest', False),
+        ('gemini-3.1-flash-live-preview', False),
+        ('gemini-3.8-live', False),
+    ],
+)
+def test_profile_marks_models_that_close_the_tool_call_turn_separately(model_name: str, separate: bool) -> None:
+    profile = cast(
+        'GoogleRealtimeModelProfile',
+        GoogleRealtimeModel(model_name, provider=GoogleProvider(client=_fake_client(_RecordingSession()))).profile,
+    )
+    assert profile.get('google_closes_tool_call_turn_separately') is separate
 
 
 async def test_turn_complete_with_a_tool_call_still_unanswered_stays_a_response_boundary() -> None:
@@ -2901,6 +2950,7 @@ async def test_reconnect_forgets_an_unanswered_tool_call_turn() -> None:
         cast('AsyncSession', _AnswersThenDrops()),
         dial=dial,
         reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False},
+        profile=GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True),
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
 
