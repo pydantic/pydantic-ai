@@ -11,7 +11,8 @@ permissions: {}
 jobs:
   benchmarks:
     name: Run benchmarks
-    runs-on: ubuntu-latest
+    runs-on: codspeed-macro-arm64-graviton-ubuntu-22-04
+    timeout-minutes: 10
     permissions:
       id-token: write
       contents: read
@@ -32,5 +33,5 @@ jobs:
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
-          mode: instrumentation
+          mode: walltime
           run: uv run pytest tests/benchmarks --codspeed
