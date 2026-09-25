@@ -10468,6 +10468,149 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
             await events
 
 
+async def test_tool_failure_leaves_a_reply_requested_before_it_owed() -> None:
+    """A turn sent while a tool ran is still waited for after that tool fails: only its exchange ended."""
+    fail_now = asyncio.Event()
+    answer = asyncio.Event()
+
+    class _AnswersTheQueuedTurn(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}', response_usage_follows=True)
+            yield SessionUsage(usage=RequestUsage(input_tokens=1), finish_reason='tool_call')
+            await answer.wait()
+            yield OutputTranscript(text='B answered', is_final=True)
+            yield ResponseDone()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await fail_now.wait()
+        raise ValueError('tool exploded')
+
+    session = RealtimeSession(_AnswersTheQueuedTurn([]), runner)
+    errors: list[BaseException] = []
+
+    async def consume() -> None:
+        while True:
+            try:
+                async for _ in session:
+                    pass
+            except ValueError as e:
+                errors.append(e)
+            else:
+                return
+
+    async with session:
+        events = asyncio.create_task(consume())
+        await session.send('A')
+        await _until(lambda: 'c1' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        await session.send('B')  # reserved while A's tool runs
+        fail_now.set()
+        await _until(lambda: bool(errors))
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert not waiting.done(), "returned before B's answer"
+        answer.set()
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await waiting
+            await events
+
+
+async def test_tool_failure_does_not_hide_a_later_server_started_reply() -> None:
+    """After a tool fails, a reply the server starts on its own (server VAD) is still waited for."""
+    reply_started = asyncio.Event()
+    finish_reply = asyncio.Event()
+
+    class _ServerReplies(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}')
+            await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
+            yield OutputTranscript(text='unprompted')
+            reply_started.set()
+            await finish_reply.wait()
+            yield ResponseDone()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise ValueError('tool exploded')
+
+    session = RealtimeSession(_ServerReplies([]), runner)
+    errors: list[BaseException] = []
+
+    async def consume() -> None:
+        while True:
+            try:
+                async for _ in session:
+                    pass
+            except ValueError as e:
+                errors.append(e)
+            else:
+                return
+
+    async with session:
+        events = asyncio.create_task(consume())
+        await reply_started.wait()
+        await _until(lambda: session._response_active)  # pyright: ignore[reportPrivateUsage]
+        waiting = asyncio.create_task(session.wait_for_reply())
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert not waiting.done()
+        finish_reply.set()
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await waiting
+            await events
+
+
+async def test_provider_answering_a_batch_by_itself_takes_the_reservation_made_before_its_last_result() -> None:
+    """A provider that answers the moment the last result arrives must find a reservation to take.
+
+    The fast result is still going out when the slow one settles, and the provider starts its answer
+    as soon as the slow one arrives, before that send returns. The reply was counted before the last
+    result left, so nothing leaks and `wait_for_reply()` returns once the answer is done.
+    """
+
+    def last_result_sent() -> bool:
+        return any(isinstance(content, ToolResult) and content.tool_call_id == 'c2' for content in conn.sent)
+
+    class _AnswersOnArrival(_ToolBatchConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            assert isinstance(content, ToolResult)
+            if content.tool_call_id == 'c1':
+                # Still going out while the slow call settles and queues its own result.
+                await _until(lambda: session._tool_call_batches['c1'].sending == 2)  # pyright: ignore[reportPrivateUsage]
+            await super().send(content)
+            if content.tool_call_id == 'c2':
+                # The provider's answer begins before this send returns.
+                await answer_begun.wait()
+                last_send_returned.set()
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            for call in self.calls:
+                yield call
+            yield SessionUsage(usage=RequestUsage(input_tokens=1))
+            await _until(last_result_sent)
+            yield OutputTranscript(text='both', is_final=True)
+            answer_begun.set()  # the session has taken the answer's first event
+            await last_send_returned.wait()
+            yield ResponseDone()
+
+    answer_begun = asyncio.Event()
+    last_send_returned = asyncio.Event()
+    release_slow = asyncio.Event()
+    conn = _AnswersOnArrival()
+    session = RealtimeSession(
+        conn, _slow_until(release_slow), profile=RealtimeModelProfile(supports_manual_turn_control=False)
+    )
+    async with session:
+        events = asyncio.create_task(drain_events(session))
+        await _until(lambda: session._open_tool_batch is None and bool(session._tool_call_batches))  # pyright: ignore[reportPrivateUsage]
+        release_slow.set()
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await _until(last_result_sent)
+            await session.wait_for_reply()
+        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        await session.close()
+        events.cancel()
+
+
 async def test_wait_for_reply_returns_when_a_tool_result_trips_the_request_limit() -> None:
     """The request a tool result would make can exceed `request_limit`; the reply then never comes."""
 
