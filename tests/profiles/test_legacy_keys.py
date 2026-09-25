@@ -101,11 +101,13 @@ def test_legacy_provider_key_from_callable_profile_wins_over_carried_over_defaul
         assert model.profile.get('supports_forced_tool_choice') is False
 
 
-def test_legacy_provider_key_from_mutating_callable_profile():
-    """A callable that updates the profile it's given in place, rather than returning a copy, gets the same result."""
+def test_current_key_set_in_place_by_callable_profile_wins_over_legacy():
+    """A callable that sets the current spelling on the profile it's given, in place, still has it win over a legacy
+    spelling it also sets: the comparison is against the profile before the callable ran."""
 
     def disable_forcing(profile: ModelProfile) -> ModelProfile:
-        profile.update({'openai_supports_tool_choice_required': False})  # pyright: ignore[reportCallIssue,reportArgumentType]
+        profile['supports_forced_tool_choice'] = False
+        profile.update({'openai_supports_tool_choice_required': True})  # pyright: ignore[reportCallIssue,reportArgumentType]
         return profile
 
     with pytest.warns(PydanticAIDeprecationWarning, match='`openai_supports_tool_choice_required` is deprecated'):
