@@ -760,23 +760,46 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     if event_type in ('response.output_audio.delta', 'response.audio.delta'):
         event = _AUDIO_DELTA_ADAPTER.validate_python(data)
-        return AudioDelta(data=base64.b64decode(event.delta, validate=True), item_id=event.item_id or None)
+        return AudioDelta(
+            data=base64.b64decode(event.delta, validate=True),
+            item_id=event.item_id or None,
+            response_id=event.response_id or None,
+        )
 
     elif event_type in ('response.output_audio_transcript.delta', 'response.audio_transcript.delta'):
         event = _AUDIO_TRANSCRIPT_DELTA_ADAPTER.validate_python(data)
-        return OutputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
+        return OutputTranscript(
+            text=event.delta or '', is_final=False, item_id=event.item_id or None, response_id=event.response_id or None
+        )
 
     elif event_type in ('response.output_audio_transcript.done', 'response.audio_transcript.done'):
         event = _AUDIO_TRANSCRIPT_DONE_ADAPTER.validate_python(data)
-        return OutputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
+        return OutputTranscript(
+            text=event.transcript or '',
+            is_final=True,
+            item_id=event.item_id or None,
+            response_id=event.response_id or None,
+        )
 
     elif event_type == 'response.output_text.delta':
         event = ResponseTextDeltaEvent.model_validate(data)
-        return OutputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None, output_text=True)
+        return OutputTranscript(
+            text=event.delta or '',
+            is_final=False,
+            item_id=event.item_id or None,
+            output_text=True,
+            response_id=event.response_id or None,
+        )
 
     elif event_type == 'response.output_text.done':
         event = ResponseTextDoneEvent.model_validate(data)
-        return OutputTranscript(text=event.text or '', is_final=True, item_id=event.item_id or None, output_text=True)
+        return OutputTranscript(
+            text=event.text or '',
+            is_final=True,
+            item_id=event.item_id or None,
+            output_text=True,
+            response_id=event.response_id or None,
+        )
 
     elif event_type in (
         'conversation.item.input_audio_transcription.delta',
@@ -796,6 +819,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
             tool_name=event.name or '',
             args=event.arguments or '{}',
             response_usage_follows=True,
+            response_id=event.response_id or None,
         )
 
     elif event_type == 'input_audio_buffer.speech_started':

@@ -102,7 +102,6 @@ from .codec import (
     RealtimeInput,
     RealtimeSessionInput,
     ResponseDone,
-    ResponseStarted,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -781,10 +780,10 @@ class RealtimeSession:
         self._response_active = False
         self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
-        # The id a provider reported when the current response started (`ResponseStarted`), for a
-        # response that never gets the terminal that would otherwise carry it: one cut off by a dropped
-        # connection or by closing the session.
-        self._started_response_id: str | None = None
+        # The provider id of the response whose content is being assembled, from its content events'
+        # `response_id`. It ties terminals and usage to the response they belong to, and names a reply
+        # that never gets its terminal (one cut off by a dropped connection or by closing the session).
+        self._assembling_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
         self._response_finalized_before_terminal = False
@@ -2242,15 +2241,27 @@ class RealtimeSession:
             self._check_response_boundary_limits()
 
     def _take_response_id(self, provider_response_id: str | None) -> str | None:
-        """The provider id for the response being recorded, from its terminal, its usage, or its start.
-
-        The id from `ResponseStarted` is used up by the response it named, and only by that one: a late
-        terminal for an earlier response that arrives after the next one started leaves it in place.
-        """
-        response_id = provider_response_id or self._pending_provider_response_id or self._started_response_id
-        if response_id == self._started_response_id:
-            self._started_response_id = None
+        """The provider id for the response being recorded, from its terminal, its usage, or its content."""
+        response_id = provider_response_id or self._pending_provider_response_id or self._assembling_response_id
+        self._assembling_response_id = None
         return response_id
+
+    def _note_response_id(self, response_id: str | None) -> None:
+        """Remember which response the content being assembled belongs to, from its first event that says."""
+        if self._assembling_response_id is None:
+            self._assembling_response_id = response_id
+
+    def _is_for_another_response(self, response_id: str | None) -> bool:
+        """Whether a terminal or usage report names a response other than the one being assembled.
+
+        A late `response.done` for a response the user barged in on can land after the next one has
+        started streaming. It must not close the newer response, or stamp it with its own id and status.
+        """
+        return (
+            response_id is not None
+            and self._assembling_response_id is not None
+            and response_id != self._assembling_response_id
+        )
 
     def _check_response_boundary_limits(self) -> None:
         """Check the usage limits against a response that has just been finalized.
@@ -2283,6 +2294,9 @@ class RealtimeSession:
         self._session_instrumentation.ensure_chat_span()
 
     def _handle_turn_complete(self, event: ResponseDone) -> list[RealtimeEvent]:
+        if self._is_for_another_response(event.provider_response_id):
+            # The terminal of an earlier response, already recorded, arriving while the next one streams.
+            return []
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
         # Gemini emits neither `RealtimeInputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
@@ -2901,11 +2915,13 @@ class RealtimeSession:
         if isinstance(event, AudioDelta):
             if not self._accept_item(event.item_id):
                 return []
+            self._note_response_id(event.response_id)
             self._session_instrumentation.set_output_type('speech')
             return self._handle_assistant_audio(event.data, item_id=event.item_id)
         if isinstance(event, OutputTranscript):
             if not self._accept_item(event.item_id):
                 return []
+            self._note_response_id(event.response_id)
             self._session_instrumentation.set_output_type('text' if event.output_text else 'speech')
             # `is_final` doesn't end the part — the turn ends on `ResponseDone`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
@@ -3179,6 +3195,11 @@ class RealtimeSession:
     def _accumulate_response_usage(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
         self._pending_response_usage = self._pending_response_usage + event.usage
+        if self._is_for_another_response(event.provider_response_id):
+            # Usage for an earlier response, which is already recorded: its tokens still count toward the
+            # response in progress so they are priced, but its id, finish reason and status don't describe
+            # this response, and it must not close it.
+            return events
         self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
         self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
         if self._tool_calls_awaiting_usage:
@@ -3329,6 +3350,7 @@ class RealtimeSession:
             args=event.args,
             tool_call_id=event.tool_call_id,
         )
+        self._note_response_id(event.response_id)
         for out in self._handle_tool_call_part(
             call_part,
             response_usage_follows=event.response_usage_follows,
@@ -3400,9 +3422,6 @@ class RealtimeSession:
         assert not isinstance(event, ToolCall)
         self._settle_deferred_response()
         if isinstance(event, ConversationCreated):
-            return False
-        if isinstance(event, ResponseStarted):
-            self._started_response_id = event.provider_response_id
             return False
         if isinstance(event, ConversationItemCreated):
             self._handle_conversation_item(event)

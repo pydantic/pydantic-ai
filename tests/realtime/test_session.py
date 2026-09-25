@@ -106,7 +106,6 @@ from pydantic_ai.realtime.codec import (
     RealtimeConnection,
     RealtimeInput,
     ResponseDone,
-    ResponseStarted,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -5786,19 +5785,17 @@ async def test_reconnect_response_state(
     assert session.new_messages() == expected
 
 
-async def test_response_cut_off_by_a_reconnect_keeps_its_started_id() -> None:
-    """A reply the drop cut off is recorded with the id its `ResponseStarted` gave it.
+async def test_response_cut_off_by_a_reconnect_keeps_its_id() -> None:
+    """A reply the drop cut off is recorded with the response id its content carried.
 
-    Its `ResponseDone` never arrives, so that id is the only one the session will ever see. The next
+    Its `ResponseDone` never arrives, so the content is the only place the session sees that id. The next
     response gets its own id rather than inheriting the cut one.
     """
     conn = FakeRealtimeConnection(
         [
-            ResponseStarted(provider_response_id='resp_cut'),
-            OutputTranscript(text='One, two, three'),
+            OutputTranscript(text='One, two, three', response_id='resp_cut'),
             RealtimeSessionReconnectEvent(state_restored=True),
-            ResponseStarted(provider_response_id='resp_next'),
-            OutputTranscript(text='after', is_final=True),
+            OutputTranscript(text='after', is_final=True, response_id='resp_next'),
             ResponseDone(provider_response_id='resp_next'),
         ],
         reconnect_restores_in_flight_state=False,
@@ -5812,11 +5809,9 @@ async def test_response_cut_off_by_a_reconnect_keeps_its_started_id() -> None:
     ]
 
 
-async def test_response_cut_off_by_close_keeps_its_started_id() -> None:
-    """Closing the session mid-reply records the partial reply with the id its `ResponseStarted` gave it."""
-    conn = BlockingRealtimeConnection(
-        [ResponseStarted(provider_response_id='resp_cut'), OutputTranscript(text='One, two, three')]
-    )
+async def test_response_cut_off_by_close_keeps_its_id() -> None:
+    """Closing the session mid-reply records the partial reply with the response id its content carried."""
+    conn = BlockingRealtimeConnection([OutputTranscript(text='One, two, three', response_id='resp_cut')])
     async with RealtimeSession(conn) as session:
         async for event in session:  # pragma: no branch
             # The reply's first event: close with it in flight.
@@ -5834,29 +5829,44 @@ async def test_response_cut_off_by_close_keeps_its_started_id() -> None:
     )
 
 
-async def test_late_terminal_for_an_earlier_response_leaves_the_started_id() -> None:
-    """A late terminal for the response before doesn't use up the id of the one that has since started."""
-    conn = BlockingRealtimeConnection(
+async def test_late_terminal_of_an_earlier_response_does_not_close_the_next() -> None:
+    """A late terminal for the response before doesn't close, or restamp, the one streaming now.
+
+    The user barged in on A, and B started streaming (with a tool call) before A's `response.done`
+    landed. A's usage and terminal name A, so B stays open until its own usage, which records it with
+    B's id and status. A's tokens still count toward B, so they're priced.
+    """
+    conn = FakeRealtimeConnection(
         [
-            ResponseStarted(provider_response_id='resp_a'),
-            OutputTranscript(text='first'),
-            ResponseStarted(provider_response_id='resp_b'),
-            ResponseDone(provider_response_id='resp_a', interrupted=True),
-            OutputTranscript(text='second'),
+            OutputTranscript(text='Let me check.', response_id='resp_b'),
+            ToolCall(
+                tool_call_id='call_b',
+                tool_name='missing_tool',
+                args='{}',
+                response_usage_follows=True,
+                response_id='resp_b',
+            ),
+            SessionUsage(
+                usage=RequestUsage(input_tokens=1),
+                provider_response_id='resp_a',
+                finish_reason=None,
+                provider_details={'status': 'cancelled'},
+            ),
+            ResponseDone(interrupted=True, provider_response_id='resp_a', provider_details={'status': 'cancelled'}),
+            SessionUsage(
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                provider_response_id='resp_b',
+                finish_reason='tool_call',
+                provider_details={'status': 'completed'},
+            ),
         ]
     )
-    async with RealtimeSession(conn) as session:
-        starts = 0
-        async for event in session:  # pragma: no branch
-            if isinstance(event, PartStartEvent):
-                starts += 1
-                if starts == 2:
-                    break
+    session = RealtimeSession(conn)
+    await collect_events(session)
     responses = [m for m in session.new_messages() if isinstance(m, ModelResponse)]
-    assert [(r.state, r.provider_response_id) for r in responses] == [
-        ('interrupted', 'resp_a'),
-        ('interrupted', 'resp_b'),
-    ]
+    assert [
+        (r.provider_response_id, r.provider_details, r.finish_reason, r.usage.input_tokens, r.state) for r in responses
+    ] == [('resp_b', {'status': 'completed'}, 'tool_call', 11, 'complete')]
 
 
 async def test_reconnect_while_idle_on_replay_provider_keeps_state_restored() -> None:

@@ -158,6 +158,12 @@ class AudioDelta:
     _: KW_ONLY
     item_id: str | None = None
     """Provider item ID for the spoken output this chunk belongs to, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session tell which response a late terminal or usage report belongs to, and name a reply
+    that never gets its terminal (one cut off by a dropped connection or by closing the session).
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -177,6 +183,12 @@ class OutputTranscript:
     an audio transcript becomes a [`SpeechPart`][pydantic_ai.messages.SpeechPart]."""
     item_id: str | None = None
     """Provider item ID for the spoken output, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session tell which response a late terminal or usage report belongs to, and name a reply
+    that never gets its terminal (one cut off by a dropped connection or by closing the session).
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -229,6 +241,12 @@ class ToolCall:
     uses this signal to keep all calls and their usage on the same `ModelResponse`."""
     item_id: str | None = None
     """Provider conversation-item ID for this call, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session tell which response a late terminal or usage report belongs to, and name a reply
+    that never gets its terminal (one cut off by a dropped connection or by closing the session).
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -281,25 +299,6 @@ class ResponseDone:
     """
 
     event_kind: Literal['response_done'] = 'response_done'
-    """Event type identifier, used as a discriminator."""
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-@dataclass(repr=False)
-class ResponseStarted:
-    """The provider started a model response.
-
-    Optional: a provider that assigns response IDs up front reports one here so the session can stamp it
-    on a response that never reaches its [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone], such
-    as one cut off by a dropped connection or by closing the session.
-    """
-
-    _: KW_ONLY
-    provider_response_id: str | None = None
-    """Provider-assigned ID for the response, when available."""
-
-    event_kind: Literal['response_started'] = 'response_started'
     """Event type identifier, used as a discriminator."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -405,7 +404,6 @@ RealtimeCodecEvent = TypeAliasType(
     | InputTranscript
     | ToolCall
     | ToolCallCancelled
-    | ResponseStarted
     | ResponseDone
     | RealtimeInputSpeechStartEvent
     | RealtimeResponseInterruptedEvent
@@ -548,7 +546,6 @@ __all__ = (
     'ToolCall',
     'ToolResult',
     'ToolCallCancelled',
-    'ResponseStarted',
     'ResponseDone',
     'ConversationCreated',
     'ConversationItemCreated',
