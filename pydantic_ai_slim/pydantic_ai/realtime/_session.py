@@ -1832,9 +1832,15 @@ class RealtimeSession:
             frames.extend(self._truncations(cuts) if self._spoken else [TruncateOutput(audio_end_ms=played_ms)])
         if not self._server_cancelled_the_response_on_speech:
             frames.append(CancelResponse())
+        # Registered before the send: the provider's `response.done` can be processed while it is
+        # awaited, and would record the response without its cut.
+        undo = self._record_cuts(cuts)
         if frames:
-            await self._send_frame(*frames)
-        self._record_cuts(cuts)
+            try:
+                await self._send_frame(*frames)
+            except BaseException:
+                undo()
+                raise
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
@@ -1885,17 +1891,18 @@ class RealtimeSession:
             # Best effort on a model without output truncation (xAI): the unheard audio is still
             # flushed and the response cancelled; only the provider-side transcript sync is
             # unavailable.
+            # The provider keeps the whole reply, but a reply still being generated records where the
+            # listener stopped (registered before the send, for the same reason as the cut below).
+            self._record_cuts(self._playhead_cuts(playhead))
             if cancel:
                 await self._send_frame(CancelResponse())
-            # The provider keeps the whole reply, but a reply still being generated records where the
-            # listener stopped.
-            self._record_cuts(self._playhead_cuts(playhead))
             self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
             return True
         cuts = self._playhead_cuts(playhead)
+        # Registered before the send, as above; the flush already happened, so it isn't rolled back.
+        self._record_cuts(cuts)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
         await self._send_frame(*self._truncations(cuts), *([CancelResponse()] if cancel else []))
-        self._record_cuts(cuts)
         # The trace records where the part being heard was cut.
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=cuts[0][1] if cuts else None)
         return True
@@ -1920,16 +1927,18 @@ class RealtimeSession:
     def _played_ms_cuts(self, played_ms: int | None) -> list[tuple[_SpokenPart, int]]:
         """Where a caller-reported playback position cuts, in the part being played.
 
-        That is the part the single `stream_audio()` view is playing, when there is one; otherwise the
-        part whose audio was emitted last, or the last speech part when no audio passes through the
-        session (a WebRTC sideband). Parts generated after it, never heard, are cut at 0. A position
+        That is the part the single `stream_audio()` view is playing, when there is one; on a WebRTC
+        sideband, the oldest reply the provider hasn't reported as played out; otherwise the part whose
+        audio was emitted last. Parts generated after it, never heard, are cut at 0. A position
         that covers a finished part says it was heard in full, so that part isn't cut.
         """
         parts = list(self._spoken.values())
         audible = [part for part in parts if part.start is not None] or parts
         if played_ms is None or not audible:
             return []
-        target = audible[-1]
+        # On a sideband the browser plays replies in order and retired ones have finished, so the
+        # oldest one left is the one playing; elsewhere it is the one the provider truncates.
+        target = audible[-1] if self._owns_media else audible[0]
         if (playhead := self._playhead()) is not None:
             target = next((part for part in audible if part.start is not None and part.end > playhead), target)
         later = [(part, 0) for part in audible if part.index > target.index]
@@ -1958,29 +1967,40 @@ class RealtimeSession:
             truncations.append(TruncateOutput(audio_end_ms=cuts[-1][1]))
         return truncations
 
-    def _record_cuts(self, cuts: list[tuple[_SpokenPart, int]]) -> None:
-        """Hand cut positions to the response in flight, applied when it is finalized.
+    def _record_cuts(self, cuts: list[tuple[_SpokenPart, int]]) -> Callable[[], None]:
+        """Hand cut positions to the response in flight, applied when it is finalized; return an undo.
 
         A reply already in history keeps what it recorded — history is append-only — so its cut only
-        reaches the provider. A new barge-in replaces any cut still pending.
+        reaches the provider. A later barge-in adds to the cuts still pending (replacing a part's
+        earlier position) and never erases them: one that finds nothing left to cut says nothing new.
         """
-        self._pending_cuts = {part.index: played_ms for part, played_ms in cuts if not part.recorded}
+        previous = dict(self._pending_cuts)
+        self._pending_cuts.update({part.index: played_ms for part, played_ms in cuts if not part.recorded})
+
+        def undo() -> None:
+            self._pending_cuts = previous
+
+        return undo
 
     def _retire_spoken_parts(self, *, playback_ended: bool = False) -> None:
         """Forget recorded speech parts the listener can no longer be hearing.
 
         Run as a new speech part starts, so the set stays as small as what is still queued for
-        playback. A part with no audio in the session (a WebRTC sideband) is only ever cut as the
-        latest part, so a newer one retires it; so does the provider reporting its playback ended, or
-        a reconnect, whose fresh provider conversation has none of these output items.
+        playback, and when playback provably ended: the provider reporting it (a WebRTC sideband), or a
+        reconnect, whose fresh provider conversation has none of these output items. A sideband part,
+        whose audio never passes through the session, is only retired then: a newer reply being
+        generated doesn't mean the browser finished playing the one before it. Other parts without
+        audio (text-only fakes, a transcript ahead of its audio) are only ever cut as the latest part.
         """
         playhead = self._playhead()
         latest_audible = max((part.index for part in self._spoken.values() if part.start is not None), default=None)
         for part in list(self._spoken.values()):
             if not part.recorded:
                 continue
-            if playback_ended or part.start is None:
+            if playback_ended:
                 heard = True
+            elif part.start is None:
+                heard = self._owns_media
             elif playhead is not None:
                 heard = part.end <= playhead
             else:
@@ -2897,10 +2917,11 @@ class RealtimeSession:
         """
         if event.state_restored and self._connection.reconnect_restores_in_flight_state:
             return [event]
-        # A replayed conversation has none of the old output items, so nothing recorded can be truncated.
-        self._retire_spoken_parts(playback_ended=True)
         lost_in_flight = self._response_in_flight or bool(self._pending_tool_calls)
         events = self._finalize_lost_state()
+        # A replayed conversation has none of the old output items, so nothing recorded — including
+        # what was settled just now — can be truncated.
+        self._retire_spoken_parts(playback_ended=True)
         if lost_in_flight:
             event = replace(event, state_restored=False)
         if not event.state_restored:

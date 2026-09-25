@@ -212,8 +212,9 @@ even though the user heard only part of it. The barge-in still truncates the pro
 playback stopped, so the model doesn't take the whole reply as heard. With `played_bytes` (or
 `handle_barge_in=True`), the session resolves the playback position against every reply still
 queued for playback. The reply being played is cut where playback stopped, and any reply generated
-after it, which the user never heard, is cut at 0. The `interrupt` span in the trace records the
-position. Only a reply that is still being generated is recorded as interrupted, and the position
+after it, which the user never heard, is cut at 0. On a WebRTC sideband, `interrupt(played_ms=...)`
+cuts the oldest reply the provider hasn't reported as played out, and later ones at 0. The `interrupt`
+span in the trace records the position. Only a reply that is still being generated is recorded as interrupted, and the position
 is never carried over to a later response.
 
 ## Speaking first
