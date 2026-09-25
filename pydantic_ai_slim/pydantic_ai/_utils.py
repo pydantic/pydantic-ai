@@ -941,11 +941,12 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    # Recursively update refs in properties
-    if 'properties' in s:
-        props: dict[str, dict[str, Any]] = s['properties']
-        for prop in props.values():
-            _update_mapped_json_schema_refs(prop, name_mapping)
+    # Recursively update refs in properties and patternProperties
+    for keyword in ['properties', 'patternProperties']:
+        if keyword in s:
+            props: dict[str, dict[str, Any]] = s[keyword]
+            for prop in props.values():
+                _update_mapped_json_schema_refs(prop, name_mapping)
 
     # Handle arrays
     if 'items' in s and isinstance(s['items'], dict):
@@ -956,10 +957,13 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
         for item in prefix_items:
             _update_mapped_json_schema_refs(item, name_mapping)
 
-    # Handle additionalProperties
+    # Handle additionalProperties and propertyNames
     if 'additionalProperties' in s and isinstance(s['additionalProperties'], dict):
         additional_props: dict[str, Any] = s['additionalProperties']  # pyright: ignore[reportUnknownVariableType]
         _update_mapped_json_schema_refs(additional_props, name_mapping)
+    if 'propertyNames' in s and isinstance(s['propertyNames'], dict):
+        property_names: dict[str, Any] = s['propertyNames']  # pyright: ignore[reportUnknownVariableType]
+        _update_mapped_json_schema_refs(property_names, name_mapping)
 
     # Handle unions and composition keywords
     for keyword in ['anyOf', 'oneOf', 'allOf']:
