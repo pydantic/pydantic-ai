@@ -1801,7 +1801,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         # Warned here, the one synchronous entry point, so the warning points at the caller's code rather
         # than at the `contextlib` frames that open the session.
         # A model given by name has no defaults yet; a per-session value overrides the model's default.
-        model_defaults = None if isinstance(model, str) else model.settings
+        # `getattr` because the model isn't validated until a session opens, and binding must not fail first.
+        model_defaults: RealtimeModelSettings | None = (
+            None if isinstance(model, str) else getattr(model, 'settings', None)
+        )
         if {**(model_defaults or {}), **(model_settings or {})}.get('tool_choice') is not None:
             warnings.warn(
                 'Setting `tool_choice` for a realtime session is deprecated and will raise an error in the '
