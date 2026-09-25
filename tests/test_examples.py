@@ -989,6 +989,11 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
 
+model_routes: dict[str, str] = {
+    'What does this repo do?': 'fast',
+    'Now redesign its auth layer.': 'capable',
+}
+
 tool_responses: dict[tuple[str, str], str] = {
     (
         'weather_forecast',
@@ -1032,9 +1037,6 @@ async def model_logic(  # noqa: C901
 ) -> ModelResponse:  # pragma: lax no cover
     if not messages[-1].parts:
         # docs/models/decision.md: a run with no new prompt judges the history it was given
-        if any('capable' in json.dumps(t.parameters_json_schema) for t in info.output_tools):
-            # `select_the_model_per_step.py`: the router is asked which model takes the next step
-            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': 'capable'})])
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
     m = messages[-1].parts[-1]
     # Handle multimodal tool returns (content directly in ToolReturnPart)
@@ -1084,7 +1086,12 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
+        if (route := model_routes.get(str(m.content))) and any(
+            'capable' in json.dumps(t.parameters_json_schema) for t in info.output_tools
+        ):
+            # `select_the_model_per_step.py`: the router is asked which model takes the run's prompt
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': route})])
+        elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
         assert isinstance(m.content, str)
         if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
