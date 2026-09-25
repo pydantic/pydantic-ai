@@ -194,7 +194,7 @@ Realtime sessions use the standard Pydantic AI exception hierarchy:
 | Exception | Raised when |
 | --- | --- |
 | [`UserError`][pydantic_ai.exceptions.UserError] | The application requests an unsupported operation, passes incompatible settings, lacks credentials, or misuses the session. |
-| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status; Gemini also maps WebSocket close codes such as `1007` and `1008` to `status_code`, while OpenAI-protocol providers use `RealtimeError` for an in-handshake rejection. |
+| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status. A provider that accepts the upgrade and then closes the socket during the handshake (Gemini's `1007` for a rejected config, for example) raises `RealtimeError` instead, since a WebSocket close code isn't an HTTP status. |
 | [`RealtimeError`][pydantic_ai.realtime.RealtimeError] | The connection fails, times out, closes unexpectedly, returns an invalid frame, or exhausts reconnect attempts. |
 | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | A configured [usage limit](observability.md#usage-and-limits) is exceeded. |
 

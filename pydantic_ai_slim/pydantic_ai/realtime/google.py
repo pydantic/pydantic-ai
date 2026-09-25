@@ -219,9 +219,11 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     [text-to-speech](../models/google.md) feature; a Live session has one voice, set with `google_voice`.
     """
     google_affective_dialog: bool
-    """Whether to enable emotion-aware delivery (native-audio models only).
+    """Whether to enable emotion-aware delivery.
 
-    Not supported by the Gemini 3.8 Live models, which reject it at connect."""
+    Not supported by the Gemini 3.1 Flash Live and 3.8 Live models, so `connect` raises
+    [`UserError`][pydantic_ai.exceptions.UserError] if it's enabled for one of them (see
+    [`google_supports_affective_dialog`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_supports_affective_dialog])."""
     google_proactive_audio: bool
     """Whether the model may decide *when* to respond, including staying silent on input not
     addressed to it. Useful for "react to the camera" experiences.
@@ -356,6 +358,19 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     Function response scheduling is not supported for this model` if the field is sent at all.
     """
 
+    google_supports_affective_dialog: bool
+    """Whether the model takes [`google_affective_dialog`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_affective_dialog]. Default: `True`.
+
+    When `False`, `connect` raises [`UserError`][pydantic_ai.exceptions.UserError] for a session that
+    enables it, rather than opening one the provider rejects. `False` for the `gemini-3.1-flash-live` and
+    `gemini-3.8-live` families, which don't support affective dialog: `gemini-3.1-flash-live-preview`
+    refuses the handshake with `1007 Request contains an invalid argument`, and the 3.8 models open the
+    session and then close it with the same error on the first send.
+    """
+
+
+_MIN_WEBSOCKET_CLOSE_CODE = 1000
+"""The lowest WebSocket close code (RFC 6455 section 7.4), above every HTTP status."""
 
 INPUT_SAMPLE_RATE = 16000
 """Sample rate (Hz) Gemini expects for PCM16 input audio."""
@@ -1103,6 +1118,13 @@ class GoogleRealtimeModel(RealtimeModel):
                 'policy enables resumption.'
             )
         self._check_proactive_audio_api_version(settings)
+        if settings.get('google_affective_dialog', False) and not self._google_profile.get(
+            'google_supports_affective_dialog', True
+        ):
+            raise UserError(
+                f'`google_affective_dialog=True` is not supported by {self.model!r}; Gemini Live rejects it. '
+                'Leave it unset for this model.'
+            )
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.
         cm: AbstractAsyncContextManager[AsyncSession] | None = None
@@ -1133,12 +1155,17 @@ class GoogleRealtimeModel(RealtimeModel):
 
         try:
             # A rejected config (unsupported `voice`, unknown model) closes the WebSocket, which the SDK
-            # surfaces as an `APIError`. Map it to the same typed exceptions a regular request raises,
-            # mirroring `GoogleModel`. Reconnects dial from the receive loop, which keeps handling the
-            # `APIError` as a retryable drop.
+            # surfaces as an `APIError`. Map it to a typed exception rather than leaking the SDK's.
+            # Reconnects dial from the receive loop, which keeps handling the `APIError` as a retryable drop.
             try:
                 session = await dial(None)
             except genai_errors.APIError as e:
+                if e.code >= _MIN_WEBSOCKET_CLOSE_CODE:
+                    # The server closed the socket during setup, and the SDK reports the WebSocket close
+                    # code (`1007` for a rejected config, `1008` for an unknown model) where an HTTP status
+                    # would go. A close code is not an HTTP status, so this is a `RealtimeError`, worded like
+                    # a close later in the session and like the OpenAI-protocol providers' handshake closes.
+                    raise RealtimeError(model_name=self.model, message=f'Gemini Live connection closed: {e}') from e
                 mapped_error = _map_api_error(e, self.model)
                 if isinstance(mapped_error, ModelHTTPError):
                     raise mapped_error from e

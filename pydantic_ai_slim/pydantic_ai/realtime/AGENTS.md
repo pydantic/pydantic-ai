@@ -10,7 +10,8 @@ history, and running the tool loop. The provider-agnostic layout mirrors the req
 vocabulary, `profiles.py` the `RealtimeModelProfile` type (per-provider tables live in
 `pydantic_ai/profiles/{google,openai,grok}.py` as `*_realtime_model_profile` helpers), and
 `codec.py` the connection layer; concrete providers live in `openai.py` / `azure.py` / `google.py` /
-`xai.py`. The [models/ guidelines](../models/AGENTS.md) apply in spirit throughout.
+`xai.py` / `openai_live.py` (OpenAI GPT-Live, a different protocol from the Realtime API rather than another
+model on it, which is why `infer_realtime_model` routes it by model name inside the `openai` prefix). The [models/ guidelines](../models/AGENTS.md) apply in spirit throughout.
 
 ## Policy lives in the shared core, never in the session
 
@@ -36,7 +37,10 @@ vocabulary, `profiles.py` the `RealtimeModelProfile` type (per-provider tables l
   a profile flag needs a test pinning each side of the flag.
 - One event means one thing on every provider. If providers disagree about what a frame implies
   (speech start, turn end), normalize in the codec — the session must not branch per provider.
-  `RealtimeTurnCompleteEvent` is synthesized by the session, never read off the wire.
+  `RealtimeTurnCompleteEvent` is synthesized by the session, never read off the wire. Where a protocol
+  has no end-of-turn frame at all (GPT-Live), the *connection* synthesizes `ResponseDone` from output
+  timing and the profile says so via `synthesizes_turn_boundary`, so the session still sees one
+  vocabulary.
 - Wrap connect/handshake failures in `ModelAPIError`/`ModelHTTPError`; recoverable in-session
   provider errors become `RealtimeSessionErrorEvent` and leave the session usable.
 

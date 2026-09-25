@@ -99,8 +99,8 @@ agent = Agent[Deps, Response](
 )
 
 
-@agent.system_prompt
-async def system_prompt() -> str:
+@agent.instructions
+async def instructions() -> str:
     return f"""\
 Given the following PostgreSQL table of records, your job is to
 write a SQL query that suits the user's request.
