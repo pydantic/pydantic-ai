@@ -11,6 +11,7 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 from __future__ import annotations as _annotations
 
 import asyncio
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -39,7 +40,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import CassetteMessage, RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
@@ -105,6 +106,43 @@ async def test_audio_in_server_vad_turn(
     assert any(isinstance(p, SpeechPart) and p.transcript for p in user_speech)  # at least one transcribed
     responses = [message for message in messages if isinstance(message, ModelResponse)]
     assert responses and isinstance(responses[-1].parts[0], SpeechPart)
+
+
+async def test_input_transcription_off_keeps_user_words_out_of_history(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """With input transcription off, a Gemini 3.x model's own transcript of the user stays out of history.
+
+    The 3.x Live models transcribe the user's speech even when the setup leaves out
+    `inputAudioTranscription` (the recording has the `inputTranscription` frames), so the setting is
+    honored on our side: the spoken turn lands as a content-less placeholder.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_16khz.pcm').read_bytes()
+
+    async with agent.realtime(model, model_settings={'input_transcription_model': None}).session() as session:
+        for start in range(0, len(pcm), 3200):  # ~100 ms chunks at 16 kHz
+            await session.send_audio(pcm[start : start + 3200])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [setup] = sent_frames_containing(cassette, 'Reply in a few words.')
+    assert 'inputAudioTranscription' not in setup['setup']
+    received = [
+        json.dumps(message.data)
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'received'
+    ]
+    assert any('inputTranscription' in frame for frame in received)
+
+    messages = session.all_messages()
+    user_parts = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+    assert user_parts == snapshot([SpeechPart(speaker='user')])
+    assert isinstance(messages[-1], ModelResponse)
 
 
 async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
