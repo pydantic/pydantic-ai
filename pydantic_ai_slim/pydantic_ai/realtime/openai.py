@@ -91,12 +91,14 @@ from ._openai_protocol import (
     loads_obj,
     map_connect_errors,
     map_event,
+    openai_websocket_auth_headers,
     realtime_websocket_url,
     rejected_inputs,
     resolve_base_turn_detection,
     resolve_transcription_model,
     response_failed_error,
     response_finish_reason,
+    response_provider_details,
     seed_items,
     tool_choice_config,
     tool_def_to_openai,
@@ -864,12 +866,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # frame (its `response.usage` is empty), so fall back to it.
         frame_usage = done.usage if isinstance(done, ProtocolResponseDoneEvent) else None
         usage = self._map_response_usage(response.usage) or self._map_response_usage(frame_usage)
+        # The response's `provider_details` ride along too: a response that called a tool is recorded
+        # from this usage rather than from its `ResponseDone` (suppressed for a function-call-only
+        # response, and arriving after the response is already recorded otherwise), so without them a
+        # tool-call response would lack the `status` every other response carries. Not for a superseded
+        # response, though: the session may be recording the newer one when this usage lands, and the
+        # older response's status (typically `cancelled`) doesn't describe it.
+        provider_details = None if superseded else response_provider_details(response)
         if usage is not None:
             events.append(
                 SessionUsage(
                     usage=usage,
                     provider_response_id=response_id or None,
                     finish_reason=finish_reason,
+                    provider_details=provider_details,
                 )
             )
         elif matches_active_response and finish_reason == 'tool_call':
@@ -878,6 +888,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     usage=RequestUsage(),
                     provider_response_id=response_id or None,
                     finish_reason='tool_call',
+                    provider_details=provider_details,
                 )
             )
         # Reported even for a superseded response: its failure is real, and it's the only report of it.
@@ -1252,19 +1263,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         # `model_settings` lets a provider vary auth by session (e.g. Azure Voice Live uses a different
         # resource key); OpenAI's auth doesn't depend on it.
         del model_settings
-        # The raw WebSocket handshake bypasses the SDK's request path, which is where `AsyncOpenAI`
-        # resolves anything but a static key, so both dynamic forms are resolved the same way here.
-        client = self._provider.client
-        # A `workload_identity` client leaves `client.api_key` set to a placeholder string and
-        # exchanges it for a real token per request; sending the placeholder would fail the handshake
-        # with an opaque auth error.
-        if (workload_identity := client._workload_identity_auth) is not None:  # pyright: ignore[reportPrivateUsage]
-            return {'Authorization': f'Bearer {await workload_identity.get_token_async()}'}
-        # An async `api_key` provider leaves `client.api_key` empty until resolved. The SDK's own
-        # refresh is a no-op returning the static key when no provider is configured, so the handshake
-        # stays byte-identical in that case.
-        api_key = await client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
-        return {'Authorization': f'Bearer {api_key}'}
+        return await openai_websocket_auth_headers(self._provider.client)
 
     def _connection_class(self, model_settings: OpenAIRealtimeModelSettings) -> type[OpenAIRealtimeConnection]:
         """The connection class for a session, given its settings.

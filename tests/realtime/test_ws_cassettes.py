@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -15,9 +16,11 @@ from .ws_cassettes import (
     CassetteClose,
     CassetteMessage,
     CassettePlan,
+    ProviderName,
     RealtimeCassette,
     RecordingWebSocket,
     ReplayWebSocket,
+    patched_ws_connect,
     realtime_cassette_plan,
     ws_cassettes_available,
 )
@@ -25,6 +28,8 @@ from .ws_cassettes import (
 with try_import() as imports_successful:
     from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
     from websockets.frames import Close
+
+    from pydantic_ai.realtime import openai_live
 
 pytestmark = pytest.mark.skipif(
     not imports_successful() or not ws_cassettes_available(), reason='PyYAML / websockets not installed'
@@ -285,20 +290,28 @@ async def test_recording_truncates_inbound_audio() -> None:
     """Unit test: inbound audio is truncated so cassettes stay small — both provider shapes."""
     long_audio = 'A' * 400  # far longer than the retained byte budget
     openai_frame = {'type': 'response.output_audio.delta', 'delta': long_audio}
+    # GPT-Live names the same thing differently, and streams a continuous track, so an untruncated
+    # Live cassette is the largest of the three.
+    live_frame = {'type': 'session.output_audio.delta', 'delta': long_audio}
     gemini_frame = {'serverContent': {'modelTurn': {'parts': [{'inlineData': {'data': long_audio}}]}}}
     # `inlineData` present but without string `data` (e.g. metadata-only) is walked through untouched.
     gemini_no_data = {'serverContent': {'modelTurn': {'parts': [{'inlineData': {'mimeType': 'audio/pcm'}}]}}}
-    fake_ws = _FakeWebSocket([json.dumps(openai_frame), json.dumps(gemini_frame), json.dumps(gemini_no_data)])
+    fake_ws = _FakeWebSocket(
+        [json.dumps(openai_frame), json.dumps(live_frame), json.dumps(gemini_frame), json.dumps(gemini_no_data)]
+    )
     cassette = RealtimeCassette()
     recording = RecordingWebSocket(fake_ws, cassette)
 
     await recording.recv()
     await recording.recv()
     await recording.recv()
+    await recording.recv()
 
-    openai_stored, gemini_stored, no_data_stored = cassette.interactions
+    openai_stored, live_stored, gemini_stored, no_data_stored = cassette.interactions
     assert isinstance(openai_stored, CassetteMessage) and isinstance(gemini_stored, CassetteMessage)
+    assert isinstance(live_stored, CassetteMessage)
     assert 0 < len(openai_stored.data['delta']) < len(long_audio)
+    assert 0 < len(live_stored.data['delta']) < len(long_audio)
     stored_gemini = gemini_stored.data['serverContent']['modelTurn']['parts'][0]['inlineData']['data']
     assert 0 < len(stored_gemini) < len(long_audio)
     assert isinstance(no_data_stored, CassetteMessage)
@@ -428,8 +441,9 @@ def test_load_round_trips_close_frame(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_replay_rejects_unexpected_outbound_frame() -> None:
+async def test_replay_rejects_unexpected_outbound_frame(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unit test: replay asserts outbound frames match the recording, catching silent wire drift."""
+    monkeypatch.setattr(ws_cassettes, '_REPLAY_PROGRESS_GRACE', 0.01)
     # No recorded send at this position (the next interaction is inbound) → the send is unexpected.
     no_send = RealtimeCassette(interactions=[CassetteMessage(direction='received', data={'type': 'server.event'})])
     with pytest.raises(AssertionError, match='no matching recorded send'):
@@ -440,8 +454,188 @@ async def test_replay_rejects_unexpected_outbound_frame() -> None:
         await ReplayWebSocket(wrong_content).send(json.dumps({'type': 'client.unexpected'}))
 
 
+_LIVE_MIC_FRAME = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
+
+
+@pytest.mark.anyio
+async def test_replay_waits_for_a_direct_recv_reader() -> None:
+    """A send behind recorded inbound frames waits for a reader that calls `recv()` itself.
+
+    GPT-Live keeps one read in flight as its own task rather than iterating the socket, so it never
+    counts as an iterating reader; its progress is the only sign the frames are being consumed.
+    """
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data={'type': 'server.event'}),
+            CassetteMessage(direction='sent', data={'type': 'client.event'}),
+        ]
+    )
+    replay = ReplayWebSocket(cassette)
+    send = asyncio.ensure_future(replay.send(json.dumps({'type': 'client.event'})))
+    await asyncio.sleep(0)
+    assert json.loads(await replay.recv()) == {'type': 'server.event'}
+    await send
+
+
+@pytest.mark.parametrize(
+    ('frame', 'is_audio'),
+    [
+        (_LIVE_MIC_FRAME, True),
+        ({'type': 'input_audio_buffer.append', 'audio': 'AAAA'}, True),
+        ({'realtime_input': {'audio': {'data': 'AAAA'}}}, True),
+        ({'realtime_input': {'text': 'hi'}}, False),
+        ({'type': 'response.create'}, False),
+    ],
+)
+def test_is_audio_send(frame: dict[str, object], is_audio: bool) -> None:
+    assert ws_cassettes._is_audio_send(frame) is is_audio  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.anyio
 async def test_replay_close_is_noop() -> None:
     """Unit test: replay's `close()` accepts the websockets signature and does nothing."""
     replay = ReplayWebSocket(RealtimeCassette())
     await replay.close(1000, 'done')
+
+
+@pytest.mark.anyio
+async def test_recording_stamps_when_each_interaction_happened(tmp_path: Path) -> None:
+    """Recording timestamps every interaction from the first one, and the stamps survive a dump/load round trip."""
+    fake_ws = _FakeWebSocket([json.dumps({'type': 'server.event'}), ConnectionClosedOK(Close(1000, 'bye'), None)])
+    cassette = RealtimeCassette()
+    recording = RecordingWebSocket(fake_ws, cassette)
+    await recording.send(json.dumps({'type': 'client.event'}))
+    await asyncio.sleep(0.01)
+    await recording.recv()
+    with pytest.raises(ConnectionClosedOK):
+        await recording.recv()
+
+    stamps = [interaction.at for interaction in cassette.interactions]
+    sent_at, received_at, closed_at = stamps
+    assert sent_at == 0.0
+    assert received_at is not None and received_at >= 0.01
+    assert closed_at is not None and closed_at >= received_at
+
+    path = tmp_path / 'cassette.yaml'
+    cassette.dump(path)
+    assert [interaction.at for interaction in RealtimeCassette.load(path).interactions] == stamps
+
+
+def test_untimed_cassette_round_trips_without_timing(tmp_path: Path) -> None:
+    """A cassette recorded before timing was captured loads and dumps without it, so replay treats it as before."""
+    path = tmp_path / 'cassette.yaml'
+    path.write_text(
+        'version: 1\ninteractions:\n'
+        '- kind: message\n  direction: received\n  data:\n    type: server.event\n'
+        '- kind: close\n  code: 1000\n  ok: true\n',
+        encoding='utf-8',
+    )
+    cassette = RealtimeCassette.load(path)
+    assert [interaction.at for interaction in cassette.interactions] == [None, None]
+    assert not ReplayWebSocket(cassette).timed
+
+    cassette.dump(path)
+    assert 'at:' not in path.read_text(encoding='utf-8')
+
+
+@pytest.mark.anyio
+async def test_replay_clock_reads_when_the_frame_being_handled_was_recorded() -> None:
+    """`now()` moves to each inbound frame's recorded time as it is taken up, however fast replay runs."""
+    replay = ReplayWebSocket(
+        RealtimeCassette(
+            interactions=[
+                CassetteMessage(direction='received', data={'type': 'server.one'}, at=1.25),
+                # Stamps only ever move the clock forward, and an unstamped frame leaves it be.
+                CassetteMessage(direction='received', data={'type': 'server.two'}, at=1.0),
+                CassetteMessage(direction='received', data={'type': 'server.three'}),
+                CassetteMessage(direction='received', data={'type': 'server.four'}, at=2.5),
+            ]
+        )
+    )
+    assert replay.timed
+    # Reading ahead doesn't move the clock: only taking a frame up does, in the order they were read.
+    for _ in range(4):
+        await replay.recv()
+    assert replay.now() == 0.0
+    clock: list[float] = []
+    for _ in range(4):
+        replay.begin_handling_frame()
+        clock.append(replay.now())
+    assert clock == [1.25, 1.25, 1.25, 2.5]
+
+
+@pytest.mark.anyio
+async def test_replay_clock_ignores_sends_that_overtake_the_frame_being_handled() -> None:
+    """A send waiting on an inbound frame can go out before that frame is handled; the clock must not follow it.
+
+    Otherwise the frame would be handled at the send's time rather than its own, and a silence measured
+    from it would depend on which task asyncio happened to run first.
+    """
+    replay = ReplayWebSocket(
+        RealtimeCassette(
+            interactions=[
+                CassetteMessage(direction='received', data={'type': 'server.one'}, at=0.0),
+                CassetteMessage(direction='sent', data={'type': 'client.event'}, at=0.7),
+                CassetteMessage(direction='received', data={'type': 'server.two'}, at=1.1),
+                CassetteClose(code=1000, reason='', ok=True, at=9.0),
+            ]
+        )
+    )
+    send = asyncio.ensure_future(replay.send(json.dumps({'type': 'client.event'})))
+    await asyncio.sleep(0)
+    await replay.recv()
+    await send  # the waiting send goes out before the frame it waited on is handled
+    replay.begin_handling_frame()
+    assert replay.now() == 0.0
+    await replay.recv()
+    with pytest.raises(ConnectionClosedOK):
+        await replay.recv()
+    replay.begin_handling_frame()
+    assert replay.now() == 1.1
+
+
+def test_timed_live_replay_runs_the_turn_clock_on_recorded_time() -> None:
+    """GPT-Live's turn clock reads the replay's recorded time, and only for a timed GPT-Live replay."""
+    real_clock = openai_live._now  # pyright: ignore[reportPrivateUsage]
+    timed = RealtimeCassette(interactions=[CassetteMessage(direction='received', data={'type': 'x'}, at=3.0)])
+    untimed = RealtimeCassette(interactions=[CassetteMessage(direction='received', data={'type': 'x'})])
+
+    real_map_frame = openai_live.OpenAILiveConnection._map_frame  # pyright: ignore[reportPrivateUsage]
+    with patched_ws_connect('openai_live', timed, 'replay'):
+        replay = timed._replay  # pyright: ignore[reportPrivateUsage]
+        assert replay is not None
+        assert openai_live._now == replay.now  # pyright: ignore[reportPrivateUsage]
+    assert openai_live._now is real_clock  # pyright: ignore[reportPrivateUsage]
+    assert openai_live.OpenAILiveConnection._map_frame is real_map_frame  # pyright: ignore[reportPrivateUsage]
+
+    # An untimed Live cassette, another provider's timed one, and a recording all keep the real clock.
+    cases: list[tuple[ProviderName, RealtimeCassette, CassettePlan]] = [
+        ('openai_live', untimed, 'replay'),
+        ('openai', timed, 'replay'),
+        ('openai_live', RealtimeCassette(), 'record'),
+    ]
+    for provider, cassette, plan in cases:
+        with patched_ws_connect(provider, cassette, plan):
+            assert openai_live._now is real_clock  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_live_turn_clock_moves_as_each_frame_is_mapped_not_read() -> None:
+    """GPT-Live keeps its next read in flight while it handles a frame, so that read must not move the clock."""
+    first = {'type': 'session.unknown_event', 'n': 1}
+    second = {'type': 'session.unknown_event', 'n': 2}
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage(direction='received', data=first, at=0.5),
+            CassetteMessage(direction='received', data=second, at=3.0),
+        ]
+    )
+    with patched_ws_connect('openai_live', cassette, 'replay'):
+        replay = cassette._replay  # pyright: ignore[reportPrivateUsage]
+        assert replay is not None
+        connection = openai_live.OpenAILiveConnection(cast(Any, replay))
+        raw_first, raw_second = await replay.recv(), await replay.recv()
+        assert connection._map_frame(raw_first) == []  # pyright: ignore[reportPrivateUsage]
+        assert openai_live._now() == 0.5  # pyright: ignore[reportPrivateUsage]
+        assert connection._map_frame(raw_second) == []  # pyright: ignore[reportPrivateUsage]
+        assert openai_live._now() == 3.0  # pyright: ignore[reportPrivateUsage]

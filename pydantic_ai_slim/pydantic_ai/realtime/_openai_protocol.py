@@ -100,6 +100,7 @@ from .profiles import RealtimeModelProfile
 from .settings import TurnDetection
 
 if TYPE_CHECKING:
+    from openai import AsyncOpenAI
     from websockets.asyncio.client import ClientConnection
 
 
@@ -123,14 +124,19 @@ class _ReconnectableOpenAIProtocolConnection(Protocol):
 _ConnectionT = TypeVar('_ConnectionT', bound=_ReconnectableOpenAIProtocolConnection)
 
 
-def realtime_websocket_url(base_url: str, *, model: str | None = None, call_id: str | None = None) -> str:
+def realtime_websocket_url(
+    base_url: str, *, model: str | None = None, call_id: str | None = None, path: str = 'realtime'
+) -> str:
     """Derive the realtime WebSocket URL from a provider's HTTP base URL.
 
-    Swaps the HTTP scheme for the WebSocket one and appends the `realtime` path, so the default
-    OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The
-    path lands *before* any query string the base URL carries, rather than being appended after it
-    into the wrong endpoint. A fragment is likewise split off first, so it can't swallow the path
-    into the client-side part of the URL. `model`/`call_id` are merged in by `with_realtime_query`.
+    Swaps the HTTP scheme for the WebSocket one and appends `path`, so the default OpenAI base URL
+    `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The path lands *before*
+    any query string the base URL carries, rather than being appended after it into the wrong
+    endpoint. A fragment is likewise split off first, so it can't swallow the path into the
+    client-side part of the URL. `model`/`call_id` are merged in by `with_realtime_query`.
+
+    `path` exists because GPT-Live is a different protocol on the same host, reached at
+    `live/sessions`; everything about deriving the URL from the base URL is identical.
     """
     url, _, fragment = base_url.partition('#')
     url, _, query = url.partition('?')
@@ -139,7 +145,7 @@ def realtime_websocket_url(base_url: str, *, model: str | None = None, call_id: 
         url = 'wss://' + url[len('https://') :]
     elif url.startswith('http://'):
         url = 'ws://' + url[len('http://') :]
-    url = f'{url}/realtime'
+    url = f'{url}/{path.strip("/")}'
     url = f'{url}?{query}' if query else url
     url = f'{url}#{fragment}' if fragment else url
     return with_realtime_query(url, model=model, call_id=call_id)
@@ -715,7 +721,7 @@ def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEve
     )
 
 
-def _response_provider_details(response: ProtocolResponse) -> dict[str, Any]:
+def response_provider_details(response: ProtocolResponse) -> dict[str, Any]:
     """Retain the raw response status, incomplete reason, and failure error for provider fidelity."""
     details: dict[str, Any] = {'status': response.status}
     if (reason := _response_status_reason(response)) is not None:
@@ -743,7 +749,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         interrupted=status == 'cancelled',
         provider_response_id=response_id if isinstance(response_id, str) else None,
         finish_reason=response_finish_reason(response),
-        provider_details=_response_provider_details(response),
+        provider_details=response_provider_details(response),
     )
 
 
@@ -760,23 +766,46 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     if event_type in ('response.output_audio.delta', 'response.audio.delta'):
         event = _AUDIO_DELTA_ADAPTER.validate_python(data)
-        return AudioDelta(data=base64.b64decode(event.delta, validate=True), item_id=event.item_id or None)
+        return AudioDelta(
+            data=base64.b64decode(event.delta, validate=True),
+            item_id=event.item_id or None,
+            response_id=event.response_id or None,
+        )
 
     elif event_type in ('response.output_audio_transcript.delta', 'response.audio_transcript.delta'):
         event = _AUDIO_TRANSCRIPT_DELTA_ADAPTER.validate_python(data)
-        return OutputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None)
+        return OutputTranscript(
+            text=event.delta or '', is_final=False, item_id=event.item_id or None, response_id=event.response_id or None
+        )
 
     elif event_type in ('response.output_audio_transcript.done', 'response.audio_transcript.done'):
         event = _AUDIO_TRANSCRIPT_DONE_ADAPTER.validate_python(data)
-        return OutputTranscript(text=event.transcript or '', is_final=True, item_id=event.item_id or None)
+        return OutputTranscript(
+            text=event.transcript or '',
+            is_final=True,
+            item_id=event.item_id or None,
+            response_id=event.response_id or None,
+        )
 
     elif event_type == 'response.output_text.delta':
         event = ResponseTextDeltaEvent.model_validate(data)
-        return OutputTranscript(text=event.delta or '', is_final=False, item_id=event.item_id or None, output_text=True)
+        return OutputTranscript(
+            text=event.delta or '',
+            is_final=False,
+            item_id=event.item_id or None,
+            output_text=True,
+            response_id=event.response_id or None,
+        )
 
     elif event_type == 'response.output_text.done':
         event = ResponseTextDoneEvent.model_validate(data)
-        return OutputTranscript(text=event.text or '', is_final=True, item_id=event.item_id or None, output_text=True)
+        return OutputTranscript(
+            text=event.text or '',
+            is_final=True,
+            item_id=event.item_id or None,
+            output_text=True,
+            response_id=event.response_id or None,
+        )
 
     elif event_type in (
         'conversation.item.input_audio_transcription.delta',
@@ -796,6 +825,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
             tool_name=event.name or '',
             args=event.arguments or '{}',
             response_usage_follows=True,
+            response_id=event.response_id or None,
         )
 
     elif event_type == 'input_audio_buffer.speech_started':
@@ -905,6 +935,26 @@ class RealtimeHandshakeError(Exception):
         self.error = error
         """The server's `error` payload when it rejected the session, otherwise a description of the failure."""
         super().__init__(_error_message(error))
+
+
+async def openai_websocket_auth_headers(client: AsyncOpenAI) -> dict[str, str]:
+    """Resolve the `Authorization` header for a raw OpenAI WebSocket handshake.
+
+    The handshake bypasses the SDK's request path, which is where `AsyncOpenAI` resolves anything but
+    a static key, so both dynamic forms are resolved here. Shared by the Realtime and GPT-Live
+    transports, which authenticate identically even though their protocols have nothing else in
+    common.
+    """
+    # A `workload_identity` client leaves `client.api_key` set to a placeholder string and exchanges
+    # it for a real token per request; sending the placeholder would fail the handshake with an
+    # opaque auth error.
+    if (workload_identity := client._workload_identity_auth) is not None:  # pyright: ignore[reportPrivateUsage]
+        return {'Authorization': f'Bearer {await workload_identity.get_token_async()}'}
+    # An async `api_key` provider leaves `client.api_key` empty until resolved. The SDK's own refresh
+    # is a no-op returning the static key when no provider is configured, so the handshake stays
+    # byte-identical in that case.
+    api_key = await client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
+    return {'Authorization': f'Bearer {api_key}'}
 
 
 @contextmanager
@@ -1074,19 +1124,26 @@ def config_interrupts_response_on_speech(session_config: dict[str, Any]) -> bool
     return turn_detection is not None and bool(turn_detection.get('interrupt_response'))
 
 
-def tool_choice_config(tool_choice: ResolvedToolChoice) -> str | dict[str, Any]:
+def tool_choice_config(tool_choice: ResolvedToolChoice) -> str:
     """Map a resolved `tool_choice` to the OpenAI realtime `tool_choice` field.
 
     Restrictions to a subset of the tools are carried by the advertised tool definitions, which the
-    caller has already narrowed, so only the mode is left to send — except for the one restriction
-    realtime does express directly, a single named function.
+    caller has already narrowed, so only the mode is left to send.
+
+    Raises:
+        UserError: For a choice that forces a tool call. The session config applies it to every
+            response, including the one after a tool result, so the model could never answer: it would
+            call tools until a usage limit ended the session.
     """
-    if isinstance(tool_choice, tuple):
-        mode, allowed = tool_choice
-        if mode == 'required' and len(allowed) == 1:
-            return {'type': 'function', 'name': next(iter(allowed))}
-        return mode
-    return tool_choice
+    mode = tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice
+    if mode == 'required':
+        raise UserError(
+            "A realtime session can't force a tool call: the provider applies `tool_choice` to every "
+            "response, including the one after a tool result, so `tool_choice='required'` or a list of "
+            'tool names would never let the model answer. To restrict which tools the model can use, pass '
+            '`ToolOrOutput(function_tools=[...])` instead.'
+        )
+    return mode
 
 
 async def expect_event(

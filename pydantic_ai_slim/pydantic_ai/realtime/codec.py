@@ -158,6 +158,12 @@ class AudioDelta:
     _: KW_ONLY
     item_id: str | None = None
     """Provider item ID for the spoken output this chunk belongs to, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -177,6 +183,12 @@ class OutputTranscript:
     an audio transcript becomes a [`SpeechPart`][pydantic_ai.messages.SpeechPart]."""
     item_id: str | None = None
     """Provider item ID for the spoken output, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -229,6 +241,12 @@ class ToolCall:
     uses this signal to keep all calls and their usage on the same `ModelResponse`."""
     item_id: str | None = None
     """Provider conversation-item ID for this call, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -299,6 +317,10 @@ class SessionUsage:
 
     finish_reason: FinishReason | None = None
     """Normalized completion reason for the response this usage belongs to, when available."""
+
+    provider_details: dict[str, Any] | None = None
+    """Provider-specific details about how this usage was incurred, merged into the response's
+    `ModelResponse.provider_details`. Only applies to response-scoped usage."""
 
     response_scoped: bool = True
     """Whether this usage belongs to a specific model response.
