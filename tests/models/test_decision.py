@@ -1177,3 +1177,45 @@ async def test_a_turn_with_no_earlier_history_has_no_history_entry(allow_model_r
             ],
         }
     )
+
+
+@pytest.mark.anyio
+async def test_a_tool_result_with_no_prompt_before_it_is_all_history(allow_model_requests: None):
+    """Resuming a call made elsewhere can leave nothing but the call and its result: no prompt to split the turn at."""
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('look_up_order', {}, 'c1')]),
+        ModelRequest(parts=[ToolReturnPart('look_up_order', 'Order #1 shipped yesterday.', 'c1')]),
+    ]
+    await Agent(model, output_type=Triage, tools=[look_up_order]).run(message_history=history)
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [
+                {'tool_call': {'name': 'look_up_order', 'args': {}}},
+                {'tool_return': {'name': 'look_up_order', 'content': 'Order #1 shipped yesterday.'}},
+            ]
+        }
+    )
+
+
+class Short(BaseModel):
+    """Note the ticket."""
+
+    urgent: bool = Field(description='Is it urgent?')
+
+
+@pytest.mark.anyio
+async def test_a_route_with_nothing_to_ask_could_be_the_one_taken(allow_model_requests: None):
+    """If the pick can land on a route with no questions, every question asked up front may be thrown away.
+
+    Two routes' questions that cost less than a second request each still are not asked up front beside a `None`,
+    since declining would discard both.
+    """
+    model = RoutingDecisionModel({'Wide': 0.1, 'Short': 0.1, 'None': 0.8})
+    await Agent(model, output_type=[Wide, Short]).run('Hi.')
+    assert list(model.requests[0].questions) == snapshot(
+        ['Wide.a', 'Wide.b', 'Wide.c', 'Wide.d', 'Short.urgent', 'route']
+    )
+    model = RoutingDecisionModel({'Wide': 0.1, 'Short': 0.1, 'None': 0.8})
+    await Agent(model, output_type=[Wide, Short, None]).run('Hi.')
+    assert list(model.requests[0].questions) == snapshot(['route'])

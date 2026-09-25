@@ -858,8 +858,10 @@ class _Speculation:
                     continue
         sizes = {label: _question_tokens(ask.questions) for label, ask in asks.items()}
         state_tokens = _state_tokens(state)
-        # The route taken is not known yet, so the questions thrown away are all but the smallest route's, at most.
-        unpicked = sum(sizes.values()) - min(sizes.values(), default=0)
+        # The route taken is not known yet, so the questions thrown away are all but the smallest route's, at most,
+        # and all of them when the route taken could be one with nothing asked about it.
+        smallest = min(sizes.values()) if len(sizes) == len(routes) else 0
+        unpicked = sum(sizes.values()) - smallest
         if unpicked > _REQUEST_TOKENS + state_tokens or state_tokens + sum(sizes.values()) > _SPECULATION_TOKENS:
             asks = {
                 label: ask for label, ask in asks.items() if routes[label] in output_tools and len(output_tools) == 1
@@ -1753,7 +1755,7 @@ def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
     are told apart from it. Every entry lands in exactly one of the three, however the messages arrived: a run's own,
     or a `message_history` passed in that ends partway through a turn.
     """
-    if turn:
+    if turn and any(isinstance(part, UserPromptPart) for message in messages for part in message.parts):
         return _map_turn(messages)
     history: list[JsonValue] = []
     prompt_parts: list[str] = []
