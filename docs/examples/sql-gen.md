@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI text-to-SQL example that turns user requests into PostgreSQL queries, with an output validator that checks each query using EXPLAIN."
+---
+
 # SQL Generation
 
 Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.

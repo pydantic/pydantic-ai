@@ -1,3 +1,7 @@
+---
+description: "Build voice agents with Pydantic AI realtime: live speech-to-speech conversations over the OpenAI Realtime API, Gemini Live, xAI and Azure, with your tools."
+---
+
 # Realtime (speech-to-speech)
 
 Pydantic AI's realtime support lets an agent hold a live, spoken conversation. It streams the

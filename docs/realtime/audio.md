@@ -1,3 +1,7 @@
+---
+description: "Stream PCM microphone audio, text and images into a Pydantic AI realtime session, play back the spoken reply, and show live captions and input transcription."
+---
+
 # Audio, images, and transcripts
 
 A realtime session accepts live audio, text, and supported images while exposing separate views for

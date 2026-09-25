@@ -1,3 +1,7 @@
+---
+description: "Track usage and cost of Pydantic AI realtime voice sessions, cap them with usage limits, and trace them with OpenTelemetry and Pydantic Logfire."
+---
+
 # Usage and observability
 
 Realtime audio bills by the second in both directions, so knowing what a session cost — and capping

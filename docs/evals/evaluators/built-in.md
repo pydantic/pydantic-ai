@@ -1,3 +1,7 @@
+---
+description: "Reference for the evaluators built into Pydantic Evals: exact match, contains, type checks, max duration, LLM judge, G-Eval, span checks and confusion matrices."
+---
+
 # Native Evaluators
 
 Pydantic Evals provides several built-in evaluators for common evaluation tasks.

@@ -1,3 +1,7 @@
+---
+description: "Use the Model Context Protocol with Pydantic AI: connect agents to MCP servers as a client, use provider-native MCP tools, or run agents inside an MCP server."
+---
+
 # Model Context Protocol (MCP)
 
 Pydantic AI supports [Model Context Protocol (MCP)](https://modelcontextprotocol.io) in multiple ways:

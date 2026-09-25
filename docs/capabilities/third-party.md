@@ -1,3 +1,7 @@
+---
+description: "Find community capability packages for Pydantic AI, covering todos, context management, subagents, guardrails, sandboxing, Agent Skills, SQL analytics and RAG."
+---
+
 # Third-Party Capabilities
 
 [Capabilities](overview.md) are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](../extensibility.md) for the full ecosystem, including [third-party toolsets](../toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.

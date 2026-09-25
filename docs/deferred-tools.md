@@ -1,3 +1,7 @@
+---
+description: "Add human-in-the-loop tool approval to Pydantic AI agents, or hand tool calls to a frontend or background worker, and resume the run with the results."
+---
+
 # Deferred Tools
 
 There are a few scenarios where the model should be able to call a tool that should not or cannot be executed during the same agent run inside the same Python process:

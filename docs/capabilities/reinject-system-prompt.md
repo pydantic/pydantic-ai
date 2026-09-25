@@ -1,3 +1,7 @@
+---
+description: "Make sure a Pydantic AI agent's system prompt is always sent, even when message history from a UI or database has dropped it, with ReinjectSystemPrompt."
+---
+
 # Reinject System Prompt
 
 [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] is a [capability](overview.md) that ensures the agent's configured [`system_prompt`](../agent.md#system-prompts) is at the head of the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] on every model request. By default, if any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is already present in the history, the capability is a no-op (so multi-agent handoff and user-managed system prompts remain authoritative). Set `replace_existing=True` to instead strip any existing `SystemPromptPart`s before prepending the agent's configured prompt — useful when the history comes from an untrusted source and the server's prompt must win.

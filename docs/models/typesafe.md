@@ -1,3 +1,7 @@
+---
+description: "Run Pydantic AI agents on Jev from TypeSafe, a classifier that answers typed questions with confidence scores, for routing, guards and judging conversations."
+---
+
 # TypeSafe (Jev)
 
 [Jev](https://typesafe.ai) is TypeSafe's model, and a [decision model](decision.md): it answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text. In Pydantic AI, an agent running on a decision model can use it both to produce a structured [output](../output.md) and to call [tools](../tools.md).

@@ -1,3 +1,7 @@
+---
+description: "Make low-level requests to any LLM with the Pydantic AI direct API when you only need input and output schema translation, not the full Agent machinery."
+---
+
 # Direct Model Requests
 
 The `direct` module provides low-level methods for making imperative requests to LLMs where the only abstraction is input and output schema translation, enabling you to use all models with the same API.

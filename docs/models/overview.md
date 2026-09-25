@@ -1,3 +1,7 @@
+---
+description: "See every LLM provider Pydantic AI supports, how models, providers and profiles relate, and how to add fallback models, concurrency limits or a custom model."
+---
+
 # Model Providers
 
 Pydantic AI is model-agnostic and has built-in support for multiple model providers:
