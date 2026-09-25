@@ -1427,6 +1427,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                             part.code_execution_result, self._provider_name, self._code_execution_tool_call_id
                         )
                     )
+                    # Each `executable_code` has exactly one result, as the classic path assumes, so the
+                    # pairing ends here: a search status line later in the session must not pair with it.
+                    self._code_execution_tool_call_id = None
                 elif part.text and not part.thought:
                     # Skip thinking parts: native-audio models stream their reasoning as `thought`
                     # text alongside the spoken answer, and it must not leak into the transcript. A
