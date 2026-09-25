@@ -868,9 +868,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # The response's `provider_details` ride along too: a response that called a tool is recorded
         # from this usage rather than from its `ResponseDone` (suppressed for a function-call-only
         # response, and arriving after the response is already recorded otherwise), so without them a
-        # tool-call response would lack the `status` every other response carries. The session only
-        # applies them to the response this usage names, so a late one can't restamp a newer response.
-        provider_details = response_provider_details(response)
+        # tool-call response would lack the `status` every other response carries. Not for a superseded
+        # response, though: the session may be recording the newer one when this usage lands, and the
+        # older response's status (typically `cancelled`) doesn't describe it.
+        provider_details = None if superseded else response_provider_details(response)
         if usage is not None:
             events.append(
                 SessionUsage(

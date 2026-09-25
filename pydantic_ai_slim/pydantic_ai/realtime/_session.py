@@ -252,9 +252,6 @@ _AUDIO_TAP_SECONDS = 300
 _AUDIO_TAP_MAX_CHUNKS = 30_000
 _TRANSCRIPT_TAP_SIZE = 512
 _SESSION_DELTA_QUEUE_SIZE = 512
-# How many recently recorded response ids to remember when recognizing a late event for one of them.
-# Late events trail their response by at most a response or two, so this is generous.
-_RECORDED_RESPONSE_IDS = 32
 # Structural events are some five per turn against one delta per audio frame, so they are not what
 # makes an unread queue large — but they are never superseded the way deltas are, so without their own
 # bound a session nothing iterates keeps every one of them for as long as it runs. The same 512 buys a
@@ -783,20 +780,13 @@ class RealtimeSession:
         self._response_active = False
         self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
-        # The provider id of the response whose content is being assembled, from its content events'
-        # `response_id`. It ties terminals and usage to the response they belong to, and names a reply
-        # that never gets its terminal (one cut off by a dropped connection or by closing the session).
-        self._assembling_response_id: str | None = None
-        # Ids of the responses most recently recorded in history, so late content, usage or terminals
-        # that name one of them are recognized as leftovers of a response that's already over.
-        self._recorded_response_ids: deque[str] = deque(maxlen=_RECORDED_RESPONSE_IDS)
-        self._last_recorded_response_id: str | None = None
+        # The provider id carried by the content of the response being assembled, for a reply that
+        # never gets the terminal that would otherwise name it: one cut off by a dropped connection or
+        # by closing the session.
+        self._content_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
         self._pending_interrupted_at_ms: int | None = None
         self._response_finalized_before_terminal = False
-        # The id of the response `_response_finalized_before_terminal` is about, so the terminal of a
-        # *different* response isn't mistaken for that response's redundant one.
-        self._finalized_before_terminal_id: str | None = None
         # User requests sent while a response is in flight are held until that response is finalized,
         # so the pump remains the sole writer for that portion of history and a caller cannot splice a
         # request between an assistant response's streamed parts.
@@ -2209,7 +2199,9 @@ class RealtimeSession:
                 provider_name=self._provider_name,
                 provider_url=self._provider_url,
                 provider_details=provider_details,
-                provider_response_id=self._take_response_id(provider_response_id),
+                provider_response_id=provider_response_id
+                or self._pending_provider_response_id
+                or self._content_response_id,
                 finish_reason=finish_reason or self._pending_finish_reason,
                 conversation_id=self._conversation_id,
                 state='interrupted' if interrupted else 'complete',
@@ -2245,76 +2237,11 @@ class RealtimeSession:
         self._native_tool_parts = []
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id = None
+        self._content_response_id = None
         self._pending_finish_reason = None
         self._response_limit_checked = False
         if response is not None:
             self._check_response_boundary_limits()
-
-    def _take_response_id(self, provider_response_id: str | None) -> str | None:
-        """The provider id for the response being recorded, from its terminal, its content, or its usage."""
-        response_id = provider_response_id or self._assembling_response_id or self._pending_provider_response_id
-        self._assembling_response_id = None
-        self._last_recorded_response_id = response_id
-        if response_id is not None:
-            self._recorded_response_ids.append(response_id)
-        return response_id
-
-    def _route_content(self, response_id: str | None) -> tuple[bool, list[RealtimeEvent]]:
-        """Decide where content naming `response_id` goes: `(keep, events)`.
-
-        Content of a response already recorded is a leftover (a delta that was in flight when the
-        response was closed) and is dropped. Content of a response other than the one being assembled
-        means that one is over, though its terminal hasn't arrived: it's recorded as it stands, and
-        assembly moves to the new response. Content that names no response is kept as is.
-        """
-        if response_id is None:
-            return True, []
-        if response_id in self._recorded_response_ids:
-            return False, []
-        events: list[RealtimeEvent] = []
-        if self._assembling_response_id is not None and self._assembling_response_id != response_id:
-            events.extend(self._finalize_assistant_part())
-            self._finalize_response(response_occurred=True)
-        self._assembling_response_id = response_id
-        return True, events
-
-    def _admit_output(self, item_id: str | None, response_id: str | None) -> list[RealtimeEvent] | None:
-        """Admit model output to the response being assembled, or `None` to drop it.
-
-        Returns the events of recording the previous response, when this output starts a new one.
-        """
-        if not self._accept_item(item_id):
-            return None
-        keep, events = self._route_content(response_id)
-        return events if keep else None
-
-    def _is_for_another_response(self, response_id: str | None) -> bool:
-        """Whether a terminal or usage report names a response other than the one being assembled.
-
-        A late `response.done` for a response the user barged in on can land after the next one has
-        started streaming. It must not close the newer response, or stamp it with its own id and status.
-        """
-        return response_id is not None and (
-            response_id in self._recorded_response_ids
-            or (self._assembling_response_id is not None and response_id != self._assembling_response_id)
-        )
-
-    def _record_orphan_usage(self, usage: RequestUsage) -> None:
-        """Price usage for a response that's already recorded, and count its cost toward the session.
-
-        Its tokens were already added to the session total; the response it belongs to can't change,
-        since history is append-only, and the response in progress isn't its to carry.
-        """
-        priced = ModelResponse(
-            parts=[],
-            usage=usage,
-            model_name=self._connection.model_name or self._model_name,
-            provider_name=self._provider_name,
-            provider_url=self._provider_url,
-        )
-        fill_response_cost(priced)
-        if usage.cost is None:
-            self.usage.incr(RequestUsage(cost=priced.usage.cost))  # usage-attribution: the session owns its spans
 
     def _check_response_boundary_limits(self) -> None:
         """Check the usage limits against a response that has just been finalized.
@@ -2347,20 +2274,6 @@ class RealtimeSession:
         self._session_instrumentation.ensure_chat_span()
 
     def _handle_turn_complete(self, event: ResponseDone) -> list[RealtimeEvent]:
-        response_id = event.provider_response_id
-        if response_id is not None and self._finalized_before_terminal_id not in (None, response_id):
-            # The response recorded ahead of its terminal is some other one: this terminal isn't that one's
-            # redundant trailer, so it mustn't be treated as such.
-            self._response_finalized_before_terminal = False
-            self._finalized_before_terminal_id = None
-        if self._is_for_another_response(response_id) and not (
-            self._assembling_response_id is None and response_id == self._finalized_before_terminal_id
-        ):
-            # The terminal of an earlier response, already recorded, arriving while the next one streams.
-            if response_id == self._finalized_before_terminal_id:
-                self._response_finalized_before_terminal = False
-                self._finalized_before_terminal_id = None
-            return []
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
         # Gemini emits neither `RealtimeInputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
@@ -2405,7 +2318,6 @@ class RealtimeSession:
             or any(isinstance(part, ToolCallPart) for part in self._response_parts)
         )
         self._response_finalized_before_terminal = False
-        self._finalized_before_terminal_id = None
         if event.more_expected and not event.interrupted and event.provider_details is None:
             # The provider ended this response but said the exchange isn't over: a background-reasoning
             # model speaks a filler, closes the response, and only then calls the tool it was stalling
@@ -2978,21 +2890,20 @@ class RealtimeSession:
         (the pump-consumed variants narrowed out) so the final `assert_never` gives static exhaustiveness.
         """
         if isinstance(event, AudioDelta):
-            if (events := self._admit_output(event.item_id, event.response_id)) is None:
+            if not self._accept_item(event.item_id):
                 return []
+            self._content_response_id = self._content_response_id or event.response_id
             self._session_instrumentation.set_output_type('speech')
-            return [*events, *self._handle_assistant_audio(event.data, item_id=event.item_id)]
+            return self._handle_assistant_audio(event.data, item_id=event.item_id)
         if isinstance(event, OutputTranscript):
-            if (events := self._admit_output(event.item_id, event.response_id)) is None:
+            if not self._accept_item(event.item_id):
                 return []
+            self._content_response_id = self._content_response_id or event.response_id
             self._session_instrumentation.set_output_type('text' if event.output_text else 'speech')
             # `is_final` doesn't end the part — the turn ends on `ResponseDone`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
             # text output (`output_text`) becomes a `TextPart`, an audio transcript a `SpeechPart`.
-            return [
-                *events,
-                *self._handle_assistant_transcript(event.text, output_text=event.output_text, item_id=event.item_id),
-            ]
+            return self._handle_assistant_transcript(event.text, output_text=event.output_text, item_id=event.item_id)
         if isinstance(event, InputTranscript):
             if not self._accept_item(event.item_id):
                 return []
@@ -3273,20 +3184,14 @@ class RealtimeSession:
             # OpenAI emits this usage immediately before `response.done`; the response is complete
             # already, so that terminal must not append a second, empty `ModelResponse`.
             self._response_finalized_before_terminal = True
-            self._finalized_before_terminal_id = self._last_recorded_response_id
         return events
 
     async def _handle_usage_event(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
-        # Usage naming a response other than the one being assembled (a late report for one already
-        # recorded) counts toward the session, but neither starts nor joins the response in progress.
-        response_scoped = event.response_scoped and not self._is_for_another_response(event.provider_response_id)
-        if response_scoped:
+        if event.response_scoped:
             self._begin_response()
         self.usage.incr(event.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
-        if event.response_scoped and not response_scoped:
-            self._record_orphan_usage(event.usage)
-        if response_scoped:
+        if event.response_scoped:
             # Measured before accumulating: a tool-call response is finalized by the accumulation
             # itself, which resets the accumulator.
             response_input_tokens = (self._pending_response_usage + event.usage).input_tokens
@@ -3417,13 +3322,11 @@ class RealtimeSession:
             args=event.args,
             tool_call_id=event.tool_call_id,
         )
-        # A call is never dropped, even one naming a response already recorded: the model waits on its
-        # result either way. It only moves assembly on when it names a new response.
-        _, routed = self._route_content(event.response_id)
-        for out in [
-            *routed,
-            *self._handle_tool_call_part(call_part, response_usage_follows=event.response_usage_follows),
-        ]:
+        self._content_response_id = self._content_response_id or event.response_id
+        for out in self._handle_tool_call_part(
+            call_part,
+            response_usage_follows=event.response_usage_follows,
+        ):
             # Published as well as queued: folding the call in first ends the in-flight assistant part,
             # so a turn that speaks *and* calls a tool ("let me look that up") emits its
             # `PartEndEvent(SpeechPart)` here rather than on the translation path, and the transcript

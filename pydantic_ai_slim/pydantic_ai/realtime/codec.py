@@ -161,8 +161,8 @@ class AudioDelta:
     response_id: str | None = None
     """Provider ID of the response this belongs to, when available.
 
-    Lets the session tell which response a late terminal or usage report belongs to, and name a reply
-    that never gets its terminal (one cut off by a dropped connection or by closing the session).
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
     """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -186,8 +186,8 @@ class OutputTranscript:
     response_id: str | None = None
     """Provider ID of the response this belongs to, when available.
 
-    Lets the session tell which response a late terminal or usage report belongs to, and name a reply
-    that never gets its terminal (one cut off by a dropped connection or by closing the session).
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
     """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -244,8 +244,8 @@ class ToolCall:
     response_id: str | None = None
     """Provider ID of the response this belongs to, when available.
 
-    Lets the session tell which response a late terminal or usage report belongs to, and name a reply
-    that never gets its terminal (one cut off by a dropped connection or by closing the session).
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
     """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
