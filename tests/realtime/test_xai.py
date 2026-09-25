@@ -270,6 +270,7 @@ def test_profile() -> None:
     """xAI supports cancellation-based interruption but not output truncation, and no image input."""
     assert _model().profile == RealtimeModelProfile(
         supports_image_input=False,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=False,
@@ -282,6 +283,8 @@ def test_profile() -> None:
         supports_async_tool_calls=False,
         supports_tool_return_schema=False,
         emits_input_speech_events=True,
+        synthesizes_turn_boundary=False,
+        responses_are_requests=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
@@ -427,14 +430,23 @@ def test_session_config_no_voice_by_default() -> None:
 
 
 def test_session_config_forwards_model_settings() -> None:
-    settings = rt_xai.XaiRealtimeModelSettings(max_tokens=256, parallel_tool_calls=False, tool_choice='required')
+    settings = rt_xai.XaiRealtimeModelSettings(max_tokens=256, parallel_tool_calls=False, tool_choice='none')
     model = _model(settings=settings)
     assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
     config = model._session_config('hi', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config['max_output_tokens'] == 256
     assert config['parallel_tool_calls'] is False
-    assert config['tool_choice'] == 'required'
+    assert config['tool_choice'] == 'none'
+    assert 'tools' not in config
+
+
+def test_session_config_rejects_forced_tool_choice() -> None:
+    tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
+    with pytest.raises(UserError, match="A realtime session can't force a tool call"):
+        _model()._session_config(  # pyright: ignore[reportPrivateUsage]
+            'hi', tools, model_settings=rt_xai.XaiRealtimeModelSettings(tool_choice='required')
+        )
 
 
 def test_session_config_omits_absent_model_settings() -> None:
