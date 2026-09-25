@@ -717,6 +717,8 @@ By default, the `LogfirePlugin` will instrument Temporal (including metrics) and
 
 If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`).
 
+A [decision model](../models/decision.md)'s [`decide` spans](../logfire.md#decision-model-spans) are recorded inside the model activity only when the worker can see the agent's own instrumentation: `Agent.instrument_all()` (which the `LogfirePlugin` sets up), `agent.instrument`, or an `Instrumentation` capability on the agent. A run instrumented only through `agent.run(..., capabilities=[Instrumentation(...)])` gets no `decide` spans.
+
 To disable sending Temporal metrics to Logfire, pass `metrics=False` to the `LogfirePlugin` constructor. This also lets you supply your own [`Runtime`](https://python.temporal.io/temporalio.runtime.Runtime.html) to `Client.connect()` when you need to configure other Temporal telemetry options; the plugin will still configure tracing.
 
 ## Known Issues
