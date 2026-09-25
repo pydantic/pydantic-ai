@@ -825,10 +825,13 @@ class OpenAILiveConnection(RealtimeConnection):
             return [*self._open_response(), AudioDelta(data=pcm)]
         if self._pause_ms is None:
             return []
+        # A chunk that crosses the allowance is cut at it, on a sample boundary, so the pause forwarded
+        # doesn't depend on how Live happened to chunk the track.
+        allowed = max(0, int((_MAX_FORWARDED_PAUSE_MS - self._pause_ms) * self._audio_bytes_per_ms) // 2 * 2)
         self._pause_ms += len(pcm) / self._audio_bytes_per_ms
-        if self._response_open and not self._input_open and self._pause_ms <= _MAX_FORWARDED_PAUSE_MS:
-            return [AudioDelta(data=pcm)]
-        return []
+        if not self._response_open or self._input_open or not allowed:
+            return []
+        return [AudioDelta(data=pcm[:allowed])]
 
     def _map_delegation(self, event: DelegationCreatedEvent) -> list[RealtimeCodecEvent]:
         delegation = event.delegation

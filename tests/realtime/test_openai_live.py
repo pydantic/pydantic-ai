@@ -17,6 +17,7 @@ from typing import Any
 
 import anyio
 import pytest
+from genai_prices import calc_price
 from genai_prices.data_snapshot import DataSnapshot, get_snapshot, set_custom_snapshot
 from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice
 from inline_snapshot import snapshot
@@ -49,6 +50,7 @@ from pydantic_ai.realtime import (
     infer_realtime_model,
 )
 from pydantic_ai.realtime.codec import (
+    AudioDelta,
     CancelResponse,
     ClearAudio,
     CommitAudio,
@@ -1676,9 +1678,12 @@ def test_a_quiet_stretch_after_speech_is_forwarded_only_as_a_pause() -> None:
     # Speech resuming is a pause after all, and the next one is measured from it.
     connection._map_event(voice)  # pyright: ignore[reportPrivateUsage]
     assert connection._map_event(quiet) != []  # pyright: ignore[reportPrivateUsage]
-    # One frame holding more than the whole allowance is not a pause either.
+    # However the quiet is chunked, the same 500 ms of it is forwarded: a chunk crossing the allowance
+    # is cut at it, rather than dropped whole.
     connection._map_event(voice)  # pyright: ignore[reportPrivateUsage]
-    assert connection._map_event(_audio_frame(b'\x00' * 48_000)) == []  # pyright: ignore[reportPrivateUsage]
+    (cut,) = connection._map_event(_audio_frame(b'\x00' * 28_800))  # pyright: ignore[reportPrivateUsage]  # 600 ms
+    assert isinstance(cut, AudioDelta) and len(cut.data) == 24_000  # 500 ms
+    assert connection._map_event(quiet) == []  # pyright: ignore[reportPrivateUsage]
 
 
 def test_the_wait_after_a_delegated_call_is_not_spoken() -> None:
@@ -1783,6 +1788,13 @@ async def test_request_limit_is_checked_as_backend_responses_arrive() -> None:
     # The request past the limit had already run: it is recorded before the session ends, tokens and all.
     assert sessions[0].usage.requests == 2
     assert sessions[0].usage.input_tokens == 20
+    # Priced too: the connection prices the backend's tokens as they arrive, so the cost includes both.
+    one = RequestUsage(input_tokens=10, output_tokens=2)
+    price = calc_price(one, 'gpt-5.6-sol', provider_id='openai').total_price
+    assert sessions[0].usage.cost == 2 * price
+    # And the response it landed on is settled into history carrying that cost when the session ends.
+    responses = [message for message in sessions[0].all_messages() if isinstance(message, ModelResponse)]
+    assert sum(response.usage.cost or 0 for response in responses) == 2 * price
 
 
 async def test_a_backend_response_without_usage_is_still_a_request() -> None:
