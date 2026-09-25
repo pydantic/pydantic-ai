@@ -10110,6 +10110,36 @@ async def test_lost_conversation_drops_tool_batches() -> None:
         events.cancel()
 
 
+async def test_tool_that_outlives_a_lost_conversation_does_not_ask_for_an_answer() -> None:
+    """A tool that swallows the cancellation a reconnect sends and returns anyway asks for no answer."""
+    cancelled = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+        return f'{name} result'
+
+    class _DropsWhileRunning(_ToolBatchConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='slow', args='{}', response_usage_follows=True)
+            yield SessionUsage(usage=RequestUsage(input_tokens=1))  # the calling response is complete
+            yield RealtimeSessionReconnectEvent(state_restored=False)
+            await asyncio.Event().wait()
+
+    conn = _DropsWhileRunning()
+    session = RealtimeSession(conn, runner)
+    async with session:
+        events = asyncio.create_task(drain_events(session))
+        await _until(lambda: bool(_sent_tool_traffic(conn)))
+        assert cancelled.is_set()
+        assert _sent_tool_traffic(conn) == [ToolResult(tool_call_id='c1', output='slow result', respond=False)]
+        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        await session.close()
+        events.cancel()
+
+
 async def test_tool_batch_answer_that_would_exceed_the_request_limit_ends_the_session() -> None:
     """The answer a complete batch asks for is a request like any other, checked against `request_limit`."""
 
