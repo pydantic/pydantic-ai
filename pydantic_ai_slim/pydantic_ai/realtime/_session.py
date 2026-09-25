@@ -94,6 +94,7 @@ from .codec import (
     ConversationCreated,
     ConversationItemCreated,
     CreateResponse,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -686,6 +687,11 @@ class RealtimeSession:
         # `_record_sent_request` stores these same objects in the pending list or the history.
         self._retained_image_requests: list[ModelRequest] = []
         self._sent_image_count = 0
+        # Every `send()` made on the connection is numbered, the same way the connection numbers the
+        # inputs it receives, so an `InputRejected` can name the request whose content the provider
+        # refused. Weak, so an image evicted from history by the retention cap isn't kept alive here.
+        self._inputs_sent = 0
+        self._input_requests: weakref.WeakValueDictionary[int, ModelRequest] = weakref.WeakValueDictionary()
         # Whether the connection transcribes the user's audio. When it doesn't, no `InputTranscript`
         # arrives to finalize a user turn, so its retained audio or content-less placeholder is finalized
         # at the turn boundary (see `_finalize_untranscribed_user`).
@@ -1232,7 +1238,8 @@ class RealtimeSession:
         tool-calling turn, that is the answer that follows the tool results, not the response that
         called them. Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
-        over; it also returns if the session closes.
+        over; it also returns if the session closes, or if the provider refuses the request for the
+        reply (reported as a [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
         unlike that loop it can run while something else is iterating the session, so a caller that
@@ -1451,7 +1458,7 @@ class RealtimeSession:
         request = self._new_request([UserPromptPart(content=content)])
         self._record_sent_request(request)
         try:
-            await self._send_frame(content if respond else TextContext(content))
+            await self._send_frame(content if respond else TextContext(content), request=request)
         except BaseException:
             if respond:
                 self._release_response_reservation()
@@ -1550,9 +1557,9 @@ class RealtimeSession:
             image = BinaryContent.narrow_type(content)
             assert isinstance(image, BinaryImage)
             if respond:
-                await self._send_frame(image, CreateResponse())
+                await self._send_frame(image, CreateResponse(), request=request)
             else:
-                await self._send_frame(image)
+                await self._send_frame(image, request=request)
         except BaseException:
             if respond:
                 self._release_response_reservation()
@@ -1562,7 +1569,10 @@ class RealtimeSession:
                 self._remove_sent_request(request)
             raise
         self._sent_image_count += 1
-        if request is not None:
+        # The provider can refuse the image while the send is still in progress, and the refusal then
+        # took the request out of history before it got here: retaining it anyway would let a request
+        # that isn't in history count against the cap and evict one that is.
+        if request is not None and self._is_recorded(request):
             self._retained_image_requests.append(request)
             # `retain_images_every_n` only slows history growth; the cap bounds it, so a long-running
             # frame stream can't grow the host's memory without limit. Providers hold their own
@@ -1587,6 +1597,12 @@ class RealtimeSession:
             or self._pending_finish_reason is not None
             or self._pending_response_usage != RequestUsage()
             or self._session_instrumentation.chat_span is not None
+        )
+
+    def _is_recorded(self, request: ModelRequest) -> bool:
+        """Whether a sent request is still in history or waiting to join it. Searched newest first."""
+        return any(message is request for message in self._pending_sent_requests) or any(
+            message is request for message in reversed(self._history)
         )
 
     def _remove_sent_request(self, request: ModelRequest) -> None:
@@ -1864,13 +1880,16 @@ class RealtimeSession:
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index
 
-    async def _send_frame(self, *contents: RealtimeInput) -> None:
+    async def _send_frame(self, *contents: RealtimeInput, request: ModelRequest | None = None) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
 
         A single input can expand to several protocol frames (a `ToolResult` creates the conversation
         item and then asks for a response), so the lock is what makes each input indivisible on the
         wire, not just ordered. Passing several inputs extends that indivisibility across them, for
         the cases where an interleaved frame would change what they mean.
+
+        `request` is the history entry recording the first input, taken back if the provider later
+        reports that input's content as refused (see `_handle_input_rejected`).
         """
         self._ensure_not_closed()
         self._start_pump()
@@ -1882,7 +1901,14 @@ class RealtimeSession:
         # which is a caller that asked to send.
         async with self._send_lock:
             try:
-                for content in contents:
+                for position, content in enumerate(contents):
+                    # Numbered before the call, and whether or not it raises, matching how
+                    # `InputRejected.input_index` counts. Registered before the frame goes out, since
+                    # the pump can read the refusal while a later input of this group is still sending.
+                    input_index = self._inputs_sent
+                    self._inputs_sent += 1
+                    if position == 0 and request is not None:
+                        self._input_requests[input_index] = request
                     await self._connection.send(content)
             except self._connection.transport_errors as e:
                 # A send that fails because the link is gone is the same failure the receive side
@@ -2782,6 +2808,18 @@ class RealtimeSession:
         self._server_cancelled_the_response_on_speech = self._connection.interrupts_response_on_speech
         return [event]
 
+    def _handle_input_rejected(self, event: InputRejected) -> None:
+        """Take back what a send assumed, now that the provider refused it: the same rollback a failed send gets."""
+        if event.refused == 'response':
+            # Reservations are a count, not tied to a particular response, so the one to release is
+            # whichever is still pending. None is when a response the provider started on its own
+            # (server VAD) already took it: that response is then what the caller is waiting for.
+            if self._pending_response_requests:
+                self._release_response_reservation()
+        elif (request := self._input_requests.pop(event.input_index, None)) is not None:
+            self._remove_sent_request(request)
+            self._retained_image_requests = [kept for kept in self._retained_image_requests if kept is not request]
+
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
         """Remember IDs assigned to xAI's replay burst so related events are suppressed."""
         if event.replayed:
@@ -3332,6 +3370,9 @@ class RealtimeSession:
             return False
         if isinstance(event, ConversationItemCreated):
             self._handle_conversation_item(event)
+            return False
+        if isinstance(event, InputRejected):
+            self._handle_input_rejected(event)
             return False
         if isinstance(event, ToolCallCancelled):
             for tool_call_id in event.tool_call_ids:
